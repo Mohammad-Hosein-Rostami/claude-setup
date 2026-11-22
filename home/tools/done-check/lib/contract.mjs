@@ -125,7 +125,7 @@ export const EFFORT_PATTERN = /^[a-z]{1,16}$/;
  * @property {string|null} base base commit
  * @property {string} key the change key
  * @property {number} files number of changed files (never their names)
- * @property {Record<string, { result: Result, new: number, old: number, ms: number, flaky?: number, unknown?: number, why?: NotRunWhy }>} checks one entry per check kind (`flaky`: new test failures that passed on a rerun at head; `unknown`: with no base, test failures in files the change does not hold; each left out when 0)
+ * @property {Record<string, { result: Result, new: number, old: number, ms: number, flaky?: number, unknown?: number, why?: NotRunWhy }>} checks one entry per check kind (`flaky`: new test failures that passed on a rerun at head; `unknown`: with no base, test failures in files the change does not hold, the kind then `fail` and the run `left-open`; each left out when 0)
  * @property {Verdict['verdict']} verdict
  * @property {string[]} risk risk classes found
  * @property {number} ms total time

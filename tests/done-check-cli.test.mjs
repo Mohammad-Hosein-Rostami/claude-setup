@@ -177,6 +177,22 @@ test('A5: a test run that sleeps past the deadline ends as `tests not run (time)
   assert.match(verdict.line, /tests not run \(time\)/);
 });
 
+test('with no base, a test that fails only in a file the change does not hold is never shown or stored as ok, nor reused as green', async (t) => {
+  const repo = newRepo(t, { packageJson: VITEST_PACKAGE, files: VITEST_SOURCES, tools: ['vitest'], replay: { vitest: FAILING_VITEST } });
+  repo.write('src/a.ts', 'export const a = 3;\n');
+  const { checkChange } = await lib('check-change.mjs');
+  const scope = { top: repo.dir, git: true, base: null, files: ['src/a.ts'], wide: [], named: [], key: 'a'.repeat(64) }; // a Scope a caller built with no base
+  for (const run of ['first', 'second']) {
+    const verdict = await checkChange(scope, { where: 'stop', session: 's', agent: 'a', env: repo.env });
+    assert.equal(verdict.verdict, 'left-open', `${run} run: ${verdict.line}`);
+    assert.deepEqual([verdict.row.checks.tests.result, verdict.row.checks.tests.new, verdict.row.checks.tests.unknown], ['fail', 0, 1]);
+    assert.match(verdict.line, /tests 0 new, 1 unknown/);
+    assert.doesNotMatch(verdict.line, /tests ok/);
+  }
+  const rows = readFileSync(join(repo.home, '.claude', 'state', 'done-check', 'ledger.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(rows.map((row) => row.verdict), ['left-open', 'left-open']);
+});
+
 const UNREADABLE = [
   { name: 'an empty vitest output file after a failing run', kind: 'tests', tool: 'vitest', replay: { exit: 1, outputFile: '' } },
   { name: 'a vitest output file that is not JSON', kind: 'tests', tool: 'vitest', replay: { exit: 1, outputFile: 'not json {{' } },

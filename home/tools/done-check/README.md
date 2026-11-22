@@ -33,15 +33,19 @@ anything runs. `DONE_CHECK_SKIP=all` skips every check (one ledger row); a comma
   has several packages the line also names each one that did not run.
 - `tests none related (n files)`: no test relates to the change. `base: none`: no git base, so failures block once, worded "may be older".
 - `n unknown`: with no git base, a test failure in a file the change does not hold (another agent's work or an older failure cannot be
-  told apart). Listed, never blocking; a failure in a file the change holds stays `new`.
+  told apart). Its kind shows `FAIL 0 new, n unknown` and the run is `left open` (never `ok`, never reused as green); it does not block.
+  A failure in a file the change holds stays `new`. A stop always has a base (below), so only a Scope built by a caller can show it.
 - `review: needed (classes)`: the change is in a risky class (`risk-rules.json`); the lead runs the reviewer. A file whose changed lines are only comments or blank lines is left out; any doubt (no base, a deleted file, a Vue file) keeps the class.
 - `reused (same change) ok`: the same change key was already checked green; no command ran.
 
 ## What counts as a change
 
 Only the stopper's own change in a git worktree. A folder that is not git is never checked (no base, nothing to judge: a lead started
-in `~` gets no line for its notes there). Beside its own worktree the lead, or an agent whose folder is not git, is checked only in the
-worktrees holding files it edited itself, and only on those files: the lead is never handed an agent's lane worktree.
+in `~` gets no line for its notes there). Beside its own worktree every stopper is checked in each worktree holding files it edited
+itself (one per worktree, also two lane worktrees of one repo), and only on those files: the lead is never handed an agent's lane
+worktree it did not edit in. The base is the HEAD the stopper had at its first tool call in that worktree; where none was recorded (a
+lead in `~`, an agent started in a folder that is not git, a base commit that is gone) it is the worktree's HEAD, so a test the
+uncommitted edit breaks that passes at HEAD is new and blocks.
 
 Code files (`ts tsx js jsx mjs cjs mts cts vue`) and the scripts in a `.githooks/` folder, plus the wide files (`package.json`, lockfiles, tsconfig, test and lint config). A changed text file (markdown, json, ...) counts too when a test file names it (the file name appears in a test-looking file's text): the related-test search then picks the tests that write its path, and no typecheck or lint runs for it. A text file no test names stays `checks: no code change`. In a `node --test` script part only the e2e or live globs are dropped (and named `e2e-or-live`); the other globs still pick related tests. `tests-weakened` also fails when always-true matchers (`toBeDefined`, `toBeTruthy`, `toBeFalsy`) are added while value-checking matchers go down.
 

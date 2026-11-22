@@ -2,7 +2,8 @@
 // spec, apart from the code: they are red until lane dc-scope lands the module.
 // Covers: ownChange(input, env) -> Scope[] for a subagent (base = HEAD at its first tool call, committed + uncommitted + untracked changes),
 // for the lead (only the files it recorded, one Scope per worktree, never an agent's lane worktree), for a plain folder (no Scope) and
-// for an agent whose folder is not git (its edits in a git worktree, base null); rangeChange(top, base) ->
+// for an agent whose folder is not git (its edits in a git worktree, compared with HEAD when no base was recorded there; one Scope per
+// worktree, not per repository); rangeChange(top, base) ->
 // Scope; changedLines(top, base, file) -> [start, end][] (1-based, both ends inclusive, sorted); the change key (same change before and
 // after its commit = one key, moved base = another); hostile file names; an empty change; no git call beyond the first status.
 // Decisions this test fixes where the design is silent (the writer of scope.mjs follows them): a Scope.files / wide entry uses `/` and is
@@ -259,7 +260,7 @@ test('a lead outside any repo keeps its own edit and leaves out an agent edit in
   recordAgentEdits(repo.env, AGENT, join(lane, 'src', 'a.ts')); // the newest edit of the session is the agent's
   const { ownChange } = await loadScope();
   const scopes = await ownChange({ session_id: SESSION, stop_hook_active: false }, env);
-  assert.deepEqual(scopes.map((scope) => [scope.top, scope.files, scope.base]), [[repo.dir, ['src/b.ts'], null]]);
+  assert.deepEqual(scopes.map((scope) => [scope.top, scope.files, scope.base]), [[repo.dir, ['src/b.ts'], repo.head()]]);
 });
 
 test('a lead in a main checkout with nothing changed is not given an agent lane worktree with changes', async (t) => {
@@ -273,7 +274,7 @@ test('a lead in a main checkout with nothing changed is not given an agent lane 
   assert.deepEqual(await ownChange(input, envOf(repo)), []);
 });
 
-test('an agent whose folder is not git still gets its edits in a git worktree checked (no base)', async (t) => {
+test('an agent whose folder is not git still gets its edits in a git worktree checked, against that worktree\'s HEAD', async (t) => {
   const repo = withRepo(t, { files: BASE_FILES });
   const plainFolder = join(dirname(repo.dir), 'reports');
   mkdirSync(plainFolder);
@@ -286,7 +287,7 @@ test('an agent whose folder is not git still gets its edits in a git worktree ch
   const input = { session_id: SESSION, agent_id: AGENT, agent_type: 'general-purpose', agent_transcript_path: transcript, stop_hook_active: false };
   const { ownChange } = await loadScope();
   const scopes = await ownChange(input, repo.env);
-  assert.deepEqual(scopes.map((scope) => [scope.top, scope.git, scope.files, scope.base]), [[repo.dir, true, ['src/a.ts'], null]]);
+  assert.deepEqual(scopes.map((scope) => [scope.top, scope.git, scope.files, scope.base]), [[repo.dir, true, ['src/a.ts'], repo.head()]]);
 });
 
 test('an unreadable edit log: a subagent change since its baseline is still checked', async (t) => {
@@ -302,15 +303,62 @@ test('an unreadable edit log: a subagent change since its baseline is still chec
   assert.deepEqual(scopes.map((scope) => [scope.files, scope.base]), [[['src/a.ts'], repo.baseSha]]);
 });
 
-test('a baseline without a head gives base none and no error', async (t) => {
+test('a baseline without a head: the change since it is compared with HEAD, no error', async (t) => {
   const repo = withRepo(t, { files: BASE_FILES });
   const input = startAgent(repo);
   assert.equal(saveBaseline(repo.env, SESSION, 'old-agent', repo.dir, [], null), true); // a baseline written before round 9 has no head
   repo.write('src/a.ts', 'export const a = 2;\n');
   const { ownChange } = await loadScope();
   const scopes = await ownChange({ ...input, agent_id: 'old-agent' }, envOf(repo));
-  assert.ok(Array.isArray(scopes));
-  for (const scope of scopes) assert.equal(scope.base, null);
+  assert.deepEqual(scopes.map((scope) => [scope.files, scope.base]), [[['src/a.ts'], repo.head()]]);
+});
+
+test('a baseline whose commit is gone: the uncommitted change is compared with HEAD', async (t) => {
+  const repo = withRepo(t, { files: BASE_FILES });
+  const input = startAgent(repo);
+  assert.equal(saveBaseline(repo.env, SESSION, 'gone-agent', repo.dir, [], 'f'.repeat(40)), true); // a commit this repo never had
+  repo.write('src/a.ts', 'export const a = 2;\n');
+  recordAgentEdits(repo.env, 'gone-agent', join(repo.dir, 'src', 'a.ts'));
+  const { ownChange } = await loadScope();
+  const scopes = await ownChange({ ...input, agent_id: 'gone-agent' }, envOf(repo));
+  assert.deepEqual(scopes.map((scope) => [scope.files, scope.base]), [[['src/a.ts'], repo.head()]]);
+});
+
+/** The Stop input of an agent that started in a plain folder beside `repo` (no baseline worktree, so no recorded base). */
+function startAgentInPlainFolder(repo) {
+  const plainFolder = join(dirname(repo.dir), 'plain-start');
+  mkdirSync(plainFolder, { recursive: true });
+  const transcript = join(dirname(repo.dir), 'plain-agent-transcript.jsonl');
+  writeFileSync(transcript, `${JSON.stringify({ cwd: plainFolder })}\n`);
+  assert.equal(saveBaseline(repo.env, SESSION, AGENT, null, [], null), true);
+  return { session_id: SESSION, agent_id: AGENT, agent_type: 'general-purpose', agent_transcript_path: transcript, stop_hook_active: false };
+}
+
+for (const [order, laneFirst] of [['checkout edit first', false], ['lane edit first', true]]) {
+  test(`an agent whose folder is not git gets one scope per worktree of one repo it edited in (${order})`, async (t) => {
+    const repo = withRepo(t, { files: BASE_FILES });
+    const lane = addLaneWorktree(repo, 'lane-two');
+    const input = startAgentInPlainFolder(repo);
+    const edits = [join(repo.dir, 'src', 'a.ts'), join(lane, 'src', 'b.ts')];
+    for (const file of edits) writeFileSync(file, 'export const changed = 2;\n');
+    recordAgentEdits(repo.env, AGENT, ...(laneFirst ? edits.reverse() : edits));
+    const { ownChange } = await loadScope();
+    const scopes = (await ownChange(input, repo.env)).map((scope) => [scope.top, scope.files, scope.base]).sort(([left], [right]) => left.localeCompare(right));
+    assert.deepEqual(scopes, [[repo.dir, ['src/a.ts'], repo.head()], [lane, ['src/b.ts'], repo.head()]]);
+  });
+}
+
+test('an agent in a git worktree that also edits another repo gets that repo checked on its own edit there', async (t) => {
+  const repo = withRepo(t, { files: BASE_FILES });
+  const other = withRepo(t, { files: BASE_FILES });
+  const input = startAgent(repo);
+  repo.write('src/a.ts', 'export const a = 2;\n');
+  other.write('src/b.ts', 'export const b = 2;\n');
+  other.write('src/a.ts', 'export const a = 3;\n'); // changed in the other repo, but not by this agent
+  recordAgentEdits(repo.env, AGENT, join(repo.dir, 'src', 'a.ts'), join(other.dir, 'src', 'b.ts'));
+  const { ownChange } = await loadScope();
+  const scopes = (await ownChange(input, envOf(repo))).map((scope) => [scope.top, scope.files, scope.base]);
+  assert.deepEqual(scopes, [[repo.dir, ['src/a.ts'], repo.baseSha], [other.dir, ['src/b.ts'], other.head()]]);
 });
 
 test('an unreadable baseline file gives base none and no error', async (t) => {

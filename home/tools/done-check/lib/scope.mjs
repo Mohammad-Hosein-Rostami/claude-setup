@@ -5,16 +5,20 @@
 // Rules (the tests in tests/done-check-scope.test.mjs fix the ones the design leaves open):
 // - Base = the HEAD the agent or lead had at its first tool call (lib/dirty-baseline.mjs `baselineOf`), only when that baseline was taken in
 //   the same worktree and the commit still exists. No baseline, an old one without head, an unreadable store, a base git cannot find or a
-//   baseline taken in another folder: base null, and only uncommitted and untracked files of this session's own are seen.
+//   baseline taken in another folder: the worktree's HEAD is the base, and only uncommitted and untracked files of this stopper's own are
+//   seen. So a test its uncommitted edit breaks, and that passes at HEAD, is new and blocks (the lead's decision of 2026-11-22: a lead in ~
+//   or an agent started in a folder that is not git is still held to its own break). A worktree always has a HEAD (worktreeOf gives none
+//   before the first commit), so base null is left only for a Scope a caller builds itself.
 // - A folder that is not git gives no Scope of its own (no base, nothing a check could judge; the lead's home folder was 42% of all runs,
 //   each one `review: needed` that nobody could act on). Only git worktrees are checked.
 // - A subagent owns every file changed between base and its worktree (committed or not), plus untracked ones. Of the uncommitted files it
 //   owns those it recorded (lib/own-edits.mjs) or that changed since its baseline (a Bash command made them). In its own worktree the lead
 //   owns the files recorded for its session (that set also holds the files its agents recorded there, as commit-gate sees it): land-lane
 //   moves HEAD, so a landed lane is not the lead's.
-// - Beside its own worktree (the lead always; an agent when its folder is not git) a stopper gets one Scope per worktree holding a file it
-//   recorded itself (`editedWorktrees` over `pathsRecordedBy`), and owns there only those files: the lead is never given an agent's lane
-//   worktree, where half-finished work with no base would block it for failures that are not its own.
+// - Beside its own worktree a stopper gets one Scope per worktree holding a file it recorded itself (`ownWorktrees` over `pathsRecordedBy`),
+//   and owns there only those files: the lead is never given an agent's lane worktree it did not edit in, where half-finished work would
+//   block it for failures that are not its own. One Scope per worktree, not per repository: two lane worktrees of one repo hold two
+//   changes, and a worktree nested in another (`.claude/worktrees/<lane>`) is its own.
 // - Code files: ts tsx js jsx mjs cjs mts cts vue, and the scripts in a `.githooks/` folder (no extension). `named`: any other changed file
 //   (markdown, json, ...) that a test-looking file names (lib/related.mjs `pathsNamedByTests`), so a test that reads a text file is run when
 //   the text changes; a change with no code and nothing named stays no change. `wide`: package.json, lockfiles, tsconfig*.json, vitest, jest and eslint config; a wide file
@@ -27,14 +31,17 @@
 //   a filter program is not asked (git would run it): ownChange gives [], rangeChange throws so a land fails closed. An empty tree costs one
 //   `rev-parse` pair and one `status`, no more. ownChange never throws; rangeChange and changedLines throw on a bad base or a failed git call.
 import { createHash } from 'node:crypto';
-import { basename, join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { basename, dirname, join, sep } from 'node:path';
 import { baselineOf, changedSinceBaseline } from '../../../hooks/lib/dirty-baseline.mjs';
-import { editedWorktrees, gatedFolder, gitOut, namesFilterProgram, worktreeOf } from '../../../hooks/lib/gated-folder.mjs';
+import { gatedFolder, gitOut, namesFilterProgram, worktreeOf } from '../../../hooks/lib/gated-folder.mjs';
 import { LEAD, pathsRecordedBy, realPathOf, recordedPaths, statusEntries } from '../../../hooks/lib/own-edits.mjs';
 import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
 import { pathsNamedByTests } from './related.mjs';
 
 const GIT_TIMEOUT_MS = 20_000; // one git call; a hung repo must not eat the stop deadline
+const MAX_OWN_WORKTREES = 5; // worktrees one stop checks beside its own; each one's checks share the one stop deadline
+const MAX_FOLDERS_ASKED = 30; // folders of the stopper's recorded files asked for their worktree, newest edit first
 const MAX_HASHED_BYTES = 8 * 1024 * 1024; // a code file over this is stamped by size and time instead of content
 const STATUS_PATH_AT = 3; // a porcelain entry is `XY <path>`
 const COMMIT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -121,13 +128,41 @@ function gitScope(ctx, tree) {
   let changed = dirty.map(({ rel }) => rel);
   if (base !== null && base !== head) {
     const committed = diffPaths(tree.top, base);
-    if (committed === null) base = null; // the base commit is gone: no base compare
+    if (committed === null) base = null; // the base commit is gone: the uncommitted change is compared with HEAD below
     else changed = [...committed, ...dirty.filter(({ field }) => field.startsWith('??')).map(({ rel }) => rel)];
   }
+  base ??= COMMIT_ID.test(head) ? head : null; // no recorded base: HEAD, so a test the uncommitted change breaks is still new
   const named = pathsNamedByTests(top, changed.filter(isOther));
   const relevant = [...changed.filter((rel) => isCode(rel) || isWide(rel)), ...named];
   if (relevant.length === 0) return null;
   return scopeFrom(top, true, base, ownedPaths(ctx, top, relevant, dirty), { named });
+}
+
+/** True when `folder` is in worktree `top` itself, not in a worktree or repository nested below it (a folder there holds a `.git`). */
+function isInWorktree(folder, top) {
+  if (folder !== top && !folder.startsWith(`${top}${sep}`)) return false;
+  for (let dir = folder; dir !== top; dir = dirname(dir)) if (existsSync(join(dir, '.git'))) return false;
+  return true;
+}
+
+/**
+ * The worktrees holding `files` (real paths, oldest first), newest edit first, at most MAX_OWN_WORKTREES, `primary` left out. One per
+ * worktree, never one per repository (gated-folder.mjs editedWorktrees, which git-tidy-gate uses, keeps one per repository). git runs only
+ * in the folder of a recorded file; a folder inside a worktree already found is not asked again, a folder that is gone is skipped.
+ */
+function ownWorktrees(files, primary) {
+  const found = [];
+  let asked = 0;
+  for (const file of [...files].reverse()) {
+    if (found.length >= MAX_OWN_WORKTREES || asked >= MAX_FOLDERS_ASKED) break;
+    const folder = dirname(file);
+    const known = primary === null ? found : [primary, ...found];
+    if (known.some(({ top }) => isInWorktree(folder, top)) || !existsSync(folder)) continue;
+    asked += 1;
+    const tree = worktreeOf(folder);
+    if (tree !== null && !known.some(({ top }) => top === tree.top)) found.push(tree);
+  }
+  return found;
 }
 
 /**
@@ -144,9 +179,8 @@ export async function ownChange(input, env) {
     const folder = gatedFolder(input ?? {}, env);
     const primary = folder === null ? null : worktreeOf(folder);
     // Beside its own worktree a stopper is judged only on the files it edited itself: never an agent's lane for the lead.
-    const lookBeside = agent === LEAD || (folder !== null && primary === null);
     const ownCtx = { ...ctx, recorded: pathsRecordedBy(env, session, agent) };
-    const beside = lookBeside ? editedWorktrees(session, env, { except: primary, files: ownCtx.recorded }) : [];
+    const beside = ownWorktrees(ownCtx.recorded, primary);
     const scopes = [...(primary === null ? [] : [gitScope(ctx, primary)]), ...beside.map((tree) => gitScope(ownCtx, tree))];
     return scopes.filter((scope) => scope !== null);
   } catch {

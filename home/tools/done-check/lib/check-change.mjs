@@ -2,12 +2,13 @@
 // of the same change -> run the checks at head -> base compare of the failures -> verdict -> ledger row -> one status line.
 // Exports: checkChange(scope, options) -> Promise<Verdict>, repoIdOf(top) -> string (the hashed repo id of the ledger rows).
 // What it decides: a kind FAILs when it has a failure the base does not have (types, lint, tests) or any weakened-test item; a new test
-//   failure that passes when its test file runs once more at head is `flaky`, shown in the line and never a FAIL; with no base, a test
-//   failure in a file the change does not hold is `unknown` (it may be another agent's or older), shown and never a FAIL; a kind
-//   that could not run is `not-run` and never blocks and is never ok. At a stop (`where: 'stop'`) a FAIL blocks, except when the same
-//   change key was blocked before or the agent was blocked MAX_BLOCKS_IN_A_ROW times already: then it is `left-open` (the caller, the
-//   hook, owns that count and passes it as `priorBlocks`). At a land or a manual run a FAIL always blocks. Empty scope: verdict `skipped`,
-//   no ledger row. DONE_CHECK_SKIP=all: verdict `skipped`, no command runs, one ledger row.
+//   failure that passes when its test file runs once more at head is `flaky`, shown in the line and never a FAIL; with no base (only a
+//   Scope a caller builds without one: ownChange always gives a git worktree its HEAD), a test failure in a file the change does not hold
+//   is `unknown` (it may be another agent's or older): its kind is a FAIL that does not block, and the run is `left-open`, so a failing
+//   test is never shown or stored as ok and never reused as green; a kind that could not run is `not-run` and never blocks and is never
+//   ok. At a stop (`where: 'stop'`) a FAIL with a new failure blocks, except when the same change key was blocked before or the agent was
+//   blocked MAX_BLOCKS_IN_A_ROW times already: then it is `left-open` (the caller, the hook, owns that count and passes it as
+//   `priorBlocks`). At a land or a manual run a new failure always blocks. Empty scope: verdict `skipped`, no ledger row. DONE_CHECK_SKIP=all: verdict `skipped`, no command runs, one ledger row.
 // Invariants: the change key mixes the plan fingerprint into Scope.key, so a changed set of commands is a new change. The same key in the
 //   ledger after an ok or reused run (with no time or error not-run) is `reused` and runs no command. The risk classes are always computed
 //   fresh. Result files made for the tools are removed after the run (and old ones of a crashed run after a day). The ledger holds counts
@@ -70,7 +71,7 @@ function membersOf({ scope, plan, results, answers, flaky }) {
     const unknown = notOld.filter((failure) => isUnknownOrigin(scope, cmd, failure));
     const fresh = notOld.filter((failure) => !unknown.includes(failure) && !isFlaky(failure));
     const flakyCount = notOld.filter((failure) => !unknown.includes(failure) && isFlaky(failure)).length;
-    const judged = result.result === 'fail' ? (fresh.length > 0 ? 'fail' : 'ok') : result.result;
+    const judged = result.result === 'fail' ? (fresh.length > 0 || unknown.length > 0 ? 'fail' : 'ok') : result.result;
     return { kind: cmd.kind, name: `${packageNameOf(scope, cmd)}${cmd.label}`, result: judged, why: result.why, ms: result.ms, fresh, old, unknown, flaky: flakyCount, baseWhy: answer?.unavailable };
   });
   const skipped = plan.skipped.map((entry) => ({ kind: entry.kind, name: entry.label, result: 'not-run', why: entry.why, ms: 0, fresh: [], old: [], unknown: [], flaky: 0 }));
@@ -85,11 +86,11 @@ function weakenedMember(scope) {
   return { kind: 'tests-weakened', name: 'tests-weakened', result: fresh.length > 0 ? 'fail' : 'ok', ms: Date.now() - started, fresh, old: [], unknown: [], flaky: 0 };
 }
 
-/** The members of one kind merged into the kind's result: fail beats ok beats none beats not-run. */
+/** The members of one kind merged into the kind's result: fail (a new or an unknown failure) beats ok beats none beats not-run. */
 function summarize(kind, members) {
   const fresh = members.flatMap((member) => member.fresh);
   const has = (result) => members.some((member) => member.result === result);
-  const result = fresh.length > 0 ? 'fail' : has('ok') ? 'ok' : has('none') ? 'none' : 'not-run';
+  const result = has('fail') ? 'fail' : has('ok') ? 'ok' : has('none') ? 'none' : 'not-run';
   const reasons = members.map((member) => member.why).filter(Boolean);
   const why = result === 'not-run' ? (WHY_PRIORITY.find((reason) => reasons.includes(reason)) ?? reasons[0] ?? 'error') : undefined;
   return { kind, result, fresh, old: members.flatMap((member) => member.old), unknown: members.flatMap((member) => member.unknown), flaky: members.reduce((sum, member) => sum + member.flaky, 0), ms: members.reduce((sum, member) => sum + member.ms, 0), ...(why ? { why } : {}) };
@@ -128,9 +129,12 @@ async function riskOf(scope) {
   return { classes: [...new Set((await riskClasses(scope, rules)).map((entry) => entry.class))], warning };
 }
 
-/** `block`, `left-open` or `ok` for the merged kinds; a stop that was blocked on this key or too often before is left open. */
-function decide({ failing, where, key, priorBlocks }) {
-  if (!failing) return { verdict: 'ok', tries: 0 };
+/**
+ * `block`, `left-open` or `ok` for the merged kinds: `failing` = a new failure, `unblamed` = a failure that is not the change's to fix
+ * (unknown), left open and never ok. A stop that was blocked on this key or too often before is left open.
+ */
+function decide({ failing, unblamed, where, key, priorBlocks }) {
+  if (!failing) return { verdict: unblamed ? 'left-open' : 'ok', tries: 0 };
   if (where !== 'stop') return { verdict: 'block', tries: 0 };
   if (priorBlocks.lastKey === key) return { verdict: 'left-open', tries: 0 };
   if (priorBlocks.inARow >= MAX_BLOCKS_IN_A_ROW) return { verdict: 'left-open', tries: priorBlocks.inARow };
@@ -205,7 +209,9 @@ export async function checkChange(scopeOrPromise, options) {
     cleaned = tidyResultFiles(plan, env);
   }
   for (const summary of ran.summaries) row.checks[summary.kind] = rowCheck(summary);
-  const { verdict, tries } = decide({ failing: ran.summaries.some((summary) => summary.result === 'fail'), where, key: row.key, priorBlocks });
+  const failing = ran.summaries.some((summary) => summary.fresh.length > 0);
+  const unblamed = ran.summaries.some((summary) => summary.result === 'fail');
+  const { verdict, tries } = decide({ failing, unblamed, where, key: row.key, priorBlocks });
   const notes = [...notesOf(plan, scope, ran.groups), ...(cleaned ? [] : ['result files not removed'])];
   return finish(verdict, { notes, tries, reason: verdict === 'block' ? reasonOf(ran.summaries, { baseWhy: ran.baseWhy }) : null });
 }

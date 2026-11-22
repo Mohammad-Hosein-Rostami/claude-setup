@@ -9,8 +9,7 @@
 // - git never runs a program the repository names: every call has core.fsmonitor off, core.hooksPath empty, log.showSignature off and bare-repo discovery off,
 //   and the variables that point git at another repository are removed.
 // - editedWorktrees is the worktrees of the files the session itself edited (lib/own-edits.mjs records): the only other folders a lead's
-//   gate may look at, for a session started where there is no repo (~); a caller may narrow it to some of those files (`files`, the
-//   done-check: the stopper's own). git runs only in the folder of a recorded file, never elsewhere.
+//   gate may look at, for a session started where there is no repo (~). git runs only in the folder of a recorded file, never elsewhere.
 //   Each repository counts once however many of its worktrees were edited in (they share one git folder).
 // - Finding a worktree is time-bound: a folder whose git state never answers (a stale network mount, a pipe where HEAD should be) is given
 //   up on after DISCOVERY_TIMEOUT_MS and counts as no worktree, so a stop is never held by it.
@@ -121,15 +120,14 @@ export function namesFilterProgram(top) {
  * A folder of a file that is already inside a found worktree is not asked again; a file whose folder is gone is skipped.
  * @param {string} session the session id
  * @param {Record<string, string | undefined>} env HOME (the edit records)
- * @param {{deadlineMs?: number, except?: {top: string, commonDir: string} | null, files?: Set<string>}} [options] `deadlineMs`: epoch
- *   ms after which no further folder is asked (the first always is); `except`: a worktree whose repository is already looked at, so it is
- *   left out; `files`: the recorded real paths to look through, oldest first (default: every file the session recorded)
+ * @param {{deadlineMs?: number, except?: {top: string, commonDir: string} | null}} [options] `deadlineMs`: epoch ms after which no
+ *   further folder is asked (the first always is); `except`: a worktree whose repository is already looked at, so it is left out
  * @returns {{top: string, gitDir: string, commonDir: string, branch: string}[]} at most MAX_EDITED_WORKTREES
  */
-export function editedWorktrees(session, env, { deadlineMs = Infinity, except = null, files = recordedPaths(env, session, LEAD) } = {}) {
+export function editedWorktrees(session, env, { deadlineMs = Infinity, except = null } = {}) {
   const found = [];
   let probed = 0;
-  for (const file of [...files].reverse()) {
+  for (const file of [...recordedPaths(env, session, LEAD)].reverse()) {
     if (found.length >= MAX_EDITED_WORKTREES || probed >= MAX_FOLDERS_PROBED || (probed > 0 && Date.now() >= deadlineMs)) break;
     const folder = dirname(file);
     const looked = except === null ? found : [except, ...found];

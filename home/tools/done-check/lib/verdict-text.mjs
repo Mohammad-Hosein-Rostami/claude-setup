@@ -2,8 +2,9 @@
 // Exports: lineOf(row, options) -> string, reasonOf(summaries, options) -> string, KindSummary (type).
 // Invariants: the line is a function of the ledger row (plus optional extra notes), so `done-check last` prints exactly what the run
 //   printed, minus the notes (details a row does not hold: which package did not run). A kind that did not run is never shown as ok; a
-//   kind with new failures says FAIL; `tests-weakened` is shown only when it fails. The reason lists at most MAX_REASON_LINES_PER_CHECK
-//   failure lines per check and counts the rest; it holds tool text only after the parsers cut it to one line.
+//   kind with new or unknown failures says FAIL (a failing test is never shown as ok); `tests-weakened` is shown only when it fails. The
+//   reason lists at most MAX_REASON_LINES_PER_CHECK failure lines per check and counts the rest; it holds tool text only after the parsers
+//   cut it to one line.
 import { CHECK_KINDS, MAX_REASON_LINES_PER_CHECK } from './contract.mjs';
 
 const MS_PER_SECOND = 1000;
@@ -38,7 +39,8 @@ const kindParts = (row) => CHECK_KINDS.map((kind) => (row.checks[kind] ? partOf(
 /** True when at least one check really ran and passed: only then is a reused run called ok. */
 const somethingRan = (row) => Object.values(row.checks).some((check) => check.result === 'ok');
 
-const failingKinds = (row) => CHECK_KINDS.filter((kind) => row.checks[kind]?.result === 'fail').map((kind) => `${kind} ${row.checks[kind].new}`);
+const unknownPart = (check) => (check.unknown > 0 ? ` new, ${check.unknown} unknown` : '');
+const failingKinds = (row) => CHECK_KINDS.filter((kind) => row.checks[kind]?.result === 'fail').map((kind) => `${kind} ${row.checks[kind].new}${unknownPart(row.checks[kind])}`);
 
 /**
  * The one line for a run: `checks: types ok · tests ok, 1 old fail · 12 s · review: needed (security)`.

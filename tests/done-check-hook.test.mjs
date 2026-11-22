@@ -213,9 +213,9 @@ test('a lead started outside any repo is not blocked for failing tests inside an
   assert.match(own.out.reason, /half-finished lane work/);
 });
 
-/** A node:test project, a lead outside any repo (base none) that edited src/a.mjs, and tests/a.test.mjs failing. */
-function leadWithoutBase(t) {
-  const repo = newRepo(t, { packageJson: NODE_TEST_PACKAGE, files: { 'src/a.mjs': 'export const a = 1;\n', 'tests/a.test.mjs': FAILING_TEST } });
+/** A node:test project whose tests/a.test.mjs is `testSource` at HEAD, and a lead outside any repo (no recorded base) that edited src/a.mjs. */
+function leadWithoutBase(t, testSource) {
+  const repo = newRepo(t, { packageJson: NODE_TEST_PACKAGE, files: { 'src/a.mjs': 'export const a = 1;\n', 'tests/a.test.mjs': testSource } });
   assert.equal(saveBaseline(repo.env, SESSION, LEAD, null, [], null), true);
   const record = (file) => assert.equal(recordEditedFile({ session_id: SESSION, tool_input: { file_path: join(repo.dir, file) } }, repo.env), true);
   repo.write('src/a.mjs', 'export const a = 2;\n');
@@ -223,23 +223,53 @@ function leadWithoutBase(t) {
   const stop = () => stopHook(repo, { hook_event_name: 'Stop', session_id: SESSION, cwd: repo.home, stop_hook_active: false }, { CLAUDE_PROJECT_DIR: repo.home });
   return { repo, record, stop };
 }
+const ONE_IS_ONE_TEST = "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { a } from '../src/a.mjs';\ntest('a is one', () => assert.equal(a, 1));\n";
 
-test('base none: a failing test in a test file the stopper did not edit is `unknown`, shown and never blocking', (t) => {
-  const { repo, stop } = leadWithoutBase(t);
+test('no recorded base: a related test the own edit breaks, which passes at HEAD, is new and blocks', (t) => {
+  const { repo, stop } = leadWithoutBase(t, ONE_IS_ONE_TEST);
   const result = stop();
-  assert.equal(isBlock(result), false, result.stdout);
-  assert.match(result.out.systemMessage, /tests ok, 1 unknown\b.*base: none/);
-  assert.deepEqual(ledgerRows(repo).map((row) => [row.verdict, row.checks.tests.new, row.checks.tests.unknown]), [['ok', 0, 1]]);
+  assert.equal(isBlock(result), true, result.stdout);
+  assert.match(result.out.systemMessage, /tests FAIL 1 new\b/);
+  assert.doesNotMatch(result.out.systemMessage, /unknown|base: none/);
+  assert.match(result.out.reason, /a is one/);
+  assert.deepEqual(ledgerRows(repo).map((row) => [row.verdict, row.base, row.checks.tests.new]), [['block', repo.baseSha, 1]]);
 });
 
-test('base none: a failing test in a test file the stopper edited is new and blocks, worded "may be older"', (t) => {
-  const { repo, record, stop } = leadWithoutBase(t);
-  repo.write('tests/a.test.mjs', `${FAILING_TEST}\n`);
+test('no recorded base: a test that fails at HEAD too is old, shown and never blocking', (t) => {
+  const { repo, stop } = leadWithoutBase(t, FAILING_TEST);
+  const result = stop();
+  assert.equal(isBlock(result), false, result.stdout);
+  assert.match(result.out.systemMessage, /tests ok, 1 old fail\b/);
+  assert.deepEqual(ledgerRows(repo).map((row) => [row.verdict, row.checks.tests.new, row.checks.tests.old]), [['ok', 0, 1]]);
+});
+
+test('no recorded base: a test file the stopper broke itself, which passes at HEAD, is new and blocks', (t) => {
+  const { repo, record, stop } = leadWithoutBase(t, ONE_IS_ONE_TEST);
+  repo.write('src/a.mjs', 'export const a = 1;\n');
+  repo.write('tests/a.test.mjs', FAILING_TEST);
   record('tests/a.test.mjs');
   const result = stop();
   assert.equal(isBlock(result), true, result.stdout);
-  assert.match(result.out.systemMessage, /tests FAIL 1 new/);
-  assert.match(result.out.reason, /half-finished lane work[\s\S]*may be older/);
+  assert.match(result.out.systemMessage, /tests FAIL 1 new\b/);
+  assert.match(result.out.reason, /half-finished lane work/);
+  assert.doesNotMatch(result.out.reason, /may be older/);
+});
+
+test('an agent started outside any repo: a later edit in a second worktree of the same repo does not hide its first break', (t) => {
+  const repo = newRepo(t, { packageJson: NODE_TEST_PACKAGE, files: { 'src/a.mjs': 'export const a = 1;\n', 'src/b.mjs': 'export const b = 1;\n', 'tests/a.test.mjs': ONE_IS_ONE_TEST } });
+  writeFileSync(join(repo.dir, '.git', 'info', 'exclude'), '.claude/worktrees/\n');
+  const lane = join(repo.dir, '.claude', 'worktrees', 'lane-b');
+  git(repo.dir, 'worktree', 'add', '-q', '-b', 'lane-b', lane);
+  const agent = startAgent(repo, 'agent-1', { dir: repo.home, base: null });
+  const record = (path) => assert.equal(recordEditedFile({ session_id: SESSION, agent_id: agent.agent, tool_input: { file_path: path } }, repo.env), true);
+  repo.write('tests/a.test.mjs', FAILING_TEST);
+  record(join(repo.dir, 'tests', 'a.test.mjs'));
+  writeFileSync(join(lane, 'src', 'b.mjs'), 'export const b = 2;\n');
+  record(join(lane, 'src', 'b.mjs'));
+  const result = stopHook(repo, subagentStop(agent));
+  assert.equal(isBlock(result), true, result.stdout);
+  assert.match(result.out.reason, /half-finished lane work/);
+  assert.equal(result.out.systemMessage.split(' | ').length, 2, 'both worktrees are checked');
 });
 
 test('the lead is not blamed for a changed file it did not record (another session or a lane wrote it)', (t) => {
