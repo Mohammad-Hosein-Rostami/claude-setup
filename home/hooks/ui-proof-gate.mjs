@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { readPlainFile } from './lib/plain-file.mjs';
 import { readSessionFile, writeSessionFile } from './lib/session-store.mjs';
 
 const DEADLINE_MS = 12_000; // the settings timeout is 15 s
@@ -29,6 +30,7 @@ const RUN_COMMAND = /ui-check[\\/]cli\.mjs["']?\s+run\b|ui-check\s+run\b/;
 const MATRIX_FLAG = /--matrix[= ](?:"([^"]+)"|'([^']+)'|(\S+))/;
 const BLOCKED_KEPT = 50;
 const STORE_MAX_BYTES = 64 * 1024;
+const RUN_FILE_MAX_BYTES = 64 * 1024 * 1024; // a ui-check ledger, results or matrix JSON; far above any real one
 const blockedDir = (env) => path.join(env.HOME || env.USERPROFILE || os.homedir(), '.claude', 'state', 'ui-proof-gate');
 
 const proofLib = () => Promise.all([import('../tools/ui-proof/lib/records.mjs'), import('../tools/ui-proof/lib/ui-files.mjs')]);
@@ -36,10 +38,13 @@ const proofLib = () => Promise.all([import('../tools/ui-proof/lib/records.mjs'),
 /** The text Claude Code gave as the Bash result (a string or {stdout, stderr}). */
 const outputOf = (response) => (typeof response === 'string' ? response : `${response?.stdout ?? ''}\n${response?.stderr ?? ''}`);
 
+/** The text of a run file the command or its output names; read without waiting or following a link (lib/plain-file.mjs). */
+const readRunFile = (file) => readPlainFile(file, RUN_FILE_MAX_BYTES);
+
 function matrixHash(command, cwd) {
   const match = MATRIX_FLAG.exec(command);
   const file = match ? path.resolve(cwd, match[1] ?? match[2] ?? match[3]) : null;
-  return file && fs.existsSync(file) ? crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex') : null;
+  return file && fs.existsSync(file) ? crypto.createHash('sha256').update(readRunFile(file)).digest('hex') : null;
 }
 
 /**
@@ -54,8 +59,8 @@ export async function recordRun(input) {
   if (!line) return false;
   const cwd = input.cwd ?? process.cwd();
   const resultsPath = path.resolve(cwd, line[2].trim());
-  const ledger = JSON.parse(fs.readFileSync(path.join(path.dirname(resultsPath), 'ledger.json'), 'utf8'));
-  const results = JSON.parse(fs.readFileSync(resultsPath, 'utf8'));
+  const ledger = JSON.parse(readRunFile(path.join(path.dirname(resultsPath), 'ledger.json')));
+  const results = JSON.parse(readRunFile(resultsPath));
   const [{ appendRecord, buildRecord, storeFile }, { workingUiTree }] = await proofLib();
   const record = buildRecord({ ledger, results, verdict: line[1], agentType: input.agent_type ?? null, matrixHash: matrixHash(command, cwd), resultsPath, uiTree: workingUiTree(cwd) });
   appendRecord(storeFile(cwd), record);

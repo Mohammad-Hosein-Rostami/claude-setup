@@ -17,11 +17,12 @@
 // words ("now style the settings page header") and job follow-ups ("continue", "finish it", FA "ادامه") get a UI follow-up line.
 // Quiet (no output) when CLAUDE_SKILL_ROUTER=off or in a Gradle project without package.json (Android routing
 // lives in the personal per-project layer there). Never blocks: always exits 0; unparsable input produces no output.
-import { mkdirSync, existsSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, existsSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { GATE_ROUTES } from './lib/gate-routes.mjs';
+import { readPlainFile } from './lib/plain-file.mjs';
 import { ownerWords, pastedText } from './lib/owner-words.mjs';
 import { EDIT_REMINDER_TEXT, FOLLOW_UP_SHORT_TEXT, fullPromptText, shortPromptText } from './lib/skill-router-text.mjs';
 
@@ -65,6 +66,7 @@ const PROMPT_STATE_DIR = join(STATE_DIR, 'prompt'); // one file per session: the
 const UI_STATE_DIR = join(STATE_DIR, 'ui'); // one empty file per session: this session is UI work
 const UI_IMPLEMENTER = 'ui-implementer';
 const AGENT_FILE_MAX_BYTES = 64 * 1024; // an agent file is a few KB; a bigger one is not read and counts as a project copy
+const PROMPT_MARKER_MAX_BYTES = 64 * 1024; // a marker lists skill names (about 1 KB for all); a bigger one is not read: full text
 const FOLLOW_UP_SKILLS = ['accessibility-build', 'responsive-ui', 'ui-quality-pass'];
 const COMPACT_SOURCE = 'compact';
 const OFF_ENV = 'CLAUDE_SKILL_ROUTER';
@@ -116,6 +118,19 @@ const promptMarkerPath = (sessionId) =>
   typeof sessionId === 'string' && SAFE_ID.test(sessionId) ? join(PROMPT_STATE_DIR, sessionId) : null;
 
 /**
+ * The marker's text, '' when there is none. Read without waiting (lib/plain-file.mjs): the marker sits in the shared temp folder, where
+ * a FIFO, device or link in its place is refused (throws) instead of holding the prompt.
+ */
+function namedBefore(marker) {
+  try {
+    return readPlainFile(marker, PROMPT_MARKER_MAX_BYTES);
+  } catch (error) {
+    if (error.code === 'ENOENT') return '';
+    throw error;
+  }
+}
+
+/**
  * Records `skills` as named for this session and returns true when every one was already named before (short text
  * is enough). Unsafe session id or unwritable temp dir -> false (full text), never throws: the hook must not block.
  */
@@ -123,7 +138,7 @@ function alreadyNamed(sessionId, skills) {
   const marker = promptMarkerPath(sessionId);
   if (!marker) return false;
   try {
-    const known = existsSync(marker) ? new Set(readFileSync(marker, 'utf8').split('\n').filter(Boolean)) : new Set();
+    const known = new Set(namedBefore(marker).split('\n').filter(Boolean));
     const allKnown = skills.every((skill) => known.has(skill));
     if (!allKnown) {
       mkdirSync(PROMPT_STATE_DIR, { recursive: true });
@@ -199,11 +214,13 @@ function firstUiEdit(sessionId, agentId) {
   return true;
 }
 
-/** The text of a regular file of at most AGENT_FILE_MAX_BYTES; null when it is missing, bigger or unreadable. */
+/**
+ * The text of a regular file of at most AGENT_FILE_MAX_BYTES; null when it is missing, a link, bigger or unreadable. Read without
+ * waiting (lib/plain-file.mjs), so a FIFO at the path, even one swapped in after a check, never holds the hook.
+ */
 function agentFileText(path) {
   try {
-    const stats = statSync(path);
-    return stats.isFile() && stats.size <= AGENT_FILE_MAX_BYTES ? readFileSync(path, 'utf8') : null;
+    return readPlainFile(path, AGENT_FILE_MAX_BYTES);
   } catch {
     return null; // no readable file: no answer from it
   }

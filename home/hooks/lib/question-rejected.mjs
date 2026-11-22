@@ -7,7 +7,8 @@
 // watch started, and only complete lines, and once it has seen a rejection it keeps answering true.
 // Invariants: never throws; an unreadable transcript or a damaged line means "not rejected" (the popups then simply stay as they were).
 // A wrong "true" only hands the question to the terminal, which is where it already is, so this fails safe.
-import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
+import { readSync } from 'node:fs';
+import { readPlainFileWith } from './plain-file.mjs';
 
 const MAX_READ_BYTES = 1024 * 1024; // one look at the transcript never reads more than this
 const NEWLINE = 0x0a;
@@ -24,19 +25,19 @@ function isRejection(text) {
   }
 }
 
-/** @returns {{size: number, bytes: Buffer} | undefined} the file size and up to MAX_READ_BYTES from `offset`; undefined when the file cannot be read */
+/**
+ * @returns {{size: number, bytes: Buffer} | undefined} the file size and up to MAX_READ_BYTES from `offset`; undefined when the file
+ *   cannot be read. Opened without waiting (lib/plain-file.mjs): a FIFO, device or link at the transcript path reads as unreadable.
+ */
 function readFrom(path, offset) {
-  let descriptor;
   try {
-    descriptor = openSync(path, 'r');
-    const { size } = fstatSync(descriptor);
-    const bytes = Buffer.alloc(Math.min(Math.max(size - offset, 0), MAX_READ_BYTES));
-    const bytesRead = readSync(descriptor, bytes, 0, bytes.length, offset);
-    return { size, bytes: bytes.subarray(0, bytesRead) };
+    return readPlainFileWith(path, (fd, size) => {
+      const bytes = Buffer.alloc(Math.min(Math.max(size - offset, 0), MAX_READ_BYTES));
+      const bytesRead = readSync(fd, bytes, 0, bytes.length, offset);
+      return { size, bytes: bytes.subarray(0, bytesRead) };
+    });
   } catch {
     return undefined; // missing or unreadable: the check answers false
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 

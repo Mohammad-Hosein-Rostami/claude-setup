@@ -15,10 +15,11 @@
 //   up on after DISCOVERY_TIMEOUT_MS and counts as no worktree, so a stop is never held by it.
 // - Nothing here throws: a missing or unreadable input gives null.
 import { spawnSync } from 'node:child_process';
-import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs';
+import { existsSync, readSync } from 'node:fs';
 import { devNull } from 'node:os';
 import { dirname, isAbsolute, sep } from 'node:path';
 import { LEAD, recordedPaths } from './own-edits.mjs';
+import { readPlainFileWith } from './plain-file.mjs';
 import { agentFileWrites } from './writer-agents.mjs';
 
 const TRANSCRIPT_HEAD_BYTES = 4 * 1024 * 1024; // the first transcript line holds the brief, which can be long
@@ -51,17 +52,16 @@ export const gitOut = (cwd, args, timeoutMs) => {
 export const gitSucceeds = (cwd, args) => runGit(cwd, args).status === 0;
 export const gitText = (cwd, args) => (gitOut(cwd, args) ?? '').trim();
 
-/** The first `maxBytes` of a regular file as text; null when it is missing, not a regular file or unreadable. */
+/**
+ * The first `maxBytes` of a regular file as text; null when it is missing, a link, not a regular file or unreadable. Opened without
+ * waiting (lib/plain-file.mjs), so a FIFO at the path, even one swapped in after a check, never holds the stop.
+ */
 export function readHead(path, maxBytes) {
   try {
-    if (!statSync(path).isFile()) return null;
-    const fd = openSync(path, 'r');
-    try {
+    return readPlainFileWith(path, (fd) => {
       const buffer = Buffer.alloc(maxBytes);
       return buffer.toString('utf8', 0, readSync(fd, buffer, 0, maxBytes, 0));
-    } finally {
-      closeSync(fd);
-    }
+    });
   } catch {
     return null; // nothing to read means nothing to gate
   }

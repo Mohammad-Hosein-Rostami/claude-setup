@@ -5,8 +5,9 @@
 // AskUserQuestion call happened since the last real user prompt (tool results, notifications, interrupts and image-only
 // turns are not prompts); quoted text (code, `>` lines, "..." and curly quotes) and negated phrases ("no open questions", "decisions needed are none") never match; a request phrase counts only in the last 15 lines, at a sentence start, outside a sentence about the matcher and with an open choice (?, options, colon); any internal error is one stderr line and exit 0, so a
 // session is never trapped. Env ASK_GATE_LOG appends one JSON line per run (debug and E2E evidence).
-import { appendFileSync, closeSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
+import { appendFileSync, readSync, realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { readPlainFileWith } from './lib/plain-file.mjs';
 import { countedGate } from './lib/stop-block-count.mjs';
 
 const MAX_TRANSCRIPT_BYTES = 20 * 1024 * 1024;
@@ -158,23 +159,21 @@ export function parseTranscript(text) {
 }
 
 /**
- * Last `max` bytes of a file, cut at a line start.
+ * Last `max` bytes of a file, cut at a line start. Read through lib/plain-file.mjs: a FIFO, device or link at the path is refused at
+ * once instead of holding the hook.
  * @param {string} path transcript file
  * @param {number} [max] byte cap
  * @returns {string}
+ * @throws {Error} when the path is missing, a link (`ELOOP`) or not a regular file (code NOT_PLAIN_FILE)
  */
 export function readTranscriptTail(path, max = MAX_TRANSCRIPT_BYTES) {
-  const size = statSync(path).size;
-  const start = Math.max(0, size - max);
-  const buf = Buffer.alloc(size - start);
-  const fd = openSync(path, 'r');
-  try {
+  return readPlainFileWith(path, (fd, size) => {
+    const start = Math.max(0, size - max);
+    const buf = Buffer.alloc(size - start);
     readSync(fd, buf, 0, buf.length, start);
-  } finally {
-    closeSync(fd);
-  }
-  const text = buf.toString('utf8');
-  return start > 0 ? text.slice(text.indexOf('\n') + 1) : text;
+    const text = buf.toString('utf8');
+    return start > 0 ? text.slice(text.indexOf('\n') + 1) : text;
+  });
 }
 
 const blocksOf = (entry) => (Array.isArray(entry?.message?.content) ? entry.message.content : []);

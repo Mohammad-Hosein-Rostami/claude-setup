@@ -5,13 +5,15 @@
 // killed with its whole process tree. Silent on success; on failure prints at most 15 `file:line RULE-ID message` lines and
 // exits 2. Never evaluates hook input; on Windows (shell on) the relative path must look safe.
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { readPlainFile } from './lib/plain-file.mjs';
 import { CODE_FILE, diagnostics } from './lib/diagnostics.mjs';
 
 const SAFE_PATH = /^[\w@+=:,./-]+$/; // no `%`: cmd.exe expands %VAR%
 const BUDGET_MS = 18_000; // hook timeout is 20 s
+const PACKAGE_JSON_MAX_BYTES = 4 * 1024 * 1024; // far above any real package.json; a bigger one is reported unreadable
 const FORMAT_SCRIPT = 'format'; // takes the edited file after `--`
 const FORMAT_TOOL = ['prettier', '--write']; // per-file fallback for a broad format script
 const BROAD_SCRIPT = /(^|\s)\.\/?(\s|$)|\*|\brun-many\b|\bnx\b|\bturbo\b|\blerna\b/;
@@ -177,7 +179,8 @@ export async function checkFile(file) {
   if (process.platform === 'win32' && !SAFE_PATH.test(rel)) return []; // shell is on: refuse metacharacters
   let scripts;
   try {
-    scripts = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).scripts;
+    // no wait and no link: a FIFO or device named package.json is reported unreadable instead of holding the hook (lib/plain-file.mjs)
+    scripts = JSON.parse(readPlainFile(join(dir, 'package.json'), PACKAGE_JSON_MAX_BYTES)).scripts;
   } catch (error) {
     return [`${rel}:1 HOOK unreadable package.json in ${dir}: ${error.message}`];
   }

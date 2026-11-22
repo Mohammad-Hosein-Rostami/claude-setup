@@ -30,6 +30,7 @@ import { checkedTempRoot } from './lib/edit-log.mjs';
 import { overCap, parseCap } from './lib/reply-cap.mjs';
 import { isReadOnlyCommand } from './lib/read-only-command.mjs';
 import { contextTokens } from './lib/transcript.mjs';
+import { readPlainFileWith } from './lib/plain-file.mjs';
 import { countedGate, markToolCall } from './lib/stop-block-count.mjs';
 import { recordAgentStart, recordAgentStop } from './lib/agent-launches.mjs';
 import { callCounterPath } from './lib/writer-agents.mjs';
@@ -194,21 +195,19 @@ export async function postToolUseContext(input) {
 }
 
 /**
- * The cap the spawn prompt names: first user message of the agent transcript.
+ * The cap the spawn prompt names: first user message of the agent transcript. Read through lib/plain-file.mjs, so a FIFO, device or
+ * link at the path is refused at once instead of holding the stop.
  * @param {unknown} transcriptPath agent_transcript_path (empty when unavailable)
  * @returns {{limit: number, unit: string} | null}
+ * @throws {Error} when the transcript is missing, a link (`ELOOP`) or not a regular file (code NOT_PLAIN_FILE)
  */
 export function spawnCap(transcriptPath) {
   if (typeof transcriptPath !== 'string' || !transcriptPath) return null;
-  const fd = openSync(transcriptPath, 'r');
-  let head;
-  try {
-    const buf = Buffer.alloc(Math.min(statSync(transcriptPath).size, SPAWN_PROMPT_BYTES));
+  const head = readPlainFileWith(transcriptPath, (fd, size) => {
+    const buf = Buffer.alloc(Math.min(size, SPAWN_PROMPT_BYTES));
     readSync(fd, buf, 0, buf.length, 0);
-    head = buf.toString('utf8');
-  } finally {
-    closeSync(fd);
-  }
+    return buf.toString('utf8');
+  });
   for (const line of head.split('\n')) {
     let entry;
     try {

@@ -11,11 +11,12 @@
 // Flags (round 9, r9-writer-gate): `isolated` (launched with isolation "worktree") and `readOnly` (a read-only brief, isReadOnlyBrief).
 // Invariants: never throws; the read functions answer false or [] for a store that is missing or unusable. callCounterPath and
 // agentTypeOf are called by lib/agent-launches.mjs, which imports this file (each file calls the other's functions only after loading).
-import { closeSync, openSync, readSync, statSync } from 'node:fs';
+import { readSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { checkedTempRoot } from './edit-log.mjs';
 import { readLaunchRecord } from './agent-launches.mjs';
+import { readPlainFileWith } from './plain-file.mjs';
 
 const SAFE_ID = /^[\w-]{1,128}$/;
 const AGENT_FILE_BYTES = 64 * 1024;
@@ -37,17 +38,16 @@ export function agentTypeOf(type) {
   return typeof type === 'string' && type !== '' ? type : DEFAULT_TYPE;
 }
 
-/** The first `maxBytes` of a regular file as text; null when it is missing, not a regular file or unreadable. */
+/**
+ * The first `maxBytes` of a regular file as text; null when it is missing, a link, not a regular file or unreadable. Opened without
+ * waiting (lib/plain-file.mjs), so a FIFO at the path, even one swapped in after a check, never holds the hook.
+ */
 function readHead(path, maxBytes) {
   try {
-    if (!statSync(path).isFile()) return null;
-    const fd = openSync(path, 'r');
-    try {
+    return readPlainFileWith(path, (fd) => {
       const buffer = Buffer.alloc(maxBytes);
       return buffer.toString('utf8', 0, readSync(fd, buffer, 0, maxBytes, 0));
-    } finally {
-      closeSync(fd);
-    }
+    });
   } catch {
     return null; // no file means no answer
   }
