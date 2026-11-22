@@ -7,16 +7,19 @@
 // Sticky hues (lead decision, fix round 1; stable per name and distinct on screen at once): a name's home hue is a hash of it into
 // the HUE_CODES palette (cells.mjs). A name seen for the first time takes the first hue from its home that no live item uses (one
 // whose marker shape no live item uses first, so NO_COLOR still tells three items apart); the assignment is kept in `store`
-// ({ v, items: [{ name, hue, seenMs, sinceMs }] }, hue-store.mjs keeps it in a file) and an item keeps its hue for as long as it
-// is live, so a hue never changes when other items join or leave. An item gone for more than GONE_MS is forgotten. With more than
-// six live items the seventh and later share a hue (their home hue) with an earlier one. Without a store the names are
-// given hues in name order, so the same board always looks the same.
+// ({ v, items: [{ name, hue, seenMs, sinceMs, away? }] }, hue-store.mjs keeps it in a file) and an item keeps its hue for as long
+// as it is live, so a hue never changes when other items join or leave. An item that was away (`away`) comes back with its hue only
+// when no live item has taken it meanwhile, and a newcomer avoids the hue of an item gone only a moment, so up to six live items
+// never share. An item gone for more than GONE_MS is forgotten. With more than six live items the seventh and later share a hue
+// (their home hue) with an earlier one. Only items the rows draw hold a hue: a finished agent after DONE_SHOWN_MS and a stopped
+// run with no agent shown do not. Without a store the names are given hues in name order, so the same board always looks the same.
 // Ties: a workflow (and an agent) working in a lane worktree, the board's sure placement (repos.mjs placeAgents: `wt` set; never a
 // guess from a folder), takes that branch's name, so it shares the branch's hue; a branch checked out in a main worktree is no lane;
-// a finished agent counts for no lane. A worktree an isolated workflow agent got (`worktree-<runId>-<n>`) and the agents in it
+// a finished agent counts for a lane only when no running agent of the run is placed (the run keeps its lane while read-only
+// reviewers run after its writer finished). A worktree an isolated workflow agent got (`worktree-<runId>-<n>`) and the agents in it
 // belong to that workflow's own hue. The marker shape is the hue's index mod 3.
 // Invariants: pure (no I/O); never throws on any board shape (a name that is no string counts as none).
-import { HUE_CODES } from './cells.mjs';
+import { DONE_SHOWN_MS, HUE_CODES } from './cells.mjs';
 
 const MARKERS = ['●', '◆', '▲'];
 const ASCII_MARKERS = ['*', '+', 'o'];
@@ -60,37 +63,46 @@ function laneBranchOf(agent, repos, runs) {
   return wt !== undefined && wt.main !== true ? agent.branch : null;
 }
 
-/** Each run's lane branch: the branch most of its running agents work on (ties: the first seen). A finished agent counts for none. */
+/** Each run's lane branch: the branch most of its running agents work on (ties: the first seen); only when none of them is placed, the
+ *  branch most of its finished agents worked on, so the run keeps its lane while read-only reviewers run after its writer finished. */
 function runBranches(board, repos, runs) {
-  const counts = new Map();
+  const running = new Map();
+  const finished = new Map();
   for (const agent of listOf(board?.agents)) {
-    const branch = agent.state === 'done' ? null : laneBranchOf(agent, repos, runs);
+    const branch = laneBranchOf(agent, repos, runs);
     if (branch === null || !isName(agent.runId)) continue;
+    const counts = agent.state === 'done' ? finished : running;
     const perRun = counts.get(agent.runId) ?? new Map();
     counts.set(agent.runId, perRun.set(branch, (perRun.get(branch) ?? 0) + 1));
   }
-  return new Map([...counts].map(([runId, perRun]) => [runId, [...perRun].sort((a, b) => b[1] - a[1])[0][0]]));
+  const mostCommon = (perRun) => [...perRun].sort((a, b) => b[1] - a[1])[0][0];
+  return new Map([...new Set([...finished.keys(), ...running.keys()])].map((runId) => [runId, mostCommon(running.get(runId) ?? finished.get(runId))]));
 }
 
-/** The stored assignment as a map of name -> { hue, seenMs, sinceMs }; entries of a bad shape are left out, a bad store is empty. */
+/** The stored assignment as a map of name -> { hue, seenMs, sinceMs, away? }; entries of a bad shape are left out, a bad store is empty. */
 function storedItems(store) {
   const items = store !== null && typeof store === 'object' && store.v === STORE_VERSION ? listOf(store.items) : [];
   const valid = items.filter((item) => isName(item.name) && Number.isInteger(item.hue) && item.hue >= 0 && item.hue < HUE_CODES.length
     && Number.isFinite(item.seenMs) && Number.isFinite(item.sinceMs));
-  return new Map(valid.map((item) => [item.name, { hue: item.hue, seenMs: item.seenMs, sinceMs: item.sinceMs }]));
+  return new Map(valid.map((item) => [item.name, { hue: item.hue, seenMs: item.seenMs, sinceMs: item.sinceMs, ...(item.away === true ? { away: true } : {}) }]));
 }
 
-/** The hue a new item takes: the first free one from its home, one with a marker shape no live item has first; its home when none is free. */
-function freshHue(name, used) {
+/**
+ * The hue a new item takes: the first free one from its home, one that no item gone only a moment holds first (it may come back),
+ * then one with a marker shape no live item has; its home when none is free.
+ */
+function freshHue(name, used, held) {
   const home = homeHue(name);
   const free = HUE_CODES.map((_, step) => (home + step) % HUE_CODES.length).filter((hue) => !used.has(hue));
+  const unheld = free.filter((hue) => !held.has(hue));
+  const choices = unheld.length > 0 ? unheld : free;
   const shapes = new Set([...used].map(shapeOf));
-  return free.find((hue) => !shapes.has(shapeOf(hue))) ?? free[0] ?? home;
+  return choices.find((hue) => !shapes.has(shapeOf(hue))) ?? choices[0] ?? home;
 }
 
 /**
  * @param {string[]} keys the names of the live items, most important first (new names take hues in this order)
- * @param {Map<string, { hue: number, seenMs: number, sinceMs: number }>} stored the earlier assignment
+ * @param {Map<string, { hue: number, seenMs: number, sinceMs: number, away?: true }>} stored the earlier assignment
  * @param {number} nowMs the clock
  * @returns {Map<string, number>} the hue of every live name
  */
@@ -99,10 +111,15 @@ function assignHues(keys, stored, nowMs) {
   const used = new Set();
   const keep = (key, hue) => { hues.set(key, hue); used.add(hue); };
   const known = keys.filter((key) => stored.has(key));
-  for (const key of known.filter((name) => nowMs - stored.get(name).seenMs <= CONTINUOUS_MS)) keep(key, stored.get(key).hue);
+  const live = new Set(keys);
+  const justGone = new Set([...stored].filter(([name, item]) => !live.has(name) && nowMs - item.seenMs <= CONTINUOUS_MS).map(([, item]) => item.hue));
+  // An item seen in the last render keeps its hue whatever it shares (a seventh item keeps sharing); one that was away, or unseen
+  // for long, gets its old hue back only when no live item has taken it meanwhile, the one that stayed keeping it.
+  const stayed = known.filter((name) => stored.get(name).away !== true && nowMs - stored.get(name).seenMs <= CONTINUOUS_MS);
+  for (const key of stayed) keep(key, stored.get(key).hue);
   const back = known.filter((name) => !hues.has(name)).sort((a, b) => stored.get(a).sinceMs - stored.get(b).sinceMs);
   for (const key of back) if (!used.has(stored.get(key).hue)) keep(key, stored.get(key).hue);
-  for (const key of keys.filter((name) => !hues.has(name))) keep(key, freshHue(key, used));
+  for (const key of keys.filter((name) => !hues.has(name))) keep(key, freshHue(key, used, justGone));
   return hues;
 }
 
@@ -114,20 +131,28 @@ function nextStore(hues, stored, nowMs) {
     return { name, hue, seenMs: fresh ? before.seenMs : nowMs, sinceMs: before?.sinceMs ?? nowMs };
   });
   const gone = [...stored].filter(([name, item]) => !hues.has(name) && nowMs - item.seenMs <= GONE_MS)
-    .map(([name, item]) => ({ name, ...item }));
+    .map(([name, item]) => ({ name, ...item, away: true }));
   const items = [...live, ...gone].sort((a, b) => b.seenMs - a.seenMs || (a.name < b.name ? -1 : 1)).slice(0, MAX_STORED_ITEMS);
   const asText = (list) => JSON.stringify([...list].sort((a, b) => (a.name < b.name ? -1 : 1)));
   const before = [...stored].map(([name, item]) => ({ name, ...item }));
   return asText(items) === asText(before) ? null : { v: STORE_VERSION, items };
 }
 
-/** The names of the board's live items, most important first: workflows, then lane branches, then the agents outside lanes. */
-function liveKeys(identity, board, repos) {
+/** An agent the rows draw: not finished, or finished less than DONE_SHOWN_MS ago (layout.mjs workGroups). */
+const isShownAgent = (agent, nowMs) => agent.state !== 'done' || nowMs - agent.doneMs < DONE_SHOWN_MS;
+
+/**
+ * The names of the items the rows draw, most important first: workflows, then lane branches, then the agents outside lanes. An agent
+ * the rows have dropped and a workflow with no row hold no hue, so a new item never shares with one that is no longer on screen.
+ */
+function liveKeys(identity, board, repos, nowMs) {
   const lanes = repos.flatMap((repo) => listOf(repo.worktrees).filter((wt) => wt.main !== true && isolatedRunOf(wt.branch ?? wt.name, identity.runs) === undefined)
     .map((wt) => wt.branch ?? wt.name));
+  const agents = listOf(board?.agents).filter((agent) => isShownAgent(agent, nowMs));
+  const runs = identity.runs.filter((run) => run.state !== 'stopped?' || agents.some((agent) => agent.runId === run.runId));
   const sorted = (names) => names.filter(isName).sort();
   return [...new Set([
-    ...sorted(identity.runs.map((run) => itemKey(identity, run))), ...sorted(lanes), ...sorted(listOf(board?.agents).map((agent) => agentKey(identity, agent))),
+    ...sorted(runs.map((run) => itemKey(identity, run))), ...sorted(lanes), ...sorted(agents.map((agent) => agentKey(identity, agent))),
   ])];
 }
 
@@ -144,7 +169,7 @@ export function boardIdentity(board, store = null, nowMs = 0) {
   const runs = listOf(board?.runs);
   const identity = { hues: new Map(), branches: runBranches(board, repos, runs), repos, runs, store: null };
   const stored = storedItems(store);
-  identity.hues = assignHues(liveKeys(identity, board, repos), stored, nowMs);
+  identity.hues = assignHues(liveKeys(identity, board, repos, nowMs), stored, nowMs);
   identity.store = nextStore(identity.hues, stored, nowMs);
   return identity;
 }

@@ -30,6 +30,8 @@ const COLOR_CODE = {
  * pink, orchid.
  */
 export const HUE_CODES = [31, 166, 99, 64, 197, 133];
+/** A finished agent keeps its row this long; identity.mjs lets it hold a hue only that long too. */
+export const DONE_SHOWN_MS = 30_000;
 const HUE_STATE = /^hue:(\d+)$/;
 /** The 16-colour stand-ins of the hues, cycled so that with the marker shape (hue % 3) each of the six hues looks different. */
 const HUE_STYLES_16 = ['\u001b[1m', '\u001b[4m', ''];

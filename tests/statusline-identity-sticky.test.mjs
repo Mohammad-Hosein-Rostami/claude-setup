@@ -198,7 +198,7 @@ function rowsFor(board, env = TERM_256, columns = 160) {
   return { look, ctx, identity, plain: (rows) => rows.map(plain), header: (run, agents) => runHeader(run, agents, ctx, look) };
 }
 
-test('a finished agent counts for no lane: the run says `on` the lane of its running agents, and none when all are finished', () => {
+test('a finished agent counts only when no running agent is placed: the run says `on` the lane of its running agents, else of its finished ones', () => {
   const board = screenshotBoard();
   const run = board.runs[0];
   const wt = (name) => ({ ...board.repo.worktrees[1], name, branch: name });
@@ -209,7 +209,23 @@ test('a finished agent counts for no lane: the run says `on` the lane of its run
   assert.match(plain(header(run, [])), / on remove-modes /);
   assert.doesNotMatch(plain(header(run, [])), /old-lane/);
   board.agents = [onLane('old-lane', 'done')];
-  assert.doesNotMatch(plain(rowsFor(board).header(run, [])), / on /, 'only a finished agent: no lane');
+  assert.match(plain(rowsFor(board).header(run, [])), / on old-lane /, 'only a finished agent: its lane stays while no running agent is placed (SA3)');
+});
+
+test('a workflow keeps its lane and its hue after its implementer finishes, while read-only reviewers run (SA3)', () => {
+  const board = screenshotBoard();
+  const run = board.runs[0];
+  const writer = { ...board.agents[0], runId: run.runId, state: 'done', doneMs: NOW - MIN_MS };
+  const reader = (id) => ({ ...board.agents[1], id, runId: run.runId, state: 'run' });
+  board.agents = [writer, reader('r1'), reader('r2')];
+  const { look, ctx, header } = rowsFor(board);
+  const runRow = header(run, []);
+  assert.match(plain(runRow), / on remove-modes /);
+  const gitRow = repoRows(board, Infinity, ctx, look).find((row) => plain(row).includes('⎇ ') && plain(row).includes(' remove-modes'));
+  const [runLook, gitLook] = [runRow, gitRow].map((row) => /((?:\u001b\[[0-9;]*m)*)(?:▸|⎇) (\S) /.exec(row).slice(1, 3));
+  assert.deepEqual(runLook, gitLook, 'the workflow row and the lane row keep one hue and marker');
+  board.agents = [writer, { ...writer, id: 'w2', wt: 'road-gate-landed-row', branch: 'road-gate-landed-row' }, { ...writer, id: 'w3', state: 'run', wt: 'road-gate-landed-row', branch: 'road-gate-landed-row' }];
+  assert.match(plain(rowsFor(board).header(run, [])), / on road-gate-landed-row /, 'a running writer on one lane beats finished ones on another');
 });
 
 test('a workflow with isolated worktree agents shows no temp branch, and its agents, worktrees and row share the workflow\'s hue and marker', () => {
@@ -313,4 +329,85 @@ test('a part with spans that is cut keeps the state of the spans it still shows'
   const split = { text: 'abcdefghijklmnopq', spans: [{ text: 'abcdef', state: hueState(0) }, { text: 'ghijklmnopq', state: STATE.dim }] };
   assert.equal(fitParts([split], look), `${paint('abcdef', hueState(0), look)}${paint('ghijk', STATE.dim, look)}…`);
   assert.equal(fitParts([{ text: 'x' }, { ...part, join: ' ' }], lookOf(TERM_256, 'darwin', 3)), 'x …');
+});
+
+const homeOf = (name) => hueOfName(boardIdentity(boardOfNames([name])), name);
+/** A name (not `not`) whose home hue is the given hue. */
+const nameHomedAt = (hue, not = []) => Array.from({ length: 400 }, (_, index) => `new-${index}`).find((name) => homeOf(name) === hue && !not.includes(name));
+
+test('an item back within 5 minutes keeps its hue and a newcomer that came meanwhile gets another one (N1, RISK-8)', () => {
+  const newcomer = nameHomedAt(homeOf('returning'));
+  assert.ok(newcomer);
+  for (const awayMin of [1, 2, 4]) {
+    const [first, , back] = walk([{ names: ['returning'], atMin: 0 }, { names: [newcomer], atMin: awayMin }, { names: ['returning', newcomer], atMin: awayMin + 1 }]);
+    assert.equal(hueOfName(back, 'returning'), hueOfName(first, 'returning'), `gone ${awayMin} min: the returning item keeps its hue`);
+    assert.notEqual(hueOfName(back, newcomer), hueOfName(back, 'returning'), `gone ${awayMin} min: no two live items share`);
+  }
+});
+
+test('an item the store marks as away that comes back while a live item holds its hue moves to a free hue; two live items that stayed keep sharing', () => {
+  const held = 2;
+  const item = (name, seenMs, extra = {}) => ({ name, hue: held, seenMs, sinceMs: seenMs - MIN_MS, ...extra });
+  const store = { v: 1, items: [item('older', NOW - 2 * MIN_MS, { away: true }), item('newer', NOW - MIN_MS)] };
+  const identity = boardIdentity(boardOfNames(['older', 'newer']), store, NOW);
+  assert.equal(hueOfName(identity, 'newer'), held);
+  assert.notEqual(hueOfName(identity, 'older'), held);
+  assert.equal(identity.store.items.find((entry) => entry.name === 'older').away, undefined, 'back among the live: no longer away');
+  const six = ['a', 'b', 'c', 'd', 'e', 'f'].map((name, index) => ({ name, hue: index, seenMs: NOW, sinceMs: NOW - MIN_MS }));
+  const shared = boardIdentity(boardOfNames(['a', 'b', 'c', 'd', 'e', 'f', 'g']), { v: 1, items: [...six, { name: 'g', hue: 3, seenMs: NOW, sinceMs: NOW }] }, NOW);
+  assert.equal(hueOfName(shared, 'g'), 3, 'all six hues held and a seventh item sharing: nothing moves');
+  assert.equal(hueOfName(shared, 'd'), 3);
+  const fewer = boardIdentity(boardOfNames(['b', 'c', 'd', 'e', 'f', 'g']), { v: 1, items: [...six, { name: 'g', hue: 3, seenMs: NOW, sinceMs: NOW }] }, NOW);
+  assert.deepEqual([hueOfName(fewer, 'd'), hueOfName(fewer, 'g')], [3, 3], 'items that stayed live do not move when another leaves');
+  const gone = boardIdentity(boardOfNames(['b']), { v: 1, items: six }, NOW).store.items;
+  assert.ok(gone.find((entry) => entry.name === 'a').away === true && gone.find((entry) => entry.name === 'b').away === undefined);
+});
+
+test('for 3000 random steps with at most six live items no two share a hue, and an item live in two steps in a row keeps its hue', () => {
+  const pool = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'];
+  let seed = 20_261_122;
+  const random = (limit) => { seed = (Math.imul(seed, 1_664_525) + 1_013_904_223) >>> 0; return seed % limit; };
+  let store = null;
+  let atMin = 0;
+  let before = null;
+  for (let step = 0; step < 3000; step += 1) {
+    atMin += [1, 1, 1, 2, 3, 7][random(6)];
+    const names = pool.filter(() => random(100) < 55).slice(0, 6);
+    const identity = boardIdentity(boardOfNames(names), store, NOW + atMin * MIN_MS);
+    store = identity.store ?? store;
+    const hues = Object.fromEntries(names.map((name) => [name, hueOfName(identity, name)]));
+    assert.equal(new Set(Object.values(hues)).size, names.length, `step ${step}: ${JSON.stringify(hues)}`);
+    if (before !== null) for (const name of names) if (name in before.hues && before.atMin + 1 === atMin) assert.equal(hues[name], before.hues[name], `step ${step}: ${name} moved`);
+    before = { hues, atMin };
+  }
+});
+
+/** A board of workflow `wf-a` (and `extra` runs), three lane worktrees and plain agents. */
+const laneBoard = (agents, runNames) => ({
+  runs: runsOf(runNames), agents, repo: null, repos: [{ name: 'r', worktrees: ['lane-1', 'lane-2', 'lane-3'].map((name) => ({ name, branch: name, main: false })) }],
+});
+const scout = (name, state, doneMs = null) => ({ id: name, name, state, doneMs });
+
+test('a finished agent the rows no longer show holds no hue: a new workflow takes a hue none of the items on screen has (RISK-1)', () => {
+  const running = laneBoard([scout('scout-1', 'run'), scout('scout-2', 'run')], ['wf-a']);
+  const first = boardIdentity(running, null, NOW);
+  assert.equal(new Set(['wf-a', 'lane-1', 'lane-2', 'lane-3', 'scout-1', 'scout-2'].map((name) => hueOfName(first, name))).size, 6);
+  const newcomer = nameHomedAt(hueOfName(first, 'wf-a'));
+  const onScreen = ['wf-a', 'lane-1', 'lane-2', 'lane-3'];
+  const hidden = laneBoard([scout('scout-1', 'done', NOW), scout('scout-2', 'done', NOW)], ['wf-a', newcomer]);
+  const later = boardIdentity(hidden, first.store, NOW + MIN_MS);
+  assert.ok(!onScreen.some((name) => hueOfName(later, name) === hueOfName(later, newcomer)), 'a minute after they finished the agents are not drawn');
+  assert.deepEqual(huesOf(later, onScreen), huesOf(first, onScreen), 'nothing on screen moved');
+  const shown = laneBoard([scout('scout-1', 'done', NOW + MIN_MS - 10_000), scout('scout-2', 'run')], ['wf-a', newcomer]);
+  const soon = boardIdentity(shown, first.store, NOW + MIN_MS);
+  assert.equal(hueOfName(soon, newcomer), hueOfName(soon, 'wf-a'), 'ten seconds after, the finished agent is still drawn, so all six hues are held');
+  assert.equal(hueOfName(soon, 'scout-1'), hueOfName(first, 'scout-1'));
+});
+
+test('a workflow run the rows hide holds no hue', () => {
+  const runs = [{ runId: 'wf_1', name: 'stopped-run', state: 'stopped?' }, { runId: 'wf_2', name: 'live-run', state: 'run' }];
+  const board = { runs, agents: [], repo: null, repos: [] };
+  assert.deepEqual([...boardIdentity(board, null, NOW).hues.keys()], ['live-run']);
+  board.agents = [{ id: 'x', name: 'x', runId: 'wf_1', state: 'run' }];
+  assert.ok(boardIdentity(board, null, NOW).hues.has('stopped-run'), 'shown while it has an agent');
 });

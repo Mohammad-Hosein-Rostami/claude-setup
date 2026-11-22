@@ -13,7 +13,7 @@
 // Colour of the counts row (spec-tui-2): running work cyan, any quiet agent yellow, waiting on the owner magenta; it leads with a dim
 // `Σ` (`=` in ASCII; spec-tui-3 section labels). The strip row's group names lead with their marker and are in their identity hue (identity.mjs).
 // Invariants: pure (no I/O); every row fits look.columns; never more rows than `slots`.
-import { cleanText, cutWords, fitParts, hueState, STATE } from './cells.mjs';
+import { cleanText, cutWords, DONE_SHOWN_MS, fitParts, hueState, STATE } from './cells.mjs';
 import { hueOf, itemKey, markerOf } from './identity.mjs';
 import { agentRow, countsText, foldRow, plainHeader, runHeader, sparkText, treeMark, urgencyOf } from './agent-rows.mjs';
 import { gitCounts } from './git-rows.mjs';
@@ -26,7 +26,6 @@ const LINES_PER_ROW = 3;
 const FULL_COLUMNS = 150;
 const PAIR_GAP = '  ';
 const STRIP_NAME_CHARS = 12; // a workflow's name on the strip row, cut at a word or `-` with the cut mark
-const DONE_SHOWN_MS = 30_000;
 const DONE_COUNTED_MS = 10 * 60_000;
 const MS_PER_S = 1000;
 const S_PER_MIN = 60;
