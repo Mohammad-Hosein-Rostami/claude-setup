@@ -15,7 +15,7 @@ repo. `settings.json` is generated from `settings/` (it holds machine paths).
 | `settings/`, `plugins/` | Settings layers (base, OS, local) and the plugin list |
 | `home/lead-rules.md`, `home/lead.md` | The lead's rules, printed to the main session at start |
 | `tests/`, `tools/`, `.githooks` | Repo tests (`node:test`), Brewfile and Windows tool script, pre-commit (gitleaks, `node --check` of hook files) |
-| `scripts/` | `install.mjs` (the one installer; `install/`), `install.sh`, `install.ps1`, `doctor.sh`, `doctor-accounts.mjs`, `lane-new.sh`, `merge-settings.jq` |
+| `scripts/` | `install.mjs` (the one installer; `install/`), `install.sh`, `install.ps1`, `doctor.sh` (+ `doctor/`), `doctor-accounts.mjs`, `lane-new.sh`, `merge-settings.jq` |
 
 ## Quick start
 Install on a new machine (macOS or Linux; needs git, Node 22+ and jq), in the folder you keep repos in:

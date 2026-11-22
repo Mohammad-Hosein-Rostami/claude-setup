@@ -21,7 +21,7 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 | `plugins/` | The list of plugins to install. |
 | `tools/` | System programs to install (`Brewfile`, `windows-tools.ps1`); not the same as `home/tools/`. |
 | `.githooks/` | The pre-commit hook: gitleaks on the staged changes and `node --check` of each staged hook file. It only runs after `scripts/install.sh` sets `core.hooksPath`. |
-| `scripts/` | `install.sh`, `install.ps1` and `doctor.sh`. |
+| `scripts/` | `install.sh`, `install.ps1` and `doctor.sh` (its check groups are in `scripts/doctor/`). |
 | `tests/` | The test suite (`node:test`); the done-check runs the tests related to a change, the whole suite is run by hand. |
 | `docs/` | The documents for people. Start with `catalog.md` for a list of everything. |
 
