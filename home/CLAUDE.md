@@ -13,8 +13,8 @@ agent file and the caller's prompt.
 - Report sizes (`≤ N lines`) size the summary, not the work. When the detail matters, write it to a file and return
   the path.
 - At a usage limit: read the reset time from the message, tell the owner that time, and never retry before the reset (a retry only
-  spends the wait). Interactive sessions and workflows continue by themselves after a reset within 24 h (sessions at most 3 times,
-  workflows twice); schedule one wake a few minutes after the reset only where that does not reach: a weekly reset over 24 h, after
+  spends the wait). Interactive sessions continue by themselves after a reset within 24 h (at most 3 times);
+  schedule one wake a few minutes after the reset only where that does not reach: a weekly reset over 24 h, after
   an exit, `-p` and background runs, or once those continuations are spent (a wake over 1 h is a scheduled task, not ScheduleWakeup).
 - Subscription only: never `/fast`, `/code-review ultra` or usage credits, since they bill beyond the plan. Usage credits are off on
   every account (owner, 2026-11-19); a headless run names a non-Fable model, since a `-p` run on Fable would bill them.
@@ -35,7 +35,7 @@ agent file and the caller's prompt.
 - `test` / `types` on: after a change, run the checks that cover it through `runner` (targeted tests, typecheck, lint) once, after the
   last edit, not after each step. `verify-done` reuses that run when no file changed after it.
 - `review` on: run the set `review-tier` prints (`reviewer`, plus `security-auditor` and Opus lenses by class) and follow its `steps:`
-  line (agents or the review workflow, the fix round's delta brief, security findings never dropped). `ui` on: `ui-quality-pass`,
+  line (the lens batch, `verdict.mjs` each round, the fix round's delta brief, security findings never dropped). `ui` on: `ui-quality-pass`,
   then `visual-qa`. Then `verify-done` for the categories on.
 - Off, build carefully: exact interfaces and acceptance lines in the spec before writing; small lanes on one file set; read the code
   and the installed docs before editing; the writer re-reads its own diff against the spec once; strict types. The final reply
@@ -110,7 +110,7 @@ global setup combines with it.
 
 ## Agents (workers)
 
-This section binds every subagent and workflow agent; the lead follows its lead rules instead. An agent file's own line wins
+This section binds every subagent; the lead follows its lead rules instead. An agent file's own line wins
 over a line here, and an agent file names the lines that do not fit it (`runner` and `scout` never write).
 
 - Owner decisions: you cannot ask the owner. If the brief gives a queue path (`ASK_QUEUE`; the variable is not set in your
@@ -123,7 +123,7 @@ over a line here, and an agent file names the lines that do not fit it (`runner`
 - The brief's constraints (scope exclusions, owner decisions, boundaries) bind the whole run; after a compaction re-read them from
   the brief or your hand-over note before the next edit, because the task message comes back summarised.
 - Writers: read the spec first and do not redesign it; follow the project's CLAUDE.md and AGENTS.md rules (they load
-  automatically); make the smallest diff that satisfies the acceptance checks; edit existing files over creating new ones.
+  automatically); make the smallest diff that satisfies the acceptance checks and closes every instance of each finding's class (its parts and siblings); edit existing files over creating new ones.
 - Tests in a lane (only with `test` on; off, run none and say `not checked: test`): only those related to the changed files (the repo's related-tests command, `vitest related --run <files>`,
   `jest --findRelatedTests <files>`, or the nearest test file), with a terse reporter (`node --test --test-reporter=dot`,
   `vitest --reporter=dot`) so a green run costs one line of context. Never run the full suite inside a lane: the review runs it

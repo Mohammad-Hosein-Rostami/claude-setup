@@ -140,14 +140,17 @@ test('home/CLAUDE.md: long-command line says ~5 min, not ~2 min', () => {
   assert.doesNotMatch(claude, /A command over ~2 min/);
 });
 
-test('home/lead.md job-order line: contract first, probes beside lanes, repos apart, one critic round, one sync', () => {
+test('home/lead.md job-order bullet: contract first, probes beside lanes, repos apart, review rounds, one sync', () => {
   const claude = read('home/lead.md');
-  const line = claude.split('\n').find((candidate) => candidate.startsWith('- Order a job as')) ?? '';
-  assert.match(line, /contract first/i);
-  assert.match(line, /probes (run )?beside (the )?lanes/i);
-  assert.match(line, /independent repos[^.;]*separate workflows/i);
-  assert.match(line, /one critic round[^.;]*delta check/i);
-  assert.match(line, /sync once per job/i);
+  const lines = claude.split('\n');
+  const start = lines.findIndex((candidate) => candidate.startsWith('- Order a job as'));
+  const end = lines.findIndex((candidate, index) => index > start && candidate.startsWith('- '));
+  const block = lines.slice(start, end).join('\n'); // the bullet and its sub-bullets
+  assert.match(block, /the contract/i);
+  assert.match(block, /probes run beside lanes/i);
+  assert.match(block, /independent repos run as separate roads/i);
+  assert.match(block, /review rounds/i);
+  assert.match(claude, /`scripts\/sync-machines\.mjs` \(once per job, after the last land\)/);
 });
 
 test('docs/catalog.md lists principles.md among the rules', () => {

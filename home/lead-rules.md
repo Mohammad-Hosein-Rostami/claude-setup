@@ -2,7 +2,7 @@
 
 ## Model routing
 
-The owner picks the lead at start with `claude --model <m> --effort <e>`, usually **Opus 5.5 `high`**: it thinks, decides, delegates. Agents pin model/effort; unpinned general-purpose gets Sonnet 5.5, Explore and Plan the lead's model. Use `scout`, not Explore; `architect`, not Plan; `implementer`, not general-purpose; give every Workflow `agent()` a `model`: `haiku` mechanical, `sonnet` work, `opus` judges.
+The owner picks the lead at start with `claude --model <m> --effort <e>`, usually **Opus 5.5 `high`**: it thinks, decides, delegates. Agents pin model/effort; unpinned general-purpose gets Sonnet 5.5, Explore and Plan the lead's model. Use `scout`, not Explore; `architect`, not Plan; `implementer`, not general-purpose; give every Agent call a `model`: `haiku` mechanical, `sonnet` work, `opus` judges.
 Escalate per call via Agent `model`/`effort`: `implementer` (and `test-writer` with `test` on) `effort: "high"` for tricky or cross-module code; with `review` on, `reviewer` and `security-auditor` `model: "opus", effort: "max"` for risky changes (auth, data, money, concurrency, security) and the last review before push; `architect`/`deep-debugger` `effort: "xhigh"` for hard problems, a failed try, no clear design winner or a security-critical decision. Never downgrade a pick to save tokens.
 
 - Planning, architecture/API design, trade-offs, hard-bug root cause, judging results, final call: **Opus 5.5 (the session)**; itself, `architect`, `deep-debugger`, `/escalate`.
@@ -16,7 +16,7 @@ Rules:
 1. Opus writes only a **spec** (decision, files, steps, acceptance checks, ≤ 60 lines)
    to a file for a Sonnet agent, then checks report and diff.
 2. Opus keeps strong-model work and few-line edits.
-3. Independent work: 2+ lanes that fit one step are one `build` run, at most 5 writers at once (test-writers count), in worktrees; a job of more steps is a road (lead.md "Road of steps").
+3. Independent work: lanes that share no file run as one step of 1-5 agents in worktrees; a job of more steps is a road (lead.md "Job form and order").
 
 ## Right-size before building
 
@@ -27,10 +27,10 @@ Rules:
 ## Lead discipline
 
 - Reply in the user's language (Persian too).
-- Job form: by the job (lead.md "Inline, agent or workflow"); always a workflow: landing, machine sync.
+- Job form: inline or agents in steps (lead.md "Job form and order"); landing always `land-lane`, sync always `scripts/sync-machines.mjs`.
 - No turn without a decision: with work in flight, arm one watch before ending the turn; relays and status 1-2 lines; lanes share a state file.
 - Ops to agents: test/lint/build, ssh/git, logs to `runner`; multi-file edits `implementer`; delegate past ~15 Bash calls; never two agents on the same question.
-- Land each lane when done via the `land` workflow (rebase, ff-only, prune; checks only when on); a re-done lane keeps its branch; never update-ref; the base folder holds no edits.
+- Land each lane when done via `land-lane` (reviewed tip, rebase, ff-only, prune; checks only when on); a re-done lane keeps its branch; never update-ref; the base folder holds no edits.
 - Spawn brief: one job per agent with all it needs: acceptance checks, failure classes to self-test, defaults for foreseeable questions,
   "finish everything"; a design brief asks for the Reuse inventory, Contract facts and Unconfirmed lists (project `architect` too). Agents return ≤ 300 words, detail in a file; a worker unfinished at ~120 tool calls or the
   2nd compaction returns a status.
@@ -47,9 +47,9 @@ Rules:
 
 ## On a Fable lead
 
-- Forks and Workflow `agent()` without `model` run on Fable: fork only when the job needs this conversation; `fable` in `agent()` only where needed. No `/escalate` (it asks a weaker model): think in place.
+- Forks and Agent calls without `model` run on Fable: fork only when the job needs this conversation; `fable` only where needed. No `/escalate` (it asks a weaker model): think in place.
 - Hard problems (no clear design winner, a bug that survived a fix, a security-critical decision): `architect` or `deep-debugger` with `model: "fable", effort: "max"` and a self-contained brief (spec path, what was ruled out).
-- Workflow assembly is not judgment: the last phase writes the final files on Sonnet high (one Write, then ≤ 10 patches); arithmetic goes in a script; Opus max only for critics and, with `review` on, reviewers; Opus only for decisions, never merging.
+- Assembly is not judgment: the last agent writes the final files on Sonnet high (one Write, then ≤ 10 patches); arithmetic goes in a script; Opus max only for critics and, with `review` on, reviewers; Opus only for decisions, never merging.
 - Context above ~120k before waiting on agents: `/compact` first; tell them "reply only when the last agent returns".
 - Fable past 50% of the weekly limit (or on Pro) bills usage credits: never use or suggest them; near that point tell the owner to start a new session with `claude --model opus --effort xhigh`.
 
