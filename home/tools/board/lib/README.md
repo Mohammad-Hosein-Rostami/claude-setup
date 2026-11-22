@@ -10,9 +10,12 @@ Collecting (run only by the detached refresh):
 - `agent-transcript.mjs`: reads one subagent transcript incrementally from a stored byte offset (calls, steps, last call, ended or not).
 - `progress.mjs`: how far a running subagent is, from its transcript evidence and the run times of finished agents of its type.
 - `pools.mjs`: the run times of finished subagents per agent type on this machine, rebuilt at most every few minutes.
-- `repos.mjs`: finds the repositories the session's work is in, for the git rows.
-- `trusted-repos.mjs`: the repositories the board may run git in (the session folder's and the setup's own).
-- `git-state.mjs`: per worktree branch, ahead/behind the base, changed files, last commit age and the agents working there.
+- `repos.mjs`: finds the repositories the session's work is in, for the git rows: the session folder's, then those of the folders
+  the session used (edits, launch worktrees, cwds), newest use first.
+- `trusted-repos.mjs`: places a folder in its repository by the file system alone and lists the worktrees the repository records.
+- `git-state.mjs`: per worktree branch, ahead/behind the base, staged, changed, new and conflicted files, an operation in progress,
+  last commit age; the stash count; and the active branches (at most 4 per repository).
+- `check-state.mjs`: a repository's last done-check verdict, from the tail of the done-check ledger.
 - `repo-stats.mjs`: the base branch's tip commit and the commits landed on it today.
 - `job-facts.mjs`: the session's road (id, goal, current step, lanes landed) and the trend of the job's finish clock.
 - `read-part.mjs`: a bounded read of a plain file (never a link or a folder, never more than a set number of bytes).

@@ -6,15 +6,16 @@
 // cache }, refreshBoard(source, deps) -> boolean, claimBoardRefresh(session, deps) -> boolean, startBoardRefresh(session, deps) ->
 // boolean, findTranscript(session, projectsDir); MAX_BOARD_BYTES.
 // File: ~/.claude/state/board/<session>.json = { session, at, stale, refreshStartedAt, asking,
-// agents: [agents.mjs entries plus repo (its repository's name), wt, branch, unplaced (repos.mjs placeAgents)], repo: git-state.mjs repo plus { tip, landed } (repo-stats.mjs) | null,
-// repos: the other repositories with work (repos.mjs, same shape without the stats), git: { branch, ahead, behind, changed } | null,
+// agents: [agents.mjs entries plus repo (its repository's name), wt, branch, unplaced (repos.mjs placeAgents)], repo: git-state.mjs repo plus { name, check }
+// (repos.mjs, check-state.mjs) and { tip, landed } (repo-stats.mjs) | null, repos: the other used repositories (same shape without the stats), git: { branch, ahead, behind, changed } | null,
 // road: job-facts.mjs road | null, trend: { deltaMin, atMs } | null }
 // (<= MAX_BOARD_BYTES: done agents go first, then the oldest, until it fits). Cache (cache-file.mjs, <session>.json): { cursors, git,
-// job, stats }. The repositories (repos.mjs) are only trusted ones (trusted-repos.mjs: the session folder's and the setup's
-// own) with active work, else the one holding STATUS.md or the road's `repo`
-// (lead decision, fix round 3), with the worktrees the repository records (trusted-repos.mjs worktreeRecords, passed to git as
-// `--git-dir=`/`--work-tree=`); agents are matched to those worktrees by path prefix (repos.mjs placeAgents; owner report 2026-11-21: no git info at
-// all; review SEC-1: git never runs where a tool call points). One refresh at a time per session: an O_EXCL lock file
+// job, stats, lead, used }. The repositories (repos.mjs, owner decisions RC15 and RC19): the session folder's, then those holding a
+// folder this session used, newest use first: `used` = [{ dir, atMs }] (at most MAX_USED_DIRS) of the agents' edited folders,
+// launch worktrees and cwds (live or done) and the lead's Edit/Write folders (`lead`: an agent-transcript.mjs cursor on the main
+// transcript that starts at its end, so only new bytes are read); each with the worktrees the repository records
+// (trusted-repos.mjs worktreeRecords, passed to git as `--git-dir=`/`--work-tree=`, never the used folder itself); agents are
+// matched to those worktrees by path prefix (repos.mjs placeAgents). One refresh at a time per session: an O_EXCL lock file
 // (disk-free/lib/lock-file.mjs, review L1), broken once it is LOCK_STALE_MS old (review SEC-2: a hung refresh must not be
 // joined by a new one every IN_FLIGHT_MS).
 // After the write, the agent-type pools (pools.mjs) are rebuilt when an hour old, outside the budget.
@@ -24,9 +25,10 @@
 // timeouts; `git-tidy check` never runs here; nothing here throws.
 import { spawn } from 'node:child_process';
 import { lstatSync, mkdirSync, readdirSync } from 'node:fs';
+import { advanceCursor, emptyCursor } from './agent-transcript.mjs';
 import { releaseLock, takeLock } from '../../disk-free/lib/lock-file.mjs';
 import { homedir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readAsking } from '../../../hooks/lib/asking-marker.mjs';
 import { isSessionId, readSessionFile, writeSessionFile } from '../../../hooks/lib/session-store.mjs';
@@ -35,6 +37,7 @@ import { readCacheFile, writeCacheFile } from './cache-file.mjs';
 import { jobFacts } from './job-facts.mjs';
 import { repoStats } from './repo-stats.mjs';
 import { placeAgents, sessionRepos } from './repos.mjs';
+import { REMOTE_PATH } from './trusted-repos.mjs';
 import { poolsDue, readPools, rebuildPools } from './pools.mjs';
 
 export const MAX_BOARD_BYTES = 48 * 1024;
@@ -43,6 +46,7 @@ const LIVE_EVERY_MS = 5_000; // the settings' refreshInterval: agent rows and a 
 const IDLE_EVERY_MS = 60_000;
 const BUDGET_MS = 300;
 const IN_FLIGHT_MS = 30_000; // a claimed refresh that wrote nothing for this long is taken as dead
+const MAX_USED_DIRS = 16; // folders this session used, kept newest first (repos.mjs places at most 12 of them per refresh)
 const BOARD_SCRIPT = fileURLToPath(new URL('../board.mjs', import.meta.url));
 
 /** @returns {string} the folder of the board files (HOME from env, so tests run under a temp home) */
@@ -71,24 +75,67 @@ function fitted(board) {
   return { ...board, agents };
 }
 
+const isUsableDir = (dir) => typeof dir === 'string' && isAbsolute(dir) && !REMOTE_PATH.test(dir);
+
+/**
+ * The lead's cursor on the main transcript: a new one starts at the file's end (only Edit/Write calls from then on count, and a long
+ * transcript is never read from its start inside the refresh budget). null when there is no plain transcript file.
+ */
+function leadCursor(cached, transcriptPath) {
+  try {
+    if (typeof transcriptPath !== 'string') return null;
+    const info = lstatSync(transcriptPath, { throwIfNoEntry: false });
+    if (!info?.isFile()) return null;
+    const fresh = cached === null || typeof cached !== 'object' || cached.ino !== info.ino || !(info.size >= cached.offset);
+    return advanceCursor(fresh ? { ...emptyCursor(info.ino), offset: info.size } : cached, transcriptPath);
+  } catch {
+    return null; // an unreadable transcript: no lead folders this time
+  }
+}
+
+/** The folders each source used now, with when: agents (now while live, else when done), writer launches, the lead's new edit folders. */
+function usesNow({ agents, launchDirs, lead, oldLead, nowMs }) {
+  const uses = agents.flatMap((agent) => {
+    const atMs = agent.state === 'done' ? (agent.doneMs ?? nowMs) : nowMs;
+    const places = agent.places ?? {};
+    return [...(places.changed ?? []), places.worktree, places.cwd].map((dir, at) => ({ dir, atMs: atMs - at }));
+  });
+  uses.push(...launchDirs.map((dir) => ({ dir, atMs: nowMs })));
+  // the lead's folders get a time only when its list of edit folders changed: the newest first, so the order holds
+  const leadDirs = lead?.changedDirs ?? [];
+  if (leadDirs.join('\n') !== (oldLead?.changedDirs ?? []).join('\n')) uses.push(...leadDirs.map((dir, at) => ({ dir, atMs: (lead.lastMs ?? nowMs) - at })));
+  return uses;
+}
+
+/** The folders this session used, newest use first, at most MAX_USED_DIRS: the cached list (checked) with this refresh's uses merged in. */
+function usedDirsOf(cachedUsed, uses) {
+  const newest = new Map();
+  for (const use of [...(Array.isArray(cachedUsed) ? cachedUsed : []), ...uses]) {
+    if (!isUsableDir(use?.dir) || !Number.isFinite(use.atMs)) continue;
+    newest.set(use.dir, Math.max(newest.get(use.dir) ?? -Infinity, use.atMs));
+  }
+  return [...newest].map(([dir, atMs]) => ({ dir, atMs })).sort((a, b) => b.atMs - a.atMs).slice(0, MAX_USED_DIRS);
+}
+
 /**
  * The board of a session now and the cache it read through (no write).
  * @param {{ session: string, transcriptPath: string | null, cwd: string }} source the session, its transcript and its folder
  * @param {{ env?: object, nowMs?: number, cache?: object | null, pools?: object | null }} [deps] tests pass env and nowMs
- * @returns {{ board: object, cache: { cursors: object, git: object } }} the board and the cache to store
+ * @returns {{ board: object, cache: { cursors: object, git: object, job: object, stats: object, lead: object | null, used: object[] } }}
+ *   the board and the cache to store
  */
 export function collectBoard({ session, transcriptPath, cwd }, { env = process.env, nowMs = Date.now(), cache = null, pools = null } = {}) {
   const sessionFolder = typeof transcriptPath === 'string' ? join(dirname(transcriptPath), basename(transcriptPath, '.jsonl')) : null;
   const found = sessionFolder === null ? { agents: [], cursors: {} }
     : sessionAgents({ session, sessionFolder, cursors: cache?.cursors ?? {}, pools, env, nowMs });
   const job = jobFacts({ session, cwd, cache: cache?.job ?? null, nowMs });
-  const statusDir = typeof job.cache?.path === 'string' ? dirname(job.cache.path) : null;
-  // Git only in trusted repositories (repos.mjs, trusted-repos.mjs); the agents' folders and the STATUS.md and road folders only
-  // choose among them, by path prefix (review SEC-1 and its residual, lead decision of fix round 3).
-  const agentDirs = [...(found.launchDirs ?? []), ...found.agents.filter((agent) => agent.state !== 'done')
-    .flatMap((agent) => [...(agent.places?.changed ?? []), agent.places?.worktree, agent.places?.cwd])];
+  const launchDirs = found.launchDirs ?? [];
+  const lead = leadCursor(cache?.lead ?? null, transcriptPath);
+  const used = usedDirsOf(cache?.used, usesNow({ agents: found.agents, launchDirs, lead, oldLead: cache?.lead ?? null, nowMs }));
+  const liveDirs = [...launchDirs, ...found.agents.filter((agent) => agent.state !== 'done')
+    .flatMap((agent) => [...(agent.places?.changed ?? []), agent.places?.worktree, agent.places?.cwd])].filter(isUsableDir);
   const gitStartMs = Date.now(); // one git budget for the whole refresh (git-state.mjs GIT_BUDGET_MS), repo-stats included
-  const git = sessionRepos({ sessionFolder: cwd, agentDirs, preferred: [statusDir, job.repoDir], cache: cache?.git ?? null, nowMs, startMs: gitStartMs });
+  const git = sessionRepos({ sessionFolder: cwd, usedDirs: used.map(({ dir }) => dir), liveDirs, cache: cache?.git ?? null, nowMs, startMs: gitStartMs, env });
   const placed = placeAgents(found.agents, git.repos);
   const [primary = null, ...others] = placed.repos;
   // repo-stats runs on the trusted shared git folder, never on a worktree path a stale cached state shows (review SEC-10)
@@ -100,7 +147,7 @@ export function collectBoard({ session, transcriptPath, cwd }, { env = process.e
     session, at: nowMs, stale: null, refreshStartedAt: null, asking, agents: placed.agents, repo,
     repos: others, git: git.git, road: job.road, trend: job.trend,
   };
-  return { board: fitted(board), cache: { cursors: found.cursors, git: git.cache, job: job.cache, stats: stats.cache } };
+  return { board: fitted(board), cache: { cursors: found.cursors, git: git.cache, job: job.cache, stats: stats.cache, lead, used } };
 }
 
 /** @returns {object} the board of a session now (no write; see collectBoard) */
