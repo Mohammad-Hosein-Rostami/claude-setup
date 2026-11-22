@@ -11,7 +11,9 @@
 // One CLI version per phase: it stops, naming the machine, when a machine is below the floor, has no DISABLE_UPDATES=1, is not
 // on its local.json pin, or differs from another in version or release channel. Targets get the tip as a git bundle and a
 // fast-forward pull (or a fetched tag), never a push; local.json values that are not machine-specific (`claudeSetup.shared`)
-// are copied, never pushed. A machine that cannot sync skips its doctor and gets a diagnosis; the others go on.
+// are copied, never pushed. Every prompt that runs commands over ssh tells the runner to start each remote command with a PATH
+// export (REMOTE_PATH_EXPORT: the target's non-interactive shell lacks ~/.local/bin and friends) and to wrap ssh in perl's alarm.
+// A machine that cannot sync skips its doctor and gets a diagnosis; the others go on.
 export const meta = {
   name: 'sync-machines',
   description: 'Sync this machine and its sync targets to the base tip (or the targets to a tag): bundle, ff-only pull, install, doctor on each; never pushes',
@@ -28,6 +30,12 @@ checkArgs(args)
 const LOCAL_MACHINE = 'macbook' // this machine's label in the rows; the targets are named in local.json
 const CLI_FLOOR = '2.1.326' // the phase pin's floor on every machine (scripts/doctor.sh CLAUDE_FLOOR)
 const DOCTOR_TIMEOUT_MS = 600000 // the Bash tool's maximum: doctor runs the suite when no PASS is recorded (about 4 minutes), so it stays in the foreground
+// A non-interactive ssh shell on a target has a short PATH (no ~/.local/bin, ~/.volta/bin, /usr/local/bin, /opt/homebrew/bin), so
+// `claude`, `node` and `git` are not found; every remote command starts with this export (harmless in Git Bash on Windows).
+const REMOTE_PATH_EXPORT = 'export PATH="$HOME/.volta/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin:$PATH";'
+const SSH_TIMEOUT_SECONDS = 120 // a remote read or check; the MacBook has no `timeout` command, so ssh is wrapped in perl's alarm
+const SYNC_SSH_TIMEOUT_SECONDS = 900 // the remote pull and install
+const DOCTOR_SSH_TIMEOUT_SECONDS = DOCTOR_TIMEOUT_MS / 1000 + 60 // doctor runs the suite, plus a margin over the Bash timeout
 const NAME = /^[a-z0-9][a-z0-9-]{0,31}$/
 const HOST = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/
 const { row, repo, base, tag } = args
@@ -75,8 +83,13 @@ function checkedTargets(given) {
   return bad ? `sync target ${JSON.stringify(bad).slice(0, 120)} is not a plain name and ssh host (or uses the name ${LOCAL_MACHINE})` : given
 }
 
-function where(machine) {
-  return machine === LOCAL_MACHINE ? `in ${repo}` : `over ssh ${hostOf[machine]}, in that machine's checkout of the repo (the same path relative to the home folder as ${repo}; if it is not there, stop and report that, do not search)`
+/** How the runner starts a command on a target: the PATH export first, ssh inside a perl alarm that ends it after `seconds`. */
+function remoteRule(machine, seconds) {
+  return `start each remote command with ${REMOTE_PATH_EXPORT} and run ssh as perl -e 'alarm ${seconds}; exec @ARGV' ssh ${hostOf[machine]} '<command>', since this Mac has no timeout command`
+}
+
+function where(machine, seconds = SSH_TIMEOUT_SECONDS) {
+  return machine === LOCAL_MACHINE ? `in ${repo}` : `over ssh ${hostOf[machine]} (${remoteRule(machine, seconds)}), in that machine's checkout of the repo (the same path relative to the home folder as ${repo}; if it is not there, stop and report that, do not search)`
 }
 
 function cliPrompt(machine) {
@@ -119,12 +132,12 @@ function targetSteps(machine) {
   const move = tag
     ? `git fetch ${bundle} refs/tags/${tag}:refs/tags/${tag}, then scripts/install.sh --update --to ${tag}`
     : `check git branch --show-current is ${base} and git status --porcelain --untracked-files=no prints nothing, then git pull --ff-only ${bundle} ${base}, then scripts/install.sh`
-  return `Move the ${tag ? `tag ${tag}` : 'tip'} to ${machine}. (1) On this machine: git -C ${repo} bundle create ${bundle} ${tag ? `refs/tags/${tag}` : base}, then node ${repo}/scripts/install/local-settings.mjs shared ${shared}, then scp ${bundle} ${shared} ${host}:/tmp/. (2) ssh ${host}, ${where(machine).replace(/^over ssh \S+, /, '')}: node scripts/install/local-settings.mjs merge-shared ${shared}, then ${move}.`
+  return `Move the ${tag ? `tag ${tag}` : 'tip'} to ${machine}. (1) On this machine: git -C ${repo} bundle create ${bundle} ${tag ? `refs/tags/${tag}` : base}, then node ${repo}/scripts/install/local-settings.mjs shared ${shared}, then scp ${bundle} ${shared} ${host}:/tmp/. (2) On ${machine}, ${where(machine, SYNC_SSH_TIMEOUT_SECONDS)}: node scripts/install/local-settings.mjs merge-shared ${shared}, then ${move}.`
 }
 
 async function doctorMachine(synced, machine) {
   if (!allExitedZero(synced)) return { machine, synced: false, sha: '', doctorExit: null, diagnosis: await diagnose(machine, synced?.tail ?? 'no result') }
-  const doctor = await runner(`doctor:${machine}`, `Run scripts/doctor.sh ${where(machine)}. It reuses a recorded suite PASS, else runs the whole suite and takes minutes: run it as ONE foreground Bash command with timeout: ${DOCTOR_TIMEOUT_MS}, never in the background and never in a polling loop. Return exit (doctor.sh's exit code) and the FAIL and WARN lines as tail.`, 'Doctor', DOCTOR_SCHEMA)
+  const doctor = await runner(`doctor:${machine}`, `Run scripts/doctor.sh ${where(machine, DOCTOR_SSH_TIMEOUT_SECONDS)}. It reuses a recorded suite PASS, else runs the whole suite and takes minutes: run it as ONE foreground Bash command with timeout: ${DOCTOR_TIMEOUT_MS}, never in the background and never in a polling loop. Return exit (doctor.sh's exit code) and the FAIL and WARN lines as tail.`, 'Doctor', DOCTOR_SCHEMA)
   const exit = doctor ? doctor.exit : null
   const diagnosis = exit === 0 ? '' : await diagnose(machine, doctor ? doctor.tail : 'doctor returned nothing')
   return { machine, synced: true, sha: synced.sha, doctorExit: exit, diagnosis }

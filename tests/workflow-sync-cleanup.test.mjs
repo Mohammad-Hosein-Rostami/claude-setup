@@ -79,6 +79,20 @@ test('sync: the PC steps are bundle, copy, ff-only pull, install, doctor over ss
   }
 });
 
+test('sync: every prompt that runs commands on a target sets the PATH and wraps ssh in a perl alarm; the local ones do not', async () => {
+  const run = await runScript('sync-machines', SYNC_ARGS, { replies: syncReplies() });
+  const pathExport = 'export PATH="$HOME/.volta/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin:$PATH";';
+  for (const label of ['s1:cli:pc', 's1:sync:pc', 's1:doctor:pc']) {
+    const prompt = run.calls.find((c) => c.label === label).prompt;
+    assert.ok(prompt.includes(pathExport), `${label}: PATH export`);
+    assert.match(prompt, /perl -e 'alarm \d+; exec @ARGV' ssh pc/, `${label}: alarm wrapper`);
+  }
+  for (const label of ['s1:cli:macbook', 's1:sync:macbook', 's1:doctor:macbook']) {
+    const prompt = run.calls.find((c) => c.label === label).prompt;
+    assert.doesNotMatch(prompt, /export PATH|perl -e/, `${label}: local prompt unchanged`);
+  }
+});
+
 test('sync: the doctor runner runs one foreground command with a 10 minute Bash timeout, never in the background and never polling', async () => {
   const run = await runScript('sync-machines', SYNC_ARGS, { replies: syncReplies() });
   for (const machine of ['macbook', 'pc']) {
