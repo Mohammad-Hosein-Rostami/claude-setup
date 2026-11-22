@@ -57,7 +57,7 @@ Rules:
 
 - Owner's call (the Owner decisions line of CLAUDE.md): AskUserQuestion at once. Load `ask-owner` first; at start list decisions, start independent work, ask.
 - Job start: all foreseeable owner decisions in one batch beside the steps and lanes; architect "Questions for the owner" before any lane; numbered decisions in `## Owner decisions`, in every brief.
-- No answer in 60 s (the dialog marks each such answer `UNCONFIRMED`): take the recommended option, say which; mark it `UNCONFIRMED` in STATUS.md `## Owner decisions` and re-ask it in the next reply.
+- No answer in 2 min (RC3; the dialog marks each such answer `UNCONFIRMED`): a small, reversible choice takes the recommended option, say which; a strategic, big or deleting change waits for the owner, and only that part pauses (RC10, lead.md). Mark it `UNCONFIRMED` in STATUS.md `## Owner decisions` and re-ask it in the next reply.
 
 ## Delegating UI work
 

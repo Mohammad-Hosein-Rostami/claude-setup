@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const read = (relative) => readFileSync(fileURLToPath(new URL(`../${relative}`, import.meta.url)), 'utf8');
 test('lead-rules.md carries the lead-discipline rules and stays small', () => {
   const lead = read('home/lead-rules.md');
-  for (const needle of ['Persian', 'No turn without a decision', 'runner', '2nd compaction', 'usage-limit', 'STATUS.md', '3k chars', 'tell the owner to restart', 'No answer in 60 s','≤ 300 words', '`implementer`, not general-purpose', 'estimate.mjs']) {
+  for (const needle of ['Persian', 'No turn without a decision', 'runner', '2nd compaction', 'usage-limit', 'STATUS.md', '3k chars', 'tell the owner to restart', 'No answer in 2 min','≤ 300 words', '`implementer`, not general-purpose', 'estimate.mjs']) {
     assert.ok(lead.includes(needle), `lead-rules.md must mention ${needle}`);
   }
   assert.ok(lead.split('\n').length <= 100, 'lead-rules.md is injected into every session; keep it <= 100 lines');
