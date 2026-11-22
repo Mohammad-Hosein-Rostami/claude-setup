@@ -2,7 +2,8 @@
 // of the same change -> run the checks at head -> base compare of the failures -> verdict -> ledger row -> one status line.
 // Exports: checkChange(scope, options) -> Promise<Verdict>, repoIdOf(top) -> string (the hashed repo id of the ledger rows).
 // What it decides: a kind FAILs when it has a failure the base does not have (types, lint, tests) or any weakened-test item; a new test
-//   failure that passes when its test file runs once more at head is `flaky`, shown in the line and never a FAIL; a kind
+//   failure that passes when its test file runs once more at head is `flaky`, shown in the line and never a FAIL; with no base, a test
+//   failure in a file the change does not hold is `unknown` (it may be another agent's or older), shown and never a FAIL; a kind
 //   that could not run is `not-run` and never blocks and is never ok. At a stop (`where: 'stop'`) a FAIL blocks, except when the same
 //   change key was blocked before or the agent was blocked MAX_BLOCKS_IN_A_ROW times already: then it is `left-open` (the caller, the
 //   hook, owns that count and passes it as `priorBlocks`). At a land or a manual run a FAIL always blocks. Empty scope: verdict `skipped`,
@@ -47,6 +48,15 @@ function earlierGreenRun(repo, key, env) {
 /** The packages of the plan as `<folder>: ` prefixes (empty for the project root), in command order. */
 const packageNameOf = (scope, cmd) => (cmd.cwd === scope.top ? '' : `${relative(scope.top, cmd.cwd).split('\\').join('/')}: `);
 
+/**
+ * With no base, a test failure in a file the stopper did not change cannot be told old or new (another agent's half-finished work, an old
+ * failure): it is `unknown`, shown and never blocking. One in a file it changed stays new.
+ */
+function isUnknownOrigin(scope, cmd, failure) {
+  if ((scope.git && scope.base) || cmd.kind !== 'tests') return false;
+  return ![...scope.files, ...scope.wide, ...(scope.named ?? [])].includes(failure.file);
+}
+
 /** One member per planned command (its head result judged against the base answer) and one per command that could not be planned. */
 function membersOf({ scope, plan, results, answers, flaky }) {
   const cmds = plan.packages.flatMap((one) => one.cmds);
@@ -56,21 +66,23 @@ function membersOf({ scope, plan, results, answers, flaky }) {
     const oldIds = answer?.oldIds;
     const old = oldIds ? result.failures.filter((failure) => oldIds.has(failure.id)) : [];
     const isFlaky = (failure) => flaky.get(index)?.has(failure.id) === true;
-    const fresh = result.result === 'fail' ? result.failures.filter((failure) => !old.includes(failure) && !isFlaky(failure)) : [];
-    const flakyCount = result.result === 'fail' ? result.failures.filter((failure) => !old.includes(failure) && isFlaky(failure)).length : 0;
+    const notOld = result.result === 'fail' ? result.failures.filter((failure) => !old.includes(failure)) : [];
+    const unknown = notOld.filter((failure) => isUnknownOrigin(scope, cmd, failure));
+    const fresh = notOld.filter((failure) => !unknown.includes(failure) && !isFlaky(failure));
+    const flakyCount = notOld.filter((failure) => !unknown.includes(failure) && isFlaky(failure)).length;
     const judged = result.result === 'fail' ? (fresh.length > 0 ? 'fail' : 'ok') : result.result;
-    return { kind: cmd.kind, name: `${packageNameOf(scope, cmd)}${cmd.label}`, result: judged, why: result.why, ms: result.ms, fresh, old, flaky: flakyCount, baseWhy: answer?.unavailable };
+    return { kind: cmd.kind, name: `${packageNameOf(scope, cmd)}${cmd.label}`, result: judged, why: result.why, ms: result.ms, fresh, old, unknown, flaky: flakyCount, baseWhy: answer?.unavailable };
   });
-  const skipped = plan.skipped.map((entry) => ({ kind: entry.kind, name: entry.label, result: 'not-run', why: entry.why, ms: 0, fresh: [], old: [], flaky: 0 }));
+  const skipped = plan.skipped.map((entry) => ({ kind: entry.kind, name: entry.label, result: 'not-run', why: entry.why, ms: 0, fresh: [], old: [], unknown: [], flaky: 0 }));
   return [...members, ...skipped];
 }
 
 /** The weakened-test scan as one member: not run without a git base, else ok or one failure per item. */
 function weakenedMember(scope) {
-  if (!scope.git || !scope.base) return { kind: 'tests-weakened', name: 'tests-weakened', result: 'not-run', why: 'not-supported', ms: 0, fresh: [], old: [], flaky: 0 };
+  if (!scope.git || !scope.base) return { kind: 'tests-weakened', name: 'tests-weakened', result: 'not-run', why: 'not-supported', ms: 0, fresh: [], old: [], unknown: [], flaky: 0 };
   const started = Date.now();
   const fresh = weakenedTests(scope);
-  return { kind: 'tests-weakened', name: 'tests-weakened', result: fresh.length > 0 ? 'fail' : 'ok', ms: Date.now() - started, fresh, old: [], flaky: 0 };
+  return { kind: 'tests-weakened', name: 'tests-weakened', result: fresh.length > 0 ? 'fail' : 'ok', ms: Date.now() - started, fresh, old: [], unknown: [], flaky: 0 };
 }
 
 /** The members of one kind merged into the kind's result: fail beats ok beats none beats not-run. */
@@ -80,7 +92,7 @@ function summarize(kind, members) {
   const result = fresh.length > 0 ? 'fail' : has('ok') ? 'ok' : has('none') ? 'none' : 'not-run';
   const reasons = members.map((member) => member.why).filter(Boolean);
   const why = result === 'not-run' ? (WHY_PRIORITY.find((reason) => reasons.includes(reason)) ?? reasons[0] ?? 'error') : undefined;
-  return { kind, result, fresh, old: members.flatMap((member) => member.old), flaky: members.reduce((sum, member) => sum + member.flaky, 0), ms: members.reduce((sum, member) => sum + member.ms, 0), ...(why ? { why } : {}) };
+  return { kind, result, fresh, old: members.flatMap((member) => member.old), unknown: members.flatMap((member) => member.unknown), flaky: members.reduce((sum, member) => sum + member.flaky, 0), ms: members.reduce((sum, member) => sum + member.ms, 0), ...(why ? { why } : {}) };
 }
 
 /** Line parts the ledger row cannot hold: which package or command did not run when a kind has several, a base that was not compared. */
@@ -94,7 +106,7 @@ function notesOf(plan, scope, groups) {
   return notes;
 }
 
-const rowCheck = (summary) => ({ result: summary.result, new: summary.fresh.length, old: summary.old.length, ms: summary.ms, ...(summary.flaky > 0 ? { flaky: summary.flaky } : {}), ...(summary.why ? { why: summary.why } : {}) });
+const rowCheck = (summary) => ({ result: summary.result, new: summary.fresh.length, old: summary.old.length, ms: summary.ms, ...(summary.flaky > 0 ? { flaky: summary.flaky } : {}), ...(summary.unknown.length > 0 ? { unknown: summary.unknown.length } : {}), ...(summary.why ? { why: summary.why } : {}) });
 
 /** Removes the result files of this plan, and result files of a crashed run older than a day; false when a file could not be removed. */
 function tidyResultFiles(plan, env) {

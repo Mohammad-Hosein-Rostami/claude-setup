@@ -71,8 +71,8 @@ Asking and remembering:
 
 Other hooks:
 - `diagnostics.mjs`: used by `post-edit.mjs` (parses a failed format run into `file:line RULE-ID message` lines). `edit-log.mjs`: the per-user hook temp root (`tempRoot`, `checkedTempRoot`) that `agent-budget.mjs` and `writer-agents.mjs` keep their records in.
-- `own-edits.mjs`: the files a session or agent changed with Edit/Write/MultiEdit/NotebookEdit, recorded and read by `commit-gate.mjs`.
-- `gated-folder.mjs`: the folder a Stop or SubagentStop gate looks at (the session's own worktree, never a folder it only cd'd into; for a lead also one worktree per repository of the files the session edited, `editedWorktrees`) and the hardened git calls that read it, the discovery ones time-bound; used by `commit-gate.mjs` and `git-tidy-gate.mjs` (also `namesFilterProgram`, `readHead`).
+- `own-edits.mjs`: the files a session or agent changed with Edit/Write/MultiEdit/NotebookEdit, recorded and read by `commit-gate.mjs` (all of the session's for the lead) and the done-check (`pathsRecordedBy`: the stopper's own only).
+- `gated-folder.mjs`: the folder a Stop or SubagentStop gate looks at (the session's own worktree, never a folder it only cd'd into; for a lead also one worktree per repository of the files the session edited, or of the `files` a caller gives, `editedWorktrees`) and the hardened git calls that read it, the discovery ones time-bound; used by `commit-gate.mjs` and `git-tidy-gate.mjs` (also `namesFilterProgram`, `readHead`).
 - `call-windows.mjs`, `call-window-build.mjs`: the call-window log (when each tool call of a session was open, and how big each watched branch reflog was then) that `commit-gate.mjs` writes on every tool and stop event, and the code that builds the windows from its lines (split to keep each file under 300 lines).
 - `change-owner.mjs`, `base-moves.mjs`: whether a change or a branch move is this session's own or only another session's, read from the call-window logs; any doubt means own. Used by `commit-gate.mjs`.
 - `new-file-size.mjs`: new files over the size limit (a build output or binary an agent adds), for `commit-gate.mjs`.

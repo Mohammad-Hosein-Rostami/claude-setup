@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { saveBaseline } from '../home/hooks/lib/dirty-baseline.mjs';
 import { recordEditedFile } from '../home/hooks/lib/own-edits.mjs';
-import { makeDoneCheckRepo } from './done-check-fixture.mjs';
+import { makeDoneCheckRepo, nodeTestSource } from './done-check-fixture.mjs';
 import { addWorktree, git } from './git-tidy-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/done-check.mjs', import.meta.url));
@@ -167,7 +167,7 @@ test('R16: a model that is not a model id (a token-shaped value, another vendor\
 });
 
 test('R16: a lead stop reads the model from the main-thread replies of transcript_path, not from subagent lines', (t) => {
-  const repo = newRepo(t, { plain: true });
+  const repo = newRepo(t);
   repo.write('src/lib.ts', 'export const n: number = 2;\n');
   assert.equal(recordEditedFile({ session_id: SESSION, tool_input: { file_path: join(repo.dir, 'src', 'lib.ts') } }, repo.env), true);
   const transcript = join(repo.home, `${SESSION}.jsonl`);
@@ -178,17 +178,68 @@ test('R16: a lead stop reads the model from the main-thread replies of transcrip
   assert.deepEqual(routingOfRows(repo), [['claude-opus-5-5', 'high']]);
 });
 
-test('A8: not git (a plain folder): the lead\'s recorded file is checked, the line says `base: none`, the failure blocks once worded "may be older"', (t) => {
+test('A8: not git (a plain folder): the lead\'s recorded file there gives no output, runs no tool, writes no ledger row and no review line', (t) => {
   const repo = newRepo(t, { plain: true, replay: { tsc: TSC_BROKEN_CALLER } });
   repo.write('src/lib.ts', 'export const n: number = 2;\n');
-  assert.equal(recordEditedFile({ session_id: SESSION, tool_input: { file_path: join(repo.dir, 'src', 'lib.ts') } }, repo.env), true);
-  const lead = { hook_event_name: 'Stop', session_id: SESSION, cwd: repo.dir, stop_hook_active: false };
-  const first = stopHook(repo, lead, { CLAUDE_PROJECT_DIR: repo.dir });
-  assert.equal(isBlock(first), true, first.stdout);
-  assert.match(first.out.reason, /may be older/);
-  assert.match(first.out.systemMessage, /base: none/);
-  const again = stopHook(repo, { ...lead, stop_hook_active: true }, { CLAUDE_PROJECT_DIR: repo.dir });
-  assert.equal(isBlock(again), false, 'the same key at the next stop passes');
+  repo.write('src/auth/token-session.ts', 'export const secret = 1;\n'); // a security-looking path: still no review line
+  for (const file of ['src/lib.ts', 'src/auth/token-session.ts']) {
+    assert.equal(recordEditedFile({ session_id: SESSION, tool_input: { file_path: join(repo.dir, file) } }, repo.env), true);
+  }
+  const result = stopHook(repo, { hook_event_name: 'Stop', session_id: SESSION, cwd: repo.dir, stop_hook_active: false }, { CLAUDE_PROJECT_DIR: repo.dir });
+  assert.equal(result.stdout, '');
+  assert.deepEqual(repo.calls(), []);
+  assert.deepEqual(ledgerRows(repo), []);
+});
+
+const NODE_TEST_PACKAGE = { name: 'p', private: true, type: 'module', scripts: { test: 'node --test tests/*.test.mjs' } };
+const FAILING_TEST = nodeTestSource({ imports: ['../src/a.mjs'], cases: [{ name: 'half-finished lane work', ok: false }] });
+
+test('a lead started outside any repo is not blocked for failing tests inside an agent\'s lane worktree it never edited', (t) => {
+  const repo = newRepo(t, { packageJson: NODE_TEST_PACKAGE, files: { 'src/a.mjs': 'export const a = 1;\n', 'tests/a.test.mjs': nodeTestSource({ imports: ['../src/a.mjs'] }) } });
+  writeFileSync(join(repo.dir, '.git', 'info', 'exclude'), '.claude/worktrees/\n');
+  const lane = join(repo.dir, '.claude', 'worktrees', 'lane-a');
+  git(repo.dir, 'worktree', 'add', '-q', '-b', 'lane-a', lane);
+  const agent = startAgent(repo, 'agent-1', { dir: lane });
+  for (const [file, text] of [['src/a.mjs', 'export const a = 2;\n'], ['tests/a.test.mjs', FAILING_TEST]]) {
+    writeFileSync(join(lane, file), text);
+    assert.equal(recordEditedFile({ session_id: SESSION, agent_id: agent.agent, tool_input: { file_path: join(lane, file) } }, repo.env), true);
+  }
+  assert.equal(saveBaseline(repo.env, SESSION, LEAD, null, [], null), true); // the lead's folder is not a repo
+  const result = stopHook(repo, { hook_event_name: 'Stop', session_id: SESSION, cwd: repo.home, stop_hook_active: false }, { CLAUDE_PROJECT_DIR: repo.home });
+  assert.equal(result.stdout, '');
+  assert.deepEqual(ledgerRows(repo), []);
+  const own = stopHook(repo, subagentStop(agent)); // the agent's own stop still checks its lane fully
+  assert.equal(isBlock(own), true, own.stdout);
+  assert.match(own.out.reason, /half-finished lane work/);
+});
+
+/** A node:test project, a lead outside any repo (base none) that edited src/a.mjs, and tests/a.test.mjs failing. */
+function leadWithoutBase(t) {
+  const repo = newRepo(t, { packageJson: NODE_TEST_PACKAGE, files: { 'src/a.mjs': 'export const a = 1;\n', 'tests/a.test.mjs': FAILING_TEST } });
+  assert.equal(saveBaseline(repo.env, SESSION, LEAD, null, [], null), true);
+  const record = (file) => assert.equal(recordEditedFile({ session_id: SESSION, tool_input: { file_path: join(repo.dir, file) } }, repo.env), true);
+  repo.write('src/a.mjs', 'export const a = 2;\n');
+  record('src/a.mjs');
+  const stop = () => stopHook(repo, { hook_event_name: 'Stop', session_id: SESSION, cwd: repo.home, stop_hook_active: false }, { CLAUDE_PROJECT_DIR: repo.home });
+  return { repo, record, stop };
+}
+
+test('base none: a failing test in a test file the stopper did not edit is `unknown`, shown and never blocking', (t) => {
+  const { repo, stop } = leadWithoutBase(t);
+  const result = stop();
+  assert.equal(isBlock(result), false, result.stdout);
+  assert.match(result.out.systemMessage, /tests ok, 1 unknown\b.*base: none/);
+  assert.deepEqual(ledgerRows(repo).map((row) => [row.verdict, row.checks.tests.new, row.checks.tests.unknown]), [['ok', 0, 1]]);
+});
+
+test('base none: a failing test in a test file the stopper edited is new and blocks, worded "may be older"', (t) => {
+  const { repo, record, stop } = leadWithoutBase(t);
+  repo.write('tests/a.test.mjs', `${FAILING_TEST}\n`);
+  record('tests/a.test.mjs');
+  const result = stop();
+  assert.equal(isBlock(result), true, result.stdout);
+  assert.match(result.out.systemMessage, /tests FAIL 1 new/);
+  assert.match(result.out.reason, /half-finished lane work[\s\S]*may be older/);
 });
 
 test('the lead is not blamed for a changed file it did not record (another session or a lane wrote it)', (t) => {

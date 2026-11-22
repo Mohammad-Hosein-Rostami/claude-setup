@@ -17,12 +17,13 @@ const WEAKENED = 'tests-weakened';
  * @property {import('./contract.mjs').Result} result
  * @property {import('./contract.mjs').Failure[]} fresh failures the change caused (the base does not have them)
  * @property {import('./contract.mjs').Failure[]} old failures the base has too
+ * @property {import('./contract.mjs').Failure[]} [unknown] with no base: test failures in files the change does not hold (never blamed)
  * @property {number} ms
  * @property {import('./contract.mjs').NotRunWhy} [why] set when the whole kind did not run
  */
 
 const seconds = (ms) => `${(ms / MS_PER_SECOND).toFixed(ms < WHOLE_SECONDS_FROM_MS ? 1 : 0)} s`;
-const oldNote = (check) => `${check.old > 0 ? `, ${check.old} old fail` : ''}${check.flaky > 0 ? `, ${check.flaky} flaky` : ''}`;
+const oldNote = (check) => `${check.old > 0 ? `, ${check.old} old fail` : ''}${check.unknown > 0 ? `, ${check.unknown} unknown` : ''}${check.flaky > 0 ? `, ${check.flaky} flaky` : ''}`;
 
 /** The part of the line for one kind, or null when the kind says nothing worth a part (the weakened-test scan, unless it fails). */
 function partOf(kind, check, files) {
@@ -78,6 +79,8 @@ export function reasonOf(summaries, { baseWhy } = {}) {
     for (const failure of summary.fresh.slice(0, MAX_REASON_LINES_PER_CHECK)) lines.push(`  ${failureLine(failure)}`);
     if (summary.fresh.length > MAX_REASON_LINES_PER_CHECK) lines.push(`  ... and ${summary.fresh.length - MAX_REASON_LINES_PER_CHECK} more`);
     if (summary.old.length > 0) lines.push(`  ${summary.old.length} old failures (also at the base, not yours)`);
+    const unknown = summary.unknown?.length ?? 0;
+    if (unknown > 0) lines.push(`  ${unknown} unknown failures (in files you did not change, no base to compare: not blamed)`);
   }
   if (baseWhy) lines.push(`The base was not compared (${baseWhy}): these failures may be older than your change.`);
   return lines.join('\n');

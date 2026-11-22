@@ -1,7 +1,8 @@
 // Contract tests for home/tools/done-check/lib/scope.mjs (design section 3.1 and 6, road newchk step 2, lane dc-tests-git). Written from the
 // spec, apart from the code: they are red until lane dc-scope lands the module.
 // Covers: ownChange(input, env) -> Scope[] for a subagent (base = HEAD at its first tool call, committed + uncommitted + untracked changes),
-// for the lead (only the files it recorded, one Scope per worktree), and for a plain folder (no git, base null); rangeChange(top, base) ->
+// for the lead (only the files it recorded, one Scope per worktree, never an agent's lane worktree), for a plain folder (no Scope) and
+// for an agent whose folder is not git (its edits in a git worktree, base null); rangeChange(top, base) ->
 // Scope; changedLines(top, base, file) -> [start, end][] (1-based, both ends inclusive, sorted); the change key (same change before and
 // after its commit = one key, moved base = another); hostile file names; an empty change; no git call beyond the first status.
 // Decisions this test fixes where the design is silent (the writer of scope.mjs follows them): a Scope.files / wide entry uses `/` and is
