@@ -54,8 +54,9 @@ Basic ANSI 16 colours, so the terminal theme maps them on dark and light themes;
 a sooner finish, landed today; cyan running now (bars of running agents, the active road step); yellow attention soon (a quiet
 agent, over its usual time, a later finish, context or a limit 60-80 % used, behind the upstream); red needs action (a failing
 suite, context or a limit over 80 % used, a passed finish clock); magenta waiting on the owner; dim for secondary text (clocks,
-counts, `off:` categories). Bold marks only the one most urgent item: a question waiting, else a failing suite, else context over
-80 %, else a limit over 80 %, else the longest-quiet agent. Every state also has its word (`quiet`, `over usual`, `fail`,
+counts, `off:` categories). Of the states, bold marks only the one most urgent item: a question waiting, else a failing suite, else context over
+80 %, else a limit over 80 %, else the longest-quiet agent (bold is also a plain label: `ALL`, main's git row, and two of the
+16-colour identity looks). Every state also has its word (`quiet`, `over usual`, `fail`,
 `later`, `waiting`), so `NO_COLOR` (any value) or `TERM=dumb` prints the same words with no escape codes. Descriptions,
 step titles, workflow and worktree names are cut at a word or `-` with `…`, never mid-word; a workflow's name is kept before its
 phase word, which drops first at narrow widths.
@@ -63,17 +64,27 @@ phase word, which drops first at narrow widths.
 ### Which is where: identity colours (`lib/identity.mjs`, spec-tui-3)
 
 Each work item, a workflow run, an agent outside workflows or a lane branch, has one hue and one marker shape (`●`, `◆`, `▲`;
-`*`, `+`, `o` in ASCII), kept for its name: a hash of the name picks a home hue, and the names of one board take hues in name
-order, each the first free one from its home whose shape is not taken yet, so up to six items on screen never share a hue and up
-to three never share a shape. A workflow whose agents work in a lane worktree (the board's sure placement, never a guess from a
-folder) takes that branch's hue and its row says `on <branch>`, so the workflow row and the branch's git row match; an agent in a
-lane worktree likewise. The hues are xterm 256-colour indexes 31 blue, 166 orange, 99 violet, 64 green, 197 pink and 133 orchid,
-none a state colour's code. Their contrast is 3.80 to 4.06 to 1 on both a `#1e1e1e` and a `#ffffff` background: no colour
-reaches 4.5:1 on both (the best possible is about 4.09:1), so these are the most even. Each row kind leads with a label: `road`
-blue, `ALL` bold, a dim `Σ` before the counts, the `/check` categories on green (`none` dim), `▸` and the workflow name in its
-hue, `⎇` and the branch in its hue (main in the default colour, bold), the session row's `ctx`, `5h`, `7d` and `acct` labels dim.
-A terminal whose `TERM` and `COLORTERM` name neither 256 nor true colour gets bold, underline or plain in place of the hues (with
-the shape, six different looks); `NO_COLOR` prints no codes and the marker shape tells items apart.
+`*`, `+`, `o` in ASCII), and keeps them while it is live. A name's home hue is a hash of it; a name seen for the first time takes
+the first hue from its home that no live item uses (one whose marker shape no live item has first, so `NO_COLOR` still tells
+three items apart), and that choice is remembered in `~/.claude/state/board-cache/<session>-hues.json` (`lib/hue-store.mjs`,
+written by the status line and `/where` only when it changes, temp file and rename; a missing or bad file starts fresh). So a
+name's hue never changes when other items join or leave; an item gone for more than 30 minutes is forgotten and gets a new
+hue when it returns. Up to six live items never share a hue; with more than six, the seventh and later keep their home hue and
+so share with an earlier item (and three share a marker shape beyond three). A workflow whose agents work in a lane worktree
+(the board's sure placement, never a guess from a folder; a finished agent counts for none) takes that branch's hue and its row
+says `on <branch>`, so the workflow row and the branch's git row match; an agent in a lane worktree likewise. A workflow whose
+agents have isolated worktrees (`worktree-<run id>-<n>`) keeps its own hue and says no branch: those worktrees and their agents
+take the workflow's hue. The agents of a workflow that place nowhere (read-only reviewers) take the workflow's hue, but its row
+names no lane, since no sure fact ties it to one. The hues are xterm 256-colour indexes 31 blue, 166 orange, 99 violet, 64
+green, 197 pink and 133 orchid, none a state colour's code. Their contrast (dark `#1e1e1e` / white `#ffffff`) is 4.04 / 4.13,
+4.39 / 3.80, 4.06 / 4.11, 3.93 / 4.24, 4.30 / 3.88 and 4.03 / 4.13, so 3.80 to 4.39 to 1: no cube colour reaches 4.5:1 on both
+(the best reaches 4.06), so these are the most even. Each row kind leads with a label: `road` blue, `ALL` bold, a dim `Σ`
+before the counts, the `/check` categories on green (`none` dim), `▸` and the workflow name in its hue, `⎇` and the branch in
+its hue (main in the default colour, bold), the session row's `ctx`, `5h`, `7d` and `acct` labels dim. A terminal whose `TERM`
+and `COLORTERM` name neither 256 nor true colour (Windows Terminal, which sets `WT_SESSION` instead, counts as 256) gets bold,
+underline or plain in place of the hues (with the shape, six different looks); `NO_COLOR` prints no codes and the marker shape
+tells items apart. A name that does not fit is cut at a word or `-` with `…` in every row (also the strip row); the workflow
+name is stored up to 64 characters so a longer one is always seen as cut.
 
 ### An agent's progress (`lib/progress.mjs`)
 
@@ -134,5 +145,5 @@ Files: `board.mjs` (the CLI and the lines), `lib/refresh.mjs` (build, refresh, t
 `lib/agents.mjs`, `lib/agent-transcript.mjs`, `lib/progress.mjs`, `lib/pools.mjs`, `lib/git-state.mjs`, `lib/job-facts.mjs`,
 `lib/repo-stats.mjs`, `lib/repos.mjs`, `lib/trusted-repos.mjs`, `lib/cache-file.mjs` (what the refresh reads), `lib/render.mjs` (the status line rows; `home/statusline.mjs` only reads and writes), `lib/work-row.mjs` (the
 job row), `lib/layout.mjs` (row budget, counts row, packing), `lib/agent-rows.mjs` (workflow and agent rows), `lib/git-rows.mjs`
-(git rows), `lib/stat-rows.mjs` (road and checks rows, the trend), `lib/identity.mjs` (identity hues and markers), `lib/cells.mjs` (look, glyphs, bars, durations, clocks, fitting a row to a width; shared by every surface),
+(git rows), `lib/stat-rows.mjs` (road and checks rows, the trend), `lib/identity.mjs` (identity hues and markers), `lib/hue-store.mjs` (the saved hues; read and written by the status line and `/where`), `lib/cells.mjs` (look, glyphs, bars, durations, clocks, fitting a row to a width; shared by every surface),
 `lib/tree.mjs` (the `/where` tree).
