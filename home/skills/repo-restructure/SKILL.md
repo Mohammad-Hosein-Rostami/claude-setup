@@ -3,8 +3,6 @@ name: repo-restructure
 description: Use when restructuring a whole repository - removing a build tool or layer (Nx, module federation, a monorepo tool), merging or moving apps and packages, deleting dead folders, scripts, plans or old configs, or rebuilding CI, Docker and deploy for a new layout.
 ---
 
-Its build, typecheck and test runs happen only in the categories the owner turned on with `/check` (`types`, `test`); off, say `not checked: <categories>`.
-
 Goal: the same product in a simpler layout. Nothing the owner did not name disappears, and every config still points at something real.
 
 1. **Scope from the owner's words.** Write three lists to STATUS.md: delete (each path the owner named), keep (each exception they named), change. Anything else you want to delete goes on a fourth list, "proposed", with the proof that nothing uses it; ask before deleting it (`ask-owner`). Never widen a delete because a folder "looks unused".
@@ -19,4 +17,4 @@ Goal: the same product in a simpler layout. Nothing the owner did not name disap
 10. **CI, Docker, deploy** follow I1-I6 and are validated without deploying (`docker build`, `docker compose config`, `actionlint` and `hadolint` when installed). Registry, hosts, secrets, domains and the first real deploy are the owner's decisions: ask.
 11. **Old cached pages, before the first deploy.** When a build layer is removed, list the entry files a browser with a cached old page still requests: remote entries (`remoteEntry.js`), old chunk paths, service worker, manifest. Decide per file: keep a stub that reloads the page, redirect, or accept the 404 (say why). Check the HTML's cache headers (`no-cache` on the entry page, long cache only on hashed files). Verify with a cold load from an old cached page, not a fresh tab.
 
-Done-gate (with `verify-done`): every baseline check re-run and compared (the test count is lower only by the suites the owner asked to delete, listed); `refs check` exits 0; `env-names diff` shows only changes the owner approved; the leftover sweep is clean; an old cached page loads after the deploy; the app starts and its main flows open; the "proposed" list is answered. Report: deleted, moved, kept on purpose, not verified.
+Done-gate: every baseline check re-run and compared (the test count is lower only by the suites the owner asked to delete, listed); `refs check` exits 0; `env-names diff` shows only changes the owner approved; the leftover sweep is clean; an old cached page loads after the deploy; the app starts and its main flows open; the "proposed" list is answered. Report: deleted, moved, kept on purpose, not verified.

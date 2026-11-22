@@ -17,8 +17,7 @@ template, in this order, so the next session reads the same sections the compact
 7. **Next**: ordered steps, each concrete enough to run without asking (also `status.mjs next <row> "<step>"`).
 8. **Don't redo**: dead ends already ruled out, one `-` item each (the session-start notice and the digest print this list).
 9. **Surprises**: what behaved other than expected.
-10. **Reports**: only the report paths (their name format is stated in `reviewer.md` and `security-auditor.md`); never
-    their content.
+10. **Reports**: only the paths of report files agents wrote; never their content.
 
 Entries are itemized and updated in place: add, mark done or edit one item; never rewrite the note from the old one, and
 keep every earlier item word for word unless it is wrong (then mark it, do not delete it).

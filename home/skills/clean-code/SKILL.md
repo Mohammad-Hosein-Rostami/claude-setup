@@ -28,4 +28,4 @@ Before finishing, check the smells agents leave behind:
 | Diff touches more than the task needs | `git diff --stat` (C18) |
 | Deleted, skipped or weakened tests | grep diff (C13) |
 
-Done-gate: lint clean at these limits; no new duplicate blocks; every new abstraction has a named caller. Then `verify-done`.
+Done-gate: lint clean at these limits; no new duplicate blocks; every new abstraction has a named caller.

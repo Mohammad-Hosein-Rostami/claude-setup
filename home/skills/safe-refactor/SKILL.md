@@ -3,20 +3,18 @@ name: safe-refactor
 description: Use when restructuring code without changing behaviour, including renames, extractions and moves.
 ---
 
-Test runs in this skill happen only when the owner turned `test` on with `/check`; off, keep the behaviour by reading every caller, change in small steps and say `not checked: test`.
-
 Rules: R1-R4 (`~/.claude/standards/refactor.md`), C1-C4, C18.
 
 This skill is for code-level refactors. A whole-repository restructure (removing a build tool, merging packages, folder moves with config changes) uses `repo-restructure`.
 
 1. State the goal and the behaviour that must not change. If the goal needs a behaviour change, split it out first.
-2. Check coverage of the code to move. If thin, write characterisation tests that pin current behaviour (odd outputs too) and commit them first (T2).
+2. Check coverage of the code to move. If thin, read every caller and, where the project has tests, pin current behaviour (odd outputs too) with characterisation tests and commit them first.
 3. Capture the public API (exports, route shapes, schemas) as a baseline list.
-4. Work in mechanical steps: rename, extract, move, inline. Test after each; commit only when green (C16).
+4. Work in mechanical steps: rename, extract, move, inline. After each step run the project's own tests if it has them; commit only when green (C16).
    For renames and structural matches, prefer the LSP tool (references) or `ast-grep` (`sg run -p '<pattern>'`) over regex.
 5. Never mix a refactor and a behaviour change in one commit. Never edit a test to fit the refactor; if a test must change, stop and explain.
 6. Large moves: add the new path, switch callers in batches, delete the old path when none remain.
 7. Delete dead code and unused exports (`knip`) (C8). Check size limits (C3, C4).
 8. Diff the public API against the baseline: empty, or listed in the PR body.
 
-Done-gate: tests green before and after (exit codes quoted); API diff empty or listed; then `verify-done`.
+Done-gate: the project's tests (if any) green before and after, exit codes quoted; API diff empty or listed.

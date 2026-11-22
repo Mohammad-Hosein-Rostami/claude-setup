@@ -3,7 +3,7 @@ name: figma-pixel-perfect
 description: Use whenever a task has a Figma link, frame or node id, or says match the design / pixel perfect - pull the baseline, build, compare with ui-check, fix until it passes, then check responsive.
 ---
 
-Pulling the Figma baseline and building to it always run; the `ui-check run` compare loop, responsive checks and the `visual-qa` gate run only when the owner turned `ui` on with `/check` (a Figma link does not turn it on). Off: say `not checked: ui`.
+On every UI change, with no switch: pull the Figma baseline, build to it, run the `ui-check run` compare loop and the responsive checks, then the `visual-qa` final gate.
 
 Rules: U1, U2, F7. Conversion rules, tolerances and false positives: `standards/figma.md` (read it once per task).
 Tools: `node ~/.claude/tools/ui-check/cli.mjs <cmd>`, `ui-coverage/ui-coverage.mjs`, `ui-proof/ui-proof.mjs` (READMEs beside them).
@@ -61,7 +61,6 @@ the current base; same matrix, URL, widths), writes the review page (`ui-proof r
 - Acceptance numbers: "N states, X px, R rows, not worse" against `<ref>`.
 - Every state, failure paths included (script fails, long list, forced colours, no script).
 - The owner's words verbatim; owner decisions that bind the lane; the file scope; the hand-over note path.
-- A test that fails first.
 - Shared-machine rules: other lanes' ports, kill only your own processes.
 - Token check (design-system project): a raw colour, px size or font value in `sx`, `styled` or an inline style where a theme
   token exists is a failing row naming the token; an exception needs a reason.
@@ -69,4 +68,4 @@ the current base; same matrix, URL, widths), writes the review page (`ui-proof r
 - The owner gets a live page (the review page of the final gate).
 
 Done-gate: the lane's last `run` PASS (or open items with proven causes), then visual-qa's final-gate PASS on the tree that lands
-with its review page path, commands and verdict lines quoted; then `verify-done`.
+with its review page path, commands and verdict lines quoted.

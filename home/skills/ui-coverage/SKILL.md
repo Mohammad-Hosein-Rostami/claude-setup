@@ -3,7 +3,7 @@ name: ui-coverage
 description: Use for any UI task with more than one component, any Figma or pixel-perfect work, any "all screens / all forms / everywhere" request, and any i18n or RTL work - build a coverage matrix of surfaces x states x locales, gate it with ui-coverage check, hand over a live page.
 ---
 
-The matrix (`init`) is planning and always allowed; `ui-coverage check` and every compare run only when the owner turned `ui` on with `/check`. Off: say `not checked: ui`.
+The matrix, `ui-coverage check` and every compare run on every UI change, with no switch.
 
 Rules: U13, U14, U1, U2. Tool: `node ~/.claude/tools/ui-coverage/ui-coverage.mjs <init|expand|scaffold|check|states>` (README beside it has the matrix.json format; `init matrix.json --locales en:ltr,fa:rtl --widths 320,768,1280 --surfaces a,b` writes the skeleton). The matrix is one file per task; done = `check` exits 0. Before the first UI lane, `init` the matrix (with `--frames frames.json` when there is Figma) and put the line `MATRIX: <path>` in every `ui-implementer` and `visual-qa` brief (`MATRIX: none: <reason>` only for a one-file tweak with no Figma and one locale); a brief without one is sent back once.
 
@@ -17,4 +17,4 @@ Rules: U13, U14, U1, U2. Tool: `node ~/.claude/tools/ui-coverage/ui-coverage.mjs
 8. **Report to the owner.** Paste the tool summary, including its `frames:` line and every `na` and `deferred` cell with its reason.
 9. **Timed-out question.** A scope or component question that gets no answer: take the option that keeps the full scope and reuses the existing component; mark it `UNCONFIRMED` in STATUS.md `## Owner decisions` and ask it again in the next reply (queue: `ask.mjs answer --default`).
 
-Done-gate: `ui-coverage check` exits 0 (summary pasted); live page URL given; mock-exclusion output quoted; then `ui-quality-pass` and `verify-done`.
+Done-gate: `ui-coverage check` exits 0 (summary pasted); live page URL given; mock-exclusion output quoted; then `ui-quality-pass`.

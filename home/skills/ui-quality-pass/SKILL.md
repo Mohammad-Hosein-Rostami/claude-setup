@@ -3,7 +3,7 @@ name: ui-quality-pass
 description: Use before saying any UI component, page, screen, step or dialog is done or fixed, including small tweaks and work a subagent did - tokens, semantics, keyboard, contrast, responsive, async states, copy.
 ---
 
-Runs only when the owner turned `ui` on with `/check` (a Figma link or "pixel perfect" does not turn it on). Off: build to the UI rules as you write and say `not checked: ui`.
+Runs on every UI change, with no switch: before saying a UI piece is done.
 
 Rules: F7-F9, U1-U12 (`rules/ui.md`; examples in `standards/ui-a11y.md`). Build-time detail lives in `accessibility-build`, `responsive-ui`, `async-ui-states`, `forms-validation`.
 
@@ -17,6 +17,6 @@ Rules: F7-F9, U1-U12 (`rules/ui.md`; examples in `standards/ui-a11y.md`). Build-
 8. Copy: plain sentence case, no placeholder text (U12).
 9. Run axe (or the project's a11y test) and use `ui-check responsive` for breakpoints (reports, not screenshots) if Playwright is available; otherwise state "not run".
 
-Done-gate: checklist 1-8 each marked pass or a fix commit; `ui-coverage check` exits 0 (paste the summary) for multi-component or multi-locale work; dev-only mocks/showcases proven absent from the production build (build, grep the output, quote it); axe result or "not run" stated; then `verify-done`.
+Done-gate: checklist 1-8 each marked pass or a fix commit; `ui-coverage check` exits 0 (paste the summary) for multi-component or multi-locale work; dev-only mocks/showcases proven absent from the production build (build, grep the output, quote it); axe result or "not run" stated.
 
 Typical misses: raw hex/px, `div` with `onClick`, missing loading/empty/error states, `new Date(string)`, `100vh` on mobile, overflow at 320 px, console errors, a wrong screen shown for a moment before a redirect.

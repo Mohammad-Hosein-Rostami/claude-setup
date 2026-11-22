@@ -17,18 +17,17 @@ step landed. The STATUS.md rows hold the state; the tool is `node ~/.claude/tool
 
 ## Walk
 1. `road.mjs next <road> --budget 5` names the step and its lanes (at most 5 agents at once; the hook refuses a 6th).
-2. Build batch: one writer per lane (plus a test-writer where the lane has `acceptanceTests`), each brief from the lane's contract.
-3. `road.mjs join` per lane.
-4. With `review` on: review rounds (the `review-tier` steps line, then `verdict.mjs`).
-5. `land-lane` per lane, one at a time.
-6. `road.mjs gate <road> --step <N>`, then a `deliver` row.
+2. Build batch: one writer per lane, each brief from the lane's contract.
+3. `road.mjs join` per lane (judges the lane's scope; exit 3 gives its findings back to the writer).
+4. `land-lane` per lane, one at a time; write each close row's `landed <to> on <base> from <from>` evidence.
+5. `road.mjs gate <road> --step <N>`, then a `deliver` row.
 
 Resume after an exit: `road.mjs next`, each open lane's row, branch tip, `HANDOFF-<row>.md` and last report. A live agent
 of the same session is continued with SendMessage.
 
 ## Gate and update
-When every lane of the step landed: `road.mjs gate <road> --step <N>`. Every line must PASS; the next step starts only
-then. After the gate: one update to the owner with the `Finish:` block of `estimate.mjs STATUS.md` pasted as-is, and a
+When every lane of the step landed: `road.mjs gate <road> --step <N>`. Every line must PASS (it checks that every lane landed, and the other lines the road README lists); the next step starts
+only then. After the gate: one update to the owner with the `Finish:` block of `estimate.mjs STATUS.md` pasted as-is, and a
 `status.mjs deliver "<step N done>"` row.
 
 ## Failure and carry
