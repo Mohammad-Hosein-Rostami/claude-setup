@@ -138,7 +138,7 @@ test('A2: a related test that passes at base and fails now blocks (the base comp
 const WEAKENINGS = [
   { name: 'a deleted test case', mention: /tests\/a\.test\.mjs/, edit: (repo) => repo.write('tests/a.test.mjs', nodeTestSource({ cases: [{ name: 'one' }] })) },
   { name: 'an added .skip', mention: /tests\/a\.test\.mjs[^\n]*skip|skip[^\n]*tests\/a\.test\.mjs/i, edit: (repo) => repo.write('tests/a.test.mjs', `${nodeTestSource({ cases: [{ name: 'one' }, { name: 'two' }] })}test.skip('three', () => {});\n`) },
-  { name: 'an added @ts-ignore', mention: /src\/x\.ts[^\n]*ts-ignore|ts-ignore[^\n]*src\/x\.ts/, edit: (repo) => repo.write('src/x.ts', "// @ts-ignore\nexport const x: number = 'a';\n") },
+  { name: 'an added @ts-ignore', mention: /src\/x\.ts[^\n]*suppression/, edit: (repo) => repo.write('src/x.ts', "// @ts-ignore\nexport const x: number = 'a';\n") },
   { name: 'an edited test script', mention: /package\.json/, edit: (repo) => repo.write('package.json', `${JSON.stringify({ ...NODE_TEST_PACKAGE, scripts: { ...NODE_TEST_PACKAGE.scripts, test: 'echo ok' } })}\n`) },
 ];
 const weakeningProject = (t) => newRepo(t, { packageJson: NODE_TEST_PACKAGE, files: { 'tests/a.test.mjs': nodeTestSource({ cases: [{ name: 'one' }, { name: 'two' }] }), 'src/x.ts': 'export const x: number = 1;\n' } });
@@ -223,12 +223,12 @@ test('A12: a changed path with a space keeps its `/` form; the change key is sta
   const repo = newRepo(t, { packageJson: TYPECHECK_PACKAGE, files: TS_SOURCES, tools: ['tsc'] });
   repo.write('src/my file.ts', 'export const m = 1;\n');
   const { rangeChange } = await lib('scope.mjs');
-  const first = rangeChange(repo.dir, repo.baseSha);
+  const first = await rangeChange(repo.dir, repo.baseSha);
   assert.deepEqual(first.files, ['src/my file.ts']);
   assert.match(first.key, /^[0-9a-f]{64}$/);
-  assert.equal(rangeChange(repo.dir, repo.baseSha).key, first.key);
+  assert.equal((await rangeChange(repo.dir, repo.baseSha)).key, first.key);
   repo.write('src/my file.ts', 'export const m = 2;\n');
-  assert.notEqual(rangeChange(repo.dir, repo.baseSha).key, first.key);
+  assert.notEqual((await rangeChange(repo.dir, repo.baseSha)).key, first.key);
 });
 
 test('A12: the tsc parser reads a Windows drive path with backslashes and CRLF as `C:/a b/x.ts`', async () => {
