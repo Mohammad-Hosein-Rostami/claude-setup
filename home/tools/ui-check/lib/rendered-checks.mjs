@@ -1,6 +1,6 @@
 // Purpose: pure decision functions for the `responsive` findings that need element facts but no browser: `raw-i18n-key`,
 // `focus-indicator`, `rtl-physical-align`, and the `target-size?` hint.
-// Exports: rawI18nKeyFindings, focusIndicatorFindings, focusRingWidth, rtlPhysicalAlignFindings, targetSizeHints, MAX_FOCUS_STOPS, FOCUS_INDICATOR_FAILS, RAW_KEY_PATTERN, INDICATOR_FIELDS, RELATED_SIZE_FIELDS.
+// Exports: rawI18nKeyFindings, focusIndicatorFindings, focusRingWidth, focusRingWidthHints, rtlPhysicalAlignFindings, targetSizeHints, MAX_FOCUS_STOPS, FOCUS_INDICATOR_FAILS, RAW_KEY_PATTERN, INDICATOR_FIELDS, RELATED_SIZE_FIELDS.
 // Invariants: pure; each takes plain facts gathered in the page (lib/audit.mjs, lib/focus-audit.mjs), so a unit test needs no browser;
 // a hidden element never produces a finding; every function takes an optional cap on the number of findings.
 
@@ -151,6 +151,25 @@ function ringWidthOfPair({ before, after }) {
  */
 export function focusRingWidth({ hidden, own, related }) {
   return Math.max(0, ...(hidden ? [] : own).map(ringWidthOfPair), ...related.map(ringWidthOfPair));
+}
+
+const WIDTH_DECIMALS = 100; // widths show with at most 2 decimals
+
+/**
+ * Hint `focus-ring-width`: how wide the focus rings of the page are, one row for the whole walk. Report-only information (the number a capture
+ * needs to keep a ring out of the clip); it never decides a finding. No row when no stop shows a ring (`focus-indicator` covers that case).
+ * @param {{focusables: {element: string, ringWidth: number}[]}} facts the stops of `walkFocus`, each with its `ringWidth` in px
+ * @returns {{check: 'focus-ring-width', element: 'page', detail: string}[]} none or one
+ */
+export function focusRingWidthHints({ focusables }) {
+  const ringed = focusables.filter((f) => f.ringWidth > 0);
+  if (ringed.length === 0) return [];
+  const widest = ringed.reduce((best, f) => (f.ringWidth > best.ringWidth ? f : best));
+  const counts = new Map();
+  for (const f of ringed) counts.set(f.ringWidth, (counts.get(f.ringWidth) ?? 0) + 1);
+  const px = (n) => `${Math.round(n * WIDTH_DECIMALS) / WIDTH_DECIMALS}px`;
+  const spread = [...counts].sort(([a], [b]) => a - b).map(([width, count]) => `${px(width)} x${count}`).join(', ');
+  return [{ check: 'focus-ring-width', element: 'page', detail: `widest focus ring ${px(widest.ringWidth)} (${widest.element}); ${ringed.length} of ${focusables.length} keyboard stops show one: ${spread}` }];
 }
 
 /**

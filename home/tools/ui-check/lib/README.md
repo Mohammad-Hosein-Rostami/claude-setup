@@ -11,13 +11,13 @@
 - `context.mjs` - validation of the context flags (`--locale`, `--color-scheme`, `--storage`, `--cookie`, `--expect-dir`) and widths; UsageErrors name the flag or JSON path.
 - `elements.mjs` - compare measured DOM boxes/styles to the flattened Figma spec (the element gate).
 - `errors.mjs` - one error type for usage and setup problems (exit code 2).
-- `focus-audit.mjs` - presses Tab and gathers the focused/unfocused styles behind `focus-indicator`.
+- `focus-audit.mjs` - presses Tab and gathers the focused/unfocused styles behind `focus-indicator`; each stop also carries `ringWidth` (px).
 - `figma-api.mjs` - minimal Figma REST client (node tree + PNG export). Never logs or returns the token.
 - `image.mjs` - PNG read/write, padding to a common size and diff-region scan.
 - `playwright.mjs` - finds Playwright: `--project`, `UI_CHECK_PROJECT`, the tool's own `node_modules`; the not-found message.
 - `measure.mjs` - in-page measurement of mapped elements (serialised into the browser by Playwright).
 - `pixels.mjs` - the pixel gate - odiff (threshold 0.1, anti-aliasing ignored) with size-mismatch padding.
-- `rendered-checks.mjs` - pure decisions for `raw-i18n-key`, `focus-indicator`, `rtl-physical-align`, `tap-target`.
+- `rendered-checks.mjs` - pure decisions for `raw-i18n-key`, `focus-indicator`, `focus-ring-width` (report-only), `rtl-physical-align`, `tap-target`.
 - `report.mjs` - write report.json and a report.md capped at 40 lines.
 - `spec.mjs` - flatten a Figma REST node tree into a list of boxes relative to the frame root.
 - `same-as-default.mjs` - the `same-as-default?` pass of `batch`: saves each page's comparable texts beside its report, compares later locales with the first, updates their report and record.

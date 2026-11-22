@@ -165,7 +165,7 @@ Output in `--out` (default under the OS temp dir): `results.json`, `summary.md` 
 - Playwright is looked up in `--project` (default: the current directory), then `UI_CHECK_PROJECT`, then the tool's own `node_modules`; a project without Playwright no longer exits 2 when a later place has it.
 - `batch` runs 4 states at a time by default (was one); pass `--jobs 1` for the old order of work. It prints a progress line per state on stderr and writes `results.partial.json` while running.
 - `focus` steps fail on an element that did not take focus (before: silent pass). Timed-out pointer steps say what covers the target.
-- `responsive` lists the hints `target-size?`, `raw-i18n-key`, `focus-indicator`, `rtl-physical-align`, `bidi-placeholder?`, `ltr-run-in-rtl?` and `untranslated?` (and `same-as-default?` in `batch`) in a separate section; they never change the verdict or the exit code. `report.json` gains `hints`, a `batch` record gains `hints` (a count), `summary.md` gains a column and a section.
+- `responsive` lists the hints `target-size?`, `raw-i18n-key`, `focus-indicator`, `focus-ring-width`, `rtl-physical-align`, `bidi-placeholder?`, `ltr-run-in-rtl?` and `untranslated?` (and `same-as-default?` in `batch`) in a separate section; they never change the verdict or the exit code. `report.json` gains `hints`, a `batch` record gains `hints` (a count), `summary.md` gains a column and a section.
 
 ## Not covered (open)
 
@@ -372,6 +372,10 @@ by a warning line (Figma texts of exactly 80 characters); re-pull it with `figma
   never a silent stop, unless the state sets `maxFocusStops: {"count": 80, "why": "<15+ characters>"}`. `focus-indicator` stays a hint
   until it has proven itself (`FOCUS_INDICATOR_FAILS` in `lib/rendered-checks.mjs`: set it once `results.md` counts 0 false alarms on
   one real screen per UI project). M3: the walk runs again with forced colours (`focus-indicator (forced colours)`, a hint).
+  `focus-ring-width` (a hint, one row per width, never a failure): the width in px of the ring each stop shows on focus, the outline
+  drawn or the widest solid `box-shadow` band added on focus (`outline: none` with a `0 0 0 3px` shadow is 3; a blur-only glow and a
+  shadow that is there unfocused do not count; Chromium reports the default `auto` outline by its computed width, which can be less
+  than it paints). The row names the widest ring and how many stops show each width; it is the margin a capture needs around a control.
 
 ## `attribute` (where the leftover pixels come from)
 

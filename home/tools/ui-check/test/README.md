@@ -10,6 +10,7 @@
 - `fixtures/` - static HTML and JSON inputs (card, wide, frame, map, autofocus, rtl, rtl-ok, ltr, lang, switch) used by the smoke and determinism tests.
 - `determinism.test.mjs` - launch args and autofocus step (browser-free), plus CPU-raster and autofocus checks in Chromium (need `UI_CHECK_PROJECT`).
 - `rendered-checks.test.mjs` - browser-free tests for the pure decisions behind `raw-i18n-key`, `focus-indicator`, `rtl-physical-align` and `tap-target`.
+- `focus-ring-capture.test.mjs` - browser-free tests for the focus-ring width: the measure (outline, `outline: none` with a box-shadow ring, glow, always-on shadow), `walkFocus` carrying it, and the `focus-ring-width` hint reaching report.md and report.json.
 - `steps-diagnostics.test.mjs` - browser-free tests for the `focus` check and the "what covers the target" click message.
 - `playwright-resolve.test.mjs` - browser-free tests for the Playwright lookup order and its error message (fake packages in temp folders).
 - `batch-schedule.test.mjs` - browser-free tests for `--jobs`, the parallel/serial split, the pool, the progress line and `--resume`.

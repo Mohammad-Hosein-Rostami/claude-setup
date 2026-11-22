@@ -1,5 +1,5 @@
 // Purpose: `responsive` - layout invariants at several widths; screenshots go to disk, never to the caller.
-// Exports: options, auditWidth, auditAll, run. Invariants: exit 0 pass / 1 fail; one fresh page per width.
+// Exports: options, focusChecks, auditWidth, auditAll, run. Invariants: exit 0 pass / 1 fail; one fresh page per width.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,7 +8,7 @@ import { auditInPage } from '../lib/audit.mjs';
 import { bidiFieldFindings, bidiPlaceholderFindings, isHint } from '../lib/bidi.mjs';
 import { loadChromium, launch, openPage } from '../lib/browser.mjs';
 import { walkFocus } from '../lib/focus-audit.mjs';
-import { FOCUS_INDICATOR_FAILS, MAX_FOCUS_STOPS, focusIndicatorFindings, rawI18nKeyFindings, rtlPhysicalAlignFindings, targetSizeHints } from '../lib/rendered-checks.mjs';
+import { FOCUS_INDICATOR_FAILS, MAX_FOCUS_STOPS, focusIndicatorFindings, focusRingWidthHints, rawI18nKeyFindings, rtlPhysicalAlignFindings, targetSizeHints } from '../lib/rendered-checks.mjs';
 import { CONTEXT_OPTIONS, readContextFlags, validateWidths } from '../lib/context.mjs';
 import { loadSteps } from '../lib/steps.mjs';
 import { writeReport } from '../lib/report.mjs';
@@ -36,17 +36,18 @@ function parseWidths(text) {
 /**
  * P3e and M3: the focus walk, then again with forced colours. Reaching the cap is a failing `focus-cap` finding (never a silent stop) unless the
  * state raised it with `maxFocusStops` {count, why}; `focus-indicator` fails only once promoted (FOCUS_INDICATOR_FAILS), and the forced-colours
- * walk is always a hint (a box-shadow ring disappears under forced colours).
+ * walk is always a hint (a box-shadow ring disappears under forced colours). The measured ring width is one more hint (`focus-ring-width`), never a failure.
  * @returns {Promise<{findings: object[], hints: object[]}>}
  */
-async function focusChecks(page, maxFocusStops, max) {
+export async function focusChecks(page, maxFocusStops, max) {
   const walk = await walkFocus(page, maxFocusStops?.count ?? MAX_FOCUS_STOPS);
   const indicator = focusIndicatorFindings({ focusables: walk.facts }, max);
+  const ringWidth = focusRingWidthHints({ focusables: walk.facts });
   const cap = walk.capped ? [{ check: 'focus-cap', element: 'page', detail: `the focus walk reached its cap of ${walk.max} stops before focus left the page; the rest is unchecked: raise it with maxFocusStops {count, why} in the state` }] : [];
   await page.evaluate(() => document.activeElement?.blur());
   await page.emulateMedia({ forcedColors: 'active' });
   const forced = focusIndicatorFindings({ focusables: (await walkFocus(page, walk.max)).facts }, max).map((f) => ({ ...f, check: 'focus-indicator (forced colours)' }));
-  return FOCUS_INDICATOR_FAILS ? { findings: [...cap, ...indicator], hints: forced } : { findings: cap, hints: [...indicator, ...forced] };
+  return FOCUS_INDICATOR_FAILS ? { findings: [...cap, ...indicator], hints: [...ringWidth, ...forced] } : { findings: cap, hints: [...indicator, ...ringWidth, ...forced] };
 }
 
 /**
@@ -57,7 +58,7 @@ async function focusChecks(page, maxFocusStops, max) {
  * @param {number} width viewport width in CSS px
  * @param {string} outDir where w<width>.png goes
  * @returns {Promise<{width: number, check: string, element: string, detail: string, hint?: true}[]>} layout, bidi-field and bidi-placeholder findings, plus the heuristic
- *   hints (target-size?, raw-i18n-key, rtl-physical-align, focus-indicator, bidi-placeholder?, ltr-run-in-rtl?, untranslated?) marked `hint: true`; hints never fail a run
+ *   hints (target-size?, raw-i18n-key, rtl-physical-align, focus-indicator, focus-ring-width, bidi-placeholder?, ltr-run-in-rtl?, untranslated?) marked `hint: true`; hints never fail a run
  */
 export async function auditWidth(browser, target, width, outDir) {
   const page = await openPage(browser, { ...target, width });
