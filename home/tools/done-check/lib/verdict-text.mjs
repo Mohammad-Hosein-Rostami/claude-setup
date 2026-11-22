@@ -22,7 +22,7 @@ const WEAKENED = 'tests-weakened';
  */
 
 const seconds = (ms) => `${(ms / MS_PER_SECOND).toFixed(ms < WHOLE_SECONDS_FROM_MS ? 1 : 0)} s`;
-const oldNote = (check) => (check.old > 0 ? `, ${check.old} old fail` : '');
+const oldNote = (check) => `${check.old > 0 ? `, ${check.old} old fail` : ''}${check.flaky > 0 ? `, ${check.flaky} flaky` : ''}`;
 
 /** The part of the line for one kind, or null when the kind says nothing worth a part (the weakened-test scan, unless it fails). */
 function partOf(kind, check, files) {

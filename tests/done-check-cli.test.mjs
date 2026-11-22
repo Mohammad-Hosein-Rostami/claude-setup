@@ -285,3 +285,40 @@ test('A11: an owner label `real` on an ignored block takes it out of the rate (1
   assert.deepEqual({ label: rows.at(-1).label, run: rows.at(-1).run, check: rows.at(-1).check }, { label: 'real', run: 'blk-1', check: 'types' });
   assert.deepEqual(doctorWarnings(repo), []);
 });
+
+// ---- a test that fails once and then passes is flaky, not a new failure (proof defect D2) ----
+
+/** A real node:test file whose test fails the first time it runs anywhere (it leaves a marker outside the project) and passes after. */
+const failsOnceSource = (marker) => `import test from 'node:test';
+import fs from 'node:fs';
+import '../src/a.mjs';
+test('fails only on its first run', () => {
+  if (fs.existsSync(${JSON.stringify(marker)})) return;
+  fs.writeFileSync(${JSON.stringify(marker)}, 'ran');
+  throw new Error('the paste was never shown');
+});
+`;
+
+test('D2: a new failing test that passes when its file runs again at head is flaky: no block, the line says `1 flaky`', (t) => {
+  const repo = newRepo(t, { packageJson: NODE_TEST_PACKAGE, files: { 'src/a.mjs': 'export const a = 1;\n' } });
+  repo.write('tests/a.test.mjs', failsOnceSource(join(repo.home, 'flaky-marker')));
+  repo.write('src/a.mjs', 'export const a = 2;\n');
+  const { status, verdict } = check(repo);
+  assert.equal(status, 0);
+  assert.equal(verdict.verdict, 'ok');
+  assert.equal(verdict.row.checks.tests.new, 0);
+  assert.equal(verdict.row.checks.tests.flaky, 1);
+  assert.match(verdict.line, /tests ok, 1 flaky/);
+});
+
+test('D2: a new failing test that fails again at head still blocks, and is not called flaky', (t) => {
+  const alwaysFailing = "import test from 'node:test';\nimport { a } from '../src/a.mjs';\ntest('a stays 1', () => { if (a !== 1) throw new Error('a is not 1'); });\n";
+  const repo = newRepo(t, { packageJson: NODE_TEST_PACKAGE, files: { 'src/a.mjs': 'export const a = 1;\n', 'tests/a.test.mjs': alwaysFailing } });
+  repo.write('src/a.mjs', 'export const a = 2;\n');
+  const { status, verdict } = check(repo);
+  assert.equal(status, 1);
+  assert.equal(verdict.verdict, 'block');
+  assert.equal(verdict.row.checks.tests.new, 1);
+  assert.equal(verdict.row.checks.tests.flaky, undefined);
+  assert.doesNotMatch(verdict.line, /flaky/);
+});

@@ -1,12 +1,15 @@
 // The base compare of one done-check run (design 3.3): for each typecheck or test command that failed on the change, which of its
 // failures does the base commit have too (old, not the agent's) and which does it not (new).
-// Exports: compareWithBase({ scope, plan, results, repoId, budgetMs, env }) -> Promise<Map<number, BaseAnswer>>.
+// Exports: compareWithBase({ scope, plan, results, repoId, budgetMs, env }) -> Promise<Map<number, BaseAnswer>>,
+//   findFlaky({ scope, plan, results, answers, budgetMs }) -> Promise<Map<number, Set<string>>>.
 // Rules: only `types` and `tests` commands that failed are compared (lint looks at changed lines only). A typecheck runs again at the
 //   base as it is; tests run again at the base for the failing test files only (the command is rebuilt from the head command: a vitest or
 //   jest or node --test file list; a test file the base does not have cannot be an old failure). Answers are cached per (repo, base, package,
 //   kind, command and test files) through base-run.mjs. All base work (tree and runs) shares one budget. A run that cannot be read, a base
 //   tree that cannot be made, no git base, or a command shape it does not know answer `unavailable`: the caller then says the failures "may
 //   be older than your change", never that they are old.
+// Flaky: a test that newly fails at head (not an old failure) is run once more at head, its test file alone; one that passes the second time
+//   is flaky (the caller reports it and does not block). A rerun that cannot finish or read leaves the failure new.
 // Invariants: nothing throws for a bad base; the temp base tree is removed on every path (P15); the head results are never changed here.
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -120,4 +123,34 @@ export async function compareWithBase({ scope, plan, results, repoId, budgetMs, 
     tree.cleanup();
   }
   return answers;
+}
+
+/**
+ * Finds the new test failures that pass when their test file is run once more at head.
+ * @param {{ scope: import('./contract.mjs').Scope, plan: import('./contract.mjs').Plan, results: import('./contract.mjs').CheckResult[], answers: Map<number, BaseAnswer>, budgetMs: number }} input
+ *   `answers` come from compareWithBase (a failure with an old id is not new); `budgetMs` is the most the reruns may take together
+ * @returns {Promise<Map<number, Set<string>>>} per tests command index, the ids of its new failures that were flaky (only commands that have some)
+ */
+export async function findFlaky({ scope, plan, results, answers, budgetMs }) {
+  const cmds = plan.packages.flatMap((one) => one.cmds);
+  const reruns = [];
+  results.forEach((result, index) => {
+    const cmd = cmds[index];
+    if (cmd.kind !== 'tests' || result.result !== 'fail') return;
+    const fresh = result.failures.filter((failure) => !answers.get(index)?.oldIds?.has(failure.id));
+    const files = [...new Set(fresh.map((failure) => failure.file))].sort();
+    const changedArgs = new Set(scope.files.map((file) => fileArg(cmd, scope.top, file)));
+    const run = files.length > 0 ? testCommandFor(cmd, files.map((file) => fileArg(cmd, scope.top, file)), changedArgs) : null;
+    if (run) reruns.push({ index, run, fresh });
+  });
+  const flaky = new Map();
+  if (reruns.length === 0 || budgetMs <= 0) return flaky;
+  const again = await runPlan({ packages: [{ root: scope.top, pm: '', cmds: reruns.map((item) => item.run) }], skipped: [], fingerprint: '' }, scope, { deadlineMs: budgetMs });
+  for (const [position, { index, fresh }] of reruns.entries()) {
+    if (!['ok', 'fail'].includes(again[position].result)) continue; // the rerun said nothing: the failure stays new
+    const failingAgain = new Set(again[position].failures.map((failure) => failure.id));
+    const passed = fresh.filter((failure) => !failingAgain.has(failure.id)).map((failure) => failure.id);
+    if (passed.length > 0) flaky.set(index, new Set(passed));
+  }
+  return flaky;
 }

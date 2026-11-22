@@ -51,7 +51,7 @@ function cleanRunRow(row) {
   const checks = {};
   for (const [kind, check] of Object.entries(row.checks)) {
     if (!CHECK_KINDS.includes(kind) || !isText(check?.result) || !CHECK_FIELDS.slice(1).every((name) => isCount(check[name]))) fail(`bad check entry "${kind}"`);
-    checks[kind] = { result: check.result, new: check.new, old: check.old, ms: check.ms, ...(isText(check.why) ? { why: check.why } : {}) };
+    checks[kind] = { result: check.result, new: check.new, old: check.old, ms: check.ms, ...(isCount(check.flaky) ? { flaky: check.flaky } : {}), ...(isText(check.why) ? { why: check.why } : {}) };
   }
   const { v, id, at, where, session, agent, repo, base, key, files, verdict, risk, ms } = row;
   return { v, id, at, where, session, agent, repo, base, key, files, checks, verdict, risk: [...risk], ms };
