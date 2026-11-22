@@ -116,9 +116,9 @@ test('advice never weakens an ask: a push next to a sleep loop still asks, with 
   assert.equal(r.reasons.includes(WAIT_ADVICE), false);
 });
 
-/** What the hook does with one Bash call: 'allow' (no output) or the deny with its reason. */
-function hookRun(env, command, session = 'sess-wait') {
-  const input = JSON.stringify({ cwd: PROJECT, session_id: session, tool_input: { command } });
+/** What the hook does with one call of `tool` (Bash unless named): 'allow' (no output) or the deny or ask with its reason. */
+function hookRun(env, command, session = 'sess-wait', tool = 'Bash') {
+  const input = JSON.stringify({ cwd: PROJECT, session_id: session, tool_name: tool, tool_input: { command } });
   const { status, stdout, stderr } = spawnSync(process.execPath, [GUARD], { input, encoding: 'utf8', env });
   assert.equal(status, 0, stderr);
   if (stdout === '') return { decision: 'allow' };
@@ -142,4 +142,45 @@ test('the hook denies a sleep loop once with the advice, the identical retry run
   assert.equal(hookRun(env, `${loop} `).decision, 'deny', 'a changed command is a first time again');
   assert.deepEqual(hookRun(env, 'for i in 1 2 3; do sleep 1; done'), { decision: 'allow' });
   assert.deepEqual(hookRun(env, 'sleep 2'), { decision: 'allow' });
+});
+
+// Claude Code's Monitor tool runs a command that waits on a condition, and the Bash hook sees its calls (19 of 25 wait bounces in the
+// transcripts were Monitor's own until-loop): its wait is the right way to wait, so it gets no wait advice. Everything else still applies.
+const MONITOR = 'Monitor';
+const MONITOR_WAITS = ['until [ -f x ]; do sleep 10; done', 'until [ -f x ]; do sleep 2; done', 'while ! test -f done.flag; do sleep 30; done', 'sleep 600'];
+const freshEnv = () => {
+  const home = makeTempDir('monitor-home-');
+  return hookEnv({ HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: PROJECT });
+};
+
+test('a Monitor wait runs at the first send, while the same loop sent by Bash still gets the advice once', () => {
+  for (const command of MONITOR_WAITS) assert.deepEqual(hookRun(freshEnv(), command, 'sess-monitor', MONITOR), { decision: 'allow' }, command);
+  for (const command of ['while :; do sleep 10; done', ...MONITOR_WAITS.slice(0, 1)]) {
+    const first = hookRun(freshEnv(), command, 'sess-bash', 'Bash');
+    assert.equal(first.decision, 'deny', command);
+    assert.ok(first.reason.includes(WAIT_ADVICE), first.reason);
+  }
+});
+
+test('only the tool named exactly Monitor skips the wait advice', () => {
+  for (const tool of ['monitor', 'MONITOR', 'Monitor ', 'MonitorX', 'PowerShell', '']) {
+    const first = hookRun(freshEnv(), 'until [ -f x ]; do sleep 10; done', 'sess-other', tool);
+    assert.equal(first.decision, 'deny', String(tool));
+    assert.ok(first.reason.includes(WAIT_ADVICE), first.reason);
+  }
+});
+
+test('a Monitor call still gets every rule but the wait advice: a push asks on every send, other advice is still given once', () => {
+  const env = freshEnv();
+  const push = 'until [ -f x ]; do sleep 10; done; git push origin main';
+  for (const send of ['first', 'second', 'third']) {
+    const { decision, reason } = hookRun(env, push, 'sess-monitor-ask', MONITOR);
+    assert.equal(decision, 'ask', `${send} send`);
+    assert.doesNotMatch(reason, /wait by sleeping|run_in_background/, 'the dropped advice is not named next to the ask');
+  }
+  const merge = 'until [ -f x ]; do sleep 10; done; git merge feature';
+  const first = hookRun(env, merge, 'sess-monitor-merge', MONITOR);
+  assert.equal(first.decision, 'deny', 'the merge-commit advice is not a wait: it is still given once');
+  assert.ok(!first.reason.includes(WAIT_ADVICE), first.reason);
+  assert.deepEqual(hookRun(env, merge, 'sess-monitor-merge', MONITOR), { decision: 'allow' }, 'the identical retry runs');
 });

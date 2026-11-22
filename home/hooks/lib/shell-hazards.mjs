@@ -1,10 +1,16 @@
 // Rules for commands whose real command is hidden from the guard: it runs from a variable, from stdin, or from one string.
 // Exports: shellHazards({seg, raw, parsed, shellScript, line}) -> string[] ask reasons; IFS_SPLIT_REASON; VARIABLE_COMMAND_REASON, SPLIT_VARIABLE_REASON (the two
 // variable-command reasons, which lib/bounce-once.mjs sends back once for a rewrite); CONVENTIONAL_COMMAND_VARS (the names that
-// conventionally hold an editor, pager or compiler; lib/git-runs.mjs reads them too). Pure, no I/O.
+// conventionally hold an editor, pager or compiler; lib/git-runs.mjs reads them too); commandReadings(words, splitWords) -> the ways the
+// shell may read one command's words. Pure, no I/O (it remembers the answer of the arithmetic check below for the last line it read).
 // - the command word is a variable or `$(...)` (`$X`, `X="git push"; $X`): the guard cannot see what runs. Names that conventionally hold
 //   an editor, pager or compiler (`$EDITOR file`) are fine, and so is a variable assigned earlier in the line to one plain word. The
-//   first word of an array's element list (`files+=("$f")`, a segment marked `.arrayList`) is data, not a command word.
+//   first word of an array's element list (`files+=("$f")`, a segment marked `.arrayList`) is data, not a command word, and so is the
+//   first word of an arithmetic body (`echo $(( $(cat a) - 1 ))`, `(( $N > 2 ))`): bash and zsh compute it as a number and never run it
+//   (a `$(...)` inside it is a segment of its own, judged as a command). Only on a line whose every `((` closes with `))` and that has no
+//   `( (` (two groups, which the tokenizer also joins as `((`): `( ($X) )` and `$(($X) )` still ask.
+// - a value with blanks filled in for an unquoted `$X` (`X="push --force"; git $X`) is one word to zsh and several to bash:
+//   commandReadings gives both readings, and the guard judges each one with every rule (an rm reads both itself: lib/rm-paths.mjs).
 // - a shell reads its commands from stdin: `curl x | bash`, `bash <<EOF`, `bash < file`, `sh -s`.
 // - `env -S "cmd"` and `su -c "cmd"` take the command as ONE string.
 // - a brace word the guard cannot list (`{-c,"$X"}`, more than 64 words; lib/braces.mjs) at or before the command word, or in a command
@@ -13,8 +19,9 @@
 //   rule reads (IFS_SPLIT_REASON): bash splits the value at the new IFS characters, so `IFS=,; F=-rf,/x; rm $F` is `rm -rf /x`, which the
 //   guard, splitting at blanks only, would read as one option word (N5).
 // A false positive only costs a dialog, so each rule is as narrow as the bypass it closes.
-import { commandName } from './command-of.mjs';
+import { asGitSubcommand, commandName, commandOf } from './command-of.mjs';
 import { SCAN_STOP, SCAN_VERBS } from './dangerous-scan.mjs';
+import { bashReadings } from './rm-paths.mjs';
 
 const SHELLS = new Set(['bash', 'sh', 'zsh', 'ksh', 'dash']);
 const VARIABLE_WORD = /^\$(?:\{(\w+)[^}]*\}|(\w+))?$/; // `$X`, `${X}`, `${X:-default}`, or a bare `$` (the start of `$(...)` in a command position)
@@ -62,7 +69,8 @@ function oneStringCommand(seg, raw, parsed) {
  * @returns {string[]} ask reasons
  */
 export function shellHazards({ seg, raw, parsed, shellScript, line = '' }) {
-  const commandWord = seg.arrayList === true ? undefined : hiddenCommandWord(raw, parsed); // `files+=("$f")`: its elements are words
+  const data = seg.arrayList === true || isArithmeticBody(seg, line); // `files+=("$f")`: its elements are words; `$((..))` computes a number
+  const commandWord = data ? undefined : hiddenCommandWord(raw, parsed);
   return [commandWord, shellFromStdin(seg, parsed, shellScript), oneStringCommand(seg, raw, parsed), unlistedBraces(seg, raw, parsed),
     ifsSplit(seg, raw, parsed, line)].filter((reason) => reason !== undefined);
 }
@@ -91,4 +99,51 @@ function ifsSplit(seg, raw, parsed, line) {
   if (!NAMES_IFS.test(line)) return undefined;
   const expands = (seg.bareWords?.size ?? 0) > 0 || seg.includes(SUBSTITUTION_WORD);
   return expands && rulesRead(seg, raw, parsed) ? IFS_SPLIT_REASON : undefined;
+}
+
+const RM = 'rm'; // the one command that judges both readings of its words itself
+const ARITHMETIC_JOIN = '((';// the operators in front of the first word of a `$((..))` or `((..))` body (lib/shell-words.mjs `.joinedBy`)
+const OPENS_TWO_GROUPS = /\((?:\s|\\\n|#[^\n]*)+\(/; // `( (`, `(\<newline>(`, `( # note<newline>(`: two groups, joined as `((` all the same
+
+/**
+ * True when every `((` in the line is arithmetic, the reading lib/shell-lexer.mjs gives: the parentheses balance and the `(` after it
+ * closes just before the `)` that closes it (`$((1))`; `$((a) )` is a command substitution of a group), and no `( (` stands apart.
+ * One pass over the line; anything unclear (an unbalanced or quoted parenthesis) is false, so the command word is judged as before.
+ */
+function everyDoubleParenIsArithmetic(line) {
+  if (OPENS_TWO_GROUPS.test(line)) return false;
+  const open = [];
+  const closeOf = new Map();
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === '(') open.push(i);
+    else if (line[i] === ')' && open.length === 0) return false;
+    else if (line[i] === ')') closeOf.set(open.pop(), i);
+  }
+  return open.length === 0 && [...closeOf].every(([at, close]) => line[at + 1] !== '(' || closeOf.get(at + 1) === close - 1);
+}
+
+let lastLine; // the line read last and its answer: a long line has a segment per arithmetic body, and is read once for all of them
+let lastAnswer = false;
+/** True when the segment is an arithmetic body (`$(( $X - 1 ))`, `(( $N > 2 ))`): its first word is a number to compute, not a command. */
+function isArithmeticBody(seg, line) {
+  if (!(seg.joinedBy ?? '').endsWith(ARITHMETIC_JOIN)) return false;
+  if (line !== lastLine) [lastLine, lastAnswer] = [line, everyDoubleParenIsArithmetic(line)];
+  return lastAnswer;
+}
+
+/**
+ * The ways the shell may read one command's words, each with its command: as filled in (zsh keeps an unquoted `$X` as one word), then,
+ * when a value with blanks was filled in for an unquoted `$X`, as bash splits it (`X="push --force"; git $X` is `git push --force`).
+ * Every rule judges each reading, so a command hidden in a variable's value asks whichever shell runs the line. An rm gets one reading:
+ * checkRm already judges both itself (lib/rm-paths.mjs bashReadings), on the line's one work budget, which a second reading would spend twice.
+ * @param {string[]} words the segment's words after lib/rm-paths.mjs substituteKnownWords
+ * @param {Set<string>} splitWords the words substituteKnownWords filled in for an unquoted `$X` with a value that holds blanks
+ * @returns {{words: string[], parsed: ReturnType<typeof asGitSubcommand>}[]} one reading, or two when bash splits a word
+ */
+export function commandReadings(words, splitWords) {
+  const reading = (list) => ({ words: list, parsed: asGitSubcommand(commandOf(list)) });
+  const asFilledIn = reading(words);
+  if (asFilledIn.parsed.cmd === RM || !words.some((word) => splitWords.has(word))) return [asFilledIn];
+  const pieces = (word) => bashReadings(word, splitWords).slice(splitWords.has(word) ? 1 : 0); // bashReadings: the word, then its pieces
+  return [asFilledIn, reading(words.flatMap(pieces))];
 }

@@ -126,6 +126,45 @@ test('an unquoted variable whose value has blanks is judged as each word bash sp
   }
 });
 
+test('a command hidden in an unquoted variable with blanks is judged by every rule as bash splits it', () => {
+  const FORCE_PUSH = /^DESTRUCTIVE: force push/;
+  for (const platform of PLATFORMS) {
+    for (const line of ['X="push --force"; git $X origin main', 'X="push --force"; ionice -c3 git $X origin', 'X="push -f origin"; sudo git $X main',
+      'X=push; Y="--force origin"; git $X $Y', 'X="push --force"; export X; git $X']) {
+      assert.match(reasonOn(platform, line), FORCE_PUSH, `${platform}: ${line}`);
+    }
+    assert.match(reasonOn(platform, 'F="--no-verify -m x"; git commit $F'), /--no-verify/, platform);
+    assert.match(reasonOn(platform, 'P="release delete v1"; gh $P'), /gh release/, platform);
+    assert.match(reasonOn(platform, 'D="~ -delete"; find $D'), /^DESTRUCTIVE: find deleting outside the project/, platform);
+    assert.ok(reasonsOn(platform, 'C="-c core.hooksPath=/dev/null"; git $C commit').some((reason) => /hooksPath/.test(reason)), platform);
+  }
+});
+
+test('a quoted variable is one word, and a split value that runs nothing risky stays quiet', () => {
+  for (const line of ['X="push --force"; git "$X" origin main', 'ARGS="-n 5 --oneline"; git log $ARGS', 'F="-la /tmp"; ls $F',
+    'M="a b"; git commit -m "$M"', 'T="status --short"; git $T']) {
+    for (const platform of PLATFORMS) quietOn(platform, line);
+  }
+});
+
+test('an arithmetic body has no command word: `$(( $(cat a) - $(cat b) ))` and `(( $N > 2 ))` stay quiet', () => {
+  for (const line of ['echo dur $(( $(cat a) - $(cat b) ))s', 'echo $(( 1 + 2 ))', 'echo $(($(cat a)-1))', '(( $N > 2 )) && echo big',
+    'x=$(( $CMD ))', 'a; (( $X + 1 )) && b', 'echo $(( $(echo rm) ))', 'echo $(( (1 + 2) * $N ))']) {
+    for (const platform of PLATFORMS) quietOn(platform, line);
+  }
+});
+
+test('next to arithmetic, a variable or substitution command word still asks, also inside the arithmetic and in spaced groups', () => {
+  const RM = 'rm';
+  for (const platform of PLATFORMS) {
+    for (const line of ['$CMD x', `$(echo ${RM}) -rf x`, 'echo $(( 1 + 2 )); $CMD x', `$(echo ${RM}) -rf x $(( 1 ))`, 'echo $(( $( $CMD x ) ))',
+      '( ($CMD x) )', '$(($CMD x) )', '(( 1 )) && $CMD x', '( # note\n($CMD x) )']) {
+      assert.ok(reasonsOn(platform, line).length > 0, `${platform}: ${line}`);
+    }
+    assert.match(reasonOn(platform, `echo $(( $(${RM} -rf ~/x) ))`), RM_OUTSIDE, `${platform}: a substitution inside arithmetic still runs`);
+  }
+});
+
 test('ordinary appends and array writes stay quiet', () => {
   for (const line of ['x+=1', 'arr[0]=a', 'files+=("$f")', 'X+=1 echo hi', 'PATH+=:/opt/bin npm test', 'arr[0]=a; echo "${arr[0]}"']) {
     for (const platform of PLATFORMS) quietOn(platform, line);

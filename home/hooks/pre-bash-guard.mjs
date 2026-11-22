@@ -7,9 +7,9 @@
 // secret), the first send is denied with the rewrite instead, naming by class (lib/reason-classes.mjs) any other reason that will still ask; the identical
 // command sent again gets the ask above. ADVICE (quality rules: a hand-edited lockfile, a merge that can create a merge commit, a branch moved by update-ref,
 // a copy of an existing lane branch, a fast-forward merge into the base without a suite PASS: lib/git-advice.mjs, a `for|while|until` loop that sleeps 5 s or
-// more or a single sleep of 30 s or more, unless the call is sent with run_in_background: true: lib/wait-advice.mjs) never asks: alone, the first send is
-// denied with the fix and the identical retry runs; next to an ask or bounce it is appended (table: lib/bounce-once.mjs) Every ask and its outcome is logged
-// (lib/guard-log.mjs, no secrets).
+// more or a single sleep of 30 s or more, unless the call is sent with run_in_background: true or is a Monitor call: lib/wait-advice.mjs) never asks:
+// alone, the first send is denied with the fix and the identical retry runs; next to an ask or bounce it is appended (table: lib/bounce-once.mjs). Every
+// ask and its outcome is logged (lib/guard-log.mjs, no secrets). Monitor calls reach this hook too (seen in transcripts). `$((..))` has no command word.
 // Rules. DESTRUCTIVE (the dialog says "DESTRUCTIVE: ..."): force push (incl. -fu clusters and +refspec), `push --mirror`, remote branch delete, rm -r of a
 // whole folder (the working directory, a bare glob such as `*` or `./**/*` of it, the project root, home, `/`: lib/rm-paths.mjs), rm -r outside the project
 // (temp dirs allowed, judged from every folder the line's `cd`s may have led to: lib/cd-folder.mjs, `cd` to `~`, `$HOME` and `$(git rev-parse
@@ -54,7 +54,7 @@
 // delete`, `gh repo edit --visibility`, `gh secret set`, `gh workflow run`, a `gh api graphql` mutation, `diskutil erase*` and `apfs delete*`, `newfs_*`, `>
 // /dev/disk*`, `cp|mv|tee ... /dev/disk*|sd*|nvme*`, an `alias` whose body would ask ask. PGHOST/PGSERVICE/MYSQL_HOST set earlier in the line count as the
 // host of a later psql/mysql. Prod SQL with a `$tag$` quote, a backslash escape or `;` followed by more text is not read-only. Nesting deeper than
-// MAX_NESTING asks.
+// MAX_NESTING asks. An unquoted `$X` with blanks is judged by every rule as zsh (one word) and as bash (split) reads it (`X="push -f"; git $X`).
 // Fail to ask (Round 4, lib/raw-risk.mjs): the two parsers are not a security boundary. A command that has ANY hidden-execution construct (`$(`, backtick,
 // `<<`, `<(`, eval, trap, case, `\r`, a pipe into a shell ...) and a dangerous word anywhere in its raw text, quoted or not, asks with "risky word inside
 // shell expansion" when nothing else asked. Round 5: the quoted message of `git commit` and `gh pr|issue create|edit|comment` is data (lib/message-text.mjs),
@@ -78,7 +78,7 @@ import {
   checkDiskWipe, checkGhSecret, checkGit, checkHiddenRm, checkKeychainPrint, checkLockfileEdit, checkStdinRm, checkStdinScriptRm,
 } from './lib/command-checks.mjs';
 import { withoutCapturedPrints } from './lib/captured-read.mjs';
-import { asGitSubcommand, commandOf } from './lib/command-of.mjs';
+import { commandOf } from './lib/command-of.mjs';
 import { checkCredentialSend } from './lib/credential-send.mjs';
 import { scanWrapped } from './lib/dangerous-scan.mjs';
 import { checkEval } from './lib/eval-check.mjs';
@@ -98,7 +98,7 @@ import { askUnlessRemembered } from './lib/remembered-ask.mjs';
 import { adviceOnce } from './lib/bounce-once.mjs';
 import { isAdviceReason, splitAdvice } from './lib/reason-classes.mjs';
 import { findLiteralSecret } from './lib/secrets.mjs';
-import { shellHazards } from './lib/shell-hazards.mjs';
+import { commandReadings, shellHazards } from './lib/shell-hazards.mjs';
 import { logDecision } from './lib/guard-log.mjs';
 import { lex, segments, tokenize } from './lib/shell-words.mjs';
 import { riskyWordInExpansion, unreadableNameReasons } from './lib/raw-risk.mjs';
@@ -165,19 +165,20 @@ function reasonsOf(command, context) {
   const commands = [];
   const folder = newFolder(cwd); // the folders the line's `cd`s may have led to (lib/cd-folder.mjs)
   segs.forEach((seg, index) => {
-    const words = substituteKnownWords(seg, scope);
-    const parsed = asGitSubcommand(commandOf(words));
+    const readings = commandReadings(substituteKnownWords(seg, scope), scope.splitWords); // `X="push -f"; git $X` as zsh, then as bash reads it
+    const { words, parsed } = readings[0];
     commands.push({ ...parsed, piped: seg.piped === true }); // credential-send follows a pipe into ssh
     enterSegment(folder, seg, parsed, words);
     const bareWords = new Set([...(seg.bareWords ?? [])].map((at) => words[at])); // `$NAME` outside quotes: bash splits its value into words
-    for (const dir of possibleFolders(folder, seg, work)) { // a command that may run in more than one folder is judged in each
+    // a command that may run in more than one folder is judged in each, and every rule judges each reading of its words in each
+    for (const [dir, { words: read, parsed: run }] of possibleFolders(folder, seg, work).flatMap((dir) => readings.map((reading) => [dir, reading]))) {
       const env = { cwd: dir, maybeCwds: [...maybeFolders(folder), ...maybeCwds], groupTargets: groupBranches(segs, index), project, vars: scope.vars,
         splitWords: scope.splitWords, bareWords, prodHosts, parse, depth: depth + 1, judged, line, work };
-      reasons.push(...shellHazards({ seg, raw: commandOf(seg), parsed, shellScript, line: command }), ...gitRunValueReasons(words, parsed, env, reasonsOf),
-        ...unreadableNameReasons(parsed.cmd, command, prodHosts));
-      if (parsed.cmd === undefined) continue;
-      const wrapped = (cmd, args, at) => checkCommand({ cmd, args, assigns: [], before: words.slice(0, at) }, env, []);
-      reasons.push(...checkCommand({ ...parsed, before: words.slice(0, parsed.at) }, env, segs[index + 1] ?? []), ...scanWrapped(words, parsed, wrapped));
+      reasons.push(...shellHazards({ seg, raw: commandOf(seg), parsed: run, shellScript, line: command }), ...gitRunValueReasons(read, run, env, reasonsOf),
+        ...unreadableNameReasons(run.cmd, command, prodHosts));
+      if (run.cmd === undefined) continue;
+      const wrapped = (cmd, args, at) => checkCommand({ cmd, args, assigns: [], before: read.slice(0, at) }, env, []);
+      reasons.push(...checkCommand({ ...run, before: read.slice(0, run.at) }, env, segs[index + 1] ?? []), ...scanWrapped(read, run, wrapped));
     }
     if (parsed.cmd !== undefined) leaveSegment(folder, parsed, { project, scope });
     trackAssignments(scope, seg);
@@ -253,7 +254,7 @@ function answerFor(command, input) {
   const project = process.env.CLAUDE_PROJECT_DIR || cwd;
   const rules = (text, ctx) => decide(text, { ...ctx, prodHosts: readProdHosts() }); // reading the host list is inside the guard too
   const decided = decideSafely(command, { cwd, project, sessionId: input.session_id }, rules);
-  const r = input.tool_input.run_in_background === true ? withoutWaitAdvice(decided) : decided; // a wait already in the background needs no advice
+  const r = input.tool_input.run_in_background === true || input.tool_name === 'Monitor' ? withoutWaitAdvice(decided) : decided; // waits the right way
   const recheck = (text) => decideSafely(text, { cwd, project, sessionId: input.session_id }, rules);
   if (r.ask) return askUnlessRemembered(r, { command, cwd, input, recheck });
   return r.advice ? adviceOnce(r.advice, { command, cwd, input }) : ''; // advice only: never the owner
