@@ -24,6 +24,13 @@ The parts of the `estimate` tool. `../estimate.mjs` (the CLI) and `../statusline
 - `report.mjs`: the printed block and the refusal text. `local-clock.mjs`: local clock text and the 5-minute grid.
 - `segment-text.mjs`: the status line text of a result. `segment-cache.mjs`: the status line's read side (the cache, the
   session link, the detached refresh); it imports none of the forecast, parser or transcript code, so a render never reads a transcript.
+- `row-agents.mjs` (pure): `rowAgents` links each open, started row to this session's subagent working on it (its launch record's
+  row, else a description naming exactly one row or `Lane <lane>`; anything ambiguous maps to none) with its active minutes;
+  `quietRows` lists rows whose agent has been silent 15 working minutes, or, with no agent, open past max(95th percentile, 90).
+- `pauses.mjs` (pure): `pausesOf`, the silences over 10 min in all of the job's transcripts since the promise, each with its
+  reason (`waiting for you`, `usage limit` from the job's own account only, `no activity`); the clocks assume no pause.
+- `transcript-facts.mjs`: one transcript's active-minute runs and AskUserQuestion waits, read incrementally from a stored cursor
+  (only appended bytes, in 1 MiB pieces; an ask never answered closes at the transcript's end).
 
 ## Test
 
