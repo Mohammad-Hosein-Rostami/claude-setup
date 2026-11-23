@@ -6,7 +6,7 @@
 //   done <id> <evidence>     done = now (started too when it is empty: such a row costs 0); a set done cell is never changed;
 //                            a hold at the head of the evidence is cleared, so a done row never reads as parked or waiting
 //   park <id|road> "<why>"   `parked: <why>` at the head of the evidence of the open row, or of every open row of the road
-//                            (`<road>.s<N>.*`): out of the estimate until `start` (estimate-spec R3); all rows or none
+//                            (`<road>.s<N>.*`), so the estimate can leave it out until `start` (estimate-spec R3); all rows or none
 //   wait <id> "<question>"   `waiting: <question>` the same way on one open row: it waits for the owner (R4); park and wait
 //                            exit 2 on an unknown id, a done row, a road with every row done, or a name both a row id and a road
 //   deliver "<what>"         a hand-over row `deliver:N | deliver: <what> | S | - | <now> | -`, N one above the highest
