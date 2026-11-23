@@ -69,6 +69,7 @@ Rules are one line each and load when a matching file is in play.
 | ---- | ------------------ |
 | `docs.md` | Docs (X1-X4) |
 | `figma.md` | Figma to code conversion (used by `figma-pixel-perfect`, compared by `ui-check`) |
+| `project-setups.md` | Project setups: lessons from real projects |
 | `readability.md` | Readability for humans (C31-C36) |
 | `refactor.md` | Refactor (R1-R4) |
 | `security.md` | Security (S1-S11) |
