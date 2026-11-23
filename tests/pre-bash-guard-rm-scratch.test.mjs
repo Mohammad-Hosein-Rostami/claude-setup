@@ -160,6 +160,33 @@ test('F2: on a line with a loop or a function a variable written twice is unknow
   [`D=${S}/x; for i in 1 2; do ${RM} -rf $D/$i; done`, `D=${S}/x; ${RM} -rf $D; D=${S}/y; ${RM} -rf $D`].forEach(quiet);
 });
 
+test('F3: an `&` that ends the whole and-or list runs the delete beside the link maker, so it asks; a pipe inside the list does not', () => {
+  const m = `${A}/m`;
+  [`${RM} -rf ${m}/old && true & ln -s ~ ${m}`, `${RM} -rf ${m}/old && true &\nln -s ~ ${m}`, `${RM} -rf ${m}/old || true && true & mv ${LINKS}/l ${m}`,
+    `${RM} -rf ${m}/old && true &&\n true & ln -s ~ ${m}`, `${RM} -rf ${m}/old && true | cat & ln -s ~ ${m}`,
+    `${RM} -rf ${m}/old && { true; } & ln -s ~ ${m}`, `${RM} -rf ${m}/old && (true) & ln -s ~ ${m}`].forEach(asksDestructive);
+  [`${RM} -rf ${m}/old && true | cat; ln -s ~ ${m}`, `${RM} -rf ${m}/old && true\nln -s ~ ${m}`, `${RM} -rf ${m}/old && (cd ${A} && true); ln -s ~ ${m}`,
+    ].forEach(quiet);
+  [`${RM} -rf ${m}/old && (true; true) & ln -s ~ ${m}`, `${RM} -rf ${m}/old && f() { true; } & ln -s ~ ${m}`,
+    `${RM} -rf ${m}/old && if true; then true; fi & ln -s ~ ${m}`,
+    `${RM} -rf ${m}/old && ${'true && '.repeat(70)}true; ln -s ~ ${m}`].forEach(asksDestructive); // a list over 64 commands is not read (P1)
+});
+
+const W = join(TEMP, 'cs-test-w'); // the folder a template writes in, which an earlier command of the line may take away
+mkdirSync(W);
+test('F2: a made folder whose mktemp an earlier command may make fail asks (its variable is then empty), unless the line stops', () => {
+  [`rmdir ${W}; D=$(mktemp -d ${W}/XXXX); ${RM} -rf $D/*`, `rmdir ${W}; D=$(mktemp -d ${W}/XXXX); cd $D && ${RM} -rf *`,
+    `mv ${W} ${A}; D=$(mktemp -d ${W}/XXXX); ${RM} -rf $D/x`, `chmod 555 ${W}; D=$(mktemp -d ${W}/XXXX); ${RM} -rf $D/x`,
+    `echo $(rmdir ${W}); D=$(mktemp -d ${W}/XXXX); ${RM} -rf $D/x`, `PATH=/x; D=$(mktemp -d ${W}/XXXX); ${RM} -rf $D/x`,
+    `set -e; rmdir ${W}; set +e; D=$(mktemp -d ${W}/XXXX); ${RM} -rf $D/x`, `set -e; rmdir ${W}; export D=$(mktemp -d ${W}/XXXX); ${RM} -rf $D/x`,
+    `chmod 0 $TMPDIR; D=$(mktemp -d); ${RM} -rf $D/*`, `TMPDIR=/etc; D=$(mktemp -d); ${RM} -rf $D/*`, `chmod 0 $TMPDIR; ${RM} -rf $(mktemp -d)/x`,
+    `for i in 1 2; do D=$(mktemp -d); ${RM} -rf $D/x; chmod 0 $TMPDIR; done`,
+    `${'echo mktemp; '.repeat(20)}D=$(mktemp -d); ${RM} -rf $D/*`].forEach(asksDestructive); // over 20 mentions none is read (P1)
+  [`D=$(mktemp -d ${W}/XXXX); ${RM} -rf $D/*`, `cd /x; echo hi; X=1; D=$(mktemp -d ${W}/XXXX); ${RM} -rf $D/*`,
+    `rmdir ${W}; D=$(mktemp -d ${W}/XXXX) || exit 1; ${RM} -rf $D/*`, `set -euo pipefail; rmdir ${W}; D=$(mktemp -d ${W}/XXXX); ${RM} -rf $D/*`,
+    `D=$(mktemp -d); ${RM} -rf $D/*`, `chmod 0 $TMPDIR; D=$(mktemp -d) || exit; ${RM} -rf $D/*`].forEach(quiet);
+});
+
 test('a cs-test folder right below claude-<uid> or a project folder is scratch; the project folder itself still asks', () => {
   [`${RM} -rf ${TEMP}/claude-501/cs-test-basecheck`, `${RM} -rf ${TEMP}/claude-501/-Users-owner-proj/cs-test-x/y`].forEach(quiet);
   [`${RM} -rf ${TEMP}/claude-501/-Users-owner-proj`, `${RM} -rf ${TEMP}/claude-501/cs-test-x/../-Users-owner-proj`].forEach(asksDelete);

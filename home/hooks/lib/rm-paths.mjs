@@ -11,7 +11,7 @@
 // with a loop or a function a name written twice is unknown (lib/same-line-values.mjs, also for `VAR=$(mktemp -d TEMPLATE)`).
 // A literal value is used as is, `VAR=$(mktemp -d)` (default location; the tokenizer turns it into MKTEMP_WORD, also with a path
 // suffix `$(mktemp -d)/..` and in backticks) stands for one directory inside the temp dir (a template in a scratch area: its own
-// folder), `D+=x` appends, and any other value is unknown. `..` is resolved lexically after substitution, so `$D/..` is outside the mktemp directory. A target deeper than
+// folder; neither when the line may make mktemp fail, which leaves the name empty), `D+=x` appends, and any other value is unknown. `..` is resolved lexically after substitution, so `$D/..` is outside the mktemp directory. A target deeper than
 // `$D/x` (`$D/x/y`, `$D/x/`) is let run only while the line holds no command that may make a link there (lib/scratch-area.mjs).
 // Brace expansion in targets (`{/,x}`) is expanded first; one that cannot be listed asks.
 // `$(git rev-parse --show-toplevel)` counts as the project root from a directory inside the project (`rm -rf "$(git rev-parse --show-toplevel)/dist"`).
@@ -90,15 +90,15 @@ function isBroadRoot(project) {
 }
 
 /**
- * Variable state for one command line: `vars` maps names to known values (`$TMPDIR`, `$CLAUDE_PROJECT_DIR`, `$PWD` when the
- * directory is known, then every literal assignment seen so far); `assigned` holds the names assigned in the command itself; `unknown`
- * the names `command` assigns from a backtick, whose value the parsers lose (always unknown); `sameLine` the line's `mktemp -d`
- * templates and the names it may assign again (lib/same-line-values.mjs).
+ * Variable state for one command line: `vars` maps names to known values (`$TMPDIR`, `$CLAUDE_PROJECT_DIR`, `$PWD` when the directory is
+ * known, the plain `$(mktemp -d)` stand-in unless the line may make that mktemp fail, then each literal assignment seen); `assigned` the
+ * names the command assigns; `unknown` those it assigns from a backtick (the parsers lose the value); `sameLine` its mktemp facts (lib/same-line-values.mjs).
  */
 export function newScope(cwd, project, command = '', work = newWork()) {
-  const vars = new Map([['TMPDIR', tmpdir()], ['CLAUDE_PROJECT_DIR', project], [MKTEMP_NAME, defaultMktempDir()]]);
+  const sameLine = sameLineValues(command);
+  const vars = new Map([['TMPDIR', tmpdir()], ['CLAUDE_PROJECT_DIR', project], ...(sameLine.plainMktempCounts ? [[MKTEMP_NAME, defaultMktempDir()]] : [])]);
   if (cwd !== null) vars.set('PWD', cwd);
-  return { vars, assigned: new Set(), unknown: backtickAssignedNames(command), sameLine: sameLineValues(command), splitWords: new Set(), work };
+  return { vars, assigned: new Set(), unknown: backtickAssignedNames(command), sameLine, splitWords: new Set(), work };
 }
 
 /**

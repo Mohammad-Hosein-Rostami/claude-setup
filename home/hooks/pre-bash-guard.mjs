@@ -171,7 +171,7 @@ function reasonsOf(command, context) {
       const bareWords = new Set([...(seg.bareWords ?? [])].map((at) => view.readings[0].words[at])); // `$NAME` outside quotes: bash splits its value
       for (const [dir, { words: read, parsed: run }] of possibleFolders(folder, seg, work).flatMap((dir) => view.readings.map((reading) => [dir, reading]))) {
         const env = { cwd: dir, maybeCwds: [...maybeFolders(folder), ...maybeCwds], groupTargets: groupBranches(segs, index), project, vars: scope.vars, splitWords: scope.splitWords,
-          bareWords, prodHosts, parse, depth: depth + 1, judged, line, work, inOrder: runsInOrder({ folder, seg, next: segs[index + 1], depth, before: read.slice(0, run.at) }) };
+          bareWords, prodHosts, parse, depth: depth + 1, judged, line, work, inOrder: runsInOrder({ folder, segs, at: index, depth, before: read.slice(0, run.at) }) };
         reasons.push(...shellHazards({ seg: view.seg, raw: commandOf(view.seg), parsed: run, shellScript, line: command }),
           ...gitRunValueReasons(read, run, env, reasonsOf), ...unreadableNameReasons(run.cmd, command, prodHosts));
         if (run.cmd === undefined) continue;

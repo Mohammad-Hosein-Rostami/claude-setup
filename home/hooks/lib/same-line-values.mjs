@@ -3,11 +3,13 @@
 // a function body. Read by lib/rm-paths.mjs (newScope, trackAssignments, insideProject).
 // Exports: defaultMktempDir(); madeFolders(work) -> string[]; madeFolderOf(path, work) -> folder | undefined; isMadeValue(value, work);
 // restInMadeFolder({target, abs, written}, work) -> rest | null | undefined; sameLineValues(line) -> {templates: Map<name, {template,
-// text}>, unstable(name) -> boolean}; templateOf(sameLine, name, raw) -> template | undefined; templateFolder(template, work) -> folder | undefined.
+// text}>, unstable(name) -> boolean, plainMktempCounts}; templateOf(sameLine, name, raw) -> template | undefined; templateFolder(template, work) -> folder | undefined.
 // `NAME=$(mktemp -d TEMPLATE)` (also in double quotes) counts only when all of these hold on the raw text (an allowlist, P4): it is a
 // statement of its own (STATEMENT_START, STATEMENT_END); TEMPLATE is
 // an absolute literal path (no `$`, quote, glob, `~`, blank or backslash) whose last part ends in at least three `X`; the line writes NAME
-// nowhere else (the write count of lib/git-run-values.mjs lineFacts); the line holds no loop and no function (the assignment could run more than once). The
+// nowhere else (the write count of lib/git-run-values.mjs lineFacts); the line holds no loop and no function (the assignment could run more than once);
+// nothing before it on the line can make mktemp fail, or the line stops when it fails (makerCannotFail: `|| exit`, `set -e`). The
+// plain `$(mktemp -d)` stand-in counts under the same last rule (plainMktempCounts, read by lib/rm-paths.mjs newScope). The
 // folder it makes then counts as one the line made itself, as the plain `$(mktemp -d)` does, when the template's folder is there now and
 // the template lies in a scratch area (lib/scratch-area.mjs): `rm -rf $D` and `rm -rf $D/x` run unasked even after a command that may
 // make links. On a line that holds a loop or a function, a name the line writes more than once is never known (`D=x; for ...; do rm -rf
@@ -84,10 +86,61 @@ export function sameLineValues(line) {
   const writtenAgain = writtenMoreThanOnce(line);
   const loopy = LOOP_OR_FUNCTION.test(line);
   const templates = new Map();
-  for (const [, name, , text, template] of loopy ? [] : line.matchAll(MKTEMP_TEMPLATE)) {
-    if (!writtenAgain(name)) templates.set(name, { template, text });
+  const calls = [...line.matchAll(MKTEMP_CALL_WORD)].map((call) => call.index);
+  const readable = calls.length <= MAX_MKTEMP_CALLS;
+  const templateCalls = new Set(); // where each template's `mktemp` word stands
+  for (const match of loopy ? [] : line.matchAll(MKTEMP_TEMPLATE)) {
+    const [whole, name, , text, template] = match;
+    const at = match.index + whole.indexOf('mktemp');
+    templateCalls.add(at);
+    if (readable && !writtenAgain(name) && makerCannotFail(line, at, loopy)) templates.set(name, { template, text });
   }
-  return { templates, unstable: (name) => loopy && writtenAgain(name) };
+  const plainMktempCounts = readable && calls.filter((at) => !templateCalls.has(at)).every((at) => makerCannotFail(line, at, loopy));
+  return { templates, unstable: (name) => loopy && writtenAgain(name), plainMktempCounts };
+}
+
+// R2: when mktemp fails its variable is empty, so `rm -rf $D/*` is `rm -rf /*` and `cd $D && rm -rf *` empties the working folder. An
+// earlier command of the line can make it fail (`rmdir`, `mv` or `chmod` of the folder it writes in, a changed PATH or TMPDIR), so a
+// made folder counts only when everything before its mktemp is on this allowlist of the raw text (P4), or the use is guarded.
+const MKTEMP_CALL_WORD = /\bmktemp\b/g; // any mention: one this file cannot read only makes the plain stand-in count less often
+// each mention is read against all the text before it, so a line with more counts none (P1: a hostile line stays linear; real ones have a few)
+const MAX_MKTEMP_CALLS = 20;
+const SEPARATOR = /;|\n|&&|\|\||[&|]/; // `&&` before `&`: the alternatives are tried in order
+const SEPARATORS = new RegExp(SEPARATOR.source, 'g');
+const MKTEMP_SUBSTITUTION = /\$\(mktemp\b[^$`()]*\)/g; // `$(mktemp ...)` without anything inside it that runs: it only makes a folder
+const PLAIN_REFERENCE = /\$(?:[A-Za-z_]\w*|\{[A-Za-z_]\w*\})/g; // `$X`, `${X}`: read only (`${X:=v}` assigns, so it stays out)
+// `cd`, `echo`, `pwd`, `true`, `:` and `set` with words that run nothing, or plain assignments, maybe after a declarer
+const HARMLESS_STATEMENT =
+  /^(?:(?:cd|echo|pwd|true|:|set)(?:[ \t][^`$<>(){}]*)?|(?:(?:export|local|declare|typeset|readonly)[ \t]+)?[A-Za-z_]\w*\+?=[^\s`$<>(){}]*(?:[ \t]+[A-Za-z_]\w*\+?=[^\s`$<>(){}]*)*)$/;
+const SETS_MKTEMP_ENV = /(?:^|[ \t])(?:PATH|TMPDIR)\+?=/; // where mktemp is found and where it makes its folder
+const PLAIN_MKTEMP_ASSIGNMENT = /^[ \t]*[A-Za-z_]\w*=("?)\$\(mktemp\b[^$`()]*\)\1[ \t]*$/; // no declarer: `local D=$(...)` hides the failure
+const EXIT_WORD = /^[ \t]*(?:exit|return)(?=[ \t;\n]|$)/;
+const ERREXIT_FIRST = /^[ \t]*set[ \t]+(?:-[A-Za-z]*e[A-Za-z]*|-o[ \t]+errexit)(?=[ \t;\n]|$)/; // `set -e`, `set -euo pipefail`
+const ERREXIT_OFF = /(?:^|[;\n&|])[ \t]*set[ \t][^;\n&|]*\+/; // `set +e`, `set +o errexit` (any `set +`, to keep the grammar small)
+
+/**
+ * True when nothing before the line's `mktemp` word at `at` can make it fail, or the line stops when it does (see above).
+ * @param {string} line the command line as written
+ * @param {number} at where the `mktemp` word starts
+ * @param {boolean} loopy the line holds a loop or a function (every command of it may run before a later pass)
+ * @returns {boolean}
+ */
+function makerCannotFail(line, at, loopy) {
+  const previous = [...line.slice(0, at).matchAll(SEPARATORS)].at(-1);
+  const start = previous === undefined ? 0 : previous.index + previous[0].length;
+  const next = SEPARATOR.exec(line.slice(at));
+  const statement = line.slice(start, next === null ? line.length : at + next.index);
+  const before = loopy ? line : line.slice(0, start); // in a loop every command of the line may run before the next pass's mktemp
+  if (!PLAIN_MKTEMP_ASSIGNMENT.test(statement)) return harmlessBefore(before);
+  if (next?.[0] === '||' && EXIT_WORD.test(line.slice(at + next.index + next[0].length))) return true; // `D=$(mktemp ...) || exit`
+  const errexit = ERREXIT_FIRST.test(line) && !ERREXIT_OFF.test(before) && [undefined, ';', '\n'].includes(next?.[0]); // `set -e; D=$(mktemp ...);`
+  return errexit || harmlessBefore(before);
+}
+
+/** True when every statement of `text` is on the HARMLESS_STATEMENT allowlist and sets neither PATH nor TMPDIR. */
+function harmlessBefore(text) {
+  const statements = text.replace(MKTEMP_SUBSTITUTION, '_').replace(PLAIN_REFERENCE, '_').split(SEPARATORS).map((part) => part.trim());
+  return statements.every((part) => part === '' || (HARMLESS_STATEMENT.test(part) && !SETS_MKTEMP_ENV.test(part)));
 }
 
 // The write count of lib/git-run-values.mjs lineFacts, with its two patterns: importing that module here would close an import cycle

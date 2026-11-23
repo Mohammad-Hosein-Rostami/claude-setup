@@ -10,13 +10,11 @@
 // A glob folder part over a folder that holds a link, a link that leads nowhere yet, a link loop or an unreadable folder is not followed:
 // the rm asks. A path that is not there yet is its deepest existing folder's real path plus its name parts: a `..` below a
 // missing folder asks (F1). Paths split at `/` only, and also at `\` on Windows (on macOS and Linux a `\` is part of a name).
-// Links the line itself makes: the file system is read before the line runs, so a link a command of the same line makes (`mv`,
-// `cp -a`, `tar -x`, `git clone`, a script: anything but the short list of commands that cannot make one) is not there yet. A delete
-// after such a command gets no scratch exemption (claimScratchDelete refuses). A command that may make links after an exempt delete
-// asks (linkMakerReason) unless the delete runs in order (runsInOrder, F3): a plain `&&` / `;` list at the top level of the line, so it
-// has finished before the command starts; in a loop, a pipe, after `&`, in a group or a function body it may run again or alongside.
+// Links the line itself makes are not there yet when the file system is read (`mv`, `cp -a`, `tar -x`, `git clone`, a script: any
+// command but a short list): a delete after one gets no scratch exemption (claimScratchDelete), and one after an exempt delete asks
+// (linkMakerReason) unless the delete runs in order (runsInOrder, F3: in a top-level `&&` / `;` list not ended by `&`, it has finished).
 // Exports: deletedPath(written, known) -> real path | null; realFolder(path, known) -> real path | null; inScratchArea(path, sessionId);
-// linkState(work, pass); claimScratchDelete(links, target, inOrder); runsInOrder({folder, seg, next, depth, before});
+// linkState(work, pass); claimScratchDelete(links, target, inOrder); runsInOrder({folder, segs, at, depth, before});
 // linkMakerReason(cmd, args, links, deletedBefore) -> reason | undefined; followsNoFolderBelow(rest); isUnder(root, target);
 // sameFile(a, b) (both re-exported by lib/rm-paths.mjs).
 // Invariants: reads the file system only through realpath, lstat and a folder listing (cached per line in work.realPaths); writes
@@ -43,10 +41,7 @@ export const isUnder = (root, target) => {
 /** True when two paths name the same file: case-folded on Windows. */
 export const sameFile = (a, b) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
 
-/**
- * What realpath says of a path: `real` is its real path, the path itself when it is not there (`missing`) or a folder part is a file,
- * or null when where it leads is unknown.
- */
+/** What realpath says of a path: its real path, itself when not there (`missing`) or a folder part is a file, or null when unknown. */
 function readPath(path) {
   try {
     return { real: realpathSync.native(path), missing: false };
@@ -91,12 +86,10 @@ function readLinkFree(folder) {
  * The path a recursive rm of `written` really deletes. Each folder part is followed as the kernel follows it, `..` included (`$S/link/..` is
  * the parent of the link's target); the last part only when the target ends in `/` or `/.` (rm removes a link itself, not what it leads to).
  * A glob folder part (`/tmp/x/**` + `/*`) is read only in a folder that holds no link, and nothing below it is followed again. Below a
- * folder that is not there yet a `..` is not read (F1; a glob there matches nothing, a name is read as written): the path is the deepest
- * existing folder's real path plus those names.
+ * missing folder the path is the deepest existing folder's real path plus the names written (F1; a glob matches nothing there).
  * @param {string} written an absolute target as the line names it, not normalised: its `..` parts are read here
  * @param {Map<string, string | null>} known the real paths read so far on this line (modified)
- * @returns {string | null} the physical path, or null when a folder part cannot be followed or a `..` lies below a missing folder
- *   (the rm then asks)
+ * @returns {string | null} the physical path, or null (the rm asks) when a folder part cannot be followed or a `..` is below a missing folder
  */
 export function deletedPath(written, known) {
   const { root } = parse(written);
@@ -222,9 +215,8 @@ export function linkState(work, pass) {
 }
 
 /**
- * Whether a delete in a scratch area may run unasked as far as the line's own links go: only while no command of the line seen so far
- * may make a link. The first such target that does not run in order is kept (`scratchDelete`), so a command that may make links later
- * on the line asks (linkMakerReason); one that runs in order has finished before any later command starts.
+ * Whether a delete in a scratch area may run unasked as far as the line's own links go: only while no command seen so far may make a
+ * link. The first such target that does not run in order is kept (`scratchDelete`), so a later link maker asks (linkMakerReason).
  * @param {{linkMaker?: string, scratchDelete?: string}} links the reading's state (linkState; modified)
  * @param {string} target the target as written
  * @param {boolean} inOrder the delete runs in order (runsInOrder); false when unknown
@@ -239,21 +231,41 @@ export function claimScratchDelete(links, target, inOrder) {
 const ASSIGNMENT_WORD = /^[A-Za-z_]\w*\+?=/;
 const SIDE_BY_SIDE = /[&|]/; // what is left of a join once `&&` and `||` are taken out: a pipe, `|&` or `&` runs commands side by side
 const runsBeside = (join) => join === undefined || SIDE_BY_SIDE.test(join.replace(/&&|\|\|/g, ''));
+const LIST_JOIN = /^\s*(?:&&|\|\||\|&?)\s*$/; // `&&`, `||` or a pipe (maybe newlines after): the next command is still in the and-or list
+const LIST_END = /^[ \t]*[;\n]\s*$/; // `;` or a newline: the next command waits for the list (`&` or `()` in the join: it may not)
+const COMPOUND_WORDS = new Set(['{', '}', 'if', 'then', 'elif', 'else', 'fi', 'case', 'esac', 'while', 'until', 'for', 'select', 'do', 'done',
+  'function', 'coproc', 'repeat', 'foreach', 'end']); // also as plain arguments: a compound's own `;` would not end the list, so it does not count
+const MAX_LIST_SEGMENTS = 64; // read per delete; a longer list does not count, so a line of thousands of `&&` stays linear (P1)
+
+/** True when the and-or list a command starts or continues ends with `;`, a newline or the line's end, not `&` (runsInOrder). */
+function listEndsInOrder(segs, from) {
+  let open = 0; // `( )` subshells opened inside the list: their own joins do not end it
+  for (const later of segs.values().drop(from).take(MAX_LIST_SEGMENTS)) {
+    const join = later.joinedBy ?? '&';
+    open -= join.split(')').length - 1;
+    const bare = join.replace(/[()]/g, ''); // nothing left: the same command goes on (`( ... ) > log`)
+    if (open === 0 && bare.trim() !== '' && !LIST_JOIN.test(bare)) return LIST_END.test(bare);
+    open += join.split('(').length - 1;
+    if (open < 0 || join.includes('()') || later.some((word) => COMPOUND_WORDS.has(word))) return false;
+  }
+  return open === 0 && segs.length - from <= MAX_LIST_SEGMENTS;
+}
 
 /**
- * True when a command surely finishes before any command written after it on the line starts (F3): at the top level of the line (not
- * in a nested script, a group, `if`/`case`, a loop or after a function header: lib/cd-folder.mjs state), joined to its neighbours by
- * nothing but `&&`, `||`, `;` and newlines (no pipe, no `&`), with only assignments in front of it (a wrapper such as `setsid` or
- * `coproc` may leave it running). Unknown parser joins count as side by side.
- * @param {{folder: {open: number, loops: number, inFunction: boolean, compounds: number}, seg: string[] & {joinedBy?: string, piped?: boolean},
- *   next: (string[] & {joinedBy?: string}) | undefined, depth: number, before: string[]}} at the line state at the segment (lib/cd-folder.mjs
- *   newFolder), the segment and the one after it as the parser gave them, the nesting depth (0: the line itself) and the words before its command
+ * True when a command surely finishes before any later command of the line starts (F3): at the line's top level (no nested script,
+ * group, `if`/`case`, loop or function body: lib/cd-folder.mjs state), only assignments before it (`setsid` may leave it running),
+ * joined by `&&`, `||`, `;` and newlines only, its whole and-or list not ended by `&` (`rm x && true & ln` backgrounds `rm x && true`;
+ * a `( )` in the list is read through, any other compound command makes it not count).
+ * @param {{folder: {open: number, loops: number, inFunction: boolean, compounds: number}, segs: Array<string[] & {joinedBy?: string,
+ *   piped?: boolean}>, at: number, depth: number, before: string[]}} at the line state (lib/cd-folder.mjs newFolder), the line's segments
+ *   as the parser gave them and where this one stands, the nesting depth (0: the line itself), the words before its command
  * @returns {boolean}
  */
-export function runsInOrder({ folder, seg, next, depth, before }) {
+export function runsInOrder({ folder, segs, at, depth, before }) {
   const topLevel = depth === 0 && folder.open === 0 && folder.loops === 0 && !folder.inFunction && folder.compounds === 0;
+  const [seg, next] = [segs[at], segs[at + 1]];
   const alone = seg.piped !== true && !runsBeside(seg.joinedBy) && (next === undefined || !runsBeside(next.joinedBy));
-  return topLevel && alone && before.every((word) => ASSIGNMENT_WORD.test(word));
+  return topLevel && alone && listEndsInOrder(segs, at + 1) && before.every((word) => ASSIGNMENT_WORD.test(word));
 }
 
 // commands that make no link (cmd as lib/command-of.mjs names it); any other command, an unknown name included, may make one
