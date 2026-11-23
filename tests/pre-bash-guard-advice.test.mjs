@@ -11,7 +11,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { remember } from '../home/hooks/lib/allowed-literals.mjs';
 import { adviceOnce, bouncedDir } from '../home/hooks/lib/bounce-once.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
 import { hookEnv } from './hook-env.mjs';
@@ -136,17 +135,20 @@ test('after advice, a different command, a trailing blank, another directory or 
   assert.equal(s.run(command, { session: 'sess-2' }).decision, 'allow', 'and in sess-2');
 });
 
-test('table row "bounce class + advice": a lockfile edit with a literal secret is bounced, then asked, exactly like the secret alone, the advice class named', () => {
+test('table row "bounce class + advice": a lockfile edit next to a variable command word is bounced, then asked, exactly like without it, the advice class named', () => {
   const alone = guardSession();
   const mixed = guardSession();
-  const aloneCommand = `KEY='${SECRET_VALUE}' sed -i s/a/b/ notes.txt`;
-  const mixedCommand = `KEY='${SECRET_VALUE}' ${LOCKFILE_EDIT}`;
+  // the literal secret in both texts changes nothing (owner G1): it only adds its kind-only log line
+  const aloneCommand = `KEY='${SECRET_VALUE}' $CMD; sed -i s/a/b/ notes.txt`;
+  const mixedCommand = `KEY='${SECRET_VALUE}' $CMD; ${LOCKFILE_EDIT}`;
   for (const send of ['first', 'retry']) {
     const [expected, got] = [alone.run(aloneCommand), mixed.run(mixedCommand)];
     assert.equal(got.decision, send === 'first' ? 'deny' : 'ask', send);
     assert.deepEqual(got, { ...expected, reason: `${expected.reason}\nalso: hand-edited lockfile` }, send);
   }
-  assert.deepEqual(mixed.log().map((line) => [line.outcome, line.class]), [['bounce', 'secret'], ['no-gui', undefined]]);
+  assert.deepEqual(mixed.log().map((line) => [line.outcome, line.class]),
+    [['secret', 'secret'], ['bounce', 'variable command word'], ['secret', 'secret'], ['no-gui', undefined]]);
+  assert.equal(JSON.stringify(mixed.log()).includes(SECRET_VALUE), false);
 });
 
 test('table row "ask + advice": a lockfile edit with git push asks on every send like the push alone, the advice class named; nothing is stored', () => {
@@ -163,7 +165,7 @@ test('a safety verdict names its advice by class only: the advice\'s "send the s
   const s = guardSession();
   const ask = s.run(`git pull && ${PUSH}`);
   assert.deepEqual(ask, { decision: 'ask', reason: `${decide(PUSH, ctx).reason}\nalso: merge commit` });
-  const [bounce, retry] = [s.run(`KEY='${SECRET_VALUE}' git merge x`), s.run(`KEY='${SECRET_VALUE}' git merge x`)];
+  const [bounce, retry] = [s.run('$CMD; git merge x'), s.run('$CMD; git merge x')];
   assert.deepEqual([bounce.decision, retry.decision], ['deny', 'ask']);
   for (const { reason } of [ask, bounce, retry]) {
     assert.equal(reason.includes(retrySentence), false, reason);
@@ -173,16 +175,15 @@ test('a safety verdict names its advice by class only: the advice\'s "send the s
   assert.equal(s.log().some((line) => line.reason.includes(retrySentence)), false, 'nor the log');
 });
 
-test('table row "ask + advice" with a secret the owner allowed: the secret stays silent, and the advice is still given once, then the retry runs', () => {
+test('table row "advice only" with a literal secret (G1): the secret asks nothing, and the advice is still given once, then the retry runs', () => {
   const s = guardSession();
-  remember('sess-1', [SECRET_VALUE], { HOME: s.home, USERPROFILE: s.home });
   assert.deepEqual(s.run(`KEY='${SECRET_VALUE}' sed -i s/a/b/ notes.txt`), { decision: 'allow' }, 'the secret alone');
   const command = `KEY='${SECRET_VALUE}' ${LOCKFILE_EDIT}`;
   const first = s.run(command);
-  assert.equal(first.decision, 'deny', 'the advice the remembered secret would have hidden');
+  assert.equal(first.decision, 'deny', 'the secret never hides the advice');
   assert.deepEqual(first.reason.split('\n').slice(1), [`- ${lockfileAdvice('pnpm-lock.yaml')}`]);
   assert.deepEqual(s.run(command), { decision: 'allow' }, 'the identical retry runs');
-  assert.deepEqual(s.log().map((line) => line.outcome), ['remembered', 'remembered', 'advice', 'remembered', 'advice-retry']);
+  assert.deepEqual(s.log().map((line) => line.outcome), ['secret', 'secret', 'advice', 'secret', 'advice-retry']);
   assert.equal(JSON.stringify(s.log()).includes(SECRET_VALUE), false, 'the advice lines mask the secret like every other line');
 });
 
@@ -210,10 +211,11 @@ test('table row "store unusable": advice only runs on every send (no deny that r
 test('a stored digest only lets advice-only commands through: planted for a command that also asks, it still asks', () => {
   const s = guardSession();
   const digest = (command) => createHash('sha256').update(JSON.stringify([PROJECT, command])).digest('hex');
-  const commands = [LOCKFILE_EDIT, `${LOCKFILE_EDIT} && ${PUSH}`, `KEY='${SECRET_VALUE}' ${LOCKFILE_EDIT}`];
+  // the last one holds a literal secret and is advice only since owner G1, so its planted digest lets it run like the first
+  const commands = [LOCKFILE_EDIT, `${LOCKFILE_EDIT} && ${PUSH}`, `$CMD; ${LOCKFILE_EDIT}`, `KEY='${SECRET_VALUE}' ${LOCKFILE_EDIT}`];
   mkdirSync(s.store, { recursive: true, mode: 0o700 });
   writeFileSync(join(s.store, 'sess-1.json'), JSON.stringify({ digests: commands.map(digest) }), { mode: 0o600 });
-  assert.deepEqual(commands.map((command) => s.run(command).decision), ['allow', 'ask', 'ask']);
+  assert.deepEqual(commands.map((command) => s.run(command).decision), ['allow', 'ask', 'ask', 'allow']);
 });
 
 // C37: a merge that can create a merge commit.
