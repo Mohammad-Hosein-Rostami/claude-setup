@@ -174,41 +174,58 @@ export function trackRecord(log) {
 export const PROMISE_MODEL = 's1';
 /** A reason smaller than this share of the difference is not told (spec section 7). */
 const REASON_MIN_SHARE = 0.1;
+/** No promise time is older than this: the tool did not exist before it, so an earlier one is a torn or zeroed record. */
+const EARLIEST_PROMISE_MS = Date.parse('2020-01-01T00:00Z');
+/** The latest instant a Date can hold (ECMAScript time value range); past it toISOString throws. */
+const MAX_DATE_MS = 8.64e15;
+/** A promised clock at most this far past now (366 days in ms); a later one is a torn record, not a job. */
+const MAX_PROMISE_AHEAD_MS = 366 * 24 * 60 * MS_PER_MIN;
+/** The cap on promised work and on one row's likely minutes: a job that cannot end within MAX_PROMISE_AHEAD_MS has no promise. */
+const MAX_PROMISE_WORK_MIN = MAX_PROMISE_AHEAD_MS / MS_PER_MIN;
 
 const isPlainObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 const isFiniteNumber = (value) => typeof value === 'number' && Number.isFinite(value);
-const isMinutes = (value) => isFiniteNumber(value) && value >= 0;
+/** Working minutes a promise can hold: 0 up to MAX_PROMISE_WORK_MIN. */
+const isWorkMinutes = (value) => isFiniteNumber(value) && value >= 0 && value <= MAX_PROMISE_WORK_MIN;
+/** A row id as the table matches it: ignoring case (items.mjs refuses ids repeated ignoring case; its rule is not exported). */
+const idKey = (id) => id.toLowerCase();
+/** A real Date ms of the tool's era, so every clock of a promise prints. */
+const isInstantMs = (value) => isFiniteNumber(value) && value >= EARLIEST_PROMISE_MS && value <= MAX_DATE_MS;
+/** A promised clock for a promise made at atMs and read at nowMs: a real instant, not before atMs, at most MAX_PROMISE_AHEAD_MS past now. */
+const isPromisedClock = (p80Ms, atMs, nowMs) => isInstantMs(p80Ms) && p80Ms >= atMs && p80Ms <= nowMs + MAX_PROMISE_AHEAD_MS;
 
-/** True for a list of { id, likelyMin } with unique non-empty ids and minutes >= 0. */
+/** True for a list of { id, likelyMin } with non-empty ids unique ignoring case and likely minutes within MAX_PROMISE_WORK_MIN. */
 function isRowList(rows) {
   if (!Array.isArray(rows)) return false;
-  const ids = new Set();
+  const keys = new Set();
   for (const row of rows) {
-    if (!isPlainObject(row) || typeof row.id !== 'string' || row.id === '' || ids.has(row.id) || !isMinutes(row.likelyMin)) return false;
-    ids.add(row.id);
+    if (!isPlainObject(row) || typeof row.id !== 'string' || row.id === '' || keys.has(idKey(row.id)) || !isWorkMinutes(row.likelyMin)) return false;
+    keys.add(idKey(row.id));
   }
   return true;
 }
 
 const copyRows = (rows) => rows.map(({ id, likelyMin }) => ({ id, likelyMin }));
 
-/** The stored record as a promise of this job made by nowMs, or null when it is anything else: missing, torn, c3, another job's, from the future. */
+/** The stored record as a promise of this job made by nowMs, or null when it is anything else: missing, torn, c3, another job's,
+ *  from the future, a time outside the tool's era or minutes over MAX_PROMISE_WORK_MIN. */
 function storedPromiseOf(stored, job, nowMs) {
   if (!isPlainObject(stored) || stored.model !== PROMISE_MODEL || stored.job !== job) return null;
   const { atMs, p80Ms, workMin, rows } = stored;
-  if (!isFiniteNumber(atMs) || atMs > nowMs || !isFiniteNumber(p80Ms) || p80Ms < atMs || !isMinutes(workMin) || !isRowList(rows)) return null;
+  if (!isInstantMs(atMs) || atMs > nowMs || !isPromisedClock(p80Ms, atMs, nowMs) || !isWorkMinutes(workMin) || !isRowList(rows)) return null;
   return { model: PROMISE_MODEL, job, atMs, p80Ms, workMin, rows: copyRows(rows) };
 }
 
 /** Only a recorded CLI run at the real clock may make the promise (spec F1): never a status-line refresh, a `--now` run or a run that could not take the table lock. */
 const mayPromise = (run) => isPlainObject(run) && run.cli === true && run.realClock === true && run.recorded === true;
 
-/** Throws a TypeError when this run's own numbers are malformed: they come from the forecast, so a bad one is a bug, not data. */
+/** Throws a TypeError when this run's own numbers are malformed (from the forecast, so a bug, not data); the same bounds as a
+ *  stored promise, so a promise made here reads back as kept and is never made again. */
 function assertFresh(fresh, nowMs) {
-  if (!isFiniteNumber(nowMs)) throw new TypeError('promiseOf: nowMs must be a finite epoch ms');
+  if (!isInstantMs(nowMs)) throw new TypeError('promiseOf: nowMs must be an epoch ms from 2020 on');
   if (!isPlainObject(fresh) || typeof fresh.job !== 'string' || fresh.job === '') throw new TypeError('promiseOf: fresh.job must be a non-empty string');
-  if (!isFiniteNumber(fresh.p80Ms) || fresh.p80Ms < nowMs) throw new TypeError('promiseOf: fresh.p80Ms must be a finite epoch ms at or after now');
-  if (!isMinutes(fresh.workLeftMin)) throw new TypeError('promiseOf: fresh.workLeftMin must be minutes >= 0');
+  if (!isPromisedClock(fresh.p80Ms, nowMs, nowMs)) throw new TypeError('promiseOf: fresh.p80Ms must be an epoch ms from now to 366 days on');
+  if (!isWorkMinutes(fresh.workLeftMin)) throw new TypeError('promiseOf: fresh.workLeftMin must be minutes from 0 to MAX_PROMISE_WORK_MIN');
   if (!isRowList(fresh.rows)) throw new TypeError('promiseOf: fresh.rows must be unique { id, likelyMin } rows');
 }
 
@@ -231,23 +248,22 @@ export function promiseOf(stored, fresh, nowMs) {
   return { model: PROMISE_MODEL, job: fresh.job, atMs: nowMs, p80Ms: fresh.p80Ms, workMin: fresh.workLeftMin, rows: copyRows(fresh.rows) };
 }
 
-/** Each row's share of the difference: an added row its likely minutes, a dropped row minus its promised minutes, a kept row its change. */
+/** Each row's share of the difference, ids matched ignoring case: an added row its likely minutes, a dropped one minus its promised, a kept one its change. */
 function rowParts(rowsNow, rowsAtPromise) {
-  const promisedMin = new Map(rowsAtPromise.map((row) => [row.id, row.likelyMin]));
-  const nowIds = new Set(rowsNow.map((row) => row.id));
+  const promisedMin = new Map(rowsAtPromise.map((row) => [idKey(row.id), row.likelyMin]));
+  const nowKeys = new Set(rowsNow.map((row) => idKey(row.id)));
   const kept = rowsNow.map(({ id, likelyMin }) => {
-    if (!promisedMin.has(id)) return { kind: 'rows-added', id, min: likelyMin };
-    const changeMin = likelyMin - promisedMin.get(id);
+    if (!promisedMin.has(idKey(id))) return { kind: 'rows-added', id, min: likelyMin };
+    const changeMin = likelyMin - promisedMin.get(idKey(id));
     return { kind: changeMin > 0 ? 'over-usual' : 'faster', id, min: changeMin };
   });
-  const dropped = rowsAtPromise.filter((row) => !nowIds.has(row.id)).map((row) => ({ kind: 'faster', id: row.id, min: -row.likelyMin }));
+  const dropped = rowsAtPromise.filter((row) => !nowKeys.has(idKey(row.id))).map((row) => ({ kind: 'faster', id: row.id, min: -row.likelyMin }));
   return [...kept, ...dropped];
 }
 
 const largestFirst = (a, b) => Math.abs(b.min) - Math.abs(a.min) || (a.id ?? a.kind).localeCompare(b.id ?? b.kind);
 
-/** The told reasons: the parts on the difference's side summed per kind, none under REASON_MIN_SHARE of it. At most two (spec section
- *  7) by construction: a later side has two kinds (rows-added, over-usual), an earlier side one (faster). */
+/** The parts on the difference's side summed per kind, none under REASON_MIN_SHARE of it; at most two (spec section 7): a later side has two kinds, an earlier one. */
 function toldReasons(diffMin, parts) {
   const side = Math.sign(diffMin);
   const byKind = new Map();
@@ -275,9 +291,9 @@ function toldReasons(diffMin, parts) {
  * @throws {TypeError} when an argument is malformed
  */
 export function promiseDiff(promise, fresh, workedSinceMin, rowsNow, rowsAtPromise) {
-  if (!isPlainObject(promise) || !isMinutes(promise.workMin)) throw new TypeError('promiseDiff: promise.workMin must be minutes >= 0');
-  if (!isPlainObject(fresh) || !isMinutes(fresh.workLeftMin)) throw new TypeError('promiseDiff: fresh.workLeftMin must be minutes >= 0');
-  if (!isMinutes(workedSinceMin)) throw new TypeError('promiseDiff: workedSinceMin must be minutes >= 0');
+  if (!isPlainObject(promise) || !isWorkMinutes(promise.workMin)) throw new TypeError('promiseDiff: promise.workMin must be minutes from 0 to MAX_PROMISE_WORK_MIN');
+  if (!isPlainObject(fresh) || !isWorkMinutes(fresh.workLeftMin)) throw new TypeError('promiseDiff: fresh.workLeftMin must be minutes from 0 to MAX_PROMISE_WORK_MIN');
+  if (!isWorkMinutes(workedSinceMin)) throw new TypeError('promiseDiff: workedSinceMin must be minutes from 0 to MAX_PROMISE_WORK_MIN');
   if (!isRowList(rowsNow) || !isRowList(rowsAtPromise)) throw new TypeError('promiseDiff: rows must be unique { id, likelyMin } rows');
   const min = workedSinceMin + fresh.workLeftMin - promise.workMin;
   return { min, reasons: toldReasons(min, rowParts(rowsNow, rowsAtPromise)) };

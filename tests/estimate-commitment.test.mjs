@@ -211,3 +211,38 @@ test('promiseDiff: malformed arguments throw', () => {
   assert.throws(() => diff(0, Number.NaN, ROWS), TypeError);
   assert.throws(() => diff(0, 10, [{ id: 'a', likelyMin: 1 }, { id: 'a', likelyMin: 1 }]), TypeError);
 });
+
+const YEAR_AHEAD_MS = 366 * 24 * 60 * 60_000; // MAX_PROMISE_AHEAD_MS
+const WORK_CAP_MIN = 366 * 24 * 60; // MAX_PROMISE_WORK_MIN
+
+test('promiseOf: a stored time outside 2020..now + 366 days or minutes over the cap read as no promise, so every clock prints', () => {
+  const outside = [
+    { ...made, atMs: 0, p80Ms: 0 }, { ...made, atMs: -1e300, p80Ms: 1e300, workMin: 1e300 }, { ...made, atMs: Date.parse('2019-12-31T23:59Z') },
+    { ...made, p80Ms: 1e300 }, { ...made, p80Ms: LATER_MS + YEAR_AHEAD_MS + 1 }, { ...made, workMin: WORK_CAP_MIN + 1 },
+    { ...made, rows: [{ id: 'a', likelyMin: WORK_CAP_MIN + 1 }] }, { ...made, rows: [{ id: 'a', likelyMin: 1e300 }] },
+  ];
+  for (const stored of outside) assert.equal(promiseOf(stored, freshRun({ ...CLI_RUN, cli: false }), LATER_MS), null, JSON.stringify(stored));
+  const edge = { ...made, p80Ms: LATER_MS + YEAR_AHEAD_MS, workMin: WORK_CAP_MIN, rows: [{ id: 'a', likelyMin: WORK_CAP_MIN }] };
+  const kept = promiseOf(edge, freshRun({ ...CLI_RUN, cli: false }), LATER_MS);
+  assert.deepEqual(kept, edge, 'the bounds themselves are kept');
+  assert.doesNotThrow(() => [kept.atMs, kept.p80Ms].map((ms) => new Date(ms).toISOString()));
+});
+
+test('promiseOf and promiseDiff: this run\'s numbers outside the same bounds throw, so a made promise always reads back as kept', () => {
+  assert.throws(() => promiseOf(null, freshRun(CLI_RUN), 0), TypeError);
+  assert.throws(() => promiseOf(null, freshRun(CLI_RUN, { p80Ms: 1e300 }), 1e300), TypeError, 'a clock past the last Date');
+  for (const bad of [{ p80Ms: NOW_MS + YEAR_AHEAD_MS + 1 }, { workLeftMin: WORK_CAP_MIN + 1 }, { rows: [{ id: 'a', likelyMin: WORK_CAP_MIN + 1 }] }]) {
+    assert.throws(() => promiseOf(null, freshRun(CLI_RUN, bad), NOW_MS), TypeError, JSON.stringify(bad));
+  }
+  const edge = promiseOf(null, freshRun(CLI_RUN, { p80Ms: NOW_MS + YEAR_AHEAD_MS, workLeftMin: WORK_CAP_MIN }), NOW_MS);
+  assert.deepEqual(promiseOf(edge, freshRun(CLI_RUN), NOW_MS + 1), edge);
+  assert.throws(() => promiseDiff({ workMin: WORK_CAP_MIN + 1 }, { workLeftMin: 1 }, 0, [], []), TypeError);
+  assert.throws(() => diff(WORK_CAP_MIN + 1, 1, ROWS), TypeError);
+});
+
+test('promiseDiff: row ids match ignoring case, as in the table: P17 at the promise is p17 now, not an added and a dropped row', () => {
+  const d = promiseDiff({ workMin: 80 }, { workLeftMin: 110 }, 0, [{ id: 'p17', likelyMin: 70 }, { id: 'b', likelyMin: 40 }], [{ id: 'P17', likelyMin: 40 }, { id: 'b', likelyMin: 40 }]);
+  assert.deepEqual(d, { min: 30, reasons: [{ kind: 'over-usual', min: 30, ids: ['p17'] }] });
+  assert.throws(() => diff(0, 10, [{ id: 'a', likelyMin: 1 }, { id: 'A', likelyMin: 1 }]), TypeError, 'a and A are one id repeated');
+  assert.equal(promiseOf({ ...made, rows: [{ id: 'a', likelyMin: 1 }, { id: 'A', likelyMin: 1 }] }, freshRun({ ...CLI_RUN, cli: false }), LATER_MS), null);
+});
