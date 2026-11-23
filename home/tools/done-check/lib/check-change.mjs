@@ -10,7 +10,7 @@
 //   ok. At a stop (`where: 'stop'`) a FAIL with a new failure blocks, except when the same change key was blocked before or the agent was
 //   blocked MAX_BLOCKS_IN_A_ROW times already: then it is `left-open` (the caller, the hook, owns that count and passes it as
 //   `priorBlocks`). A new failure an owner's false-alarm label already names (same repo and lane, lib/false-alarms.mjs) is `labelled`:
-//   shown, stored as a count, never blocking. At a land or a manual run a new failure always blocks. Empty scope: verdict `skipped`, no ledger row. DONE_CHECK_SKIP=all: verdict `skipped`, no command runs, one ledger row (a team file's switch is ignored: hooks/lib/team-switch.mjs).
+//   shown, stored as a count, never blocking. At a land or a manual run a new failure always blocks. Empty scope: verdict `skipped`, no ledger row. DONE_CHECK_SKIP=all: verdict `skipped`, no command runs, one ledger row (a team file's switch is ignored, and the line says so: hooks/lib/team-switch.mjs).
 // Invariants: the change key mixes the plan fingerprint into Scope.key, so a changed set of commands is a new change. The same key in the
 //   ledger after an ok or reused run (with no time or error not-run) is `reused` and runs no command. The risk classes are always computed
 //   fresh. Result files made for the tools are removed after the run (and old ones of a crashed run after a day). The ledger holds counts
@@ -19,7 +19,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readdirSync, rmSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { worktreeOf } from '../../../hooks/lib/gated-folder.mjs';
-import { switchDirs, switchNames } from '../../../hooks/lib/team-switch.mjs';
+import { switchDirs, switchNames, trustedSwitch } from '../../../hooks/lib/team-switch.mjs';
 import { compareWithBase, findFlaky } from './base-compare.mjs';
 import { BASE_DEADLINE_MS, CHECK_KINDS, LAND_DEADLINE_MS, MAX_BLOCKS_IN_A_ROW, STOP_DEADLINE_MS } from './contract.mjs';
 import { planChecks } from './detect.mjs';
@@ -198,10 +198,13 @@ export async function checkChange(scopeOrPromise, options) {
   const repo = repoIdOf(scope.top ?? '');
   const risk = files === 0 ? { classes: [], warning: undefined } : await riskOf(scope);
   const row = { v: 1, id: randomBytes(RUN_ID_BYTES).toString('hex'), at: new Date().toISOString(), where, session, agent, repo, base: scope.base, key: scope.key, files, checks: {}, verdict: 'ok', risk: risk.classes, ms: 0, model, effort };
+  // A team file's DONE_CHECK_SKIP is ignored here too (the CLI and land path); the line says so, as the hook's does (the hook leaves
+  // an ignored switch out of `env`, so it is not said twice).
+  const teamNote = files === 0 ? null : trustedSwitch(env, 'DONE_CHECK_SKIP', switchDirs(env, scope.top)).ignored;
   const finish = (verdict, extra = {}) => {
     row.verdict = verdict;
     row.ms = Date.now() - startedAt;
-    const notes = [...(extra.notes ?? []), ...(risk.warning ? ['risk rules file is bad, built-in rules used'] : [])];
+    const notes = [...(extra.notes ?? []), ...(teamNote ? [teamNote] : []), ...(risk.warning ? ['risk rules file is bad, built-in rules used'] : [])];
     if (row.files > 0 && !appendRun(row, { env })) notes.push('ledger not written');
     return { verdict, line: lineOf(row, { notes, tries: extra.tries ?? 0 }), reason: extra.reason ?? null, risk: risk.classes, row };
   };

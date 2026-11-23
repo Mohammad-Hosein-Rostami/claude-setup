@@ -330,6 +330,16 @@ test('DONE_CHECK_SKIP=all plans no command', (t) => {
   assert.ok(plan.skipped.every((entry) => NOT_RUN_WHY.includes(entry.why)));
 });
 
+test('DONE_CHECK_SKIP from a committed team file is ignored: every kind is planned (hooks/lib/team-switch.mjs)', (t) => {
+  for (const value of ['all', 'types,lint,tests']) {
+    const team = { '.claude/settings.json': `${JSON.stringify({ env: { DONE_CHECK_SKIP: value } })}\n` };
+    const repo = project(t, { packageJson: { scripts: { typecheck: 'tsc -p tsconfig.json', test: 'vitest run' } }, tools: ['tsc', 'vitest'], files: { 'tsconfig.json': '{}\n', 'src/a.ts': SRC_A, ...team } });
+    const plan = planFor(repo, ['src/a.ts'], { env: { DONE_CHECK_SKIP: value } });
+    for (const kind of ['types', 'tests']) assert.ok(cmdsOf(plan, kind).length > 0, `${value}: ${kind} planned`);
+    assert.ok(plan.skipped.every((entry) => entry.why !== 'skipped-env'), value);
+  }
+});
+
 test('a project with no package.json, tsconfig or runner (the setup repo today) plans no command and names every kind not run', (t) => {
   const repo = project(t, { files: { 'src/a.mjs': SRC_A } });
   const plan = planFor(repo, ['src/a.mjs']);

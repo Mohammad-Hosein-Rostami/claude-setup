@@ -73,6 +73,22 @@ test('A1: a change that breaks a type used by an unchanged file blocks; the reas
   assert.match(verdict.line, /types/);
 });
 
+test('DONE_CHECK_SKIP=all from a committed team file: the CLI (and land) run still checks, blocks and says the switch was ignored', (t) => {
+  const team = { '.claude/settings.json': `${JSON.stringify({ env: { DONE_CHECK_SKIP: 'all' } })}\n` };
+  const repo = newRepo(t, { packageJson: TYPECHECK_PACKAGE, files: { ...TS_SOURCES, ...team }, tools: ['tsc'], replay: { tsc: TSC_CLEAN } });
+  repo.write('src/lib.ts', "export const n: string = '1';\n");
+  repo.setTool('tsc', TSC_BROKEN_CALLER);
+  const result = repo.run(CLI, ['run', '--worktree', repo.dir, '--base', repo.baseSha, '--where', 'land', '--json'], { env: { DONE_CHECK_SKIP: 'all' } });
+  const verdict = JSON.parse(result.stdout);
+  assert.equal(result.status, 1, result.stderr);
+  assert.equal(verdict.verdict, 'block', 'the checks ran');
+  assert.match(verdict.reason, /src\/use\.ts:3\b[^\n]*TS2322/);
+  assert.match(verdict.line, /team switch DONE_CHECK_SKIP ignored: the team file .*settings\.json sets it; our check runs/);
+  assert.equal(verdict.line.split('team switch').length - 1, 1, 'said once');
+  const noProjectDir = repo.run(CLI, ['run', '--worktree', repo.dir, '--base', repo.baseSha, '--where', 'manual', '--json'], { env: { DONE_CHECK_SKIP: 'all', CLAUDE_PROJECT_DIR: '' } });
+  assert.match(JSON.parse(noProjectDir.stdout).line, /team switch DONE_CHECK_SKIP ignored/, 'the git top alone is enough: no project folder needed');
+});
+
 test('A1: the same run without --json prints one `checks:` line first and exits 1', (t) => {
   const repo = newRepo(t, { packageJson: TYPECHECK_PACKAGE, files: TS_SOURCES, tools: ['tsc'], replay: { tsc: TSC_CLEAN } });
   repo.write('src/lib.ts', "export const n: string = '1';\n");
