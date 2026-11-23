@@ -1,5 +1,5 @@
-// Tests for the literal-secret ask of home/hooks/pre-bash-guard.mjs (lib/secrets.mjs): a secret typed into a command is
-// asked about (a timed dialog in the hook), a variable or a prompt is not, and no reason, output, mask or log line repeats it.
+// Tests for literal secrets in home/hooks/pre-bash-guard.mjs (lib/secrets.mjs) under owner rule G1 (2026-11-23): a secret typed into a command
+// is detected and noted by kind (decide's `secret`, one log line), never asked about or bounced; no reason, output, mask or log line repeats it.
 import './pin-home.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -46,12 +46,12 @@ const ALLOWED = [
 ];
 
 for (const [group, commands] of Object.entries(DENIED)) {
-  test(`decide asks about a literal secret: ${group}`, () => {
+  test(`decide notes a literal secret by kind and asks nothing (G1): ${group}`, () => {
     for (const command of commands) {
       const r = decide(command, ctx);
-      assert.equal(r.allow, false, command);
-      assert.equal(r.ask, true, command);
-      assert.match(r.reason, /contains a literal password\/token/, command);
+      assert.equal(r.allow, true, command);
+      assert.equal(r.ask, undefined, command);
+      assert.equal(typeof r.secret, 'string', command);
     }
   });
 }
@@ -60,22 +60,24 @@ test('decide allows variables, prompts, lookalikes and short strings', () => {
   for (const command of ALLOWED) assert.deepEqual(decide(command, ctx), { allow: true }, command);
 });
 
-test('the ask reason names the kind and never repeats the secret', () => {
+test('the noted kind never repeats the secret, and nothing else in the verdict does', () => {
   for (const [command, secret] of [[`echo ${ANTHROPIC}`, ANTHROPIC], [`PGPASSWORD=${PASSWORD} psql`, PASSWORD], [`sshpass -p ${PASSWORD} ssh h`, PASSWORD], [`echo ${GITHUB}`, GITHUB]]) {
     const r = decide(command, ctx);
-    assert.ok(!r.reason.includes(secret), command);
+    assert.ok(r.secret !== undefined && !JSON.stringify(r).includes(secret), command);
   }
   assert.equal(findLiteralSecret(`echo ${ANTHROPIC}`), 'an Anthropic API key');
   assert.equal(findLiteralSecret(`echo ${GITHUB}`), 'a GitHub token');
   assert.equal(findLiteralSecret(`echo ${AWS}`), 'an AWS access key id');
 });
 
-test('a secret and another rule hit share one ask, destructive first', () => {
+test('a secret next to another rule hit: that rule still asks, destructive first, and the secret adds no reason, only its kind', () => {
   const r = decide(`git push && echo ${ANTHROPIC}`, ctx);
   assert.equal(r.ask, true);
-  assert.match(r.reason, /literal password\/token.*git push|git push.*literal password\/token/);
+  assert.deepEqual(r.reasons.map((reason) => reason.startsWith('git push publishes')), [true]);
+  assert.equal(r.secret, 'an Anthropic API key');
   const both = decide(`echo ${ANTHROPIC} && git push -f`, ctx);
-  assert.match(both.reason, /^DESTRUCTIVE: force push.*literal password\/token/);
+  assert.match(both.reason, /^DESTRUCTIVE: force push/);
+  assert.ok(both.reasons.every((reason) => !reason.includes('literal password/token')), both.reason);
 });
 
 test('maskSecrets hides every detected secret, quoted values included, and leaves the rest', () => {
@@ -87,20 +89,20 @@ test('maskSecrets hides every detected secret, quoted values included, and leave
   assert.equal(maskSecrets('git push && ls -la'), 'git push && ls -la');
 });
 
-test('hook contract: a secret asks (no GUI), and stdout, stderr and the log never contain it', () => {
-  for (const [command, secret] of [[`PGPASSWORD=${PASSWORD} psql -h db`, PASSWORD], [`echo ${ANTHROPIC}`, ANTHROPIC], [`sshpass -p ${PASSWORD} ssh host`, PASSWORD]]) {
+test('hook contract (G1): a secret runs with no ask and no bounce, and the log gets one line naming its kind, never the value', () => {
+  for (const [command, secret, kind] of [[`PGPASSWORD=${PASSWORD} psql -h db`, PASSWORD, 'a password or key assigned in the command'],
+    [`echo ${ANTHROPIC}`, ANTHROPIC, 'an Anthropic API key'], [`sshpass -p ${PASSWORD} ssh host`, PASSWORD, 'an sshpass password']]) {
     const logPath = tempLogPath();
     const r = spawnSync(process.execPath, [HOOK], {
-      input: JSON.stringify({ cwd: PROJECT, tool_input: { command } }), encoding: 'utf8', env: hookEnv({ CLAUDE_PROJECT_DIR: PROJECT, CLAUDE_GUARD_LOG: logPath }),
+      input: JSON.stringify({ cwd: PROJECT, session_id: 'g1-secret', tool_input: { command } }), encoding: 'utf8', env: hookEnv({ CLAUDE_PROJECT_DIR: PROJECT, CLAUDE_GUARD_LOG: logPath }),
     });
     assert.equal(r.status, 0);
-    const out = JSON.parse(r.stdout).hookSpecificOutput;
-    assert.equal(out.permissionDecision, 'ask');
-    assert.match(out.permissionDecisionReason, /^the command contains a literal password\/token/);
-    assert.ok(!r.stderr.includes(secret) && !r.stdout.includes(secret));
+    assert.equal(r.stdout, '', command); // no decision: the command runs
+    assert.ok(!r.stderr.includes(secret));
     const logged = readFileSync(logPath, 'utf8');
-    assert.ok(!logged.includes(secret));
-    assert.equal(JSON.parse(logged).outcome, 'no-gui');
+    assert.ok(!logged.includes(secret), command);
+    const lines = logged.trim().split('\n').map((line) => JSON.parse(line));
+    assert.deepEqual(lines.map(({ outcome, reason, command: text, class: name }) => ({ outcome, reason, text, name })), [{ outcome: 'secret', reason: kind, text: '', name: 'secret' }]);
   }
 });
 
@@ -134,7 +136,7 @@ test('R4/L2: SSHPASS, vault, --from-literal, az -p, htpasswd -b and aws configur
     const masked = maskSecrets(command);
     assert.equal(masked.includes(R4_PW), false, `masked: ${command}`);
     assert.equal(masked.includes('Ab1Cd2Ef3G'), false, `masked: ${command}`);
-    assert.equal(decide(command, ctx).ask, true, `asks: ${command}`);
+    assert.equal(typeof decide(command, ctx).secret, 'string', `noted: ${command}`);
   }
   for (const command of R4_NOT_SECRETS) assert.equal(findLiteralSecret(command), undefined, `not a secret: ${command}`);
 });
@@ -187,8 +189,8 @@ test('R5/L3: a literal given on stdin to --with-token / --password-stdin is dete
     assert.ok(findLiteralSecret(command), `detected: ${command}`);
     assert.equal(maskSecrets(command).includes(STDIN_PW), false, `masked: ${command}`);
     const reason = decide(command, ctx);
-    assert.equal(reason.ask, true, command);
-    assert.equal(reason.reason.includes(STDIN_PW), false);
+    assert.equal(typeof reason.secret, 'string', command);
+    assert.equal(JSON.stringify(reason).includes(STDIN_PW), false);
   }
   for (const command of STDIN_NOT_LITERAL) assert.equal(findLiteralSecret(command), undefined, `not a secret: ${command}`);
 });
@@ -316,14 +318,14 @@ const DATA_STILL_SCANNED = [
 test('data: a quoted heredoc body read by cat or tee and a single-quoted argument of an inert program are not scanned by the context rules', () => {
   for (const command of DATA_NOT_SCANNED) {
     assert.equal(findLiteralSecret(command), undefined, command);
-    assert.ok(!(decide(command, ctx).reason ?? '').includes('literal password/token'), command);
+    assert.equal(decide(command, ctx).secret, undefined, command);
   }
 });
 
 test('data: a body that runs, an unquoted body, a command line and anything this reader cannot pair are still scanned', () => {
   for (const command of DATA_STILL_SCANNED) {
     assert.notEqual(findLiteralSecret(command), undefined, command);
-    assert.match(decide(command, ctx).reason ?? '', /contains a literal password\/token/, command);
+    assert.notEqual(decide(command, ctx).secret, undefined, command);
   }
 });
 

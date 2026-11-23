@@ -13,7 +13,8 @@
 // - readsRuntimeValue: a word fed by `"$@"`, `$*`, `$1`, an array (`"${A[@]}"`, `$A` after `A=(..)`), `${!X}`, or a name `read`,
 //   `mapfile` or `getopts` assigns: its words are known only at run time (`read X <<< "push --force"; git $X`). Only where the line
 //   expands it outside single quotes. A name `printf -v` or a `for`/`select` loop assigns counts only unquoted, where bash splits it
-//   (`for X in "push --force"; do git $X`); quoted it is one word (`git add "$f"`), and lib/git-run-values.mjs judges git-run values.
+//   (`for X in "push --force"; do git $X`); quoted it is one word (`git add "$f"`), and lib/git-run-values.mjs judges git-run values. A loop
+//   over plain words is judged per value instead (lib/loop-values.mjs). Both reasons bounce once (lib/bounce-once.mjs), the retry asks.
 // Scanning is linear in the line apart from a bounded look-ahead for the `))` (MAX_ARITHMETIC); a body longer than that, an unclosed
 // quote, an unbalanced parenthesis or a `<<` that is not a heredoc makes the line unclear: every `((` then counts, whatever the quoting,
 // and no assignment counts. Pure, no I/O.

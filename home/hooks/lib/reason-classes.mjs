@@ -3,8 +3,8 @@
 // any command text, path or host: a class name is fixed text. decide() uses them to keep advice (quality rules) apart from what asks.
 // Exports: BOUNCE_CLASS (the four bounce classes by key), BOUNCE_CLASSES, ADVICE_CLASS, ADVICE_CLASSES, ASK_CLASSES (every class that asks
 // the owner), reasonClass(reason) -> name | undefined, isAdviceReason(reason), splitAdvice(reasons) -> {asks, advice}.
-// The bounce classes match exactly (the reason constants of lib/shell-hazards.mjs and lib/raw-risk.mjs, a literal-secret reason of
-// lib/verdict.mjs). The advice classes match exactly too, against the closed set of texts their rules can give (one of them holds a branch name,
+// The bounce classes match exactly (the reason constants of lib/shell-hazards.mjs, lib/raw-risk.mjs and lib/runtime-values.mjs; a literal
+// secret is no reason at all since owner G1, 2026-11-23). The advice classes match exactly too, against the closed set of texts their rules can give (one of them holds a branch name,
 // so it matches as a whole text over a fixed charset): being advice is what lets
 // a command run without the owner, so another rule's reason that merely contains advice wording (from command text) stays an ask. Every
 // other class matches the fixed part of its rule's wording, so a reworded rule loses its class.
@@ -15,16 +15,18 @@ import { BRANCH_MOVE_ADVICE } from './branch-move.mjs';
 import { LOCKFILES, lockfileAdvice } from './command-checks.mjs';
 import { COPY_BRANCH_ADVICE_PATTERN } from './git-advice.mjs';
 import { MERGE_COMMIT_ADVICE } from './merge-commit.mjs';
+import { DOCKER_RM_ADVICE } from './docker-advice.mjs';
 import { RISKY_REASON } from './raw-risk.mjs';
+import { ARITHMETIC_REASON, RUNTIME_VALUE_REASON } from './runtime-values.mjs';
 import { SPLIT_VARIABLE_REASON, VARIABLE_COMMAND_REASON } from './shell-hazards.mjs';
-import { BACKSTOP_MARK, DESTRUCTIVE_PREFIX, secretKindOf } from './verdict.mjs';
+import { BACKSTOP_MARK, DESTRUCTIVE_PREFIX } from './verdict.mjs';
 import { WAIT_ADVICE } from './wait-advice.mjs';
 
 export const BOUNCE_CLASS = Object.freeze({
   variableCommand: 'variable command word',
   splitVariable: 'variable holding several words as the command',
   riskyWord: 'risky word in shell expansion',
-  secret: 'secret',
+  tooComplex: 'word or arithmetic known only at run time', // arithmetic on run-time text, a word filled in at run time (fixes spec X7)
 });
 export const BOUNCE_CLASSES = Object.values(BOUNCE_CLASS);
 
@@ -33,6 +35,8 @@ const EXACT_BOUNCE_REASONS = new Map([
   [SPLIT_VARIABLE_REASON, BOUNCE_CLASS.splitVariable],
   [RISKY_REASON, BOUNCE_CLASS.riskyWord],
   [`${DESTRUCTIVE_PREFIX}${RISKY_REASON}`, BOUNCE_CLASS.riskyWord],
+  [ARITHMETIC_REASON, BOUNCE_CLASS.tooComplex],
+  [RUNTIME_VALUE_REASON, BOUNCE_CLASS.tooComplex],
 ]);
 
 // Quality rules: the hook denies the first send with the advice and lets the identical retry run (lib/bounce-once.mjs), never the owner.
@@ -42,6 +46,7 @@ export const ADVICE_CLASS = Object.freeze({
   branchMove: 'branch moved by plumbing',
   copyBranch: 'copy of an existing branch',
   sleepWait: 'wait by sleeping',
+  dockerRm: 'docker rm without -v',
 });
 export const ADVICE_CLASSES = Object.values(ADVICE_CLASS);
 // every text an advice rule can give, exactly (see the header)
@@ -50,6 +55,7 @@ const EXACT_ADVICE_REASONS = new Map([
   [MERGE_COMMIT_ADVICE, ADVICE_CLASS.mergeCommit],
   [BRANCH_MOVE_ADVICE, ADVICE_CLASS.branchMove],
   [WAIT_ADVICE, ADVICE_CLASS.sleepWait],
+  [DOCKER_RM_ADVICE, ADVICE_CLASS.dockerRm],
 ]);
 // the advice text that holds a branch name: matched as a WHOLE text over a fixed charset (lib/git-advice.mjs), never by "contains"
 const ADVICE_PATTERNS = [
@@ -126,7 +132,6 @@ export function reasonClass(reason) {
   const plain = withoutMark(reason);
   if (adviceClassOf(plain) !== undefined) return adviceClassOf(plain);
   if (EXACT_BOUNCE_REASONS.has(plain)) return EXACT_BOUNCE_REASONS.get(plain);
-  if (secretKindOf(plain) !== undefined) return BOUNCE_CLASS.secret;
   return ASK_CLASS_PATTERNS.find(([, pattern]) => pattern.test(plain))?.[0];
 }
 

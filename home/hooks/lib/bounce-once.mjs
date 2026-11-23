@@ -4,16 +4,17 @@
 // Exports: bounceText(reasons) -> deny text | undefined, bounceOnce(ask, call, env) -> hook stdout | undefined, bouncedDir(env),
 // MAX_BOUNCED, RETRY_LINE, adviceOnce(advice, call, env) -> hook stdout (also used by agent-model-guard.mjs), withAdvice(text, advice) -> text.
 // Bounce classes (lib/reason-classes.mjs), and only these: the command word is a variable or substitution; a variable holding several
-// words run as the command; a risky word inside shell expansion (plain and DESTRUCTIVE); a literal secret. An ask with none of them (push,
-// publish, rm outside the project, prod writes, stdin shells, credentials, guard errors, "too long") is untouched. A command with a bounce
-// reason AND other reasons is bounced too, and its deny text names those other reasons by class (fixed names, never command text): the
-// rewritten command still asks the owner about them, and the identical retry's ask shows every reason. A literal secret's deny text ends
-// with an instruction to tell the owner, in the final report, which kind of secret was typed: the transcript holds it now.
+// words run as the command; a risky word inside shell expansion (plain and DESTRUCTIVE); arithmetic on run-time text or a word filled in
+// at run time (lib/runtime-values.mjs). An ask with none of them (push, publish, rm outside the project, prod writes, stdin shells,
+// credentials, guard errors, "too long", the line's work budget) is untouched. A command with a bounce reason AND other reasons is bounced
+// too, and its deny text names those other reasons by class (fixed names, never command text): the rewritten command still asks the owner
+// about them, and the identical retry's ask shows every reason. A literal secret is no reason at all (owner G1, lib/remembered-ask.mjs).
 // Store (adviceOnce callers may name their own folder instead): ~/.claude/state/guard-bounced/<session>.json through lib/session-store.mjs (lstat-checked: never through a link, never a FIFO;
 // folder 0700, file 0600): {"digests": [oldest, ..., newest]}, each the sha256 of [cwd, command] as JSON, so no command text and no secret
 // is stored. At most MAX_BOUNCED digests (the oldest is dropped). The match is exact: one changed character (a trailing blank) makes a new
 // command, which is judged fresh.
-// Log: one line with outcome "bounce" and the bounce classes in `class`; it holds no command or reason text.
+// Log: one line with outcome "bounce", the bounce classes in `class`, and the reason and command as every ask row has them (lib/guard-log.mjs
+// masks secrets with maskSecrets and cuts them; fixes spec X11).
 // Invariants of bounceOnce: never an allow; a bounce only once its digest is stored, so the retry can ask; anything uncertain (no or odd session id, an
 // unusable, corrupt or oversized store, a failed write, an exception) returns undefined, which is today's ask. Hooks recording at the same
 // moment take turns (lib/session-lock.mjs withSessionLock), so none drops another's digest, and the file is never half-written (temp file
@@ -41,7 +42,6 @@ import { BOUNCE_CLASS, BOUNCE_CLASSES, reasonClass } from './reason-classes.mjs'
 import { withSessionLock } from './session-lock.mjs';
 import { readSessionFile, writeSessionFile } from './session-store.mjs';
 import { decisionOutput } from './timed-ask.mjs';
-import { BACKSTOP_MARK, secretKindOf } from './verdict.mjs';
 
 export const MAX_BOUNCED = 200;
 const MAX_STORE_BYTES = 64 * 1024; // MAX_BOUNCED digests take about 14 KB; a bigger file was not written here, so it is not trusted
@@ -54,40 +54,25 @@ const REWRITES = new Map([
   [BOUNCE_CLASS.splitVariable, 'A variable holding several words is run as the command: write the command out.'],
   [BOUNCE_CLASS.riskyWord, 'A risky command (rm -r/-f, git push, publish, a gh change, a disk tool or a production host) is in the same call as '
     + '`$(...)`, a backtick, a heredoc, eval or an inline script: run the rm / push in its own call, without `$(...)` or a heredoc.'],
+  [BOUNCE_CLASS.tooComplex, 'A word or number is only known when the command runs (arithmetic on text read at run time, or a word from read, '
+    + 'an array, "$@" or a loop over quoted or expanded words): write the words or numbers out (a `for` list of plain words is judged per value).'],
 ]);
-const rewriteSecret = (kind) => `The command contains a literal password/token (${kind}): pass it through an environment variable or a file the tool reads.`;
 const OTHER_RULE = 'another guard rule'; // a reason no class knows (tests keep every rule classed)
 const stillAsks = (names) => `The rewritten command will still ask the owner for: ${names.join('; ')}.`;
-const reportSecret = (kinds) => `In your final report, tell the owner that a secret was typed into a command (${kinds.join('; ')}; never its value): `
-  + 'the transcript now holds it, so they may want to rotate it.';
 
 const unique = (items) => [...new Set(items)];
-const withoutMark = (reason) => (reason.endsWith(BACKSTOP_MARK) ? reason.slice(0, -BACKSTOP_MARK.length) : reason);
-
-/** @returns {string | undefined} the rewrite instruction for ONE ask reason, or undefined when its class is not bounced */
-function rewriteFor(reason) {
-  const name = reasonClass(reason);
-  return name === BOUNCE_CLASS.secret ? rewriteSecret(secretKindOf(withoutMark(reason))) : REWRITES.get(name);
-}
 
 /**
- * The deny text the agent reads: what to rewrite (one line per bounce class), the classes that will still ask after the rewrite, how to
- * reach the owner instead, and for a literal secret what to tell the owner.
+ * The deny text the agent reads: what to rewrite (one line per bounce class), the classes that will still ask after the rewrite, and how
+ * to reach the owner instead.
  * @param {string[]} reasons the ask's reasons one by one (decide's `reasons`)
  * @returns {string | undefined} the text, or undefined when no reason is in a bounce class
  */
 export function bounceText(reasons) {
-  const rewrites = unique(reasons.map(rewriteFor).filter((line) => line !== undefined));
+  const rewrites = unique(reasons.map((reason) => REWRITES.get(reasonClass(reason))).filter((line) => line !== undefined));
   if (rewrites.length === 0) return undefined;
   const others = unique(reasons.map((reason) => reasonClass(reason) ?? OTHER_RULE).filter((name) => !BOUNCE_CLASSES.includes(name)));
-  const kinds = unique(reasons.map((reason) => secretKindOf(withoutMark(reason))).filter((kind) => kind !== undefined));
-  return [
-    HEADER,
-    ...rewrites.map((line) => `- ${line}`),
-    ...(others.length > 0 ? [stillAsks(others)] : []),
-    RETRY_LINE,
-    ...(kinds.length > 0 ? [reportSecret(kinds)] : []),
-  ].join('\n');
+  return [HEADER, ...rewrites.map((line) => `- ${line}`), ...(others.length > 0 ? [stillAsks(others)] : []), RETRY_LINE].join('\n');
 }
 
 /**
@@ -154,7 +139,7 @@ export function bounceOnce(ask, { command, cwd, input }, env = process.env) {
     const text = Array.isArray(ask.reasons) ? bounceText(ask.reasons) : undefined; // a "guard error" ask has no reasons
     if (text === undefined || recordSend(input.session_id, digestOf(cwd, command), env) !== 'first') return undefined;
     const bounced = unique(ask.reasons.map(reasonClass).filter((name) => BOUNCE_CLASSES.includes(name)));
-    logDecision({ hook: 'pre-bash-guard', tool: 'Bash', decision: 'deny', outcome: 'bounce', class: bounced.join(', '), cwd, session: input.session_id }, env);
+    logDecision({ hook: 'pre-bash-guard', tool: 'Bash', decision: 'deny', outcome: 'bounce', class: bounced.join(', '), reason: ask.reason, command, cwd, session: input.session_id }, env);
     return decisionOutput({ decision: 'deny', reason: withAdvice(text, ask.advice) });
   } catch {
     return undefined; // a failure in this step falls back to today's ask, never to an allow

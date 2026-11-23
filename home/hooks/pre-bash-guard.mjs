@@ -3,11 +3,12 @@
 // string[][]. Nothing is denied for good. Every safety rule hit is an ASK, and the hook answers it with a timed native dialog (lib/timed-ask.mjs: Allow is
 // the default, no answer in 2 min (CLAUDE_ASK_TIMEOUT_S) goes ahead as Allow, only a click on Deny denies); with no GUI (ssh, CI, no display) or a failing
 // dialog it falls back to the CLI's own "ask" prompt, which also appears in bypassPermissions mode (verified on CLI 2.1.323). Bounce once
-// (lib/bounce-once.mjs): when a reason can be fixed by rewriting the command (a variable command word, a risky word inside shell expansion, a literal
-// secret), the first send is denied with the rewrite instead, naming by class (lib/reason-classes.mjs) any other reason that will still ask; the identical
+// (lib/bounce-once.mjs): when a reason can be fixed by rewriting the command (a variable command word, a risky word inside shell expansion, arithmetic
+// or a word filled in at run time), the first send is denied with the rewrite instead, naming by class (lib/reason-classes.mjs) any other reason that will still ask; the identical
 // command sent again gets the ask above. ADVICE (quality rules: a hand-edited lockfile, a merge that can create a merge commit, a branch moved by update-ref,
 // a copy of an existing lane branch, a fast-forward merge into the base without a suite PASS: lib/git-advice.mjs, a `for|while|until` loop that sleeps 5 s or
-// more or a single sleep of 30 s or more, unless sent with run_in_background: true or by Monitor (tool_name "Monitor": lib/wait-advice.mjs) never asks:
+// more or a single sleep of 30 s or more, unless sent with run_in_background: true or by Monitor (tool_name "Monitor": lib/wait-advice.mjs), a `docker rm`
+// without -v (lib/docker-advice.mjs)) never asks:
 // alone, the first send is denied with the fix and the identical retry runs; next to an ask or bounce it is appended (table: lib/bounce-once.mjs). Every ask and its outcome is logged (lib/guard-log.mjs, no secrets).
 // Rules. DESTRUCTIVE (the dialog says "DESTRUCTIVE: ..."): force push (incl. -fu clusters and +refspec), `push --mirror`, remote branch delete, rm -r of a
 // whole folder (the working directory, a bare glob such as `*` or `./**/*` of it, the project root, home, `/`: lib/rm-paths.mjs), rm -r outside the project
@@ -21,17 +22,14 @@
 // with a recursive delete call (a path the guard cannot read asks); a recursive delete through a link made earlier in the line (`ln -s .. up && rm -rf
 // up/*`). Plain ask: a write, removal, link or FIFO under ~/.claude/private or the guard's own state. `rm -r .` and `rm -r ./` never ask (rm refuses them),
 // nor does a bare glob of the folder this line's `mktemp -d` made. A nested body (`$(...)`, backticks) of a line that has a `cd`, `pushd` or `popd` is judged
-// with the folder unknown. Plain ASK: git --no-verify (and unique prefixes), `git -c core.hooksPath`, `HUSKY=0 git`, a literal secret in the command
-// (lib/secrets.mjs; the text never repeats it), `git push` (not --dry-run), `gh release *`, `gh pr merge`, package publish (lib/outward.mjs),
+// with the folder unknown. Plain ASK: git --no-verify (and unique prefixes), `git -c core.hooksPath`, `HUSKY=0 git`, `git push` (not --dry-run), `gh release *`, `gh pr merge`, package publish (lib/outward.mjs),
 // ssh/scp/rsync/psql/mysql that write to a production host (lib/remote.mjs; list in ~/.claude/private/prod-hosts), `security find-*-password -w|-g`
 // (not of the account tool's own service: lib/account-reads.mjs) / `dump-keychain` / `export` and `gh auth token` (print a stored secret), `gh ssh-key add` of a file that is not `*.pub`, and a private credential file
 // (`.ssh/id_*` or any non-public file directly under `.ssh`, `.aws/credentials`, `.netrc`, gh `hosts.yml`, `.kube/config`, `.npmrc`, `.docker/config.json`,
 // `.pypirc`) in one command line with a network sender or cloud upload (`aws s3 cp`, `gsutil cp`, `rclone copy` ...), a whole `~/.ssh` / `.aws` / `.gnupg`
 // folder given to a sender or archived before one, or a credential fed to ssh's stdin, unless it is the value of an identity flag (`ssh|scp|sftp -i`, curl
-// `--key`; lib/credential-send.mjs). A literal-secret ask that the owner allowed (or let time out) is remembered for the rest of the session as sha256
-// digests (lib/allowed-literals.mjs, lib/remembered-ask.mjs): the same values again run without a dialog (log outcome "remembered") only when the command is
-// also clean with the values neutralised. An ask with any other reason always shows its dialog and remembers nothing. ALLOW: `sed -i`, heredoc and
-// inline-interpreter writes to code files are allowed. Everything else (and any command text it cannot parse) is allowed. Reading files, `.env` included, is never blocked.
+// `--key`; lib/credential-send.mjs). A literal secret (lib/secrets.mjs) never asks or bounces (owner G1): decide returns its kind, the hook logs only that.
+// ALLOW: `sed -i`, heredoc and inline-interpreter writes to code files are allowed. Everything else (and any command text it cannot parse) is allowed. Reading files, `.env` included, is never blocked.
 // This is a safety net against model mistakes, not a sandbox. Invariants: it never executes the command, it never fails open on its own errors (hook input
 // that is not JSON with a string command asks "the guard could not read its input"; once a command was read, an exception anywhere asks "guard error":
 // decideSafely for the rules, main for everything after them; a hook process that dies or times out blocks the call through `onFailure: "block"` in
@@ -54,7 +52,7 @@
 // /dev/disk*`, `cp|mv|tee ... /dev/disk*|sd*|nvme*`, an `alias` whose body would ask ask. PGHOST/PGSERVICE/MYSQL_HOST set earlier in the line count as the
 // host of a later psql/mysql. Prod SQL with a `$tag$` quote, a backslash escape or `;` followed by more text is not read-only. Nesting deeper than
 // MAX_NESTING asks. An unquoted `$X` with blanks is judged by every rule as zsh (one word) and as bash (split) reads it (`X="push -f"; git $X`).
-// Arithmetic on anything but numbers asks, as does a word filled in at run time (`read X; git $X`, `"$@"`) in a checked command (lib/runtime-values.mjs).
+// Arithmetic on anything but numbers bounces, as does a word filled in at run time (`read X; git $X`, `"$@"`) in a checked command (lib/runtime-values.mjs); a plain `for` list is judged per value (lib/loop-values.mjs).
 // Fail to ask (Round 4, lib/raw-risk.mjs): the two parsers are not a security boundary. A command that has ANY hidden-execution construct (`$(`, backtick,
 // `<<`, `<(`, eval, trap, case, `\r`, a pipe into a shell ...) and a dangerous word anywhere in its raw text, quoted or not, asks with "risky word inside
 // shell expansion" when nothing else asked. Round 5: the quoted message of `git commit` and `gh pr|issue create|edit|comment` is data (lib/message-text.mjs),
@@ -78,6 +76,7 @@ import {
 import { withoutCapturedPrints } from './lib/captured-read.mjs';
 import { commandOf } from './lib/command-of.mjs';
 import { checkCredentialSend } from './lib/credential-send.mjs';
+import { dockerRmAdvice } from './lib/docker-advice.mjs';
 import { scanWrapped } from './lib/dangerous-scan.mjs';
 import { checkEval } from './lib/eval-check.mjs';
 import { checkFind } from './lib/find-delete.mjs';
@@ -92,7 +91,8 @@ import { hostVariables, readProdHosts, remoteAsk } from './lib/remote.mjs';
 import { TOO_COMPLEX_REASON, checkRm, newScope, newWork, substituteKnownWords, trackAssignments } from './lib/rm-paths.mjs';
 import { groupBranches } from './lib/bare-glob.mjs';
 import { enterSegment, leaveSegment, maybeFolders, newFolder, possibleFolders } from './lib/cd-folder.mjs';
-import { askUnlessRemembered } from './lib/remembered-ask.mjs';
+import { askOrBounce, logSecretKind } from './lib/remembered-ask.mjs';
+import { newLoopWalk, segmentViews, stepLoopWalk } from './lib/loop-values.mjs';
 import { adviceOnce } from './lib/bounce-once.mjs';
 import { isAdviceReason, splitAdvice } from './lib/reason-classes.mjs';
 import { findLiteralSecret } from './lib/secrets.mjs';
@@ -101,7 +101,7 @@ import { arithmeticReasons } from './lib/runtime-values.mjs';
 import { logDecision } from './lib/guard-log.mjs';
 import { lex, segments, tokenize } from './lib/shell-words.mjs';
 import { riskyWordInExpansion, unreadableNameReasons } from './lib/raw-risk.mjs';
-import { DESTRUCTIVE_PREFIX, isSecretOnlyReason, MAX_COMMAND_CHARS, secretReason } from './lib/verdict.mjs';
+import { DESTRUCTIVE_PREFIX, MAX_COMMAND_CHARS } from './lib/verdict.mjs';
 
 export { segments };
 const allow = () => ({ allow: true });
@@ -130,7 +130,7 @@ function checkSimple({ cmd, args, assigns, before }, env) {
     checkKeychainPrint(cmd, args),
     checkGhSecret(cmd, args),
     checkDiskWipe(cmd, args),
-    checkLockfileEdit(cmd, args),
+    checkLockfileEdit(cmd, args), dockerRmAdvice(cmd, args), // two advice rules: they never ask (lib/reason-classes.mjs)
     outwardAsk(cmd, args) ?? remoteAsk(cmd, args, [...assigns, ...hostVariables(env.vars)], env.prodHosts),
     ...(cmd === 'alias' ? checkAlias(args, env) : []),
   ].filter((reason) => reason !== undefined);
@@ -149,38 +149,39 @@ function checkCommand(command, env, nextWords) {
 }
 
 /**
- * Every reason a command line needs an owner answer: a literal secret, then each simple command (checked as written, then
- * scanned for a dangerous command behind an unknown wrapper), then nested bodies. Variables assigned earlier in the line are
- * tracked in order, the last assignment wins.
+ * Every reason a command line needs an owner answer: each simple command (checked as written, then scanned for a dangerous command
+ * behind an unknown wrapper), then nested bodies. Variables assigned earlier in the line are tracked in order, the last assignment wins.
  */
 function reasonsOf(command, context) {
   const { cwd, project, prodHosts, parse = tokenize, depth = 0, judged = new Map(), line = lineFacts(command), work = newWork(), maybeCwds = [] } = context;
   if (depth > MAX_NESTING) return ['commands are nested too deeply to check (bash -c / eval / $( ) inside each other); write them out flat'];
   const reasons = [];
-  const secret = findLiteralSecret(command);
-  if (secret !== undefined) reasons.push(secretReason(secret));
   const scope = newScope(cwd, project, command, work);
   const { segs, nested } = parse(command);
   const commands = [];
   const folder = newFolder(cwd); // the folders the line's `cd`s may have led to (lib/cd-folder.mjs)
+  const loops = newLoopWalk(command);
   segs.forEach((seg, index) => {
     const readings = commandReadings(substituteKnownWords(seg, scope), scope.splitWords); // `X="push -f"; git $X` as zsh, then as bash reads it
     const { words, parsed } = readings[0];
     commands.push({ ...parsed, piped: seg.piped === true }); // credential-send follows a pipe into ssh
     enterSegment(folder, seg, parsed, words);
-    const bareWords = new Set([...(seg.bareWords ?? [])].map((at) => words[at])); // `$NAME` outside quotes: bash splits its value into words
-    // a command that may run in more than one folder is judged in each, and every rule judges each reading of its words in each
-    for (const [dir, { words: read, parsed: run }] of possibleFolders(folder, seg, work).flatMap((dir) => readings.map((reading) => [dir, reading]))) {
-      const env = { cwd: dir, maybeCwds: [...maybeFolders(folder), ...maybeCwds], groupTargets: groupBranches(segs, index), project, vars: scope.vars,
-        splitWords: scope.splitWords, bareWords, prodHosts, parse, depth: depth + 1, judged, line, work };
-      reasons.push(...shellHazards({ seg, raw: commandOf(seg), parsed: run, shellScript, line: command }), ...gitRunValueReasons(read, run, env, reasonsOf),
-        ...unreadableNameReasons(run.cmd, command, prodHosts));
-      if (run.cmd === undefined) continue;
-      const wrapped = (cmd, args, at) => checkCommand({ cmd, args, assigns: [], before: read.slice(0, at) }, env, []);
-      reasons.push(...checkCommand({ ...run, before: read.slice(0, run.at) }, env, segs[index + 1] ?? []), ...scanWrapped(read, run, wrapped));
+    // judged in each folder it may run in, each reading of its words, once per value of a plain `for` list it uses (lib/loop-values.mjs)
+    for (const view of segmentViews(seg, scope, loops, readings)) {
+      const bareWords = new Set([...(seg.bareWords ?? [])].map((at) => view.readings[0].words[at])); // `$NAME` outside quotes: bash splits its value
+      for (const [dir, { words: read, parsed: run }] of possibleFolders(folder, seg, work).flatMap((dir) => view.readings.map((reading) => [dir, reading]))) {
+        const env = { cwd: dir, maybeCwds: [...maybeFolders(folder), ...maybeCwds], groupTargets: groupBranches(segs, index), project, vars: scope.vars,
+          splitWords: scope.splitWords, bareWords, prodHosts, parse, depth: depth + 1, judged, line, work };
+        reasons.push(...shellHazards({ seg: view.seg, raw: commandOf(view.seg), parsed: run, shellScript, line: command }),
+          ...gitRunValueReasons(read, run, env, reasonsOf), ...unreadableNameReasons(run.cmd, command, prodHosts));
+        if (run.cmd === undefined) continue;
+        const wrapped = (cmd, args, at) => checkCommand({ cmd, args, assigns: [], before: read.slice(0, at) }, env, []);
+        reasons.push(...checkCommand({ ...run, before: read.slice(0, run.at) }, env, segs[index + 1] ?? []), ...scanWrapped(read, run, wrapped));
+      }
     }
     if (parsed.cmd !== undefined) leaveSegment(folder, parsed, { project, scope });
     trackAssignments(scope, seg);
+    stepLoopWalk(loops, seg);
   });
   // one command line: the file may be read in one command and sent by another; a link made in one command may be deleted through in another
   reasons.push(...[checkCredentialSend(commands), checkLinkedDelete(commands)].filter((reason) => reason !== undefined), ...arithmeticReasons(command));
@@ -198,9 +199,9 @@ function reasonsOf(command, context) {
  * @param {{cwd?: string|null, project?: string, prodHosts?: string[], sessionId?: unknown}} ctx absolute paths (cwd null means "unknown directory"),
  *   the private production-host list (see lib/remote.mjs) and the hook input's session_id (its own scratch folder, lib/scratch-area.mjs);
  *   `work` is the line's work budget (lib/rm-paths.mjs newWork), which only a test passes
- * @returns {{allow: true, advice?: string[]} | {allow: false, ask: true, reason: string, reasons: string[], advice?: string[]}} reason
+ * @returns {{allow: true, advice?: string[], secret?: string} | {allow: false, ask: true, reason: string, reasons: string[], advice?: string[], secret?: string}} reason
  *   joins every rule hit, destructive first; reasons holds the same hits one by one, in the same order; advice (present only when some
- *   quality rule hit) is never in reason or reasons: it never asks, and the hook shows it once (lib/bounce-once.mjs)
+ *   quality rule hit) is never in reason or reasons: it never asks, and the hook shows it once (lib/bounce-once.mjs); secret: the kind of a literal secret (G1: logged only)
  */
 export function decide(command, { cwd = process.cwd(), project = cwd, prodHosts = [], sessionId, work = newWork(sessionId) } = {}) {
   if (command.length > MAX_COMMAND_CHARS) return ask(['command too long to check; read it before allowing']);
@@ -212,14 +213,13 @@ export function decide(command, { cwd = process.cwd(), project = cwd, prodHosts 
   const recheck = (text) => [...reasonsOf(text, ctx), ...reasonsOf(text, { ...ctx, parse: lex })];
   const found = withoutCapturedPrints([...new Set([...primary, ...backstop])], command, recheck); // `export T=$(gh auth token)` prints nothing
   const { asks: reasons, advice } = splitAdvice([...found, ...gitAdvice(command, cwd), ...waitAdvice(command)]); // advice never makes the backstop redundant
-  // fail to ask: a hidden-execution construct next to a dangerous word asks even when both parsers saw nothing; a literal secret never hides
-  // it (a secret-only ask is shortened and can be remembered, lib/remembered-ask.mjs), nor does the git-unreadable ask (it names no fix)
+  // fail to ask: a hidden construct next to a dangerous word asks even when both parsers saw nothing (the git-unreadable ask names no fix)
   const risky = riskyWordInExpansion(command, prodHosts);
-  const hidesRisky = (reason) => !isSecretOnlyReason(reason) && !reason.startsWith(GIT_UNREADABLE_REASON);
+  const hidesRisky = (reason) => !reason.startsWith(GIT_UNREADABLE_REASON);
   if (risky !== undefined && !reasons.some((reason) => reason.startsWith(risky) || hidesRisky(reason))) reasons.push(risky);
   reasons.sort((x, y) => Number(y.startsWith(DESTRUCTIVE_PREFIX)) - Number(x.startsWith(DESTRUCTIVE_PREFIX)));
-  const verdict = reasons.length === 0 ? allow() : ask(reasons);
-  return advice.length === 0 ? verdict : { ...verdict, advice };
+  const secret = findLiteralSecret(command); // owner G1: never a reason, only its kind for the log (the raw text covers nested bodies too)
+  return { ...(reasons.length === 0 ? allow() : ask(reasons)), ...(advice.length > 0 ? { advice } : {}), ...(secret !== undefined ? { secret } : {}) };
 }
 
 export const GUARD_ERROR_REASON = 'guard error';
@@ -254,8 +254,8 @@ function answerFor(command, input) {
   const rules = (text, ctx) => decide(text, { ...ctx, prodHosts: readProdHosts() }); // reading the host list is inside the guard too
   const decided = decideSafely(command, { cwd, project, sessionId: input.session_id }, rules);
   const r = input.tool_input.run_in_background === true || input.tool_name === 'Monitor' ? withoutWaitAdvice(decided) : decided; // waits the right way
-  const recheck = (text) => decideSafely(text, { cwd, project, sessionId: input.session_id }, rules);
-  if (r.ask) return askUnlessRemembered(r, { command, cwd, input, recheck });
+  if (r.secret !== undefined) logSecretKind(r.secret, { cwd, input }); // owner G1: noted, never asked
+  if (r.ask) return askOrBounce(r, { command, cwd, input });
   return r.advice ? adviceOnce(r.advice, { command, cwd, input }) : ''; // advice only: never the owner
 }
 

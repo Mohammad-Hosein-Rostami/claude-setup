@@ -2,7 +2,7 @@
 // logDecision(record, env).
 // One JSON line per guarded decision (every ask and its outcome allow / deny / timeout / no-gui / dialog-failed; guard-error when the Bash guard itself failed and fell back to the ask), appended to
 // ~/.claude/logs/guard.jsonl (override: CLAUDE_GUARD_LOG) so a monitor can report them. Fields: ts, hook, tool, decision,
-// outcome, reason, command, cwd, session (a bounce line also has `class` and leaves reason and command empty). Invariants: command and reason are masked with maskSecrets and the command is cut
+// outcome, reason, command, cwd, session (a bounce line also has `class`; a secret line, outcome "secret", has the kind as reason and no command). Invariants: command and reason are masked with maskSecrets and the command is cut
 // to 200 characters, so the log never holds a secret; on every write the directory is made 0700 and the file 0600 (also when they
 // already existed with looser modes), except a shared directory (/, $HOME, the temp dir) or one the user does not own, which is left
 // alone; best effort, a write failure never affects the hook. The file is opened without following a link and without blocking, and only
