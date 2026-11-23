@@ -111,11 +111,13 @@ test('React Router: createBrowserRouter objects (index, children, lazy) and nest
   const routes = byRoute(screens);
   assert.equal(routes['/settings'].component, 'src/pages/Settings.tsx');
   assert.equal(routes['/settings'].source, 'react-router');
-  assert.deepEqual(routes['/settings'].wraps, ['src/parts/Shell.tsx']);
+  const shell = ['src/App.tsx', 'src/main.tsx']; // the root router files are rendered around every route
+  assert.deepEqual(routes['/settings'].wraps, ['src/parts/Shell.tsx', ...shell]);
+  assert.equal(routes['/settings'].router, 'src/main.tsx');
   assert.equal(screens.find((s) => s.component === 'src/pages/Home.tsx').route, '/');
   assert.equal(routes['/a'].component, 'src/pages/PageA.tsx');
   assert.equal(routes['/b/c'].component, 'src/pages/PageC.tsx');
-  assert.deepEqual(routes['/b/c'].wraps, ['src/parts/Frame.tsx']);
+  assert.deepEqual(routes['/b/c'].wraps, ['src/parts/Frame.tsx', ...shell]);
   assert.deepEqual(routes['/members/:memberId'].urls, []);
   assert.deepEqual(unresolved, [`${NO_VALUE}"/members/:memberId" (src/pages/Member.tsx, src/main.tsx:11)`]);
 });
@@ -238,8 +240,8 @@ test('cache: a corrupt or foreign cache file is ignored and rewritten; UI_SCREEN
     const [name] = fs.readdirSync(cacheDir);
     fs.writeFileSync(path.join(cacheDir, name), '{ torn');
     assert.equal(inferScreens({ repoDir: dir, rev: sha }).cached, false);
-    assert.equal(JSON.parse(fs.readFileSync(path.join(cacheDir, name), 'utf8')).format, 'ui-screens/1');
-    fs.writeFileSync(path.join(cacheDir, name), JSON.stringify({ format: 'ui-screens/1', commonDir: '/elsewhere/.git', entries: [] }));
+    assert.equal(JSON.parse(fs.readFileSync(path.join(cacheDir, name), 'utf8')).format, 'ui-screens/2');
+    fs.writeFileSync(path.join(cacheDir, name), JSON.stringify({ format: 'ui-screens/2', commonDir: '/elsewhere/.git', entries: [] }));
     assert.equal(inferScreens({ repoDir: dir, rev: sha }).cached, false);
     assert.equal(inferScreens({ repoDir: dir, rev: sha }).cached, true);
   } finally {

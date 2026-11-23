@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { gitRun } from './git-read.mjs';
 
-export const CACHE_FORMAT = 'ui-screens/1';
+export const CACHE_FORMAT = 'ui-screens/2'; // 2: screens carry `router`; an older file reads as foreign and is replaced
 const MAX_CACHE_ENTRIES = 8;
 const NAME_HASH_CHARS = 16;
 

@@ -154,3 +154,70 @@ test('a 100k-file tree: inference and reach answer from git objects (time logged
   console.log(`100k-file tree: inference and reach took ${Date.now() - start} ms`);
   assert.deepEqual(result, { reached: [{ id: 'react-router:/a', via: 'src/ui/button.tsx' }], all: false, why: null });
 });
+
+const ROUTER_PKG = '{"name":"app","dependencies":{"react":"19.0.0","react-dom":"19.0.0","react-router-dom":"7.0.0","vue":"3.5.0","vue-router":"4.4.0","@angular/core":"19.0.0","@angular/router":"19.0.0","@angular/platform-browser":"19.0.0"}}';
+const routerOf = (routes, imports) => `import { createBrowserRouter } from 'react-router-dom';\n${imports}\nexport const router = createBrowserRouter([${routes}]);\n`;
+const AB = "{ path: '/a', element: <A /> }, { path: '/b', element: <B /> }";
+
+test('the app shell: a util of a file rendered around every route reaches every route (React, Vue, Angular)', () => {
+  const shared = { 'src/fmt.ts': 'export default 1;\n', 'src/onlyB.ts': 'export default 2;\n' };
+  const apps = {
+    'a header beside <Routes>': { 'src/App.tsx': "import { BrowserRouter, Routes, Route } from 'react-router-dom';\nimport Header from './Header';\nimport A from './A';\nimport B from './B';\nexport default function App() { return <BrowserRouter><Header /><Routes><Route path=\"/a\" element={<A />} /><Route path=\"/b\" element={<B />} /></Routes></BrowserRouter>; }\n",
+      'src/Header.tsx': page('Header', ['./fmt']), 'src/A.tsx': page('A', ['./fmt']), 'src/B.tsx': page('B', ['./onlyB']) },
+    'providers around RouterProvider': { 'src/main.tsx': "import { createRoot } from 'react-dom/client';\nimport { RouterProvider } from 'react-router-dom';\nimport { router } from './router';\nimport Providers from './Providers';\ncreateRoot(document.body).render(<Providers><RouterProvider router={router} /></Providers>);\n",
+      'src/router.tsx': routerOf(AB, "import A from './A';\nimport B from './B';"), 'src/Providers.tsx': page('Providers', ['./fmt']), 'src/A.tsx': page('A', ['./fmt']), 'src/B.tsx': page('B', ['./onlyB']) },
+    'Vue App.vue with <router-view>': { 'src/main.ts': "import { createApp } from 'vue';\nimport App from './App.vue';\nimport router from './router';\ncreateApp(App).use(router).mount('#app');\n",
+      'src/router.ts': "import { createRouter } from 'vue-router';\nimport A from './A.vue';\nimport B from './B.vue';\nexport default createRouter({ routes: [{ path: '/a', component: A }, { path: '/b', component: B }] });\n",
+      'src/App.vue': "<template><AppHeader /><router-view /></template>\n<script setup>\nimport AppHeader from './AppHeader.vue';\n</script>\n",
+      'src/AppHeader.vue': "<script setup>\nimport fmt from './fmt';\n</script>\n", 'src/A.vue': "<script setup>\nimport fmt from './fmt';\n</script>\n", 'src/B.vue': "<script setup>\nimport b from './onlyB';\n</script>\n" },
+    'an Angular AppComponent with <router-outlet>': { 'src/main.ts': "import { bootstrapApplication } from '@angular/platform-browser';\nimport { AppComponent } from './app.component';\nimport { appConfig } from './app.config';\nbootstrapApplication(AppComponent, appConfig);\n",
+      'src/app.config.ts': "import { provideRouter } from '@angular/router';\nimport { routes } from './app.routes';\nexport const appConfig = { providers: [provideRouter(routes)] };\n",
+      'src/app.routes.ts': "import { Routes } from '@angular/router';\nimport { AComponent } from './a.component';\nimport { BComponent } from './b.component';\nexport const routes: Routes = [{ path: 'a', component: AComponent }, { path: 'b', component: BComponent }];\n",
+      'src/app.component.ts': "import { RouterOutlet } from '@angular/router';\nimport { HeaderComponent } from './header.component';\n@Component({ imports: [RouterOutlet, HeaderComponent], template: '<app-header /><router-outlet />' })\nexport class AppComponent {}\n",
+      'src/header.component.ts': "import fmt from './fmt';\nexport class HeaderComponent {}\n", 'src/a.component.ts': "import fmt from './fmt';\nexport class AComponent {}\n", 'src/b.component.ts': "import b from './onlyB';\nexport class BComponent {}\n" },
+  };
+  for (const [name, files] of Object.entries(apps)) {
+    const { dir, sha } = repoWith({ 'package.json': ROUTER_PKG, ...shared, ...files });
+    const routesOf = (file) => { const r = reach(dir, [sha], [file]); return r.all ? r.why : r.reached.map((x) => x.id.split(':')[1]).join(','); };
+    assert.equal(routesOf('src/fmt.ts'), '/a,/b', name);
+    assert.equal(routesOf('src/onlyB.ts'), '/b', `${name}: a util of one route only stays on it`);
+  }
+});
+
+test('a plain stylesheet, a CSS module with :global and a Vue <style> without scoped reach every screen; a CSS module stays scoped', () => {
+  const { dir, sha } = repoWith({
+    'package.json': ROUTER_PKG,
+    'src/main.tsx': routerOf(AB, "import A from './A';\nimport B from './B';"),
+    'src/A.tsx': page('A', ['./a.css', './a.module.css', './g.module.scss', './Panel.vue', './Card.vue']), 'src/B.tsx': page('B'),
+    'src/a.css': 'h1 { color: red; }\n', 'src/a.module.css': '.title { color: red; }\n', 'src/g.module.scss': ':global(body) { margin: 0; }\n',
+    'src/Panel.vue': '<template><p/></template>\n<style lang="scss">\np { color: red; }\n</style>\n',
+    'src/Card.vue': '<template><p/></template>\n<style scoped>\np { color: red; }\n</style>\n',
+  });
+  const ids = (file) => reach(dir, [sha], [file]).reached.map((r) => r.id);
+  for (const file of ['src/a.css', 'src/g.module.scss', 'src/Panel.vue']) assert.deepEqual(ids(file), ['react-router:/a', 'react-router:/b'], file);
+  for (const file of ['src/a.module.css', 'src/Card.vue']) assert.deepEqual(ids(file), ['react-router:/a'], file);
+});
+
+test('a route component behind an alias the resolver does not read keeps its screen and gives all with one line', () => {
+  const { dir, sha } = repoWith({
+    'package.json': ROUTER_PKG,
+    'src/main.tsx': routerOf(AB, "import A from './A';\nimport B from 'pages/B';"),
+    'src/A.tsx': page('A', ['./pages/B']), 'src/pages/B.tsx': page('B'),
+  });
+  const { screens, unresolved } = inferScreens({ repoDir: dir, rev: sha, stateDir: makeTempDir('ui-reach-state-') });
+  assert.deepEqual(screens.map((s) => [s.route, s.component]), [['/a', 'src/A.tsx'], ['/b', 'src/main.tsx']]);
+  assert.deepEqual(unresolved, ['unresolved: "pages/B" in src/main.tsx is no file, alias or declared package (the route at src/main.tsx:4)']);
+  const result = reachedScreens({ repoDir: dir, revs: [sha], files: ['src/pages/B.tsx'], screens });
+  assert.equal(result.all, true);
+  assert.match(result.why, /^reach unresolved: "pages\/B" in src\/main\.tsx is no file, alias or declared package \(at [0-9a-f]{12}\): rendering/);
+});
+
+test('the walk bound: a walk past its file cap or its time budget gives all with one line', () => {
+  const { dir, sha } = repoWith(APP);
+  const { screens } = inferScreens({ repoDir: dir, rev: sha, stateDir: makeTempDir('ui-reach-state-') });
+  for (const bound of [{ maxWalkFiles: 3 }, { budgetMs: -1 }]) {
+    const result = reachedScreens({ repoDir: dir, revs: [sha], files: ['src/ui/button.tsx'], screens, ...bound });
+    assert.equal(result.all, true, JSON.stringify(bound));
+    assert.match(result.why, /^reach unresolved: the walk passed \d+ files or its time budget \(at [0-9a-f]{12}\)/);
+  }
+});

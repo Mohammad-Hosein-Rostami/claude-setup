@@ -15,15 +15,19 @@ import { configFiles, makeResolver } from './resolve.mjs';
 import { gitRun, readBlobs, readTree } from './git-read.mjs';
 import { MAX_READ_BYTES, MAX_TEXT_CHARS } from './route-parse.mjs';
 import { CACHE_FORMAT, cacheFile, hashOf, readCache, stateDirOf, writeCache } from './screens-cache.mjs';
-import { E2E_CONFIG, MATRIX, MAX_URLS, NEXT_CONFIG, STORY, e2eEntries, matrixScreens, nextScreens, routerScreens, storyScreen } from './screen-sources.mjs';
+import { E2E_CONFIG, MATRIX, MAX_URLS, NEXT_CONFIG, STORY, e2eEntries, matrixScreens, nextScreens, routerScreens, shellFiles, storyScreen } from './screen-sources.mjs';
 
 export const NO_VALUE = 'no value: ';
 const INFER_BUDGET_MS = 30_000;
 const MAX_CANDIDATES = 3000;
 const MAX_SCREENS = 3000;
 const SOURCE_SPECS = ['*.js', '*.jsx', '*.ts', '*.tsx', '*.mjs', '*.cjs', '*.mts', '*.cts', '*.vue', ':(exclude)*.d.ts'];
+// Fixed strings (`git grep -F`): with -E the search time grows with the word count and passes git's 5 s timeout on 100k files.
 const GREP_WORDS = ['createBrowserRouter', 'createHashRouter', 'createMemoryRouter', 'useRoutes', '<Route', 'Routes', 'createRouter',
-  'VueRouter', 'RouterModule', 'provideRouter', 'page\\.goto', 'cy\\.visit'];
+  'VueRouter', 'RouterModule', 'provideRouter', 'page.goto', 'cy.visit',
+  // the app shell around every route: render entries and router outlets (shellFiles)
+  'createRoot', 'hydrateRoot', 'ReactDOM.render', 'createApp', 'createSSRApp', 'bootstrapApplication', 'bootstrapModule', 'router-view',
+  'RouterView', 'router-outlet', 'RouterOutlet', 'RouterProvider'];
 
 const quote = (text) => JSON.stringify(String(text).slice(0, MAX_TEXT_CHARS));
 
@@ -53,9 +57,9 @@ function withUrls(routes, e2e) {
     if (fits.length > 0) for (const i of fits.filter((j) => patterns[j].statics === best)) urls[i].add(url);
     else unmatched.set(pathname, { spec: unmatched.get(pathname)?.spec ?? spec, urls: new Set([...(unmatched.get(pathname)?.urls ?? []), url]) });
   }
-  const screens = routes.map((s, i) => ({ id: `${s.source}:${s.route ?? s.component}`, route: s.route, component: s.component, wraps: s.wraps, urls: [...urls[i]].slice(0, MAX_URLS), frames: [], source: s.source }));
+  const screens = routes.map((s, i) => ({ id: `${s.source}:${s.route ?? s.component}`, route: s.route, router: s.router ?? null, component: s.component, wraps: s.wraps, urls: [...urls[i]].slice(0, MAX_URLS), frames: [], source: s.source }));
   const noValue = routes.flatMap((s, i) => (urls[i].size > 0 ? [] : [`${NO_VALUE}${s.route === null ? s.expr : quote(s.route)} (${s.component}, ${s.where})`]));
-  const e2eScreens = [...unmatched].map(([pathname, entry]) => ({ id: `e2e:${pathname}`, route: pathname, component: entry.spec, wraps: [], urls: [...entry.urls].slice(0, MAX_URLS), frames: [], source: 'e2e' }));
+  const e2eScreens = [...unmatched].map(([pathname, entry]) => ({ id: `e2e:${pathname}`, route: pathname, router: null, component: entry.spec, wraps: [], urls: [...entry.urls].slice(0, MAX_URLS), frames: [], source: 'e2e' }));
   const missed = noValue.length === 0 ? [...unmatched.keys()].map((p) => `unmatched: the e2e url ${quote(p)} fits no inferred route`) : [];
   return { screens: [...screens, ...e2eScreens], unresolved: [...noValue, ...missed] };
 }
@@ -81,7 +85,7 @@ function inputFiles(repoDir, sha, tree) {
   const problems = [];
   let hits = [];
   try {
-    const args = ['-c', 'grep.fallbackToNoIndex=false', 'grep', '-l', '-z', '-I', '-E', '--no-color', ...GREP_WORDS.flatMap((w) => ['-e', w]), sha, '--', ...SOURCE_SPECS];
+    const args = ['-c', 'grep.fallbackToNoIndex=false', 'grep', '-l', '-z', '-I', '-F', '--no-color', ...GREP_WORDS.flatMap((w) => ['-e', w]), sha, '--', ...SOURCE_SPECS];
     hits = gitRun(repoDir, args, undefined, [0, 1]).toString('utf8').split('\0').filter(Boolean).map((entry) => entry.slice(sha.length + 1));
   } catch (error) {
     problems.push(`unread: the router search failed: ${error.message}`);
@@ -98,8 +102,19 @@ function inputFiles(repoDir, sha, tree) {
   return { candidates, stories, matrices, read: [...new Set([...candidates, ...stories, ...matrices, ...configs])], listed, problems };
 }
 
-/** Infer from the read inputs. @returns {{screens: object[], unresolved: string[], extra: Record<string,string>}} */
-function inferAt({ repoDir, tree, inputs, started }) {
+/** Router screens with the app shell (files rendered around every route) added to their wraps. */
+function withShell(router, candidates, texts) {
+  const routeFiles = new Set(router.screens.flatMap((s) => [s.component, ...s.wraps]));
+  const shells = shellFiles({ candidates, texts, rootFiles: router.rootFiles, routeFiles });
+  return router.screens.map((s) => ({ ...s, wraps: [...new Set([...s.wraps, ...shells.filter((f) => f !== s.component)])] }));
+}
+
+/**
+ * Infer from the read inputs; the time budget is checked before each source and at each router file, and a spent budget gives one
+ * `incomplete:` line (so the result is not cached). @returns {{screens: object[], unresolved: string[], extra: Record<string,string>}}
+ */
+function inferAt({ repoDir, tree, inputs, deadline, budgetMs }) {
+  const late = () => Date.now() > deadline;
   const blobs = readBlobs(repoDir, inputs.read.map((f) => tree.get(f).blob));
   const texts = new Map(inputs.read.map((f) => [f, blobs.get(tree.get(f).blob) ?? '']));
   const resolve = makeResolver(tree, new Map(configFiles(tree).map((f) => [f, texts.get(f) ?? ''])));
@@ -110,12 +125,14 @@ function inferAt({ repoDir, tree, inputs, started }) {
     extra[file] = entry.blob;
     return readBlobs(repoDir, [entry.blob]).get(entry.blob) ?? null;
   };
-  const routes = [...nextScreens(tree, texts), ...routerScreens({ candidates: inputs.candidates, texts, resolve, readMore })];
-  const e2e = e2eEntries(inputs.candidates.filter((f) => /\b(?:page\.goto|cy\.visit)\s*\(/.test(texts.get(f))), texts);
+  const none = { screens: [], rootFiles: [], problems: [] };
+  const router = late() ? none : routerScreens({ candidates: inputs.candidates, texts, resolve, readMore, late });
+  const routes = [...(late() ? [] : nextScreens(tree, texts)), ...withShell(router, inputs.candidates, texts)];
+  const e2e = late() ? [] : e2eEntries(inputs.candidates.filter((f) => /\b(?:page\.goto|cy\.visit)\s*\(/.test(texts.get(f))), texts);
   const routed = withUrls(routes, e2e);
-  const others = [...inputs.stories.map((f) => storyScreen(f, texts.get(f))), ...inputs.matrices.flatMap((f) => matrixScreens(f, texts.get(f), tree))];
-  const late = Date.now() - started > INFER_BUDGET_MS ? [`incomplete: the inference passed its ${INFER_BUDGET_MS / 1000} s budget`] : [];
-  const { screens, unresolved } = finish([...routed.screens, ...others], [...inputs.problems, ...routed.unresolved, ...late]);
+  const others = late() ? [] : [...inputs.stories.map((f) => storyScreen(f, texts.get(f))), ...inputs.matrices.flatMap((f) => matrixScreens(f, texts.get(f), tree))];
+  const over = late() ? [`incomplete: the inference passed its ${budgetMs / 1000} s budget`] : [];
+  const { screens, unresolved } = finish([...routed.screens, ...others], [...inputs.problems, ...router.problems, ...routed.unresolved, ...over]);
   return { screens, unresolved, extra };
 }
 
@@ -124,13 +141,15 @@ export const isComplete = (unresolved) => unresolved.every((line) => line.starts
 
 /**
  * The screens of the project at `rev`, from the cache when no file it read has changed.
- * @param {{repoDir: string, rev: string, stateDir?: string}} input stateDir default: UI_SCREENS_STATE_DIR or ~/.claude/state/ui-screens
- * @returns {{screens: {id: string, route: string|null, component: string, wraps: string[], urls: string[], frames: string[],
- *   source: 'next'|'react-router'|'vue-router'|'angular'|'matrix'|'story'|'e2e'}[], unresolved: string[], cached: boolean}}
- *   never throws: an unreadable repo or rev gives no screens and one `unread:` line
+ * @param {{repoDir: string, rev: string, stateDir?: string, budgetMs?: number}} input stateDir default: UI_SCREENS_STATE_DIR or
+ *   ~/.claude/state/ui-screens; budgetMs: the time budget of one inference (default 30 s; over it the result is incomplete)
+ * @returns {{screens: {id: string, route: string|null, router: string|null, component: string, wraps: string[], urls: string[],
+ *   frames: string[], source: 'next'|'react-router'|'vue-router'|'angular'|'matrix'|'story'|'e2e'}[], unresolved: string[],
+ *   cached: boolean}} `router`: the file that declares a router screen (null for the other sources); never throws: an
+ *   unreadable repo or rev gives no screens and one `unread:` line
  */
-export function inferScreens({ repoDir, rev, stateDir = stateDirOf(process.env) }) {
-  const started = Date.now();
+export function inferScreens({ repoDir, rev, stateDir = stateDirOf(process.env), budgetMs = INFER_BUDGET_MS }) {
+  const deadline = Date.now() + budgetMs;
   try {
     if (typeof rev !== 'string' || rev === '' || rev.startsWith('-')) throw new Error(`bad rev ${quote(rev)}`);
     const sha = gitRun(repoDir, ['rev-parse', '--verify', '--quiet', `${rev}^{commit}`]).toString('utf8').trim();
@@ -140,7 +159,7 @@ export function inferScreens({ repoDir, rev, stateDir = stateDirOf(process.env) 
     const store = cacheFile(repoDir, stateDir);
     const hit = readCache(store).find((e) => e.key === key && Object.entries(e.extra).every(([f, blob]) => tree.get(f)?.blob === blob));
     if (hit) return { screens: hit.screens, unresolved: hit.unresolved, cached: true };
-    const { screens, unresolved, extra } = inferAt({ repoDir, tree, inputs, started });
+    const { screens, unresolved, extra } = inferAt({ repoDir, tree, inputs, deadline, budgetMs });
     if (unresolved.some((line) => line.startsWith('incomplete:'))) return { screens, unresolved, cached: false };
     try {
       writeCache(store, { key, extra, screens, unresolved, createdAt: new Date().toISOString() });

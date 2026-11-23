@@ -1,15 +1,21 @@
 // Purpose: route declarations read from the text of one router file: a bracket-nesting tokenizer (comments dropped, strings kept),
 // route objects (`{ path, element|component|children... }`), `<Route path element>` elements, router calls that name a routes
-// list, and the names a file binds (imports, lazy imports, local declarations). Exports: MAX_READ_BYTES, MAX_ROUTE_CHARS,
-// MAX_TEXT_CHARS, SELF, compose, bindingsOf, fileRoutes.
+// list, the names a file binds (imports, lazy imports, local declarations) and the routes a declared name holds. Exports:
+// MAX_READ_BYTES, MAX_ROUTE_CHARS, MAX_TEXT_CHARS, SELF, compose, lineAt, bindingsOf, declaredRoutes, fileRoutes.
+// A routes value is followed when it is a name (a link), an array literal (its `...name` spreads become links) or JSX `<Route>`;
+// any other value (a call, a member, an expression) gives an `unresolved:` problem line, never a silent drop.
 // Invariants (F4): project text is tokenised, never evaluated; the text read, the nesting depth and every kept string are capped.
 export const MAX_READ_BYTES = 1 << 20;
 export const MAX_ROUTE_CHARS = 300;
 export const MAX_TEXT_CHARS = 120;
 const MAX_DEPTH = 64;
 const ROUTER_CALLS = new Set(['createBrowserRouter', 'createHashRouter', 'createMemoryRouter', 'useRoutes', 'forRoot', 'forChild', 'provideRouter']);
+const MODULE_CALLS = new Set(['forRoot', 'forChild']); // Angular: only RouterModule's hold routes
 const REF_KEYS = ['element', 'component', 'Component', 'lazy', 'loadComponent'];
 const ROUTE_KEYS = new Set([...REF_KEYS, 'children', 'loadChildren', 'redirectTo', 'redirect', 'index']);
+const LITERAL_WORDS = /^(?:true|false|null|undefined|\d[\w.]*)$/;
+const DECLARE = new Set(['const', 'let', 'var']);
+const STATEMENT = new Set(['const', 'let', 'var', 'export', 'import', 'function', 'class', 'return']);
 const TOKEN = /\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)|(['"])((?:(?!\1)[^\\\n]|\\.)*)\1|`((?:[^`\\]|\\.)*)`|([\w$]+)|(\S)/g;
 const OPEN = new Set(['(', '[', '{']);
 const CLOSE = new Set([')', ']', '}']);
@@ -55,11 +61,15 @@ function propsOf(node) {
 }
 
 /** Component references in value items: `import('x')` specs and capitalised names (JSX tags, identifiers). */
+/**
+ * Component references in value items: `import('x')` specs and capitalised names; `direct` marks a name that is the value itself
+ * or a JSX tag (a component), not a word of JSX text or an argument.
+ */
 function refsIn(items, out = []) {
   items.forEach((item, i) => {
     if (item.items) { if (!(items[i - 1]?.v === 'import' && item.items[0]?.t === 'str')) refsIn(item.items, out); return; }
     if (item.t === 'id' && item.v === 'import' && items[i + 1]?.items?.[0]?.t === 'str') out.push({ spec: items[i + 1].items[0].v });
-    else if (item.t === 'id' && /^[A-Z]/.test(item.v) && items[i - 1]?.v !== '.') out.push({ name: item.v });
+    else if (item.t === 'id' && /^[A-Z]/.test(item.v) && items[i - 1]?.v !== '.') out.push({ name: item.v, direct: items.length === 1 || items[i - 1]?.v === '<' });
   });
   return out;
 }
@@ -79,30 +89,59 @@ function routeRecord(props, ctx, at) {
   const route = known ? compose(ctx.prefix, literal ?? '') : null;
   const expr = known ? (route === null ? ctx.expr : null) : `path ${textOf(pathItems).slice(0, MAX_TEXT_CHARS)}`;
   const refs = REF_KEYS.flatMap((key) => (props.has(key) ? refsIn(props.get(key)) : []));
-  const children = props.get('children');
-  const linkRefs = [...(children?.length === 1 && children[0].t === 'id' ? [{ name: children[0].v }] : []), ...refsIn(props.get('loadChildren') ?? [])];
   const hasPath = Boolean(pathItems) || isIndex;
   const childCtx = { prefix: hasPath ? route : ctx.prefix, expr: hasPath ? expr : ctx.expr, wraps: [...ctx.wraps, ...refs] };
-  return { screen: hasPath && refs.length > 0 ? { route, expr, at, refs, wraps: ctx.wraps } : null, links: linkRefs.map((ref) => ({ ref, ctx: childCtx })), childCtx };
+  const links = refsIn(props.get('loadChildren') ?? []).map((ref) => ({ ref, ctx: childCtx, at }));
+  return { screen: hasPath && refs.length > 0 ? { route, expr, at, refs, wraps: ctx.wraps } : null, links, childCtx };
+}
+
+const isRouteProps = (props) => props !== null && (props.has('path') || props.has('index')) && [...props.keys()].some((key) => ROUTE_KEYS.has(key));
+const isDots = (items, i) => items[i]?.v === '.' && items[i + 1]?.v === '.' && items[i + 2]?.v === '.' && items[i - 1]?.v !== '.';
+const hasJsxRoute = (items) => items.some((item, i) => (item.items ? hasJsxRoute(item.items) : item.v === '<' && items[i + 1]?.v === 'Route'));
+
+/** `...name` spreads of a routes array -> links (each array once); a spread of anything else cannot be followed. */
+function spreadLinks(node, ctx, out) {
+  if (out.seen.has(node)) return;
+  out.seen.add(node);
+  node.items.forEach((item, i) => {
+    if (!isDots(node.items, i)) return;
+    const [target, after] = [node.items[i + 3], node.items[i + 4]];
+    if (target?.t === 'id' && (!after || after.v === ',')) out.links.push({ ref: { name: target.v }, ctx, at: item.at });
+    else out.problems.push({ at: item.at, what: `a spread of routes (${textOf(node.items.slice(i, i + 6)).slice(0, MAX_TEXT_CHARS)})` });
+  });
+}
+
+/**
+ * A value that holds routes (a router call's argument, `routes:`, `children:`, a linked declaration): a name is linked, an array
+ * literal has its spreads linked, JSX `<Route>` elements are read where they stand; anything else (a call, a member, an
+ * expression) cannot be followed and gives a problem.
+ */
+function routeList(items, ctx, out, at, what) {
+  const cut = items.findIndex((item) => item.t === 'id' && (item.v === 'as' || item.v === 'satisfies'));
+  const value = cut > 0 ? items.slice(0, cut) : items;
+  const only = value.length === 1 ? value[0] : null;
+  if (value.length === 0 || only?.open === '{' || only?.t === 'str' || (only?.t === 'id' && LITERAL_WORDS.test(only.v))) return;
+  if (only?.t === 'id') out.links.push({ ref: { name: only.v }, ctx, at });
+  else if (only?.open === '[') spreadLinks(only, ctx, out);
+  else if (!hasJsxRoute(value)) out.problems.push({ at, what: `${what} (${textOf(value).slice(0, MAX_TEXT_CHARS)})` });
 }
 
 /** Route objects anywhere in the tree (`{ path, element|component|children... }`), nested through `children`. */
 function objectRoutes(node, ctx, out) {
-  for (const item of node.items) {
-    if (!item.items) continue;
-    const props = item.open === '{' ? propsOf(item) : null;
-    const isRoute = props && (props.has('path') || props.has('index')) && [...props.keys()].some((key) => ROUTE_KEYS.has(key));
-    if (!isRoute) {
-      const routes = props?.get('routes');
-      if (routes?.length === 1 && routes[0].t === 'id') out.links.push({ ref: { name: routes[0].v }, ctx });
+  const objects = node.items.filter((item) => item.items).map((item) => ({ item, props: item.open === '{' ? propsOf(item) : null }));
+  if (node.open === '[' && objects.some(({ props }) => isRouteProps(props))) spreadLinks(node, ctx, out);
+  for (const { item, props } of objects) {
+    if (!isRouteProps(props)) {
+      if (props?.has('routes')) routeList(props.get('routes'), ctx, out, item.at, 'the routes list');
       objectRoutes(item, ctx, out);
       continue;
     }
     const record = routeRecord(props, ctx, item.at);
     if (record.screen) out.screens.push(record.screen);
     out.links.push(...record.links);
-    const kids = props.get('children');
-    if (kids?.[0]?.items) objectRoutes({ items: kids }, record.childCtx, out);
+    const kids = props.get('children') ?? [];
+    routeList(kids, record.childCtx, out, item.at, 'the children of a route');
+    if (kids.length === 1 && kids[0].open === '[') objectRoutes(kids[0], record.childCtx, out);
   }
 }
 
@@ -136,12 +175,15 @@ function jsxRoutes(items, ctx, out) {
   }
 }
 
-/** Router calls with a routes identifier (`createBrowserRouter(routes)`, `RouterModule.forRoot(routes)`...) -> links. */
+/** Router calls (`createBrowserRouter(x)`, `useRoutes(x)`, `RouterModule.forRoot(x)`...): their first argument holds the routes. */
 function callLinks(items, ctx, out) {
   items.forEach((item, i) => {
     if (item.items) { callLinks(item.items, ctx, out); return; }
     const args = items[i + 1];
-    if (item.t === 'id' && ROUTER_CALLS.has(item.v) && args?.open === '(' && args.items[0]?.t === 'id') out.links.push({ ref: { name: args.items[0].v }, ctx });
+    if (item.t !== 'id' || !ROUTER_CALLS.has(item.v) || args?.open !== '(') return;
+    if (MODULE_CALLS.has(item.v) && items[i - 2]?.v !== 'RouterModule') return; // `StoreModule.forRoot(x)` names no routes
+    const comma = args.items.findIndex((arg) => arg.t === 'p' && arg.v === ',');
+    routeList(comma < 0 ? args.items : args.items.slice(0, comma), ctx, out, item.at, `the routes of ${item.v}`);
   });
 }
 
@@ -157,12 +199,48 @@ export function bindingsOf(text) {
   return names;
 }
 
-/** Route screens and links of one router file. */
+/** The value items of `const|let|var <name> = ...` anywhere in the tree (to the `;` or the next statement), or null. */
+function declaredValue(node, name) {
+  for (let i = 0; i < node.items.length; i += 1) {
+    const item = node.items[i];
+    const inner = item.items ? declaredValue(item, name) : null;
+    if (inner) return inner;
+    if (!DECLARE.has(item.v) || node.items[i + 1]?.v !== name) continue;
+    const end = node.items.findIndex((x, j) => j > i + 1 && ((x.t === 'p' && x.v === ';') || (x.t === 'id' && STATEMENT.has(x.v))));
+    const stop = end < 0 ? node.items.length : end;
+    const eq = node.items.findIndex((x, j) => j > i + 1 && j < stop && x.t === 'p' && x.v === '=' && node.items[j + 1]?.v !== '>');
+    return eq < 0 ? null : node.items.slice(eq + 1, stop);
+  }
+  return null;
+}
+
+/**
+ * The routes a name declared in this file holds (`const routes = [...]`): its spreads and the names it copies become links.
+ * @param {{file: string, text: string, tree: object, name: string, ctx: object}} input tree: from fileRoutes of the same text
+ * @returns {{links: object[], problems: string[]}|null} null when the file declares no such const (a parameter, an import)
+ */
+export function declaredRoutes({ file, text, tree, name, ctx }) {
+  const value = declaredValue(tree, name);
+  if (value === null) return null;
+  const out = { screens: [], links: [], problems: [], seen: new WeakSet() };
+  routeList(value, ctx, out, value[0]?.at ?? 0, `the routes ${JSON.stringify(name)}`);
+  return { links: out.links, problems: out.problems.map((p) => problemLine(file, text, p)) };
+}
+
+/** The 1-based line of a character offset. */
+export const lineAt = (text, at) => text.slice(0, at).split('\n').length;
+const problemLine = (file, text, { at, what }) => `unresolved: ${what} at ${file}:${lineAt(text, at)} cannot be followed`;
+
+/**
+ * Route screens, links and problems of one router file.
+ * @returns {{screens: object[], links: {ref: object, ctx: object, at: number}[], problems: string[], tree: object}} problems:
+ *   `unresolved:` lines; tree: the token tree (for declaredRoutes)
+ */
 export function fileRoutes(file, text, ctx) {
   const tree = parse(text);
-  const out = { screens: [], links: [] };
+  const out = { screens: [], links: [], problems: [], seen: new WeakSet() };
   objectRoutes(tree, ctx, out);
   jsxRoutes(tree.items, ctx, out);
   callLinks(tree.items, ctx, out);
-  return out;
+  return { screens: out.screens, links: out.links, problems: out.problems.map((p) => problemLine(file, text, p)), tree };
 }
