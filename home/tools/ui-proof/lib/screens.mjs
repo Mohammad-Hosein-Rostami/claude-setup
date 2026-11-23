@@ -2,10 +2,12 @@
 // `app/` and `pages/`, React Router (`createBrowserRouter` objects, `<Route path>`), Vue Router `routes`, Angular `Routes`,
 // ui-coverage matrices (`mountedAt` files, Figma frames), Storybook stories and e2e specs (`page.goto`, `cy.visit`), which also give
 // the values of dynamic segments. Exports: NO_VALUE, isComplete, inferScreens.
-// A screen: {id, route (null: not a literal path), component, wraps (files rendered around it: layouts, parent routes), urls,
-// frames, source}; `wraps` is an addition to the spec's interface (reach walks from it too). `unresolved` lines: a `no value: ` line
-// is a screen with no known url (the plan gives it the visual plan); every other line (`unread:`, `capped:`, `unmatched:` (an e2e
-// url that fits no route while every route has a value), `incomplete:`) means the list may miss screens: render every inferred route.
+// A screen: {id, route (null: not a literal path), router (the file that declares a router screen, else null), component, wraps
+// (files rendered around it: layouts, parent routes, the app shell), urls, frames, source}; `router` and `wraps` are additions to
+// the spec's interface (reach walks from wraps and never from a router file into a route component). `unresolved` lines: a
+// `no value: ` line is a screen with no known url (the plan gives it the visual plan); every other line (`unread:`, `capped:`,
+// `unresolved:` (routes that cannot be followed or named), `unmatched:` (an e2e url that fits no route while every route has a
+// value), `incomplete:` (not cached)) means the list may miss screens: render every inferred route.
 // This file picks the files to read, joins e2e urls to routes and keeps the cache; the sources are in screen-sources.mjs (router
 // text in route-parse.mjs) and the cache file in screens-cache.mjs.
 // Invariants (P1-P3, P8, P16, F3-F5): files are read at the commit with git plumbing (ls-tree, cat-file; `git grep` on the tree finds
