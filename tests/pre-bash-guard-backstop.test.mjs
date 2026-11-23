@@ -153,9 +153,9 @@ test('C/D: credential masking in quoted, assigned, query, header, redis and npmr
     assert.ok(findLiteralSecret(command), `should detect: ${command}`);
     const masked = maskSecrets(command);
     assert.ok(!masked.includes(secret), `should mask: ${command} -> ${masked}`);
-    const r = decide(command, ctx);
-    assert.equal(r.ask, true, command);
-    assert.ok(!r.reason.includes(secret), 'the reason never repeats the secret');
+    const r = decide(command, ctx); // owner G1: noted by kind, never asked
+    assert.equal(typeof r.secret, 'string', command);
+    assert.ok(!JSON.stringify(r).includes(secret), 'the verdict never repeats the secret');
   }
   for (const command of ['PGPASSWORD=$DB_PASSWORD psql', 'MY_TOKEN=$(cat /run/secrets/t) ./run', 'API_KEY="$API_KEY" ./run', 'curl "https://x.example/?page=2&sort=asc"',
     'curl "https://x.example/?token=$TOKEN"', 'redis-cli -a "$REDIS_PW" ping', 'curl -H "PRIVATE-TOKEN: $T" x', 'KEYBOARD=us ls', 'MONKEY=1 ls', 'TOKENS_FILE=a ls', 'curl -u admin:"$PW" https://x',

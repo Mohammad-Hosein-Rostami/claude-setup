@@ -51,11 +51,14 @@ test('every assignment form and every git-run name is read, in any quoting, with
 test('a value the guard cannot read asks: a substitution, a backtick, ${...} with an operator, a variable as command word or one the line writes', () => {
   assertAll(['export GIT_EDITOR="$(cat f)"', 'GIT_EDITOR=$(cat f) git commit', 'GIT_EDITOR="a `cat f`" git commit', 'GIT_EDITOR=`cat f` git commit',
     'export GIT_PAGER=`cat f`', 'GIT_SSH_COMMAND="$SSH -i k" git fetch', 'GIT_EDITOR="$EDITOR --wait" git commit', 'export EDITOR=$(which vim)',
-    'read -r B < f; GIT_EDITOR="$B" git commit', 'for B in a; do GIT_EDITOR="$B" git commit; done',
+    'read -r B < f; GIT_EDITOR="$B" git commit', 'for B in "$(cat f)"; do GIT_EDITOR="$B" git commit; done', 'for B in a*; do GIT_EDITOR="$B" git commit; done',
     'GIT_SSH_COMMAND="$(cat ssh-cmd)" git fetch', 'export GIT_EDITOR="${EDITOR:=vim}"'], asksUnreadable);
   // `+=` adds to a value the line did not set (the guard also reads `NAME+=x` as a command word, as before)
   assert.ok(reasonsOf('GIT_EDITOR+=" -f" git commit').includes(GIT_UNREADABLE_REASON));
   assert.match(reasonOf(`GIT_EDITOR=vim; GIT_EDITOR+='; ${RM}'`), RM_OUTSIDE); // a value the line set is read with what is added
+  // a loop over plain words is read once per value (lib/loop-values.mjs): the harmless one is quiet, the dangerous one asks
+  quiet('for B in vim; do GIT_EDITOR="$B" git commit; done');
+  assert.match(reasonOf('for B in vim rm; do GIT_EDITOR="$B -rf ~/x" git commit; done'), RM_OUTSIDE);
   // a substitution that also names a dangerous word keeps the bounce it had: the unreadable ask joins it
   const pager = `GIT_PAGER="$(echo ${RM})" git log`;
   assert.match(reasonOf(pager), RISKY);

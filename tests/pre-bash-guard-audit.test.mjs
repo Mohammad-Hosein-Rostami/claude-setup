@@ -130,10 +130,11 @@ test('M4: every audited secret form is detected, masked in text, reasons and the
       const masked = maskSecrets(command);
       assert.ok(masked.includes('[masked]'), `${label}: ${masked}`);
       for (const value of [PASSWORD, TOKEN_BODY, SLACK_BODY]) assert.ok(!masked.includes(value), `${label}: ${masked}`);
-      const r = decide(command, ctx);
-      assert.equal(r.ask, true, command);
-      assert.ok(!r.reason.includes(PASSWORD) && !r.reason.includes(TOKEN_BODY.slice(0, 6)), `${label}: ${r.reason}`);
-      logDecision({ hook: 'h', tool: 'Bash', decision: 'ask', outcome: 'no-gui', reason: r.reason, command }, { CLAUDE_GUARD_LOG: logPath });
+      const r = decide(command, ctx); // owner G1: noted by kind, never asked
+      assert.equal(typeof r.secret, 'string', command);
+      const verdict = JSON.stringify(r);
+      assert.ok(!verdict.includes(PASSWORD) && !verdict.includes(TOKEN_BODY.slice(0, 6)), `${label}: ${verdict}`);
+      logDecision({ hook: 'h', tool: 'Bash', decision: 'allow', outcome: 'secret', reason: r.secret, command }, { CLAUDE_GUARD_LOG: logPath });
     }
   }
   const log = readFileSync(logPath, 'utf8');
