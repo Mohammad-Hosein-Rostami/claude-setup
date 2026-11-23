@@ -20,7 +20,8 @@ step landed. The STATUS.md rows hold the state; the tool is `node ~/.claude/tool
 ## Walk
 1. `road.mjs next <road> --budget <free slots>` names the step, its `lanes` and its `early` lanes (at most 5 agents at once; the hook
    refuses a 6th). Fill to 5 (owner FR2): each launch round starts `lanes`, then `early`; fewer agents only when `early` is empty
-   (`waiting` says why each later lane waits). A step's gate still checks only its own lanes.
+   (`waiting` says why each later lane waits). A step's gate still checks only its own lanes. `baseline needed: <road>.s<N>` (exit 1)
+   comes only when a lane matrix of the step has Figma frames: take the step-start record before its writers start.
 2. Build batch: one writer per lane (an early lane too: `status.mjs start` its row), each brief from the lane's contract. Before the
    launch the lead makes the lane's worktree on its branch at the base tip (`git worktree add -b <branch> .claude/worktrees/<lane> <base>`)
    and adds the brief line `worktree: <abs path>`; the writer works only there, and one worktree has one writer.
@@ -40,7 +41,9 @@ board text) passes line 4 with its terminal proof once the owner approved a real
 `~/Desktop/claude-setup-reports/`, written after the step started) in an AskUserQuestion answer: `status.mjs decision "terminal proof
 <road>.s<N>: owner yes on <abs path> (AskUserQuestion answer)"`, then `status.mjs add <road>.s<N>.terminal-proof "proof: step N
 terminal render approved by the owner" S`, `start`, and `status.mjs done <road>.s<N>.terminal-proof "terminal proof: <abs path> (owner
-yes <the decision's date>)"` (road README, "Terminal UI proof"). Web UI always needs its `ui-proof` record. After the gate: one update to the owner with the `Finish:` block of `estimate.mjs STATUS.md` pasted as-is, and a
+yes <the decision's date>)"` (road README, "Terminal UI proof"). Web UI passes line 4 by its check plan: every landing that changed a
+UI file ends with land-lane's ` (ui plan <depth>: proved)`; a pixel landing or one without it needs the visual-qa step proof and the
+step-start record (road README, "Check plan"). There are no waivers. After the gate: one update to the owner with the `Finish:` block of `estimate.mjs STATUS.md` pasted as-is, and a
 `status.mjs deliver "<step N done>"` row.
 
 ## Failure and carry
