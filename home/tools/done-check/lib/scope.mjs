@@ -15,10 +15,9 @@
 // - A subagent owns every file changed between base and its worktree (committed or not), plus untracked ones. Of the uncommitted files it
 //   owns those it recorded (lib/own-edits.mjs) or that changed since its baseline (a Bash command made them) and that
 //   hooks/lib/change-owner.mjs `ownBashEntries` keeps as its own: the one ownership rule commit-gate uses, so a file only another, older
-//   session's closed call window claims (two sessions in one folder) is left out. An unreadable call-window log, the verdict deadline or
-//   an error there keeps the file own (the agent is still checked, never let off). In its own worktree the lead
-//   owns the files recorded for its session (that set also holds the files its agents recorded there, as commit-gate sees it): land-lane
-//   moves HEAD, so a landed lane is not the lead's.
+//   session's closed call window claims is left out; a path of its commits since the base never is. An unreadable log, the deadline or an
+//   error keeps the file own (still checked). In its own worktree the lead owns the files recorded for its session (that set also holds
+//   the files its agents recorded there, as commit-gate sees it): land-lane moves HEAD, so a landed lane is not the lead's.
 // - Beside its own worktree a stopper gets one Scope per worktree holding a file it recorded itself (`ownWorktrees` over `pathsRecordedBy`),
 //   and owns there only those files: the lead is never given an agent's lane worktree it did not edit in, where half-finished work would
 //   block it for failures that are not its own. One Scope per worktree, not per repository: two lane worktrees of one repo hold two
@@ -133,9 +132,9 @@ function scopeFrom(top, isGit, base, paths, { named = [], keepEmpty = false } = 
   return { top, git: isGit, base, files, wide, named: namedFiles, unsupported, key: changeKey(base, top, [...files, ...wide, ...namedFiles]) };
 }
 
-/** Files changed between `base` and the worktree (tracked, staged or not); null when git cannot say (a commit it does not have). */
-function diffPaths(top, base) {
-  const out = git(top, ['diff', '--name-only', '-z', ...DIFF_FLAGS, base, '--']);
+/** Files changed between `base` and the worktree (tracked, staged or not), or `upTo` (`HEAD`); null when git cannot say. */
+function diffPaths(top, base, upTo = []) {
+  const out = git(top, ['diff', '--name-only', '-z', ...DIFF_FLAGS, base, ...upTo, '--']);
   return out === null ? null : out.split('\0').filter((path) => path !== '');
 }
 
@@ -166,17 +165,17 @@ function ownBashMade(ctx, top, entries) {
 }
 
 /**
- * Of the changed paths, the ones this session or agent owns. Committed-only paths of an agent count; a dirty path counts when it was
- * recorded or (agent only) changed since the baseline and is not only another session's (ownBashMade); the lead keeps recorded paths only.
+ * Of the changed paths, the ones this session or agent owns. An agent's paths in `committed` (its commits since the base) always count;
+ * a dirty one counts when recorded or changed since the baseline and not only another session's (ownBashMade); the lead: recorded only.
  */
-function ownedPaths(ctx, top, changed, dirty) {
+function ownedPaths(ctx, top, changed, dirty, committed) {
   const isRecorded = (rel) => ctx.recorded.has(join(top, rel));
   if (ctx.agent === LEAD) return changed.filter(isRecorded);
   const dirtyRel = new Set(dirty.map(({ rel }) => rel));
   const unrecorded = dirty.filter(({ rel }) => !isRecorded(rel));
   const byBash = new Set(ownBashMade(ctx, top, changedSinceBaseline(ctx.env, ctx.session, ctx.agent, top, unrecorded)).map(({ path }) => path));
   const dirtyOwn = new Set(dirty.filter(({ rel, path }) => isRecorded(rel) || byBash.has(path)).map(({ rel }) => rel));
-  return changed.filter((rel) => !dirtyRel.has(rel) || dirtyOwn.has(rel));
+  return changed.filter((rel) => !dirtyRel.has(rel) || committed.has(rel) || dirtyOwn.has(rel));
 }
 
 /** The Scope of one git worktree for this session or agent, or null. The first git calls are `rev-parse`; the only list call is `status`. */
@@ -188,16 +187,18 @@ function gitScope(ctx, tree) {
   const dirty = dirtyEntries(tree.top);
   if (dirty === null) return null;
   let changed = dirty.map(({ rel }) => rel);
+  let committedOwn = new Set(); // paths of the commits since the base: always the agent's
   if (base !== null && base !== head) {
     const committed = diffPaths(tree.top, base);
     if (committed === null) base = null; // the base commit is gone: the uncommitted change is compared with HEAD below
     else changed = [...committed, ...dirty.filter(({ field }) => field.startsWith('??')).map(({ rel }) => rel)];
+    if (committed !== null) committedOwn = new Set(diffPaths(tree.top, base, ['HEAD']) ?? changed); // git fails: all own
   }
   base ??= COMMIT_ID.test(head) ? head : null; // no recorded base: HEAD, so a test the uncommitted change breaks is still new
   const named = namedOf(top, changed.filter(isOther));
   const relevant = [...changed.filter((rel) => isCode(rel) || isWide(rel) || isUnsupported(rel)), ...named];
   if (relevant.length === 0) return null;
-  return scopeFrom(top, true, base, ownedPaths(ctx, top, relevant, dirty), { named });
+  return scopeFrom(top, true, base, ownedPaths(ctx, top, relevant, dirty, committedOwn), { named });
 }
 
 /** True when `folder` is in worktree `top` itself, not in a worktree or repository nested below it (a folder there holds a `.git`). */

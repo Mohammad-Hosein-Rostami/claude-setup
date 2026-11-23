@@ -13,9 +13,9 @@
 //   - an eslint, vitest or jest config that changed or was deleted (a change of spaces alone is not a change);
 //   - a tsconfig strictness flag that is `false` now and was `true` at the base.
 //   - Go (`_test.go`): fewer Test/Benchmark/Fuzz/Example functions or `t.Run` subtests, fewer t.Error/t.Fatal/t.Fail or testify calls,
-//     more t.Skip, `testing.Short()` guards or build constraint lines than at the base; a `_test.go` deleted alone.
-// A test file that moved (a rename git's `-M` sees, or a new file with its exact text) is not deleted: it is scanned like an edit,
-//   between its base text and its new path.
+//     more t.Skip or `testing.Short()` guards, any changed build constraint line; a `_test.go` deleted alone.
+// A moved test file (git `-M` rename, or a new file with its exact text) is scanned like an edit at its new path, only when the same runner
+//   still finds it (same folder, kind of name, extension) and it tests the same (its modules, or Go Test names): else it is a deletion.
 // Not counted: a test file deleted with its code (every non-test module it imported at the base is deleted too, not renamed or
 //   moved: "removed with its code"; a test deleted alone, with only a fixture, or with one of its modules kept still counts; a
 //   `_test.go` goes with its code when its `<name>.go` is deleted too or its package folder keeps no non-test `.go`), a new file, a stronger change, a removed skip, a
@@ -67,11 +67,15 @@ const SKIPS = /(?<![\w.$])(test|it|describe|suite|context)\.(skip|skipIf|only|to
 // A suppression is a directive inside a comment: the comment opener in front keeps this file's own patterns from counting as one.
 const SUPPRESSIONS = /(?:\/\/|\/\*|\*)\s*(eslint-disable|@ts-ignore|@ts-expect-error|@ts-nocheck|istanbul ignore|c8 ignore|v8 ignore)/g;
 // Go (`_test.go`): a case is a top-level Test, Benchmark, Fuzz or Example function or a `t.Run(` subtest; an assertion is a t.Error,
-// t.Fatal or t.Fail call or a testify `assert.`/`require.` call; a skip is t.Skip, a `testing.Short()` guard or a build constraint
-// line (which takes the file out of `go test`). The receivers are the usual test names, so `err.Error()` is never an assertion.
-const GO_CASES = /^func\s+(?:Test|Benchmark|Fuzz|Example)\w*\s*\(|(?<![\w.])(?:t|b|tb|tt)\.Run\s*\(/gm;
-const GO_ASSERTIONS = /(?<![\w.])(?:t|b|f|tb|tt)\.(?:Error|Errorf|Fatal|Fatalf|Fail|FailNow)\s*\(|(?<![\w.])(?:assert|require)\.[A-Z]\w*\s*\(/g;
-const GO_SKIPS = /(?<![\w.])(?:t|b|f|tb|tt)\.(?:Skip|Skipf|SkipNow)\s*\(|(?<![\w.])testing\.Short\s*\(\s*\)|^\/\/go:build\b|^\/\/ \+build\b/gm;
+// t.Fatal or t.Fail call or a testify `assert.`/`require.` call; a skip is t.Skip or a `testing.Short()` guard; any change of the build
+// constraint lines (which decide whether `go test` builds the file) is a weakening of its own. The receivers are the usual test names
+// or a suite's `.T()`, `.Require()` and `.Assert()`, so `err.Error()` is never an assertion (a suite's bare `s.Equal(` is not counted).
+const GO_TB = String.raw`(?:(?<![\w.])(?:t|b|f|tb|tt)|\.T\(\))`;
+const GO_CASES = new RegExp(String.raw`^func\s+(?:Test|Benchmark|Fuzz|Example)\w*\s*\(|${GO_TB}\.Run\s*\(`, 'gm');
+const GO_ASSERTIONS = new RegExp(String.raw`${GO_TB}\.(?:Error|Errorf|Fatal|Fatalf|Fail|FailNow)\s*\(|(?:(?<![\w.])(?:assert|require)|\.(?:Require|Assert)\(\))\.[A-Z]\w*\s*\(`, 'g');
+const GO_SKIPS = new RegExp(String.raw`${GO_TB}\.(?:Skip|Skipf|SkipNow)\s*\(|(?<![\w.])testing\.Short\s*\(\s*\)`, 'g');
+const GO_BUILD_CONSTRAINT = /^\/\/(?:go:build\b| ?\+build\b).*$/gm;
+const GO_TEST_NAMES = /^func\s+((?:Test|Benchmark|Fuzz|Example)\w*)\s*\(/gm;
 const JS_TEST_PATTERNS = { cases: CASES, assertions: ASSERTIONS, skips: SKIPS, weak: WEAK_MATCHERS, strong: STRONG_MATCHERS };
 const GO_TEST_PATTERNS = { cases: GO_CASES, assertions: GO_ASSERTIONS, skips: GO_SKIPS, weak: null, strong: null };
 
@@ -168,6 +172,8 @@ function weakenedTestFile(file, before, after) {
     if (weak[1] > weak[0] && strong[1] < strong[0]) found.push(failure(file, 'softened-assertion', `assertion softened (${strong[0]} value checks before, ${strong[1]} now; ${weak[1] - weak[0]} always-true matcher added)`));
   }
   if (countOf(after, patterns.skips) > countOf(before, patterns.skips)) found.push(addedFailure(file, 'added-skip', before, after, { pattern: patterns.skips, group: 0, fallback: 'a skip, only or todo was added' }));
+  const constraints = (text) => (text.match(GO_BUILD_CONSTRAINT) ?? []).map((line) => line.trim()).join(' ');
+  if (GO_FILE.test(file) && constraints(before) !== constraints(after)) found.push(failure(file, 'build-constraint', `build constraint changed (\`${constraints(before) || 'none'}\` before, \`${constraints(after) || 'none'}\` now)`));
   return found;
 }
 
@@ -196,9 +202,8 @@ function removedWithItsCode(file, before, gone) {
 }
 
 /**
- * True when a deleted Go test file went with the code it tests: its own `<name>.go` is deleted outright too, or its package folder lost
- * a Go file in this change and holds no non-test `.go` file any more (the package is gone). A folder that cannot be listed keeps it a
- * weakening (fail closed).
+ * True when a deleted Go test went with its code: its `<name>.go` is deleted outright too, or its package folder lost a Go file and holds
+ * no non-test `.go` any more. A folder that cannot be listed keeps it a weakening (fail closed).
  */
 function goRemovedWithItsCode(top, file, gone) {
   if (gone.has(file.replace(GO_TEST_FILE, '.go'))) return true;
@@ -213,10 +218,9 @@ function goRemovedWithItsCode(top, file, gone) {
 }
 
 /**
- * What git and the worktree say about the deletions of this change: `gone`, the files deleted outright (gone from the worktree,
- * reported deleted, not renamed, by git's rename detection `-M`, and whose base text is not the text of a new file of the change), and
- * `movedTo`, deleted file -> its new path (a rename git saw, or a new file with the same text: a move to an untracked path). When git
- * cannot answer, nothing counts as gone or moved, so a deleted test keeps blocking.
+ * The deletions of this change: `gone`, deleted outright (gone from the worktree, deleted, not renamed, by git's `-M`, base text not the
+ * text of a new file), and `movedTo`, deleted file -> new path (a git rename, or a new file with the same text: a move to an untracked
+ * path; isTestMove still judges a test's move). When git cannot answer, nothing is gone or moved, so a deleted test keeps blocking.
  * @param {{ top: string, base: string }} scope
  * @param {{ file: string, before: string|null, after: string|null }[]} texts every scanned file at the base and now
  * @returns {{ gone: Set<string>, movedTo: Map<string, string> }}
@@ -237,17 +241,29 @@ function changeMoves(scope, texts) {
   return { gone: new Set(deleted.filter(({ file }) => !movedTo.has(file)).map(({ file }) => file)), movedTo };
 }
 
-/** A deleted test file that moved: the same scan as an edit, between its base text and the text at its new path (cases kept = no find). */
-function weakenedMovedTest(top, file, before, target) {
-  const after = headText(top, target);
-  if (after === null || after === 'unreadable') return [failure(file, 'deleted', `test file deleted (moved to ${target}, which cannot be read)`)];
-  return weakenedTestFile(target, before, after);
+/** How a runner finds a test file: `go` (`_test.go`), `name:<ext>` (`.test.`/`.spec.` in the name) or `folder:<ext>` (a test folder). */
+const testKind = (path) => (GO_TEST_FILE.test(path) ? 'go' : `${/\.(test|spec)\.[^/]+$/.test(path) ? 'name' : 'folder'}:${posix.extname(path)}`);
+/** The code modules a JS test imports (relative, not test files), by path without a JS extension; Go: its Test function names. */
+const subjectOf = (file, text) => (GO_FILE.test(file) ? [...text.matchAll(GO_TEST_NAMES)].map((match) => match[1])
+  : [...text.matchAll(RELATIVE_IMPORTS)].map((match) => importTargets(file, match[2])[0]).filter((target) => target && !TEST_FILE.test(target)).map((target) => target.replace(JS_EXTENSION, '')));
+
+/**
+ * A deleted test file and its new path are one moved test only when the same runner still picks the new path up (same folder, same kind
+ * of test name and extension) and it tests the same thing (every module it imported, for Go every Test function, is still there).
+ * Anything else (a move out of the run set, a delete beside an unrelated new test that git's -M pairs with it) is a deletion.
+ */
+function isTestMove(file, before, target, after) {
+  if (posix.dirname(file) !== posix.dirname(target) || testKind(file) !== testKind(target)) return false;
+  const kept = new Set(subjectOf(target, after));
+  return subjectOf(file, before).every((subject) => kept.has(subject));
 }
 
-/** What a deleted file weakens: a test file that moved is compared at its new path; one deleted outright counts unless its code went too. */
+/** What a deleted file weakens: a test that moved (isTestMove) is scanned at its new path; one deleted counts unless its code went too. */
 function weakenedDeletion(top, file, before, moves) {
   if (!TEST_FILE.test(file)) return CHECK_CONFIG.test(file) ? [failure(file, 'config-deleted', 'a lint or test config was deleted')] : [];
-  if (moves.movedTo.has(file)) return weakenedMovedTest(top, file, before, moves.movedTo.get(file));
+  const target = moves.movedTo.get(file);
+  const after = target === undefined ? null : headText(top, target);
+  if (typeof after === 'string' && after !== 'unreadable' && isTestMove(file, before, target, after)) return weakenedTestFile(target, before, after);
   const withItsCode = GO_TEST_FILE.test(file) ? goRemovedWithItsCode(top, file, moves.gone) : removedWithItsCode(file, before, moves.gone);
   return withItsCode ? [] : [failure(file, 'deleted', 'test file deleted')];
 }

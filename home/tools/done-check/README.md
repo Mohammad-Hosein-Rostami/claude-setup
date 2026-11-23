@@ -60,7 +60,10 @@ A test file deleted together with its code is not a weakening at all: every modu
 relative import at the base of a file that is not itself a test file or a fixture in a test folder) is deleted in the same change,
 not renamed or moved (git's rename detection, and a new file with the same text, both count as a move). A test deleted alone, with
 only a fixture, or while one of its modules still exists still blocks. A test file that itself moved (the same two rules) is no
-deletion: it is scanned like an edit, between its base text and its new path, so a rename that also drops a case still blocks.
+deletion only when the same runner still finds it (same folder, same kind of test name, same extension) and it still tests the same
+(every module it imported; for Go every `Test` function): then it is scanned like an edit at its new path, so a rename that also drops a
+case still blocks. A move out of the run set (`a.test.mjs` to `a.mjs` or `a.test.mjs.off`, `a_test.go.off`) or a deleted test that
+git pairs with an unrelated new one is a deletion.
 
 ## What counts as a change
 
@@ -73,7 +76,8 @@ uncommitted edit breaks that passes at HEAD is new and blocks.
 
 An agent's uncommitted file it did not record (a Bash command made it) is its own only when `ownBashEntries`
 (`hooks/lib/change-owner.mjs`, the rule commit-gate uses) keeps it: a file that another, older session's closed call window claims,
-and no call of this agent can have made, is left out, so two sessions in one folder never check (or blame) each other's files. An
+and no call of this agent can have made, is left out, so two sessions in one folder never check (or blame) each other's files. A path of the agent's own commits since
+its base always stays its own, even when another session edits it again uncommitted. An
 unreadable call-window log, its deadline or any error there keeps the file the agent's (it is still checked). A deleted code file is
 listed but never handed to a tool; the `node --test` pick still runs the tests that import it, and never a test path that is gone.
 
@@ -92,8 +96,9 @@ nearest `go.mod`) the checks are:
 | tests | `go test -json ./<dir> ...` of those folders, and of the nearest folder of `.go` files above a changed Go data file | `<dir>/\|<Test/sub>`, `<dir>/\|build failed`, `<dir>/\|package failed` |
 
 `tests-weakened` reads `_test.go` files too: fewer `Test`/`Benchmark`/`Fuzz`/`Example` functions or `t.Run` subtests, fewer
-`t.Error`/`t.Fatal`/`t.Fail` or testify `assert.`/`require.` calls, or more `t.Skip`, `testing.Short()` guards or build constraint
-lines (`//go:build`, which takes the file out of `go test`) than at the base. A `_test.go` deleted alone blocks; one deleted with its
+`t.Error`/`t.Fatal`/`t.Fail` or testify `assert.`/`require.` calls, or more `t.Skip` or `testing.Short()` guards than at the base
+(the receivers `t`, `b`, `f`, `tb`, `tt` and a suite's `.T()`, `.Require()`, `.Assert()`; a suite's bare `s.Equal(` is not counted), and any
+changed build constraint line (`//go:build`, `// +build`: it decides whether `go test` builds the file). A `_test.go` deleted alone blocks; one deleted with its
 `<name>.go`, or with the last non-test `.go` file of its package folder, is removed with its code; a renamed one passes.
 
 A `go.mod`, `go.sum` or `go.work` change vets and tests the whole module (`./...`); a deleted package (its folder holds no `.go` file

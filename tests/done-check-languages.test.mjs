@@ -166,13 +166,18 @@ test('F2: a _test.go renamed with git mv, or moved by a plain mv, is not weakene
   }), []);
 });
 
-test('F2: a _test.go renamed while a Test function is dropped is weakened at its new path', async (t) => {
-  const tests = `${GO_TEST}func TestTiny(t *testing.T) {}\n`;
-  const found = await goWeakened(t, { tests }, (repo) => {
+test('F2: a _test.go renamed while a subtest is dropped is weakened at its new path; with a Test function dropped it is a deletion', async (t) => {
+  const tests = `${GO_TEST}func TestTiny(t *testing.T) {\n\tt.Run("tiny", func(t *testing.T) {})\n}\n`;
+  const noSubtest = await goWeakened(t, { tests }, (repo) => {
+    git(repo.dir, 'mv', 'calc/calc_test.go', 'calc/add_test.go');
+    repo.write('calc/add_test.go', tests.replace('\tt.Run("tiny", func(t *testing.T) {})\n', ''));
+  });
+  assert.deepEqual(reasons(noSubtest), ['calc/add_test.go|fewer-cases']);
+  const noTest = await goWeakened(t, { tests }, (repo) => {
     git(repo.dir, 'mv', 'calc/calc_test.go', 'calc/add_test.go');
     repo.write('calc/add_test.go', GO_TEST);
   });
-  assert.ok(reasons(found).includes('calc/add_test.go|fewer-cases'), reasons(found).join(', '));
+  assert.deepEqual(reasons(noTest), ['calc/calc_test.go|deleted'], 'TestTiny is gone: not the same subject');
 });
 
 test('F2: a _test.go deleted alone is weakened; deleted with its code (its .go, or the whole package) it is not', async (t) => {
@@ -199,7 +204,7 @@ test('F2: an added t.Skip and an added testing.Short() guard are weakened skips,
   assert.deepEqual(reasons(short), ['calc/calc_test.go|added-skip']);
   assert.match(short[0].text, /testing\.Short\(\) added/);
   const tag = await goWeakened(t, {}, (repo) => repo.write('calc/calc_test.go', `//go:build integration\n\n${GO_TEST}`));
-  assert.deepEqual(reasons(tag), ['calc/calc_test.go|added-skip'], 'a build constraint takes the file out of go test');
+  assert.deepEqual(reasons(tag), ['calc/calc_test.go|build-constraint'], 'a build constraint takes the file out of go test');
 });
 
 test('F2: a dropped Test function, subtest or t.Fatal call is weakened; err.Error() is no assertion; a kept file is not', async (t) => {
@@ -221,4 +226,52 @@ test('F2: a JS test file renamed with git mv is not weakened (the same rename ru
   const deleted = newRepo(t, { files: { 'tests/a.test.mjs': source } });
   deleted.remove('tests/a.test.mjs');
   assert.deepEqual(reasons(weakenedTests(await rangeChange(deleted.dir, deleted.baseSha))), ['tests/a.test.mjs|deleted']);
+});
+
+// Fix round R1-R4 (review of 099ec0d7): each case passed the scan before the fix.
+
+/** The scan of `repo` (made with `files`) after `change(repo)`, as sorted failure ids. */
+async function scanAfter(t, files, change) {
+  const repo = newRepo(t, { files });
+  change(repo);
+  return reasons(weakenedTests(await rangeChange(repo.dir, repo.baseSha)));
+}
+const nodeTest = (imports) => `import test from 'node:test';\nimport assert from 'node:assert/strict';\n${imports.map((path) => `import '${path}';\n`).join('')}test('one', () => assert.equal(1, 1));\ntest('two', () => assert.equal(2, 2));\n`;
+const JS_FILES = { 'src/a.mjs': 'export const a = 1;\n', 'tests/a.test.mjs': nodeTest(['../src/a.mjs']) };
+
+test('R1: a test moved out of what its runner picks up is a deletion (non-test name, other folder, .off, a_test.go.off)', async (t) => {
+  for (const target of ['tests/a.mjs', 'src/a.test.mjs', 'src/a.test.mjs.off']) {
+    assert.deepEqual(await scanAfter(t, JS_FILES, (repo) => git(repo.dir, 'mv', 'tests/a.test.mjs', target)), ['tests/a.test.mjs|deleted'], target);
+  }
+  const goFiles = { 'p/go.mod': 'module p\n\ngo 1.22\n', 'p/a.go': GO_CODE.replace('calc', 'p'), 'p/a_test.go': GO_TEST.replace('calc', 'p') };
+  assert.deepEqual(await scanAfter(t, goFiles, (repo) => git(repo.dir, 'mv', 'p/a_test.go', 'p/a_test.go.off')), ['p/a_test.go|deleted']);
+  assert.deepEqual(await scanAfter(t, goFiles, (repo) => git(repo.dir, 'mv', 'p/a_test.go', 'p/b_test.go')), [], 'a rename the runner still finds passes');
+});
+
+test('R3: a deleted test of a module that stays, beside a new test of another module that git pairs with it, is a deletion', async (t) => {
+  const swapped = await scanAfter(t, JS_FILES, (repo) => {
+    repo.remove('tests/a.test.mjs');
+    repo.write('src/b.mjs', 'export const b = 1;\n');
+    repo.write('tests/b.test.mjs', nodeTest(['../src/b.mjs']));
+    repo.commit('swap');
+  });
+  assert.deepEqual(swapped, ['tests/a.test.mjs|deleted']);
+  const goSwap = await scanAfter(t, { 'go.mod': 'module m\n\ngo 1.22\n', 'calc/calc.go': GO_CODE, 'calc/calc_test.go': GO_TEST }, (repo) => {
+    repo.remove('calc/calc_test.go');
+    repo.write('calc/other_test.go', GO_TEST.replace('TestAdd', 'TestMul').replace('TestSub', 'TestDiv'));
+    repo.commit('swap');
+  });
+  assert.deepEqual(goSwap, ['calc/calc_test.go|deleted'], 'other Test functions: not the same subject');
+});
+
+test('R4: any changed build constraint of a _test.go is weakened; suite assertions through s.T() and s.Require() count', async (t) => {
+  const tagged = (tag) => `//go:build ${tag}\n\n${GO_TEST}`;
+  const swap = await goWeakened(t, { tests: tagged('linux || darwin') }, (repo) => repo.write('calc/calc_test.go', tagged('ignore')));
+  assert.deepEqual(reasons(swap), ['calc/calc_test.go|build-constraint']);
+  assert.match(swap[0].text, /`\/\/go:build linux \|\| darwin` before, `\/\/go:build ignore` now/);
+  const suite = `${GO_TEST}\nfunc (s *Suite) TestX() {\n\ts.T().Fatal("x")\n\ts.Require().Equal(1, 2)\n\ts.T().Run("y", nil)\n}\n`;
+  const gutted = await goWeakened(t, { tests: suite }, (repo) => repo.write('calc/calc_test.go', suite.replace('\ts.T().Fatal("x")\n\ts.Require().Equal(1, 2)\n', '').replace('\ts.T().Run("y", nil)\n', '')));
+  assert.deepEqual(reasons(gutted), ['calc/calc_test.go|fewer-assertions', 'calc/calc_test.go|fewer-cases']);
+  const skipped = await goWeakened(t, { tests: suite }, (repo) => repo.write('calc/calc_test.go', suite.replace('\ts.T().Fatal("x")\n', '\ts.T().Skip("later")\n\ts.T().Fatal("x")\n')));
+  assert.deepEqual(reasons(skipped), ['calc/calc_test.go|added-skip']);
 });

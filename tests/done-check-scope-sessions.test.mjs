@@ -119,3 +119,16 @@ test('F6: a test path that vanished after the scope was taken is not handed to t
   assert.equal(lstatSync(join(repo.dir, 'tests')).isDirectory(), true);
   assert.deepEqual(readdirSync(join(repo.dir, 'tests')).sort(), ['helper.test.mjs']);
 });
+
+test('R2: an agent\'s committed change stays in its scope after an older session\'s window edits the same file uncommitted', async (t) => {
+  const { repo, env, stopA } = twoSessions(t);
+  repo.remove(PROBE); // only the committed file is looked at here
+  repo.write('src/helper.mjs', 'export const helper = 2; // A\n'); // A's own change, made by Bash, then committed
+  repo.commit('A commits its change');
+  const openAt = Date.now() - 5;
+  repo.write('src/helper.mjs', 'export const helper = 3; // B\n'); // B's later uncommitted edit, inside B's closed window
+  const closeAt = Date.now() + 5;
+  writeLog(repo.home, SESSION_B, [edges.folder(repo.dir, Date.now() - 2 * HOUR_MS), edges.open('b2', openAt, [], { agent: CART }), edges.close('b2', closeAt, [], { agent: CART })]);
+  const scopes = await ownChange(stopA, env);
+  assert.deepEqual(scopes.map((scope) => scope.files), [['src/helper.mjs']]);
+});
