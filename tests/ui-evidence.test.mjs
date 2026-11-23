@@ -196,13 +196,39 @@ test('classifyFile: unknown lines and file types count as look, never as nothing
 
 test('classifyFile: empty diff, whitespace-only changes and blank lines give no class, never a crash (F2)', () => {
   assert.deepEqual(classifyFile('src/Card.tsx', [], []), []);
-  assert.deepEqual(classifyFile('src/Card.tsx', ['  <div>', '  </div>'], ['    <div>', '', '    </div>', '   ']), [], 're-indent');
-  assert.deepEqual(classifyFile('src/index.css', ['body{}'], ['body{}  ']), [], 'trailing space in a global css');
+  const inPlace = { removed: [0, 0], added: [0, 0, 0, 0] };
+  assert.deepEqual(classifyFile('src/Card.tsx', ['  <div>', '  </div>'], ['    <div>', '', '    </div>', '   '], inPlace), [], 're-indent');
+  assert.deepEqual(classifyFile('src/index.css', ['body{}'], ['body{}  '], { removed: [3], added: [3] }), [], 'trailing space in a global css');
+  assert.deepEqual(classifyFile('src/Card.tsx', ['  <p>'], ['', '   '], { removed: [0], added: [1, 1] }), ['look'], 'a removed line is a change');
+  assert.deepEqual(classifyFile('src/Card.tsx', [], ['', '  ']), [], 'blank lines only, positions unknown');
   assert.deepEqual(classifyFile('', [], []), []);
   assert.deepEqual(classifyFile('', null, null), ['look'], 'no path, no lines: look');
   assert.deepEqual(classifyFile('src/Card.tsx', ['Hello world'], ['Helloworld']), ['text'], 'a space inside text is visible');
   assert.deepEqual(classifyFile('src/a.py', ['x = 1'], ['  x = 1']), ['logic'], 'indentation is meaning in python');
   assert.deepEqual(classifyFile('src/a.sass', ['.a'], ['  .a']), ['look'], 'and in sass');
+});
+
+test('classifyFile: a moved line is a change; only lines re-spaced in place, in one hunk, count as none (R1)', () => {
+  const save = ['  <SaveButton />'];
+  assert.ok(classifyFile('src/Toolbar.tsx', save, save).includes('look'), 'same text, positions unknown: a move');
+  assert.ok(classifyFile('src/Toolbar.tsx', save, save, { removed: [0], added: [2] }).includes('look'), 'removed in one hunk, added in another');
+  assert.ok(classifyFile('src/Toolbar.tsx', save, ['      <SaveButton />']).includes('look'), 're-indent without positions');
+  assert.deepEqual(classifyFile('src/Toolbar.tsx', save, ['      <SaveButton />'], { removed: [1], added: [1] }), [], 're-indent in place');
+  const swap = { removed: [0, 0], added: [0, 0] };
+  assert.ok(classifyFile('src/Toolbar.tsx', ['<A />', '<B />'], ['<B />', '<A />'], swap).includes('look'), 'reorder in one hunk');
+  const css = ['  color: red;'];
+  assert.ok(classifyFile('src/card.css', css, css, { removed: [0], added: [4] }).includes('look'), 'a css declaration moved to another rule');
+  for (const bad of [{ removed: [0] }, { removed: [0], added: [] }, { removed: ['0'], added: [0] }, { removed: [0.5], added: [0] }]) {
+    assert.throws(() => classifyFile('src/Toolbar.tsx', save, save, bad), TypeError, JSON.stringify(bad));
+  }
+});
+
+test('classifyFile: re-indenting markdown changes it (code block, nested list), even in place (R1)', () => {
+  const at = { removed: [0], added: [0] };
+  assert.deepEqual(classifyFile('src/content/about.md', ['- item'], ['    - item'], at), ['text']);
+  assert.deepEqual(classifyFile('README.md', ['code()'], ['    code()'], at), ['devConfig']);
+  assert.ok(classifyFile('src/pages/intro.mdx', ['Hello'], ['    Hello'], at).length > 0, 'mdx');
+  assert.ok(classifyFile('Makefile', ['\tnode build'], ['    node build'], at).length > 0, 'a Makefile needs its tabs');
 });
 
 test('classifyFile: huge lines and files stay linear (F4)', HANG_GUARD, () => {

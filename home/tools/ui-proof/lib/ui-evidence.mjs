@@ -57,7 +57,8 @@ const STYLE_SCRIPT = /\.(?:styles?|sx|css)\.[cm]?[jt]sx?$/; // Button.styles.ts,
 const SCRIPT = /\.[cm]?[jt]s$/;
 const SOURCE = /\.(?:[cm]?[jt]sx?|vue|svelte|astro|html?|mdx|hbs|handlebars|ejs|njk|liquid|pug|jade|twig|erb|tmpl|gohtml|go|py|rb|php|java|kts?|swift|dart|rs|cs|exs?)$/;
 const MARKUP = /\.(?:tsx|jsx|vue|svelte|astro|html?|mdx|hbs|handlebars|ejs|njk|liquid|pug|jade|twig|erb|tmpl|gohtml)$/;
-const INDENT_SENSITIVE = /\.(?:py|ya?ml|pug|jade|sass|styl|haml|slim|coffee)$/; // re-indenting changes meaning: never "whitespace only"
+// Re-indenting changes meaning (markdown: code blocks, nested lists, trailing-space breaks): never "whitespace only".
+const INDENT_SENSITIVE = /\.(?:py|pyi|ya?ml|pug|jade|sass|styl|haml|slim|coffee|md|markdown|mdx|rst|adoc|mk)$|^(?:makefile|gnumakefile)$/;
 
 /** A docs page: under a docs folder, no product-page (mail, template) part, and no app folder above the docs folder. */
 function isDocsPath(folders, name) {
@@ -118,8 +119,27 @@ const PACKAGE_META = /^\s*"(?:version|description|keywords|author|contributors|l
 const PACKAGE_DEV_SCRIPT = /^\s*"(?:test|lint|format|typecheck|e2e|storybook)(?::[\w:-]*)?"\s*:\s*"(?![\^~<>=*\d]|workspace:|npm:|file:|link:)/;
 const packageLineClasses = (line) => (PACKAGE_META.test(line) || PACKAGE_DEV_SCRIPT.test(line) ? ['devConfig'] : ['deps']);
 
-const contentLines = (lines) => lines.map((line) => String(line).trim()).filter(Boolean);
-const sameContent = (a, b) => a.length === b.length && a.every((line, i) => line === b[i]);
+/** The non-blank lines, trimmed, each with its hunk number (undefined when positions are unknown). */
+const contentLines = (lines, hunks) =>
+  lines.map((line, i) => ({ text: String(line).trim(), hunk: hunks?.[i] })).filter((entry) => entry.text);
+
+/** @throws {TypeError} when `hunks` is given but is not one integer hunk number per removed and per added line */
+function checkHunks(hunks, removed, added) {
+  if (hunks === undefined || hunks === null) return;
+  const fits = (numbers, lines) => Array.isArray(numbers) && numbers.length === lines.length && numbers.every(Number.isInteger);
+  if (!fits(hunks.removed, removed) || !fits(hunks.added, added)) throw new TypeError('hunks must give one integer per removed and added line');
+}
+
+/**
+ * True when the change only re-spaces lines in place: the trimmed lines are the same, in the same order, and each pair sits in one
+ * hunk. A line removed in one hunk and added in another is a move, a visible change. Without positions only blank lines qualify.
+ */
+function whitespaceOnly(removed, added, hunks) {
+  const before = contentLines(removed, hunks?.removed);
+  const after = contentLines(added, hunks?.added);
+  if (!hunks) return before.length === 0 && after.length === 0;
+  return before.length === after.length && before.every((line, i) => line.text === after[i].text && line.hunk === after[i].hunk);
+}
 
 /** The union of the classes of the non-blank lines, in FILE_CLASSES order. */
 function classesOfLines(lines, lineClasses) {
@@ -133,14 +153,19 @@ function classesOfLines(lines, lineClasses) {
  * @param {string} file repo path (`/` or `\` separators)
  * @param {string[]|null} removed removed lines, or null when unknown (binary, by path only)
  * @param {string[]|null} added added lines, or null when unknown
- * @returns {string[]} classes in FILE_CLASSES order; [] when the change is whitespace only (re-indent, blank lines) or has no lines
+ * @param {{ removed: number[], added: number[] }} [hunks] the hunk of each removed and added line (one number per `@@` header,
+ *   equal numbers = same hunk); without it a re-indent cannot be told from a move, so it counts as a change
+ * @returns {string[]} classes in FILE_CLASSES order; [] when the change has no lines, only blank lines, or (with hunks) only
+ *   re-spaces lines in place
+ * @throws {TypeError} when hunks is given but does not fit the lines
  */
-export function classifyFile(file, removed, added) {
+export function classifyFile(file, removed, added, hunks) {
   const parts = String(file).replace(/\\/g, '/').toLowerCase().split('/').filter((part) => part && part !== '.');
   const name = parts.at(-1) ?? '';
   const folders = parts.slice(0, -1);
   const known = Array.isArray(removed) && Array.isArray(added);
-  if (known && !INDENT_SENSITIVE.test(name) && sameContent(contentLines(removed), contentLines(added))) return [];
+  if (known) checkHunks(hunks, removed, added);
+  if (known && !INDENT_SENSITIVE.test(name) && whitespaceOnly(removed, added, hunks)) return [];
   const byPath = classOfPath(folders, name);
   if (byPath) return [byPath];
   if (name === 'package.json') return known ? classesOfLines([...removed, ...added], packageLineClasses) : ['deps'];
