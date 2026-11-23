@@ -3,17 +3,20 @@
 // whose work is already on the base; `prune` removes exactly those, and only when it can prove they are merged.
 // Usage: git-tidy.mjs check [dir] [--base <branch>] [--json]
 //        git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--include-recent] [--json]
-//        git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] --tip <sha> [--brief <file>] [--json]
+//        git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] --tip <sha> [--brief <file>]
+//                     [--owner-waive-ui <reason> --status-file <abs STATUS.md> --road <road id>] [--json]
 //   --tip is the full sha the caller expects the lane to be at: required for a full land (exit 2 without it), optional with --rebase-only;
 //   a branch that is not at it exits 9 before anything changes; a full land lands only that sha (a rebase that rewrites it is exit 5, the lane
 //   stays rebased: land again with the new tip). `--checks` (a removed flag) is refused with exit 2.
+//   --owner-waive-ui skips only the UI proof of a full land, and only when the owner's decision line for that road is in the STATUS.md
+//   (ui-proof/lib/owner-waiver.mjs); without the line, or with a bad reason, it is exit 2 and nothing changes. The output says so.
 //        git-tidy.mjs range <sha> [dir] [--base <branch>] [--landed <sha>] [--json]
 //        --include-recent  lifts only the rule that keeps a worktree used in the last 60 minutes, and not for a lane
 //                          with no commit of its own yet (it stays protected for those 60 minutes)
 // land: rebases the lane onto the base, fast-forwards the base and cleans up (no test or review step). Exit: 0 landed and check
 //   clean (or --rebase-only done), 1 landed with findings left, 2 usage or base folder not
 //   ready, 3 conflict, 5 base moved (during the landing, or since the `--tip` was rebased), 6 ui-proof: the UI files differ from the base and
-//   `ui-proof check --tip <rebased tip>` does not exit 0 (or the ui-proof tool cannot be loaded; always on, no flag turns it off), 7 new-file-size:
+//   `ui-proof check --tip <rebased tip>` does not exit 0 (or the ui-proof tool cannot be loaded; always on unless the owner's waiver holds), 7 new-file-size:
 //   the lane adds a file over the commit gate's MAX_NEW_FILE_BYTES that the `--brief` file does not name (no brief names none).
 //   8 upstream-moved: after a fetch of the base's upstream (timeout; offline is a WARN line), the upstream holds commits the base lacks:
 //   `git pull --rebase` first. 9 tip-moved: `refs/heads/<branch>` is not the `--tip` sha (changed since the caller read it; nothing was touched).
@@ -44,15 +47,29 @@ const EXIT_NOT_FOUND = 1;
 const MAX_BRIEF_BYTES = 1024 * 1024; // a brief is text; the first MB is what the commit gate reads too
 const UI_PROOF_TIMEOUT_MS = 60_000;
 const TOOLS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..');
-const USAGE = 'usage: git-tidy.mjs check [dir] [--base <branch>] [--json]\n       git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--include-recent] [--json]\n       git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] [--tip <sha>] [--brief <file>] [--json]\n       git-tidy.mjs range <sha> [dir] [--base <branch>] [--landed <sha>] [--json]';
+const USAGE = 'usage: git-tidy.mjs check [dir] [--base <branch>] [--json]\n       git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--include-recent] [--json]\n       git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] [--tip <sha>] [--brief <file>] [--owner-waive-ui <reason> --status-file <abs> --road <id>] [--json]\n       git-tidy.mjs range <sha> [dir] [--base <branch>] [--landed <sha>] [--json]';
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const COMMANDS = ['check', 'prune', 'land', 'range'];
-const VALUE_FLAGS = { '--brief': ['land', 'brief'], '--tip': ['land', 'tip'], '--landed': ['range', 'landed'] };
+const VALUE_FLAGS = {
+  '--brief': ['land', 'brief'], '--tip': ['land', 'tip'], '--landed': ['range', 'landed'],
+  '--owner-waive-ui': ['land', 'ownerWaiveUi'], '--status-file': ['land', 'statusFile'], '--road': ['land', 'road'],
+};
+const WAIVER_FLAGS = ['ownerWaiveUi', 'statusFile', 'road']; // given all together or not at all
+const ABSOLUTE_PATH = /^(\/|[A-Za-z]:[\\/])/;
+
+/** The waiver flags as one usage check: all three or none, a full land only, an absolute STATUS.md path. */
+function checkWaiverFlags(options) {
+  const given = WAIVER_FLAGS.filter((key) => options[key] !== null);
+  if (given.length === 0) return;
+  if (given.length !== WAIVER_FLAGS.length) throw new UsageError(`--owner-waive-ui, --status-file and --road go together. ${USAGE}`);
+  if (options.rebaseOnly) throw new UsageError(`--owner-waive-ui applies to a full land only (--rebase-only runs no UI proof). ${USAGE}`);
+  if (!ABSOLUTE_PATH.test(options.statusFile)) throw new UsageError(`--status-file must be an absolute path, got ${JSON.stringify(options.statusFile)}`);
+}
 
 function parseArgs(argv) {
   const [command, ...rest] = argv;
   if (!COMMANDS.includes(command)) throw new UsageError(USAGE);
-  const options = { command, branch: null, dir: null, base: null, json: false, apply: false, includeRecent: false, rebaseOnly: false, brief: null, tip: null, landed: null };
+  const options = { command, branch: null, dir: null, base: null, json: false, apply: false, includeRecent: false, rebaseOnly: false, brief: null, tip: null, landed: null, ownerWaiveUi: null, statusFile: null, road: null };
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
     if (arg === '--json') options.json = true;
@@ -75,6 +92,7 @@ function parseArgs(argv) {
   if (command === 'range' && options.branch === null) throw new UsageError(`range needs the sha to look for. ${USAGE}`);
   if (options.tip !== null && !FULL_SHA.test(options.tip)) throw new UsageError(`--tip needs a full 40-character sha, got ${JSON.stringify(options.tip)}. ${USAGE}`);
   if (command === 'land' && !options.rebaseOnly && options.tip === null) throw new UsageError(`land needs --tip <full sha of the lane's tip>. ${USAGE}`);
+  checkWaiverFlags(options);
   options.dir ??= process.cwd();
   return options;
 }
@@ -85,7 +103,7 @@ function runPrune(repo, options) {
   return options.apply ? pruneExitCode(items) : 0;
 }
 
-// The UI proof belongs to the ui-proof tool next to this one (its one definition of UI files, F7). It is always on: when the tool
+// The UI proof belongs to the ui-proof tool next to this one (its one definition of UI files, F7). It is on unless the owner waived it (ownerWaiverOf): when the tool
 // cannot be loaded, every landing is refused with that reason (fail closed), since no one can tell whether UI files changed.
 async function loadUiCheck() {
   let changedUiFiles;
@@ -118,11 +136,31 @@ function runRange(repo, options) {
   return found ? 0 : EXIT_NOT_FOUND;
 }
 
+/**
+ * The owner's ui-proof waiver, checked before anything changes: null without --owner-waive-ui, else the reason when the owner's decision
+ * line for the road is in the STATUS.md. Fails closed: a bad reason, a missing line or a waiver module that cannot be loaded is a UsageError.
+ */
+async function ownerWaiverOf(options) {
+  if (options.ownerWaiveUi === null) return null;
+  let waiver;
+  try {
+    waiver = await import('../ui-proof/lib/owner-waiver.mjs');
+  } catch (error) {
+    throw new UsageError(`--owner-waive-ui: the waiver rule cannot be loaded (${error.message}), so the UI proof stays on`);
+  }
+  const problem = waiver.waiverReasonProblem(options.ownerWaiveUi) ?? waiver.ownerWaiverProblem(options.statusFile, options.road);
+  if (problem !== null) throw new UsageError(problem);
+  return options.ownerWaiveUi;
+}
+
 async function runLand(repo, options) {
   const briefText = briefTextOf(options.brief);
-  // Rebase, ff-only and prune always run; the UI proof and the new-file size rule hold every full landing.
-  const checks = options.rebaseOnly ? {} : { uiCheck: await loadUiCheck(), briefText };
-  const result = landLane(repo, options.branch, { rebaseOnly: options.rebaseOnly, tip: options.tip, ...checks });
+  const uiWaived = await ownerWaiverOf(options);
+  // Rebase, ff-only and prune always run; the new-file size rule holds every full landing, the UI proof every one the owner did not waive.
+  const uiCheck = uiWaived === null ? await loadUiCheck() : () => null;
+  const checks = options.rebaseOnly ? {} : { uiCheck, briefText };
+  const landed = landLane(repo, options.branch, { rebaseOnly: options.rebaseOnly, tip: options.tip, ...checks });
+  const result = uiWaived === null ? landed : { ...landed, uiWaived };
   console.log(formatLand(result, options.json));
   return landExitCode(result);
 }

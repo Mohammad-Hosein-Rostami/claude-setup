@@ -205,6 +205,12 @@ A step in which any landing range changed a UI file (a lane's or a fix row's `<r
 coverage matrix path, never takes this path: it needs `ui-proof check --against-step` and the step-start record exactly as before
 (`lib/road-gate-ui.mjs`).
 
+Owner waiver (owner decision 2026-11-23, web API-integration lanes): before both paths, line 4 is
+`PASS 4 ui: waived by owner decision (ui-proof waiver for road <road>): <n> landing(s) ...` when a landing row of the step (or its done
+correction row) ends its evidence with ` (ui-proof waived: owner decision)` (`land-lane --owner-waive-ui`), every landing that changed a
+UI file does too, and `## Owner decisions` holds the owner's line `ui-proof waiver for road <road>` without `UNCONFIRMED`
+(`ui-proof/lib/owner-waiver.mjs`, `home/tools/ui-proof/README.md`). Anything less takes the web or terminal path above, unchanged.
+
 ## Walking an `agents` step
 
 Every step is walked with plain agents:

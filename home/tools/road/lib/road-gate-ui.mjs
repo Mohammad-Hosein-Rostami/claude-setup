@@ -14,13 +14,18 @@
 //   AskUserQuestion and records the answer with `status.mjs decision`, so `## Owner decisions` holds the bullet
 //   `- <same date> terminal proof <road>.s<N>: owner yes on <same path> (AskUserQuestion answer)` (status.mjs writes the date; a timeout
 //   default, `UNCONFIRMED ...`, is no such bullet). A step with any UI file changed or any matrix path never takes this path.
+// Owner waiver (owner decision 2026-11-23, web API-integration lanes): before both paths, a step PASSes as "waived by owner decision" when
+//   a landing of it ends its evidence with ` (ui-proof waived: owner decision)` (land-lane --owner-waive-ui), every landing that changed a
+//   UI file does too, and `## Owner decisions` holds the owner's `ui-proof waiver for road <road>` line (no UNCONFIRMED). Anything less
+//   leaves the step to the paths above, unchanged.
 // Invariants: every exit other than the expected ones is FAIL (fail closed); `ctx.uiProof(argv)` runs the ui-proof tool and
 //   `ctx.isAncestor(a, b)` git's `merge-base --is-ancestor` exit, both with their timeouts (road-gate.mjs), so tests inject them.
 import { realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, sep } from 'node:path';
 import { findSection } from '../../estimate/lib/items.mjs';
-import { isUiLane } from './road-state.mjs';
+import { UI_WAIVER_EVIDENCE, ownerWaiverLine } from '../../ui-proof/lib/owner-waiver.mjs';
+import { correctionRows, isUiLane, landedLine } from './road-state.mjs';
 
 export const TERMINAL_PROOF_SUFFIX = '.terminal-proof';
 const NO_MATRIX = 'none:'; // road-file.mjs: a lane with no coverage matrix says `none: <reason>`
@@ -106,6 +111,27 @@ function terminalProofLine(rows, label, own, ctx) {
   return pass(`4 ui: terminal UI step: real render ${path} approved by the owner on ${date}`);
 }
 
+/** The evidence that holds the range's landed line: the row's own, else its one done correction row's (as road-gate.mjs reads it). */
+function landingEvidence(rows, id) {
+  const own = rows.get(id.toLowerCase());
+  if (landedLine(own?.evidence) !== null) return String(own.evidence);
+  const found = correctionRows(rows, id);
+  return found.length === 1 && found[0].done != null ? String(found[0].evidence ?? '') : '';
+}
+
+/**
+ * The owner's waiver of the step's UI proof, or null when it does not apply: some landing of the step ends its evidence with
+ * UI_WAIVER_EVIDENCE (land-lane --owner-waive-ui), every landing that changed a UI file does, and `## Owner decisions` holds the owner's
+ * line for this road (ui-proof/lib/owner-waiver.mjs; an UNCONFIRMED line is none). Otherwise the web or terminal path decides as before.
+ */
+function waiverLine(road, rows, own, changed, ctx) {
+  const waived = own.map((range) => landingEvidence(rows, range.row).trimEnd().endsWith(UI_WAIVER_EVIDENCE));
+  if (!waived.includes(true) || changed.some((result, index) => result.exit === 1 && !waived[index])) return null;
+  if (ownerWaiverLine(ctx.statusText ?? '', road.road) === null) return null;
+  const count = waived.filter(Boolean).length;
+  return pass(`4 ui: waived by owner decision (ui-proof waiver for road ${road.road}): ${count} landing(s) of the step landed with --owner-waive-ui`);
+}
+
 /**
  * Line 4: the UI proof of the step.
  * @param {object} road a checked road
@@ -125,6 +151,8 @@ export function uiLine(road, rows, ranges, step, ctx) {
   if (changed.some((result) => result.exit !== 0 && result.exit !== 1)) return fail('4 ui: ui-proof changed could not answer');
   const uiChanged = changed.some((result) => result.exit === 1);
   if (matrices.length === 0 && !uiChanged) return pass('4 ui: no UI file changed in the step');
+  const waived = waiverLine(road, rows, own, changed, ctx);
+  if (waived !== null) return waived;
   const label = `${road.road}.s${step}`;
   if (!uiChanged && matrices.every((matrix) => matrix.startsWith(NO_MATRIX))) return terminalProofLine(rows, label, own, ctx);
   const proof = ctx.uiProof(['check', '--tip', ctx.tip, '--against-step', label, '--repo', ctx.repo]);

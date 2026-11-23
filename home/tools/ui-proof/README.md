@@ -30,6 +30,22 @@ blocks (fail closed). Claude Code overrides a Stop gate after 8 blocks in a row 
 on it alone: `git-tidy land` and the road gate are the hard checks. `MATRIX: none:` skips the Figma compare, never the proof:
 visual-qa runs `run` on a matrix without a Figma source.
 
+## Owner waiver of the UI proof
+
+Why: on 2026-11-23 the owner decided that web API-integration lanes, which change no screen on purpose, land without the visual-qa
+PASS while every other check stays. `lib/owner-waiver.mjs` is the one rule, read by `git-tidy land --owner-waive-ui`, `land-lane
+--owner-waive-ui` and the road gate's line 4:
+
+- The waiver holds for road `<id>` only when the STATUS.md section `## Owner decisions` (up to the next heading; lines in a code fence do
+  not count) has a line containing `ui-proof waiver for road <id>`, the id not followed by another id character, and the line does not
+  contain `UNCONFIRMED` (a decision taken by a timeout default is no owner decision). The lead records the owner's answer with
+  `status.mjs decision "ui-proof waiver for road <id>: <what the owner said> (owner, <date>)"`.
+- A landing under it prints `ui-proof: waived by owner decision (<reason>)`, and land-lane ends the row evidence with
+  ` (ui-proof waived: owner decision)`. Gate line 4 passes a step as `waived by owner decision` when a landing of the step carries that
+  evidence, every landing that changed a UI file carries it, and the owner's line is there; otherwise the step takes the web or terminal
+  path as before.
+- Without the line, or without the flag, nothing changes: the UI proof is on. The stop gate (`hooks/ui-proof-gate.mjs`) is not changed.
+
 ## review-page
 
 `ui-proof review-page --results <dir> --out <dir> [--matrix <matrix.json>]` writes `<out>/index.html`, the page the owner

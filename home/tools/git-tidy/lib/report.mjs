@@ -61,5 +61,6 @@ export function formatLand(result, json) {
   if (status === 'base-moved') return `base-moved: ${why ?? 'the base moved during the landing'}: land again with --tip ${tip} (the lane stays rebased, nothing landed)`;
   const outcome = findings.length === 0 ? ['check: clean'] : findings.map(line);
   const refused = cleanupRefused === null ? [] : [`cleanup skipped: ${cleanupRefused}`];
-  return [`landed ${tip}`, ...(from ? [`from ${from}`] : []), ...upstreamLines, ...removed.map((entry) => `removed ${entry}`), ...refused, ...outcome].join('\n');
+  const waived = typeof result.uiWaived === 'string' ? [`ui-proof: waived by owner decision (${result.uiWaived})`] : [];
+  return [`landed ${tip}`, ...(from ? [`from ${from}`] : []), ...waived, ...upstreamLines, ...removed.map((entry) => `removed ${entry}`), ...refused, ...outcome].join('\n');
 }
