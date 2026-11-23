@@ -1,14 +1,16 @@
 // Tests for home/tools/ui-proof/lib/reach.mjs: which inferred screens a change reaches by a full import walk (no hop cap, cycles,
 // tsconfig paths, Vite aliases, workspace packages, lazy and template imports), at base and tip, and the safe `all: true` fallbacks
 // with one reason line (missing import, non-literal import, undeclared package, a file no screen imports, a project with no known
-// router). Every repo is a throw-away cs-test git repo; git runs without the user's config; the screens cache is a temp dir.
+// router, the walk bound). Also: the app shell around every route (React, Vue, Angular), global styles, routes that are spread,
+// cannot be followed or whose component does not resolve, and the inference time budget with its uncached incomplete result.
+// Every repo is a throw-away cs-test git repo; git runs without the user's config; the screens cache is a temp dir.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { reachedScreens } from '../home/tools/ui-proof/lib/reach.mjs';
-import { inferScreens } from '../home/tools/ui-proof/lib/screens.mjs';
+import { inferScreens, isComplete } from '../home/tools/ui-proof/lib/screens.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const GIT_ENV = {
@@ -221,3 +223,58 @@ test('the walk bound: a walk past its file cap or its time budget gives all with
     assert.match(result.why, /^reach unresolved: the walk passed \d+ files or its time budget \(at [0-9a-f]{12}\)/);
   }
 });
+
+const RR = "import { createBrowserRouter, createHashRouter, createMemoryRouter, useRoutes } from 'react-router-dom';";
+const listFile = (name, next) => `import { ${next} } from './${next}';\nexport const ${name} = [...${next}];\n`;
+
+test('spread routes are followed: in the router call, in children and through a local const', () => {
+  const { dir, sha } = repoWith({
+    'package.json': '{"dependencies":{"react":"19.0.0","react-router-dom":"7.0.0"}}',
+    'src/main.tsx': `${RR}\nimport A from './A';\nimport X from './X';\nimport { more } from './more';\nimport { kids } from './kids';\nconst extra = [...more];\nexport const router = createBrowserRouter([{ path: '/a', element: <A /> }, { path: '/x', element: <X />, children: [...kids] }, ...extra]);\n`,
+    'src/more.tsx': "import B from './B';\nexport const more = [{ path: '/b', element: <B /> }];\n",
+    'src/kids.tsx': "import K from './K';\nexport const kids = [{ path: 'k', element: <K /> }];\n",
+    ...Object.fromEntries(['A', 'B', 'K', 'X'].map((n) => [`src/${n}.tsx`, `export default function ${n}() { return null; }\n`])),
+  });
+  const { screens, unresolved } = inferScreens({ repoDir: dir, rev: sha, stateDir: makeTempDir('ui-reach-state-') });
+  assert.deepEqual(screens.map((s) => [s.route, s.component]), [['/a', 'src/A.tsx'], ['/b', 'src/B.tsx'], ['/x', 'src/X.tsx'], ['/x/k', 'src/K.tsx']]);
+  assert.ok(screens.find((s) => s.route === '/x/k').wraps.includes('src/X.tsx'));
+  assert.deepEqual(unresolved, []);
+});
+
+test('routes that cannot be followed give one line each: a call, a member spread, a parameter, an unread file, a link past the cap', () => {
+  const { dir, sha } = repoWith({
+    'package.json': '{"dependencies":{"react":"19.0.0","react-router-dom":"7.0.0","@angular/router":"19.0.0"}}',
+    'src/A.tsx': 'export default function A() { return null; }\n',
+    'src/one.tsx': `${RR}\nimport { buildRoutes } from './build';\nexport const one = createBrowserRouter(buildRoutes());\n`,
+    'src/two.tsx': `${RR}\nimport A from './A';\nimport { admin } from './admin';\nexport const two = createHashRouter([{ path: '/two', element: <A />, children: admin.list }, ...admin.more]);\n`,
+    'src/three.tsx': `${RR}\nexport function Three({ routes }) { return useRoutes(routes); }\n`,
+    'src/four.tsx': `${RR}\nimport routes from './routes.json';\nexport const four = createMemoryRouter(routes);\n`,
+    'src/routes.json': '[]\n',
+    'src/store.ts': "import { RouterModule } from '@angular/router';\nexport const imports = [StoreModule.forRoot(reducers), RouterModule.forRoot([])];\n",
+    'src/c0.tsx': `${RR}\nimport { c1 } from './c1';\nexport const c0 = createBrowserRouter([...c1]);\n`,
+    ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map((n) => [`src/c${n}.ts`, listFile(`c${n}`, `c${n + 1}`)])),
+    'src/c8.ts': 'export const c8 = [];\n',
+  });
+  const { screens, unresolved } = inferScreens({ repoDir: dir, rev: sha, stateDir: makeTempDir('ui-reach-state-') });
+  assert.deepEqual(screens.map((s) => s.route), ['/two']);
+  assert.deepEqual(unresolved.sort(), [
+    'capped: route links from src/c6.ts:2 pass 6 files (src/c7.ts not read)',
+    'unread: src/routes.json, whose routes src/four.tsx:3 links, is not read',
+    'unresolved: a spread of routes (. . . admin . more) at src/two.tsx:4 cannot be followed',
+    'unresolved: the children of a route (admin . list) at src/two.tsx:4 cannot be followed',
+    'unresolved: the routes "routes" at src/three.tsx:2 are bound by no import or declaration',
+    'unresolved: the routes of createBrowserRouter (buildRoutes () at src/one.tsx:3 cannot be followed',
+  ]);
+  assert.equal(isComplete(unresolved), false);
+});
+
+test('the time budget is checked during the work; an incomplete result is not cached', () => {
+  const { dir, sha } = repoWith(APP);
+  const cacheDir = makeTempDir('ui-reach-state-');
+  const spent = inferScreens({ repoDir: dir, rev: sha, stateDir: cacheDir, budgetMs: 0 });
+  assert.deepEqual([spent.screens, spent.unresolved, spent.cached], [[], ['incomplete: the inference passed its 0 s budget'], false]);
+  assert.deepEqual(fs.readdirSync(cacheDir), [], 'nothing is saved');
+  assert.equal(inferScreens({ repoDir: dir, rev: sha, stateDir: cacheDir }).cached, false);
+  assert.equal(inferScreens({ repoDir: dir, rev: sha, stateDir: cacheDir }).cached, true);
+});
+

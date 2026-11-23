@@ -277,60 +277,6 @@ test('a bad or unknown rev and a folder that is no repo give one unread line, ne
   assert.equal(inferScreens({ repoDir: makeTempDir('ui-screens-plain-'), rev: 'HEAD', stateDir: stateDir() }).unresolved.length, 1);
 });
 
-const RR = "import { createBrowserRouter, createHashRouter, createMemoryRouter, useRoutes } from 'react-router-dom';";
-const listFile = (name, next) => `import { ${next} } from './${next}';\nexport const ${name} = [...${next}];\n`;
-
-test('spread routes are followed: in the router call, in children and through a local const', () => {
-  const { dir, sha } = repoWith({
-    'package.json': '{"dependencies":{"react":"19.0.0","react-router-dom":"7.0.0"}}',
-    'src/main.tsx': `${RR}\nimport A from './A';\nimport X from './X';\nimport { more } from './more';\nimport { kids } from './kids';\nconst extra = [...more];\nexport const router = createBrowserRouter([{ path: '/a', element: <A /> }, { path: '/x', element: <X />, children: [...kids] }, ...extra]);\n`,
-    'src/more.tsx': "import B from './B';\nexport const more = [{ path: '/b', element: <B /> }];\n",
-    'src/kids.tsx': "import K from './K';\nexport const kids = [{ path: 'k', element: <K /> }];\n",
-    ...Object.fromEntries(['A', 'B', 'K', 'X'].map((n) => [`src/${n}.tsx`, `export default function ${n}() { return null; }\n`])),
-  });
-  const { screens, unresolved } = inferScreens({ repoDir: dir, rev: sha, stateDir: stateDir() });
-  assert.deepEqual(screens.map((s) => [s.route, s.component]), [['/a', 'src/A.tsx'], ['/b', 'src/B.tsx'], ['/x', 'src/X.tsx'], ['/x/k', 'src/K.tsx']]);
-  assert.ok(byRoute(screens)['/x/k'].wraps.includes('src/X.tsx'));
-  assert.deepEqual(unresolved, []);
-});
-
-test('routes that cannot be followed give one line each: a call, a member spread, a parameter, an unread file, a link past the cap', () => {
-  const { dir, sha } = repoWith({
-    'package.json': '{"dependencies":{"react":"19.0.0","react-router-dom":"7.0.0","@angular/router":"19.0.0"}}',
-    'src/A.tsx': 'export default function A() { return null; }\n',
-    'src/one.tsx': `${RR}\nimport { buildRoutes } from './build';\nexport const one = createBrowserRouter(buildRoutes());\n`,
-    'src/two.tsx': `${RR}\nimport A from './A';\nimport { admin } from './admin';\nexport const two = createHashRouter([{ path: '/two', element: <A />, children: admin.list }, ...admin.more]);\n`,
-    'src/three.tsx': `${RR}\nexport function Three({ routes }) { return useRoutes(routes); }\n`,
-    'src/four.tsx': `${RR}\nimport routes from './routes.json';\nexport const four = createMemoryRouter(routes);\n`,
-    'src/routes.json': '[]\n',
-    'src/store.ts': "import { RouterModule } from '@angular/router';\nexport const imports = [StoreModule.forRoot(reducers), RouterModule.forRoot([])];\n",
-    'src/c0.tsx': `${RR}\nimport { c1 } from './c1';\nexport const c0 = createBrowserRouter([...c1]);\n`,
-    ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map((n) => [`src/c${n}.ts`, listFile(`c${n}`, `c${n + 1}`)])),
-    'src/c8.ts': 'export const c8 = [];\n',
-  });
-  const { screens, unresolved } = inferScreens({ repoDir: dir, rev: sha, stateDir: stateDir() });
-  assert.deepEqual(screens.map((s) => s.route), ['/two']);
-  assert.deepEqual(unresolved.sort(), [
-    'capped: route links from src/c6.ts:2 pass 6 files (src/c7.ts not read)',
-    'unread: src/routes.json, whose routes src/four.tsx:3 links, is not read',
-    'unresolved: a spread of routes (. . . admin . more) at src/two.tsx:4 cannot be followed',
-    'unresolved: the children of a route (admin . list) at src/two.tsx:4 cannot be followed',
-    'unresolved: the routes "routes" at src/three.tsx:2 are bound by no import or declaration',
-    'unresolved: the routes of createBrowserRouter (buildRoutes () at src/one.tsx:3 cannot be followed',
-  ]);
-  assert.equal(isComplete(unresolved), false);
-});
-
-test('the time budget is checked during the work; an incomplete result is not cached', () => {
-  const { dir, sha } = repoWith({ ...NEXT_APP, 'src/main.tsx': `${RR}\nimport A from './A';\nexport const r = createBrowserRouter([{ path: '/r', element: <A /> }]);\n`, 'src/A.tsx': 'export default function A() { return null; }\n' });
-  const cacheDir = stateDir();
-  const spent = inferScreens({ repoDir: dir, rev: sha, stateDir: cacheDir, budgetMs: 0 });
-  assert.deepEqual([spent.screens, spent.unresolved, spent.cached], [[], ['incomplete: the inference passed its 0 s budget'], false]);
-  assert.deepEqual(fs.readdirSync(cacheDir), [], 'nothing is saved');
-  assert.equal(inferScreens({ repoDir: dir, rev: sha, stateDir: cacheDir }).cached, false);
-  assert.equal(inferScreens({ repoDir: dir, rev: sha, stateDir: cacheDir }).cached, true);
-});
-
 test('U8 probe on a real repo (UI_SCREENS_PROBE): counts and timings only, read-only git', { skip: !process.env.UI_SCREENS_PROBE && 'UI_SCREENS_PROBE not set' }, () => {
   const repoDir = process.env.UI_SCREENS_PROBE;
   const cacheDir = stateDir();
