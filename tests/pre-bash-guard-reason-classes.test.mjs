@@ -88,7 +88,9 @@ const BOUNCED = [
   [BOUNCE_CLASS.splitVariable, 'EDITOR="code --wait"; $EDITOR notes.md'],
   [BOUNCE_CLASS.riskyWord, `node -e "require('child_process').execSync('rm -rf /x')"`],
   [BOUNCE_CLASS.riskyWord, `python3 -c "import os; os.system('git push -f origin main')"`],
-  [BOUNCE_CLASS.secret, `KEY='${['i6IW', 'fakefilekey', '0123'].join('')}' ./fetch-figma.sh`],
+  [BOUNCE_CLASS.tooComplex, 'echo $(( $(cat n) + 1 ))'], // arithmetic on text read at run time
+  [BOUNCE_CLASS.tooComplex, 'read X; git $X'], // a word filled in at run time
+  // a literal secret is no class at all since owner G1: tests/pre-bash-guard-secrets.test.mjs and tests/guard-bounce-real-run.test.mjs
 ];
 
 // One command per advice class (a quality rule): allowed by the rules, with that advice and no reason that asks.
@@ -97,6 +99,7 @@ const ADVICE = [
   [ADVICE_CLASS.mergeCommit, 'git merge feature'],
   [ADVICE_CLASS.branchMove, 'git update-ref refs/heads/main abc'],
   [ADVICE_CLASS.sleepWait, 'for i in 1 2 3; do sleep 10; done'],
+  [ADVICE_CLASS.dockerRm, 'docker rm -f cs-test-db'],
 ];
 // Advice whose text names a branch depends on the repository, so it is made by gitAdvice in a real temporary repo.
 const REPOSITORY_ADVICE = [

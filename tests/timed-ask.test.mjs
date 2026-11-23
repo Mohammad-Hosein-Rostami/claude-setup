@@ -282,16 +282,20 @@ const decisionOf = (r) => JSON.parse(r.stdout).hookSpecificOutput;
 test('M2: guard hook - Allow and a real timeout print no decision (exit 0, logged); Deny prints deny; the log never holds the secret', () => {
   for (const [result, extra, decision] of [['allow', {}, 'allow'], ['deny', {}, 'deny'], ['timeout', REAL_TIMEOUT, 'allow']]) {
     const dialog = fakeDialog(result, extra);
-    const command = `git push origin main # ${SECRET}`;
-    const bounce = runGuard(command, dialog.env); // a literal secret is bounced on the first send (lib/bounce-once.mjs) ...
+    // the secret itself never asks (owner G1); the run-time arithmetic is bounced on the first send (lib/bounce-once.mjs) ...
+    const command = `git push origin main; echo $((N + 1)) # ${SECRET}`;
+    const bounce = runGuard(command, dialog.env);
     assert.equal(decisionOf(bounce).permissionDecision, 'deny', result);
     assert.ok(!bounce.stdout.includes(SECRET), result);
-    const r = runGuard(command, dialog.env); // ... and the identical retry gets the dialog
+    const r = runGuard(command, dialog.env); // ... and the identical retry gets the dialog for the push
     assert.equal(r.status, 0, result);
     if (decision === 'allow') assert.equal(r.stdout, '', result);
     else assert.equal(decisionOf(r).permissionDecision, 'deny', result);
-    const [bounced, entry] = dialog.log();
+    const lines = dialog.log();
+    assert.deepEqual(lines.filter((line) => line.outcome === 'secret').map((line) => [line.reason, line.command]), [['an Anthropic API key', ''], ['an Anthropic API key', '']]);
+    const [bounced, entry] = lines.filter((line) => line.outcome !== 'secret');
     assert.equal(bounced.outcome, 'bounce');
+    assert.match(bounced.command, /^git push origin main; echo/); // the bounce row holds the masked command (X11)
     assert.equal(entry.outcome, result);
     assert.equal(entry.decision, decision);
     assert.equal(entry.hook, 'pre-bash-guard');
