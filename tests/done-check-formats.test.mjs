@@ -10,10 +10,14 @@
 // `changedLinesOf` is assumed to be `(file) => [from, to][]`; the fake below matches by path ending, so an absolute or a repo-relative file works.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
+import { homedir, userInfo } from 'node:os';
+import { basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEslintJson, parseJestJson, parseTap, parseTsc, parseVitestJson } from '../home/tools/done-check/lib/parse.mjs';
-import { findHits, readDenyList, wordPattern } from '../scripts/share-check.mjs';
+import { readDenyList } from '../scripts/share-check.mjs';
+import { findHits, wordPattern } from '../scripts/share-check/match.mjs';
 
 const SAMPLES = fileURLToPath(new URL('./fixtures/done-check/', import.meta.url));
 const sample = (name) => readFileSync(SAMPLES + name, 'utf8');
@@ -43,17 +47,39 @@ test('every sample file is described in the README, and each Windows variant rea
 const NODE_MODULES_PARENT = /([^\s/"'`(]+)\/node_modules\//g;
 const neutralParent = (folder) => folder === 'tools' || folder === '<tools-checkout>' || /^@[^@/]+\+[^@/]+@[\d.]+$/.test(folder);
 
+// The person's own name, read from this machine and git at test time, never written in the repo (owner rule R22): the parts of the
+// login name, the home folder name, git's user.name and user.email. It is the always-on part of the user-name check, so the check
+// runs on every machine whether or not a deny list exists; parts are matched as plain text in any case, as the first version's pin was.
+const IDENTITY_PART_MIN_CHARS = 4; // a shorter part ('al', 'jo', 'dev') would be found inside ordinary words of tool output
+const gitValue = (key) => spawnSync('git', ['config', '--get', key], { cwd: SAMPLES, encoding: 'utf8' }).stdout ?? '';
+function identityParts() {
+  const [local = '', domain = ''] = gitValue('user.email').trim().split('@');
+  const sources = [userInfo().username, basename(homedir()), gitValue('user.name'), local, domain.split('.').slice(0, -1).join(' ')];
+  const parts = sources.flatMap((text) => text.toLowerCase().split(/[^\p{L}\p{N}]+/u)).filter((part) => part.length >= IDENTITY_PART_MIN_CHARS);
+  return [...new Set(parts)];
+}
+const holdsPart = (text, parts) => parts.filter((part) => text.toLowerCase().includes(part));
+
 test('no sample holds a user name, a home folder or a scratch path', () => {
-  // the person's private words (personal/share-deny.txt of the main checkout, scripts/share-check.mjs); none listed: the generic checks
+  const identity = identityParts();
+  assert.ok(identity.length > 0, 'the login name gives at least one part, so the name check never runs empty');
+  // the person's private words (personal/share-deny.txt of the main checkout, scripts/share-check.mjs), when a list exists
   const { words } = readDenyList(SAMPLES);
   const denied = (words ?? []).map((word) => ({ word, pattern: wordPattern(word) }));
   for (const name of readdirSync(SAMPLES)) {
     const text = sample(name);
     assert.doesNotMatch(text, /\/Users\/|\/home\/\w|scratchpad|\/private\/tmp|\/var\/folders/i, name);
+    assert.deepEqual(holdsPart(text, identity), [], `${name}: a part of the user's own name`);
     const parents = [...text.matchAll(NODE_MODULES_PARENT)].map((match) => match[1]);
     assert.deepEqual(parents.filter((folder) => !neutralParent(folder)), [], `${name}: node_modules under a named folder`);
     assert.deepEqual(findHits(text, denied).map((hit) => `${name}:${hit.line}`), [], `${name}: a share deny word`);
   }
+});
+
+test('the user-name check finds a planted part of the login name in a sample text, in any case', () => {
+  const [part] = identityParts();
+  assert.deepEqual(holdsPart(`PASS tests/x.test.mjs ${part.toUpperCase()} 3ms`, [part]), [part]);
+  assert.deepEqual(holdsPart('PASS tests/x.test.mjs 3ms', [part]), []);
 });
 
 test('the node_modules folder check refuses a project-named folder and keeps the neutral ones', () => {
