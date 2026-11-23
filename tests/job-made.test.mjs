@@ -18,6 +18,7 @@ const OTHER = 'bbbbbbbb-0000-4000-8000-000000000002';
 const BY = 'git-tidy lane claim';
 const LIB = new URL('../home/tools/disk-free/lib/job-made.mjs', import.meta.url).href;
 const WRITES_PER_PROCESS = 200;
+const HOLD_MS = 300; // the lock holder's turn: well under the 1 s a writer waits for the session lock (session-lock.mjs LOCK_WAIT_MS)
 
 const homeEnv = () => {
   const home = makeTempDir('job-made-');
@@ -123,6 +124,38 @@ test('two writers at once: two sessions write two files, two writers of one sess
   assert.equal(new Set(one.events.map((event) => event.key)).size, 2 * WRITES_PER_PROCESS);
   assert.equal(other.skipped, 0);
   assert.equal(other.events.length, WRITES_PER_PROCESS);
+});
+
+/** Starts a process that holds the session lock for HOLD_MS while it appends line A, waits, then line B; resolves once A is written. */
+function lockHolder(env, session, [lineA, lineB]) {
+  const script = `import { appendFileSync } from 'node:fs';
+    import { join } from 'node:path';
+    import { withSessionLock } from ${JSON.stringify(new URL('../home/hooks/lib/session-lock.mjs', import.meta.url).href)};
+    import { jobMadeFolder } from ${JSON.stringify(LIB)};
+    const dir = jobMadeFolder(process.env);
+    const done = withSessionLock(dir, process.argv[1], () => {
+      appendFileSync(join(dir, process.argv[1] + '.jsonl'), process.argv[2]);
+      process.stdout.write('holding\\n');
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${HOLD_MS});
+      appendFileSync(join(dir, process.argv[1] + '.jsonl'), process.argv[3]);
+      return true;
+    });
+    process.exit(done === true ? 0 : 1);`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', script, session, lineA, lineB], { env: { ...process.env, ...env } });
+  const exited = new Promise((done) => child.on('exit', done));
+  const holding = new Promise((done) => child.stdout.once('data', done));
+  return { holding, exited };
+}
+
+test('a writer of one session waits for the session lock: its line never lands inside another writer\'s turn (F1, P7)', async () => {
+  const { env } = homeEnv();
+  mkdirSync(jobMadeFolder(env), { recursive: true, mode: 0o700 });
+  const turn = ['a', 'b'].map((name, i) => `${JSON.stringify({ v: 1, op: 'made', at: 1000 + i, kind: 'container', key: `cs-test-${name}`, by: 'holder' })}\n`);
+  const holder = lockHolder(env, SESSION, turn);
+  await holder.holding;
+  assert.equal(recordJobMade(env, SESSION, { kind: 'container', key: 'cs-test-x', by: BY }, { now: 3000 }), 'recorded');
+  assert.equal(await holder.exited, 0);
+  assert.deepEqual(sessionOf(env, SESSION).events.map((event) => event.key), ['cs-test-a', 'cs-test-b', 'cs-test-x']);
 });
 
 test('an old reader skips and counts lines of a newer writer (version, kind, op) and drops extra fields', () => {
