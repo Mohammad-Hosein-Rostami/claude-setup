@@ -200,6 +200,20 @@ test('owner upgrade: untracked notes in home/project-notes move to personal/proj
   assert.equal(readFileSync(join(notes, 'taken.md'), 'utf8'), 'core copy\n', 'the backup comes back too');
 });
 
+test('a personal/ that is a link out of the repo gets nothing written through it: no note moved, no git init', { skip }, () => {
+  const repo = checkout();
+  const outside = makeTempDir('personal-outside-');
+  mkdirSync(join(outside, 'project-notes'));
+  symlinkSync(outside, join(repo, 'personal'));
+  writeFileSync(join(repo, 'home', 'project-notes', 'work-app.md'), 'work app note\n');
+  const result = run(repo, newHome());
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /is not a plain folder/);
+  assert.deepEqual(readdirSync(outside), ['project-notes']);
+  assert.deepEqual(readdirSync(join(outside, 'project-notes')), []);
+  assert.equal(readFileSync(join(repo, 'home', 'project-notes', 'work-app.md'), 'utf8'), 'work app note\n');
+});
+
 test('--dry-run on a fresh copy makes no personal/ and names the CLAUDE.md write with both imports', { skip }, () => {
   const repo = checkout();
   const home = newHome();

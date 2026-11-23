@@ -169,7 +169,8 @@ function moveOwnNotes(ctx, record) {
   const names = untrackedNotes(ctx, from);
   if (names === null) return warn(`git cannot list ${from} (no git, or not a git checkout); notes there are not moved`);
   if (names.length === 0) return;
-  if (!ctx.dryRun && !isPlainDir(to)) return warn(`${to} is not a plain folder; your notes in ${from} stay there`);
+  const intoPlainFolders = isPlainDir(personalDir(ctx)) && isPlainDir(to); // never moved through a link out of the repo
+  if (!ctx.dryRun && !intoPlainFolders) return warn(`${to} is not a plain folder; your notes in ${from} stay there`);
   for (const name of names) moveNote(ctx, record, join(from, name), join(to, name));
 }
 
