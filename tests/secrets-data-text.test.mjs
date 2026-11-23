@@ -17,11 +17,13 @@ const BODY = [`curl -H "Authorization: ${BEARER} ${FIXTURE}" https://api.test`, 
 const stored = (target) => `cat > ${target} <<'EOF'\n${BODY}\nEOF`;
 const ASSIGNED = 'a key, token, secret or password assigned in the command';
 
-/** Asserts the command asks about a literal secret, in the scan and in the guard's decision. */
+/** Asserts the command holds a literal secret, in the scan and in the guard's decision (noted by kind since owner G1, never a reason). */
 function assertAsks(command, kind) {
   if (kind === undefined) assert.notEqual(findLiteralSecret(command), undefined, command);
   else assert.equal(findLiteralSecret(command), kind, command);
-  assert.match(decide(command, ctx).reason ?? '', /contains a literal password\/token/, command);
+  const verdict = decide(command, ctx);
+  assert.equal(verdict.secret, findLiteralSecret(command), command);
+  assert.ok((verdict.reasons ?? []).every((reason) => !reason.includes('literal password/token')), command);
 }
 
 test('data text: a stored body that a later statement of the command runs or reads is scanned whole', () => {
@@ -67,6 +69,6 @@ test('data text: a stored body with quiet neighbours, and an env file of placeho
     `cat > .env.example <<'EOF'\nAPI_TOKEN=changeme\nDB_PASSWORD=your-db-password\nAPI_URL=https://api.test\nEOF`,
   ]) {
     assert.equal(findLiteralSecret(command), undefined, command);
-    assert.ok(!(decide(command, ctx).reason ?? '').includes('literal password/token'), command);
+    assert.equal(decide(command, ctx).secret, undefined, command);
   }
 });
