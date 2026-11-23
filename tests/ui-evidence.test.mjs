@@ -70,7 +70,7 @@ const PATH_CASES = [
   ['pnpm-lock.yaml', ['  react: 18.3.1'], 'deps'],
   ['yarn.lock', ['react@^18'], 'deps'],
   ['package-lock.json', ['"version": "1.0.0"'], 'deps'],
-  ['src/theme/palette.ts', ["primary: '#1976d2',"], 'globalLook'],
+  ['src/theme/palette.ts', null, 'globalLook'],
   ['src/index.css', ['body { margin: 0 }'], 'globalLook'],
   ['src/styles/globals.css', ['body { margin: 0 }'], 'globalLook'],
   ['index.html', ['<div id="root"></div>'], 'globalLook'],
@@ -163,6 +163,29 @@ const LINE_CASES = [
 
 test('classifyFile: line classes in an app .tsx (markup, style, text and logic lines)', () => {
   for (const [line, expected] of LINE_CASES) assert.deepEqual(classifyFile('src/pages/Profile.tsx', [], [line]), expected, line);
+});
+
+test('classifyFile: multi-line style objects, colour values, Tailwind strings and token files are look (R2)', () => {
+  const look = [
+    "    color: 'blue',", '    width: 320,', "  backgroundColor: theme.palette.grey[100],", '  p: 2,', '  bgcolor: "background.paper",',
+    "  'font-size': 14,", '  WebkitLineClamp: 2,', '  pointerEvents: "none",', '  borderTopLeftRadius: 8,', "  outline: 'none'",
+    "  primary: '#d32f2f',", "  muted: 'rgb(0 0 0 / 40%)',", "  ring: 'hsl(var(--ring))',", "  accent: 'var(--brand)',",
+    "  primary: 'bg-red-500 text-white hover:bg-red-600',", "  ghost: 'hover:bg-accent',", "  base: 'flex items-center gap-2',",
+    "  sm: 'h-9 px-3',", '  display: flex', "  zIndex: 1300,",
+  ];
+  for (const line of look) assert.ok(classifyFile('src/Card.tsx', [], [line]).includes('look'), line);
+  for (const line of ["    color: 'blue',", '    width: 320,', "  filter: 'active',"]) {
+    assert.deepEqual(classifyFile('src/Card.tsx', [], [line]), ['look', 'logic'], `a one-word key is also data: ${line}`);
+  }
+  assert.deepEqual(classifyFile('src/Card.tsx', [], ['  borderRadius: 8,']), ['look'], 'a css-only name');
+  const logic = ['  name: string;', '  width?: number;', "  locale: 'pl-PL',", "  scope: 'user:read',", "  status: 'hidden',",
+    '  pageSize: 20,', "  method: 'POST',", '  // fixes #123'];
+  for (const line of logic) assert.deepEqual(classifyFile('src/api/client.ts', [], [line]), ['logic'], line);
+  for (const file of ['src/constants/colors.ts', 'src/theme/palette.ts', 'src/styles/tokens.ts', 'src/brand.theme.ts', 'src/typography.js']) {
+    assert.deepEqual(classifyFile(file, [], ["  primary: '#d32f2f',"]), ['globalLook', 'look'], file);
+  }
+  assert.deepEqual(classifyFile('src/constants/colors.ts', [], ['export const shade = (c) => darken(c, 0.2);']), ['globalLook', 'logic']);
+  assert.deepEqual(classifyFile('tailwind.config.js', [], ['content: []']), ['globalLook'], 'bundler config: by path');
 });
 
 test('classifyFile: a removed line counts like an added one; a file takes the union of its lines in FILE_CLASSES order', () => {

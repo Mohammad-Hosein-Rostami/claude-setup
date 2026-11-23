@@ -45,7 +45,7 @@ const CONFIG_EXT = '(?:\\.(?:[cm]?[jt]s|jsonc?|json5|ya?ml|toml))?';
 const DEV_NAME = new RegExp(`^(?:(?:\\.?(?:${DEV_TOOL})rc|\\.(?:${DEV_TOOL})(?:ignore)?|(?:${DEV_TOOL})\\.config|(?:vitest|jest|playwright|cypress|karma)\\.(?:config|workspace|setup))${CONFIG_EXT}|[tj]sconfig(?:\\.[\\w-]+)*\\.json|\\.?renovate(?:rc)?(?:\\.json5?)?|\\.editorconfig|\\.gitignore|\\.gitattributes|(?:\\.gitlab-ci|\\.travis|azure-pipelines|bitbucket-pipelines)\\.ya?ml|jenkinsfile|codeowners|licen[cs]e(?:\\.(?:md|txt))?)$`);
 const MARKDOWN = /\.(?:md|markdown)$/; // devConfig, except under an app folder (content the app may render): text
 const GLOBAL_FOLDERS = new Set(['theme', 'themes', 'tokens', 'design-tokens', 'fonts']);
-const GLOBAL_NAME = /^(?:index\.html?|(?:index|globals?|app|main|reset|normalize|base|root|styles?|tailwind|theme|variables|vars|tokens|fonts?)\.(?:css|scss|sass|less|styl|pcss)|(?:tailwind|postcss|uno|windi|panda)\.config\.\w+|(?:palette|tokens|theme)\.[\w.]+)$/;
+const GLOBAL_NAME = /^(?:index\.html?|(?:index|globals?|app|main|reset|normalize|base|root|styles?|tailwind|theme|variables|vars|tokens|fonts?)\.(?:css|scss|sass|less|styl|pcss)|(?:tailwind|postcss|uno|windi|panda)\.config\.\w+|(?:palette|tokens|design-tokens|theme|colou?rs?|typography)\.[\w.]+)$/;
 const GLOBAL_SUFFIX = /\.(?:theme|tokens)\.\w+$|\.(?:woff2?|ttf|otf|eot)$/;
 const LOCALE_FOLDERS = new Set(['locales', 'locale', 'i18n', 'l10n', 'lang', 'langs', 'languages', 'translations', 'messages']);
 const LOCALE_DATA = /\.(?:json5?|ya?ml|toml|properties|ini)$/;
@@ -55,6 +55,8 @@ const ASSET_FILE = /\.(?:png|jpe?g|gif|svg|webp|avif|ico|bmp|tiff?|mp4|webm|mov|
 const STYLE_FOLDERS = new Set(['style', 'styles', 'sx', 'css', 'scss']);
 const STYLE_SCRIPT = /\.(?:styles?|sx|css)\.[cm]?[jt]sx?$/; // Button.styles.ts, vanilla-extract Button.css.ts
 const SCRIPT = /\.[cm]?[jt]s$/;
+// A global-look file whose lines are read too: a theme or token module, not bundler config (tailwind.config.js holds settings).
+const THEME_SCRIPT = /^(?!.*\.config\.\w+$).*\.[cm]?[jt]sx?$/;
 const SOURCE = /\.(?:[cm]?[jt]sx?|vue|svelte|astro|html?|mdx|hbs|handlebars|ejs|njk|liquid|pug|jade|twig|erb|tmpl|gohtml|go|py|rb|php|java|kts?|swift|dart|rs|cs|exs?)$/;
 const MARKUP = /\.(?:tsx|jsx|vue|svelte|astro|html?|mdx|hbs|handlebars|ejs|njk|liquid|pug|jade|twig|erb|tmpl|gohtml)$/;
 // Re-indenting changes meaning (markdown: code blocks, nested lists, trailing-space breaks): never "whitespace only".
@@ -84,10 +86,69 @@ function classOfPath(folders, name) {
 // A JSX or HTML tag: `<x` or `</x` or `<>` at the line start, after `return`, or after punctuation (not after a name: `Array<T>`, `a<b`).
 const TAG = /(?:^|[^\w$.)\]\s]|\breturn)\s*<\/?(?:[a-z]|>)/i;
 const STYLE_WORD = /\b(?:class|classname|classes|sx|style|styles|tw|css)\s*[=:]|\bclassname\b|\b(?:styled|css|keyframes|createglobalstyle|tw|clsx|classnames|cn|cva|makestyles|withstyles)\s*[.(`]/i;
-const CSS_VALUE = /@(?:media|keyframes|apply|tailwind|layer|font-face|container|supports)\b|\bvar\(--|\b(?:rgba?|hsla?|oklch)\(|\d(?:px|rem|em|vh|vw|dvh|svh|vmin|vmax)\b|!important|\.(?:css|scss|sass|less|styl)['"]/i;
+// Colour values: quoted or after a colon `'#d32f2f'` / `: #fff` (not an issue ref `fixes #123`), and colour functions.
+const CSS_VALUE = /@(?:media|keyframes|apply|tailwind|layer|font-face|container|supports)\b|\bvar\(--|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color-mix)\(|(?:['"`]|:\s?)#(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{3,4})(?![\w-])|\d(?:px|rem|em|vh|vw|dvh|svh|vmin|vmax)\b|!important|\.(?:css|scss|sass|less|styl)['"]/i;
 const CSS_DECL = /^\s*(?:--[\w-]+|-?[a-z]+(?:-[a-z]+)+)\s*:/; // font-size: / --brand: (a bare name in code cannot hold a hyphen)
-const CSS_PROP = /^\s*(?:color|background|margin|padding|border|display|position|width|height|top|left|right|bottom|opacity|transform|transition|animation|gap|flex|grid|overflow|cursor|outline|filter|inset|float|visibility|content)\s*:(?!\s*(?:string|number|boolean|any|unknown|null|undefined|never|void|object)\b)[^;]*;\s*$/;
-const STYLE_KEY = /^\s*['"]?(?:fontSize|fontWeight|fontFamily|lineHeight|letterSpacing|textAlign|textTransform|textDecoration|backgroundColor|backgroundImage|borderRadius|borderColor|borderWidth|boxShadow|zIndex|minWidth|maxWidth|minHeight|maxHeight|marginTop|marginBottom|marginLeft|marginRight|paddingTop|paddingBottom|paddingLeft|paddingRight|justifyContent|alignItems|alignSelf|flexDirection|flexWrap|gridTemplateColumns|whiteSpace|objectFit)['"]?\s*:/;
+
+// A style object or token map key, one per line: `color: 'blue',`, `'font-size': 14`, `p: 2,`. The key is read as a css name
+// (camelCase to kebab, vendor prefix dropped). A type member (`width: number;`) is not a style.
+const STYLE_KEY_LINE = /^\s*['"]?(-?[a-z][a-z-]{0,40})['"]?\s*:(?!:)/i;
+const TYPE_VALUE = /^\s*['"]?[\w-]+['"]?\s*:\s*(?:string|number|boolean|any|unknown|null|undefined|never|void|object)\b/;
+const VENDOR = /^-?(?:webkit|moz|ms|o)-/;
+const MUI_SHORTHANDS = new Set(['p', 'pt', 'pr', 'pb', 'pl', 'px', 'py', 'm', 'mt', 'mr', 'mb', 'ml', 'mx', 'my', 'bgcolor', 'typography', 'displayPrint']);
+// Multi-word css properties: names no data key uses, so the line is look only.
+const CSS_LONG_NAME = new RegExp(`^(?:${[
+  'font-(?:size|weight|family|style|stretch|display|kerning|feature-settings|variant(?:-[a-z]+)?|optical-sizing|synthesis)',
+  'text-(?:align(?:-last)?|transform|decoration(?:-[a-z]+)?|indent|overflow|shadow|underline-offset|wrap|rendering|size-adjust|orientation|fill-color|stroke(?:-[a-z]+)?)',
+  '(?:letter|word)-spacing|line-(?:height|clamp)|white-space|word-(?:break|wrap)|overflow-(?:x|y|wrap|anchor)|writing-mode|vertical-align|tab-size',
+  'background-(?:color|image|size|position(?:-[xy])?|repeat|clip|origin|attachment|blend-mode)',
+  'border-(?:(?:top|right|bottom|left|block|inline)(?:-(?:start|end))?(?:-(?:width|style|color))?|width|style|color|radius|collapse|spacing|image(?:-[a-z]+)?|(?:top|bottom|start|end)-(?:left|right|start|end)-radius)',
+  '(?:margin|padding|inset|scroll-margin|scroll-padding)-(?:top|right|bottom|left|block|inline|x|y)(?:-(?:start|end))?',
+  'outline-(?:width|style|color|offset)|scroll-(?:behavior|snap-(?:type|align|stop))|list-style(?:-(?:type|position|image))?',
+  '(?:min|max)-(?:width|height|block-size|inline-size)|(?:block|inline)-size|aspect-ratio|box-(?:shadow|sizing|decoration-break|orient)|object-(?:fit|position)',
+  '(?:justify|align|place)-(?:content|items|self)|(?:row|column)-gap|column-(?:count|width|rule|span|fill)|z-index',
+  'grid-(?:template(?:-[a-z]+)?|area|column(?:-start|-end)?|row(?:-start|-end)?|auto-(?:flow|columns|rows)|gap)|flex-(?:direction|wrap|grow|shrink|basis|flow)',
+  'animation-(?:name|duration|delay|timing-function|iteration-count|direction|fill-mode|play-state)|transition-(?:property|duration|delay|timing-function|behavior)',
+  'transform-(?:origin|style|box)|perspective-origin|backface-visibility|mask-(?:image|size|position|repeat|mode|clip|origin|composite)|clip-path',
+  'pointer-events|user-select|touch-action|will-change|backdrop-filter|mix-blend-mode|accent-color|caret-color|color-scheme|content-visibility',
+  'table-layout|caption-side|empty-cells|image-rendering|shape-outside|(?:fill|stroke)-(?:opacity|rule|width|dasharray|dashoffset|linecap|linejoin)',
+].join('|')})$`);
+// One-word css properties are also common data keys (`filter`, `order`, `content`): the line is look and logic.
+const CSS_WORD_NAMES = new Set(['color', 'background', 'margin', 'padding', 'border', 'outline', 'display', 'position', 'width', 'height', 'top',
+  'left', 'right', 'bottom', 'inset', 'opacity', 'transform', 'transition', 'animation', 'gap', 'flex', 'grid', 'overflow', 'cursor', 'filter',
+  'float', 'clear', 'visibility', 'content', 'order', 'columns', 'resize', 'scale', 'rotate', 'translate', 'zoom', 'isolation', 'appearance',
+  'hyphens', 'perspective', 'fill', 'stroke', 'font', 'mask', 'clip', 'direction']);
+
+/** The classes of a style key line, or null when the line is not one. `;`-ended one-word lines are css (in a template or <style>). */
+function styleKeyClasses(line) {
+  const key = STYLE_KEY_LINE.exec(line)?.[1];
+  if (!key || TYPE_VALUE.test(line)) return null;
+  if (MUI_SHORTHANDS.has(key)) return ['look'];
+  const name = key.replace(/[A-Z]/g, (letter) => `-${letter}`).toLowerCase().replace(VENDOR, '');
+  if (CSS_LONG_NAME.test(name)) return ['look'];
+  if (CSS_WORD_NAMES.has(name)) return /;\s*$/.test(line) ? ['look'] : ['look', 'logic'];
+  return null;
+}
+
+// Tailwind: a quoted string of two or more utilities, or one prefixed utility (`'bg-red-500 text-white'`, `'hover:bg-accent'`).
+const QUOTED = /(['"`])([^'"`\n]{1,500})\1/g;
+// Variant prefixes (`md:`, `hover:`), then: a colour or type utility; a spacing or size utility with a scale value (`p-4`, not the
+// locale `pl-PL`); a gradient stop with a colour; or a bare utility word (counted only next to another utility).
+const TW_UTILITY = new RegExp(`^(?:[\\w-]{1,12}:){0,4}!?-?(?:${[
+  '(?:bg|text|font|border|rounded|shadow|ring|fill|stroke|outline|divide|decoration|placeholder|accent|caret|leading|tracking|opacity|z|basis|grid-cols|grid-rows|col-span|row-span|items|justify|place-items|place-content|aspect|overflow(?:-[xy])?|whitespace|duration|ease|delay|animate|transition|cursor|blur|backdrop|line-clamp)-[\\w./[\\]#%()-]{1,60}',
+  '(?:[pm][xytrblse]?|w|h|size|min-w|max-w|min-h|max-h|gap(?:-[xy])?|space-[xy]|inset(?:-[xy])?|top|left|right|bottom|start|end|translate-[xy]|scale|rotate|skew-[xy])-(?:\\d|px|auto|full|screen|fit|min|max|\\[)[\\w./[\\]%()-]{0,60}',
+  '(?:from|via|to)-(?:[a-z]+-\\d{2,3}|transparent|white|black|current|\\[)[\\w./[\\]#%()-]{0,60}',
+  'flex|grid|hidden|block|inline(?:-block|-flex)?|contents|truncate|uppercase|lowercase|capitalize|italic|underline|absolute|relative|fixed|sticky|static|invisible|container|rounded|shadow|border|grow|shrink',
+].join('|')})$`);
+
+function isTailwindLine(line) {
+  for (const [, , body] of line.matchAll(QUOTED)) {
+    const tokens = body.trim().split(/\s+/);
+    const utilities = tokens.filter((token) => TW_UTILITY.test(token));
+    if (utilities.length >= 2 || (tokens.length === 1 && utilities.length === 1 && /[-:]/.test(tokens[0]))) return true;
+  }
+  return false;
+}
 const SELECTOR = /^\s*[.#][a-z][\w-]*(?:[\s,>+~.#:\w-]|\[[^\]]*\])*\{\s*$/i; // a css rule head in a <style> block
 const ATTR_LINE = /^\s*(?:[:@]|v-)?[a-z][\w.:-]*=(?:["'{]|$)/i; // a markup attribute on its own line: variant="primary"
 const EVENT_OR_COND = /^\s*(?:on[A-Z]\w*|@[\w.:-]+|v-(?:on|if|else-if|else|show|for|model)\b|\*ng(?:If|For)\b|\(\w+\)=)/;
@@ -101,7 +162,7 @@ const ONE_LOWER_WORD = /^\s*[a-z][\w$]*\s*$/; // `disabled`, `isOpen`: a prop or
 const I18N_CALL = /^\s*\{{1,2}\s*\$?t\(\s*['"][\w.:-]+['"]\s*\)\s*\}{1,2}\s*$/; // {t('save')} / {{ $t('save') }}
 
 const isLookLine = (line, markup) =>
-  TAG.test(line) || STYLE_WORD.test(line) || CSS_VALUE.test(line) || CSS_DECL.test(line) || CSS_PROP.test(line) || STYLE_KEY.test(line) ||
+  TAG.test(line) || STYLE_WORD.test(line) || CSS_VALUE.test(line) || CSS_DECL.test(line) || isTailwindLine(line) ||
   (markup && (SELECTOR.test(line) || ATTR_LINE.test(line)));
 
 const isTextLine = (line) => I18N_CALL.test(line) || (TEXT_ONLY.test(line) && !TEXT_NOT.test(line) && !ONE_LOWER_WORD.test(line));
@@ -109,7 +170,10 @@ const isTextLine = (line) => I18N_CALL.test(line) || (TEXT_ONLY.test(line) && !T
 /** Classes of one changed source line. `markup`: the file type can hold JSX or HTML text. */
 function sourceLineClasses(line, markup) {
   if (line.length > MAX_LINE_CHARS) return ['look', 'logic'];
-  if (isLookLine(line, markup)) return STRONG_LOGIC.test(line) || (markup && EVENT_OR_COND.test(line)) ? ['look', 'logic'] : ['look'];
+  const logicToo = STRONG_LOGIC.test(line) || (markup && EVENT_OR_COND.test(line));
+  if (isLookLine(line, markup)) return logicToo ? ['look', 'logic'] : ['look'];
+  const styleKey = styleKeyClasses(line);
+  if (styleKey) return logicToo ? ['look', 'logic'] : styleKey;
   if (markup && isTextLine(line)) return ['text'];
   return LOGIC.test(line) ? ['logic'] : ['look']; // a line that fits no class counts as look (P3)
 }
@@ -167,12 +231,15 @@ export function classifyFile(file, removed, added, hunks) {
   if (known) checkHunks(hunks, removed, added);
   if (known && !INDENT_SENSITIVE.test(name) && whitespaceOnly(removed, added, hunks)) return [];
   const byPath = classOfPath(folders, name);
+  // A theme or token script (colors.ts, src/theme/palette.ts) reaches every screen, and its lines still say look or logic.
+  const markup = MARKUP.test(name);
+  const ofSourceLines = () => classesOfLines([...removed, ...added], (line) => sourceLineClasses(line, markup));
+  if (byPath === 'globalLook' && known && THEME_SCRIPT.test(name)) return ['globalLook', ...ofSourceLines()];
   if (byPath) return [byPath];
   if (name === 'package.json') return known ? classesOfLines([...removed, ...added], packageLineClasses) : ['deps'];
   if (!SOURCE.test(name)) return ['look']; // a file type we do not know counts as look (P3)
   if (!known) return ['look', 'logic'];
-  const markup = MARKUP.test(name);
-  return classesOfLines([...removed, ...added], (line) => sourceLineClasses(line, markup));
+  return ofSourceLines();
 }
 
 // ---- Request text ----
