@@ -6,7 +6,7 @@
 // lose their chunks; docs are regular .md files only (symlinks skipped, also symlinked directories below a recall.json
 // glob root); files are read in 1 MiB pieces; a deadline stops work between lines, and a capped subagent file yields
 // no partial brief/report.
-import { closeSync, existsSync, globSync, lstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
+import { closeSync, existsSync, globSync, lstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -21,8 +21,10 @@ const READ_CHUNK_BYTES = 1 << 20;
 
 /** Transcript root: RECALL_ROOT, else ~/.claude/projects. */
 export const resolveRoot = (env = process.env) => env.RECALL_ROOT || join(homedir(), '.claude', 'projects');
-/** Home of project-notes/ and recall.json: RECALL_HOME, else the parent of the root. */
+/** Home of project-notes/ (the personal notes) and recall.json: RECALL_HOME, else the parent of the root. */
 export const resolveHome = (root, env = process.env) => env.RECALL_HOME || dirname(root);
+/** The core repo's shared notes: project-notes beside the folder <home>/tools links to (the repo's home/); null without that. */
+const sharedNotesDir = (home) => (existsSync(join(home, 'tools')) ? join(dirname(realpathSync(join(home, 'tools'))), 'project-notes') : null);
 
 /** Directory entries; a missing dir is silently empty, any other failure is reported on stderr and treated as empty. */
 function listDir(dir) {
@@ -111,11 +113,12 @@ function extraGlobDocs(home) {
   });
 }
 
-/** Every file recall indexes: transcripts, subagent transcripts and docs. */
-export function discoverFiles({ root, home, cwds }) {
+/** Every file recall indexes: transcripts, subagent transcripts and docs (personal and shared project notes among them). */
+export function discoverFiles({ root, home, cwds, sharedNotes = sharedNotesDir(home) }) {
   const files = listDir(root).filter((e) => e.isDirectory()).flatMap((e) => projectFiles(root, e.name));
   const asDoc = (path, project) => ({ path, type: 'doc', project, session: basename(path) });
-  for (const note of mdFiles(join(home, 'project-notes'))) files.push(asDoc(note, 'project-notes'));
+  const notes = [...mdFiles(join(home, 'project-notes')), ...(sharedNotes ? mdFiles(sharedNotes) : [])];
+  for (const note of notes) files.push(asDoc(note, 'project-notes'));
   for (const cwd of cwds.filter(existsSync)) {
     const project = basename(cwd);
     const named = CWD_DOC_NAMES.map((n) => join(cwd, n)).filter(isPlainFile);

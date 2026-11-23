@@ -17,6 +17,7 @@ import { dirname, join } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readPlainFile } from './lib/plain-file.mjs';
+import { fileWithImports } from './lib/claude-md-imports.mjs';
 import { stateDir } from '../tools/estimate/lib/table-store.mjs';
 import { rulesDigestBudget } from '../tools/status/rules-size.mjs';
 
@@ -215,7 +216,7 @@ function memoryRows() {
   return out.sort((a, b) => b.chars - a.chars);
 }
 
-/** The config rows of the user and project `.claude` folders and the cwd's CLAUDE.md, AGENTS.md and .mcp.json. */
+/** The config rows of the user and project `.claude` folders (~/.claude/CLAUDE.md with its @ imports) and the cwd's CLAUDE.md, AGENTS.md, .mcp.json. */
 function configRows(cwd) {
   const rows = [];
   const add = (kind, path, text) => rows.push({ kind, path, bytes: Buffer.byteLength(text), lines: text.split('\n').length });
@@ -226,8 +227,7 @@ function configRows(cwd) {
     const t = readConfig(join(cwd, f));
     if (t) add('always-loaded', f, t);
   }
-  const ug = readConfig(join(userRoot, 'CLAUDE.md'));
-  if (ug) add('always-loaded', '~/.claude/CLAUDE.md', ug);
+  for (const f of fileWithImports(join(userRoot, 'CLAUDE.md'), '~/.claude/CLAUDE.md', readConfig)) add('always-loaded', f.path, f.text);
   for (const [scope, root] of roots) {
     const name = (p) => `${scope}:${p.slice(root.length + 1).replace(/\\/g, '/')}`;
     for (const p of walk(join(root, 'rules'), (x) => x.endsWith('.md'))) {
