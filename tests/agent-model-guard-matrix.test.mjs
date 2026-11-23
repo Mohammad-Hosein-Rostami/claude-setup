@@ -12,7 +12,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { basename, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { MAX_MATRIX_BYTES, matrixLines, uiBriefDeny } from '../home/hooks/agent-model-guard.mjs';
+import { MAX_MATRIX_BYTES, matrixLines, matrixPathToken, uiBriefDeny } from '../home/hooks/agent-model-guard.mjs';
 import { adviceOnce } from '../home/hooks/lib/bounce-once.mjs';
 import { hookEnv } from './hook-env.mjs';
 import { fastestMs } from './timing.mjs';
@@ -27,7 +27,7 @@ const PROMPT = 'Build the sign-in screen.';
 // The deny text as the spec words it; a problem line goes before the init line.
 const NOT_STARTED = 'Not started: the UI brief names no coverage matrix (the owner was not asked).';
 const INIT_LINE = '- Before the first UI lane run `node ~/.claude/tools/ui-coverage/ui-coverage.mjs init <matrix.json> --locales .. --widths .. '
-  + '--surfaces .. [--frames frames.json]` and add the line `MATRIX: <path>` (or `MATRIX: none: <reason>` for a one-file tweak with no Figma).';
+  + '--surfaces .. [--frames frames.json]` and add the line `MATRIX: <path>` (or `MATRIX: none: <reason>` for any change with no visual part).';
 const SEND_AGAIN = 'Send the same call again unchanged and it runs.';
 const SHORT_REASON = '- `MATRIX: none:` needs a reason of 15 or more characters.';
 const notAMatrix = (path) => `- \`${path}\` does not exist or is not a matrix.`;
@@ -149,6 +149,55 @@ test('MATRIX: none: needs a reason of 15 or more characters', () => {
   for (const prompt of ['MATRIX: none: short tweak', `MATRIX: none: ${'x'.repeat(14)}`, 'MATRIX: none:', `MATRIX: none:    ${'x'.repeat(14)}   `]) {
     assert.deepEqual(s.send({ prompt, subagent_type: 'ui-implementer' }), denied(SHORT_REASON), prompt);
   }
+});
+
+// Matrix-line lane (PC session S2): a trailing note after the path refused a real matrix, and "a one-file tweak" sent a logic fix with
+// no visual part to build a skeleton matrix nobody filled.
+const NONE_WITH_DESIGN = '- `MATRIX: none:` is for a change with no visual part: this brief names Figma, a frame, a baseline or an export, '
+  + 'so it needs a coverage matrix.';
+
+test('a MATRIX line takes its first path token: a trailing note no longer refuses a real matrix', () => {
+  const s = gateSession();
+  writeFileSync(join(s.project, 'docs', 'my matrix.json'), JSON.stringify({ surfaces: [] }));
+  mkdirSync(join(s.home, 'm'));
+  writeFileSync(join(s.home, 'm', 'matrix.json'), JSON.stringify({ surfaces: [] }));
+  const prompts = ['MATRIX: docs/matrix.json (made by ui-coverage init, 3 surfaces)', 'MATRIX: docs/matrix.json, see the notes', 'MATRIX: ~/m/matrix.json note',
+    'MATRIX: "docs/my matrix.json" (quoted, it holds a blank)', "MATRIX: 'docs/my matrix.json'", 'MATRIX: docs/my matrix.json', 'MATRIX: `docs/matrix.json`'];
+  for (const prompt of prompts) assert.equal(s.send({ prompt, subagent_type: 'ui-implementer' }), null, prompt);
+});
+
+test('a trailing note never makes a missing, oversized, UNC or non-matrix file pass; the whole value is named', () => {
+  const s = gateSession();
+  writeFileSync(join(s.project, 'docs', 'cells.json'), '{"cells":[]}');
+  writeFileSync(join(s.project, 'docs', 'big.json'), `{"surfaces":[]}${' '.repeat(MAX_MATRIX_BYTES)}`);
+  const doubled = `/${join(s.project, 'docs', 'matrix.json')}`; // on POSIX this names the real matrix, so only the UNC rule keeps it out
+  for (const value of ['docs/missing.json (note)', 'docs/cells.json (note)', 'docs/big.json (note)', `"${doubled}" (note)`, `${doubled} note`, '"docs/matrix.json']) {
+    assert.deepEqual(s.send({ prompt: `MATRIX: ${value}`, subagent_type: 'visual-qa' }), denied(notAMatrix(value)), value);
+  }
+});
+
+test('MATRIX: none: is for any change with no visual part; a brief naming Figma, a frame or a baseline still needs a matrix', () => {
+  const s = gateSession();
+  const none = 'MATRIX: none: behaviour-only logic fix, no visual change';
+  assert.equal(s.send({ prompt: `Fix the order total rounding in order-facts.tsx.\n${none}`, subagent_type: 'ui-implementer' }), null);
+  for (const source of ['Match the Figma file.', 'Build frame 12:34.', 'Compare with the baseline.']) {
+    const out = s.send({ prompt: `${source}\n${none}`, subagent_type: 'ui-implementer' });
+    assert.deepEqual(out, denied(NONE_WITH_DESIGN), source);
+    assert.doesNotMatch(out.permissionDecisionReason, /one-file tweak/);
+  }
+});
+
+test('matrixPathToken: a quoted path up to its closing mark, else the text up to the first blank, without a trailing , or ;', () => {
+  assert.equal(matrixPathToken('C:\\x\\m.json (note)'), 'C:\\x\\m.json');
+  assert.equal(matrixPathToken('C:\\Users\\me\\m.json'), 'C:\\Users\\me\\m.json');
+  assert.equal(matrixPathToken('"/a b/m.json" note'), '/a b/m.json');
+  assert.equal(matrixPathToken('~/m.json, see'), '~/m.json');
+  assert.equal(matrixPathToken('\\\\host\\share\\m.json x'), '\\\\host\\share\\m.json');
+  assert.equal(matrixPathToken('../up/m.json;'), '../up/m.json');
+  assert.equal(matrixPathToken('"unclosed m.json'), '"unclosed');
+  const hostile = `${','.repeat(1_000_000)}x ${'"'.repeat(1_000_000)}`;
+  assert.ok(fastestMs(() => matrixPathToken(hostile)) < 200, 'linear in the value');
+  assert.ok(fastestMs(() => matrixPathToken(`"${'a'.repeat(2_000_000)}`)) < 200, 'an unclosed quote');
 });
 
 test('only a line that starts with MATRIX: counts: mid-line text, inline code, a bullet, other letter case do not', () => {

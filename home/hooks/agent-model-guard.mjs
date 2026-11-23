@@ -8,8 +8,9 @@
 // or unknown value passes, none is added; a failure there leaves the input as is (stderr line). A rewrite: allow + the full updatedInput.
 // UI brief gate: denies once with advice for UI briefs. A `ui-implementer` or `visual-qa` call is quiet when its prompt has a line that
 // starts (after optional blanks) with `MATRIX: <path>` naming a coverage matrix (a JSON object with a `surfaces` array; a relative path
-// starts at the call's cwd, `~` is the home folder) or with `MATRIX: none: <reason>` (15+ characters, and only when the brief outside its
-// MATRIX lines names no Figma, frame, baseline or design export: such a brief needs a matrix, G7). Otherwise it is denied once with
+// starts at the call's cwd, `~` is the home folder; the whole value, else matrixPathToken, so a trailing note is allowed) or with
+// `MATRIX: none: <reason>` for any change with no visual part (15+ characters, and only when the brief outside its MATRIX lines names no
+// Figma, frame, baseline or design export: such a brief needs a matrix, G7). Otherwise it is denied once with
 // the ui-coverage init advice and the identical call sent again runs: lib/bounce-once.mjs adviceOnce keeps the digest of cwd, type and
 // prompt in this session's store and logs "advice", "advice-retry" or "advice-unrecorded" with the subagent type, the digest and a fixed
 // reason class only (no prompt text). The MATRIX lines are checked in order, at most MAX_MATRIX_LINES, and the first usable one ends the
@@ -27,18 +28,19 @@
 // run): until then such a launch may go uncounted, and the env CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS (the same number) is the backstop.
 // Writer isolation gate (after the UI gate): a writing agent (lib/writer-agents.mjs isWritingAgent: implementer, ui-implementer,
 // general-purpose, claude, or an agent file whose tools include Write/Edit; scout, runner, Explore, Plan and architect never) launched
-// while another plain writer of this session runs must be isolated or read-only, else it is denied once with advice naming the roles and
-// the isolation forms (adviceOnce, as the UI gate) and the identical call sent again runs. Isolated (recorded `isolated`; the open record's
-// cwd is then the lane worktree): `isolation: "worktree"`, or a `worktree: <abs path>` line, in the prompt or a brief file it names, of a
-// linked worktree git lists that is not the lead's folder (laneWorktreeOf: a git that fails or hangs is no isolation) and that no open
-// writer record of the session holds as its cwd (else `held`: denied once, and the retry runs as a plain writer). Read-only (recorded
+// while another plain writer of this session runs must be isolated or read-only, else it is denied once with advice naming the roles,
+// the isolation forms and the brief line meant to name a worktree (worktreeLineAdvice); the identical call sent again runs. Isolated
+// (recorded `isolated`; the open record's cwd is the lane worktree): `isolation: "worktree"`, or a `worktree: <abs path>` field
+// (own line, list item or after `·`, `|`, `;`, `,`), in the prompt or a brief file it names, of a linked worktree git lists that is not
+// the lead's folder (laneWorktreeOf: a git that fails or hangs is no isolation) and that no open writer record of the session holds as
+// its cwd (else `held`: denied once, and the retry runs as a plain writer). Read-only (recorded
 // `readOnly`, held at the stop by commit-gate.mjs): a line starting `read-only:` or `scratchpad-only:` (isReadOnlyBrief). Neither makes a
 // later writer bounce ("plain" = neither); the gate is deny-once, and an isolated agent can still write the main checkout by shell
 // (worktrees.md:104-112). "Still runs" = the session's own record: every launch this hook lets start, started on SubagentStart and ended
 // on SubagentStop by agent-budget.mjs; a launch that never started or an agent idle for 30 min stops counting (lib/agent-launches.mjs).
 // Copy-branch brief gate (run first, round 4): a writer brief that creates a copy of an existing branch (`<lane>-2`) instead of continuing the
 // lane's own (lib/copy-branch-brief.mjs) is sent back once (deny-once, own digest, class "copy branch brief"). No workflow spawn fires it (P2).
-// Exports: guardedAgentInput (pure), matrixLines (pure), namesDesignSource (pure), uiBriefDeny, writerIsolationDeny (the writer isolation gate and the agent cap) and copyBranchBriefDeny (the gates), MAX_MATRIX_BYTES.
+// Exports: guardedAgentInput (pure), matrixLines (pure), matrixPathToken (pure), namesDesignSource (pure), uiBriefDeny, writerIsolationDeny (the writer isolation gate and the agent cap) and copyBranchBriefDeny (the gates), MAX_MATRIX_BYTES.
 // Invariants: the routing never blocks or denies; each gate denies an identical call at most once per session.
 import { realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -48,7 +50,7 @@ import { UNPRINTABLE, readFileHead, withBriefLines } from './lib/agent-brief.mjs
 import { copyBranchBriefAdvice } from './lib/copy-branch-brief.mjs';
 import { MAX_RUNNING_AGENTS, recordAgentLaunch } from './lib/agent-launches.mjs';
 import { isSessionId } from './lib/session-store.mjs';
-import { isReadOnlyBrief, isWritingAgent, laneWorktreeOf } from './lib/writer-agents.mjs';
+import { isReadOnlyBrief, isWritingAgent, laneWorktreeOf, worktreeLineAdvice } from './lib/writer-agents.mjs';
 
 const FORK_TYPE = 'fork';
 const DEFAULT_MODEL = 'sonnet';
@@ -72,11 +74,13 @@ const HOME_PREFIX = /^~(?=$|[\\/])/; // `~` and `~/...`; `~user` is left as it i
 const NETWORK_PATH = /^[\\/]{2}/;
 const NOT_STARTED = 'Not started: the UI brief names no coverage matrix (the owner was not asked).';
 const INIT_ADVICE = 'Before the first UI lane run `node ~/.claude/tools/ui-coverage/ui-coverage.mjs init <matrix.json> --locales .. --widths .. '
-  + '--surfaces .. [--frames frames.json]` and add the line `MATRIX: <path>` (or `MATRIX: none: <reason>` for a one-file tweak with no Figma).';
+  + '--surfaces .. [--frames frames.json]` and add the line `MATRIX: <path>` (or `MATRIX: none: <reason>` for any change with no visual part).';
 const SEND_AGAIN = 'Send the same call again unchanged and it runs.';
 const SHORT_REASON = `\`MATRIX: none:\` needs a reason of ${MIN_REASON_CHARS} or more characters.`;
-const NONE_WITH_DESIGN = '`MATRIX: none:` is for a one-file tweak with no Figma: this brief names Figma, a frame, a baseline or an export, '
+const NONE_WITH_DESIGN = '`MATRIX: none:` is for a change with no visual part: this brief names Figma, a frame, a baseline or an export, '
   + 'so it needs a coverage matrix.';
+const QUOTE_MARKS = '"\'`'; // a path in these marks may hold blanks
+const TOKEN_END_MARKS = ',;'; // sentence punctuation after the path token, never part of a matrix path
 // What makes a brief design work (G7). "export" counts unless it is the JS keyword (`export default`, `export const`, `export {`).
 const DESIGN_SOURCE = /figma|فیگما|\bframes?\b|\bbaselines?\b|\bexport(?:s|ed)?\b(?!\s+(?:default|const|let|var|function|async|class|type|interface|enum|\{|\*))/i;
 // The log names the problems by these fixed classes, never by prompt text
@@ -151,9 +155,22 @@ function matrixProblem(value, cwd, env, designBrief) {
     if (value.slice(NONE_PREFIX.length).trim().length < MIN_REASON_CHARS) return SHORT_REASON;
     return designBrief ? NONE_WITH_DESIGN : undefined;
   }
-  const path = resolve(cwd, value.replace(HOME_PREFIX, () => env.HOME || env.USERPROFILE || homedir()));
-  const usable = value.length <= MAX_PATH_CHARS && !NETWORK_PATH.test(value) && isMatrixFile(path);
+  const usable = [...new Set([value, matrixPathToken(value)])].some((path) => path.length <= MAX_PATH_CHARS && !NETWORK_PATH.test(path)
+    && isMatrixFile(resolve(cwd, path.replace(HOME_PREFIX, () => env.HOME || env.USERPROFILE || homedir()))));
   return usable ? undefined : `\`${quoted(value)}\` does not exist or is not a matrix.`;
+}
+
+/**
+ * The first path token of a MATRIX value (pure, linear), so a trailing note (`docs/matrix.json (3 surfaces)`) is no part of the path; the
+ * gate tries the whole value first, so an unquoted path with blanks reads as before. @param {string} value a matrixLines value
+ * @returns {string} a path in quote marks up to its closing mark, else the text up to the first blank without a trailing `,` or `;` */
+export function matrixPathToken(value) {
+  const close = QUOTE_MARKS.includes(value[0]) ? value.indexOf(value[0], 1) : -1;
+  if (close !== -1) return value.slice(1, close);
+  const blank = value.search(/\s/);
+  let end = blank === -1 ? value.length : blank;
+  while (end > 0 && TOKEN_END_MARKS.includes(value[end - 1])) end -= 1;
+  return value.slice(0, end);
 }
 
 const denyOutput = (reason) => `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } })}\n`;
@@ -233,7 +250,8 @@ export async function writerIsolationDeny(input, env = process.env) {
     const { adviceOnce } = await import('./lib/bounce-once.mjs');
     const call = { command: `${type}: isolation ${String(isolation)}: ${String(prompt)}`, cwd, input, hook: 'agent-model-guard', tool: 'Agent' };
     const recorded = adviceOnce([PARALLEL_WRITER_ADVICE], { ...call, logged: { type, class: 'parallel writer without isolation' } }, env);
-    if (recorded !== '') return denyOutput([`Not started: ${PARALLEL_WRITER_ADVICE}`, SEND_AGAIN].join('\n'));
+    const lines = recorded === '' ? [] : [`Not started: ${PARALLEL_WRITER_ADVICE}`, worktreeLineAdvice(prompt, env), SEND_AGAIN];
+    if (recorded !== '') return denyOutput(lines.filter(Boolean).join('\n')); // the middle line quotes the brief's near-miss line
     return launchRefusal(record({ isolated: isolated && counted.state !== 'held' })); // the identical retry runs, unless the cap filled
   } catch {
     return ''; // a quality rule, not a safety rule: any failure lets the call run

@@ -11,7 +11,8 @@ import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hookEnv } from './hook-env.mjs';
 import { IDLE_MS, MAX_RUNNING_AGENTS, PENDING_MS } from '../home/hooks/lib/agent-launches.mjs';
-import { callCounterPath } from '../home/hooks/lib/writer-agents.mjs';
+import { callCounterPath, worktreeValues } from '../home/hooks/lib/writer-agents.mjs';
+import { fastestMs } from './timing.mjs';
 import { git, makeRepo } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -309,4 +310,86 @@ test('a git that hangs or fails is no isolation: the advice comes, within the ho
     s.launch(writer('implementer', { prompt: 'lane one' }));
     assert.ok(denied(s.launch(writer('implementer', { prompt: laneBrief(worktree) }))), body); // launch fails past HOOK_TIMEOUT_MS
   }
+});
+
+// Writer-line lane (real run R22, X6): 56 of 105 briefs wrote the header on one line (`BASE: … · BRANCH: … · worktree: …`) and the PC
+// lead wrote it as a list item (`- worktree: …`); neither was read, so every such lane writer was sent back once.
+const SHA = '0'.repeat(40);
+const QUOTED_LINE_CHARS = 160; // the most of a near-miss line the advice quotes
+/** The line as the advice quotes it: whole, or its first 159 characters and "…" (temp paths make the header lines long). */
+const quoteOf = (line) => (line.length > QUOTED_LINE_CHARS ? `${line.slice(0, QUOTED_LINE_CHARS - 1)}…` : line);
+
+test('a `worktree:` field after a header separator or as a list item is read: isolated, no advice on the first send', () => {
+  const { repo, worktrees } = repoWithLaneWorktree(['lane-a', 'lane-b', 'lane-c', 'lane-d', 'lane-e', 'lane-f']);
+  const briefs = [
+    (path) => `Build it.\nBASE: ${SHA} · BRANCH: lane/x · worktree: ${path}\nGo.`,
+    (path) => `BASE: ${SHA} | BRANCH: lane/x | worktree: ${path} | REPORTS: /tmp/r`,
+    (path) => `BASE: ${SHA}; worktree: ${path}; BRANCH: lane/x`,
+    (path) => `BASE: ${SHA}, BRANCH: lane/x, worktree: \`${path}\``,
+    (path) => `Lane:\n- worktree: ${path}\n- BRANCH: lane/x`,
+    (path) => `Lane:\n  * worktree: ${path}`,
+  ];
+  briefs.forEach((brief, index) => {
+    const s = writerSession({ cwd: repo });
+    assert.ok(!denied(s.launch(writer('implementer', { prompt: 'lane one' }))), 'the first writer runs');
+    assert.equal(s.launch(writer('implementer', { prompt: brief(worktrees[index]) })), null, brief('<path>'));
+    assert.deepEqual(recordOf(s).launches.map((launch) => launch.isolated === true), [false, true], brief('<path>'));
+    assert.equal(recordOf(s).open[1].cwd, worktrees[index], 'the open record holds the lane worktree');
+  });
+});
+
+test('prose naming a worktree with no separator before it is not read; the advice quotes that line', () => {
+  const { repo, worktree } = repoWithLaneWorktree();
+  const s = writerSession({ cwd: repo });
+  s.launch(writer('implementer', { prompt: 'lane one' }));
+  const prose = `Then check the worktree: ${worktree} for the files.`;
+  const second = s.launch(writer('implementer', { prompt: `Lane two.\n${prose}` }));
+  assert.ok(denied(second), 'prose is no brief line');
+  assert.ok(second.permissionDecisionReason.includes(`\`${quoteOf(prose)}\` was not read`), second.permissionDecisionReason);
+});
+
+test('a header line naming the lead\'s folder or a held worktree gets the advice, quoting the line', () => {
+  const { repo, worktree } = repoWithLaneWorktree();
+  const lead = writerSession({ cwd: repo });
+  lead.launch(writer('implementer', { prompt: 'lane one' }));
+  const own = `BASE: ${SHA} · BRANCH: lane/x · worktree: ${repo}`;
+  const leadFolder = lead.launch(writer('implementer', { prompt: own }));
+  assert.ok(denied(leadFolder), 'the lead\'s folder is no lane');
+  assert.ok(leadFolder.permissionDecisionReason.includes(`\`${quoteOf(own)}\` names no worktree`), leadFolder.permissionDecisionReason);
+  const s = writerSession({ cwd: repo });
+  const header = `BASE: ${SHA} · BRANCH: lane/x · worktree: ${worktree}`;
+  assert.equal(s.launch(writer('implementer', { prompt: header })), null, 'the first writer of the worktree runs');
+  const held = s.launch(writer('implementer', { prompt: `Second.\n${header}` }));
+  assert.ok(denied(held), 'a second writer naming the same worktree gets the advice');
+  assert.ok(held.permissionDecisionReason.includes(`\`${quoteOf(header)}\` names no worktree`), held.permissionDecisionReason);
+  assert.ok(!denied(s.launch(writer('implementer', { prompt: `Second.\n${header}` }))), 'the identical resend runs');
+  assert.deepEqual(recordOf(s).launches.map((launch) => launch.isolated === true), [true, false], 'the resend is recorded plain');
+});
+
+test('the quoted near-miss line loses control characters and is cut; a 1 MB prompt is read only within its first 32K', () => {
+  const { repo, worktree } = repoWithLaneWorktree();
+  const s = writerSession({ cwd: repo });
+  s.launch(writer('implementer', { prompt: 'lane one' }));
+  const hostile = `See worktree:\u0007\u202e ${'x'.repeat(300)}`;
+  const out = s.launch(writer('implementer', { prompt: `Lane two.\n${hostile}` }));
+  const quotedLine = out.permissionDecisionReason.match(/`([^`]*)` was not read/)?.[1];
+  assert.ok(quotedLine !== undefined, out.permissionDecisionReason);
+  assert.ok(quotedLine.length <= QUOTED_LINE_CHARS, `${quotedLine.length} characters`);
+  assert.doesNotMatch(quotedLine, /[\u0007\u202e]/);
+  assert.ok(quotedLine.startsWith('See worktree: xxx'));
+  const filler = 'pasted material line\n'.repeat(50_000); // about 1 MB
+  const started = performance.now();
+  const huge = s.launch(writer('implementer', { prompt: `${filler}BASE: ${SHA} · worktree: ${worktree}` }));
+  assert.ok(performance.now() - started < HOOK_TIMEOUT_MS);
+  assert.ok(denied(huge), 'a line past the first 32K is pasted material');
+  assert.doesNotMatch(huge.permissionDecisionReason, /was not read|names no worktree/, 'nothing past the span is quoted');
+});
+
+test('worktreeValues: the value of each field, Windows paths whole; prose, other keys and other case are not read', () => {
+  assert.deepEqual(worktreeValues(`BASE: ${SHA} · worktree: C:\\x\\lane-1 · BRANCH: y`), ['C:\\x\\lane-1']);
+  assert.deepEqual(worktreeValues('BASE: a;worktree: C:\\Users\\me\\lane 2; BRANCH: b'), ['C:\\Users\\me\\lane 2']);
+  assert.deepEqual(worktreeValues('worktree: /a/b;c,d\n- worktree: "/e f"\n+ worktree: /g, then go'), ['/a/b;c,d', '/e f', '/g']);
+  assert.deepEqual(worktreeValues('the worktree: /x\nWorktree: /y\nmy-worktree: /z\n-worktree: /w\nBRANCH: worktree:/v'), []);
+  const hostile = `${',worktree:'.repeat(4000)}\n${' '.repeat(30_000)}·worktree: /p`;
+  assert.ok(fastestMs(() => worktreeValues(hostile)) < 200, 'linear in the text');
 });

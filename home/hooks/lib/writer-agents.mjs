@@ -1,15 +1,16 @@
 // Which agent types write files, and the checks that read a session's launch record for a writer. The record itself (every agent's
 // launch, start and stop, and the cap of agents running at once) lives in lib/agent-launches.mjs; this file keeps the questions about
 // writers that commit-gate.mjs, read-only-hold.mjs, copy-branch-brief.mjs, gated-folder.mjs, agent-budget.mjs and the board ask.
-// Exports: agentFileWrites(type, env), isWritingAgent(type, env), isReadOnlyBrief(prompt), laneWorktreeOf(prompt, cwd, env), agentTypeOf(type),
+// Exports: agentFileWrites(type, env), isWritingAgent(type, env), isReadOnlyBrief(prompt), laneWorktreeOf(prompt, cwd, env),
+// worktreeValues(text) (pure), worktreeLineAdvice(prompt, env) (the gate's quote of a near-miss line), agentTypeOf(type),
 // callCounterPath(session, agentId), readOnlyLaunchOpen(session, agentId, type, env), openWritersOf(session, env, now), writersDirOf(env).
 // Store: ~/.claude/state/agent-writers/<session>.json (a historic name: it held writer launches only; there is no migration), written
 // through lib/agent-launches.mjs. `open` (spec-p3 r9-resume, lib/open-writers.mjs) is the launch record the resume notice reads: written
 // before the agent starts, closed only at its SubagentStop, never dropped for idleness, so a writer cut off by an exit or a usage-limit
 // stop is still listed in the next session. readOnlyAgents keeps the ids of started read-only launches after their stop, because
 // commit-gate's read-only hold runs on the same SubagentStop as the stop record (hooks of one event run in parallel).
-// Flags (round 9, r9-writer-gate): `isolated` (launched with isolation "worktree", or a brief whose `worktree:` line names a lane worktree
-// laneWorktreeOf accepts and no open record of the session holds, lib/agent-launches.mjs) and `readOnly` (a read-only brief,
+// Flags (round 9, r9-writer-gate): `isolated` (launched with isolation "worktree", or a brief whose `worktree:` field (WORKTREE_PREFIX;
+// R22: 56 of 105 briefs wrote `BASE: … · BRANCH: … · worktree: …`) names a lane worktree laneWorktreeOf accepts and no open record of the session holds, lib/agent-launches.mjs) and `readOnly` (a read-only brief,
 // isReadOnlyBrief). The `worktree:` value is the writer's own text, so it is trusted only after `git worktree list` of that folder lists its real path as a linked worktree that is not the lead's folder; git runs
 // hardened (lib/gated-folder.mjs runGit) within WORKTREE_DEADLINE_MS, and a git that fails, hangs or is missing means not isolated.
 // Invariants: never throws; the read functions answer false or [] for a store that is missing or unusable. callCounterPath and
@@ -17,7 +18,7 @@
 import { readSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import { isInside } from './agent-brief.mjs';
+import { UNPRINTABLE, isInside } from './agent-brief.mjs';
 import { checkedTempRoot } from './edit-log.mjs';
 import { readLaunchRecord } from './agent-launches.mjs';
 import { runGit } from './gated-folder.mjs';
@@ -32,8 +33,14 @@ const DEFAULT_TYPE = 'general-purpose'; // what an Agent call with no subagent_t
 const READ_ONLY_BRIEF_PREFIXES = ['read-only:', 'scratchpad-only:'];
 const WRITER_TYPES = new Set(['implementer', 'ui-implementer', 'general-purpose', 'claude']);
 const READ_ONLY_TYPES = new Set(['scout', 'runner', 'Explore', 'Plan', 'architect']);
-// A brief line that names the writer's own lane worktree, as `worktree: <absolute path>` (exact case, at the start of a trimmed line)
+// A brief field that names the writer's own lane worktree, as `worktree: <absolute path>` (exact case): at the start of a trimmed line,
+// after a Markdown list marker (`- worktree: ...`), or after a header separator (`BASE: <sha> · BRANCH: <name> · worktree: <path>`)
 const WORKTREE_PREFIX = 'worktree:';
+const LIST_MARKER = /^[-*+][ \t]+/;
+const HEADER_SEPARATORS = '·|;,';
+const VALUE_END = /[·|]|[;,](?=\s|$)/; // a value ends at the next · or |, or a ; or , before a blank or the end (a path may hold ; or ,)
+const NEAR_MISS = /worktree:/i; // a line that meant to name a worktree, quoted (at most MAX_QUOTED_LINE_CHARS) when nothing was taken
+const MAX_QUOTED_LINE_CHARS = 160;
 // The head of the prompt searched for `worktree:` lines and brief paths: a brief is a few KB, text past this is pasted material
 const MAX_SCAN_CHARS = 32 * 1024;
 const MAX_WORKTREE_LINES = 3; // a brief names one lane worktree; the cap bounds the git calls of one launch
@@ -126,11 +133,34 @@ function unquoted(word) {
   return word.slice(start, end);
 }
 
-/** The values of a text's `worktree:` lines, unquoted, in order; the caller bounds the text (MAX_SCAN_CHARS, BRIEF_FILE_BYTES). */
-function worktreeValues(text) {
-  return text.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.startsWith(WORKTREE_PREFIX))
-    .map((line) => unquoted(line.slice(WORKTREE_PREFIX.length).trim()));
+/** Whether the field at `at` follows a header separator, blanks between allowed (a walk back over the blanks only). */
+function afterSeparator(body, at) {
+  let before = at - 1;
+  while (before >= 0 && (body[before] === ' ' || body[before] === '\t')) before -= 1;
+  return before >= 0 && HEADER_SEPARATORS.includes(body[before]);
 }
+
+/** The `worktree:` fields of a text, in order, as { line, value }: at most `limit`, so each value's scan to its end runs a bounded number of times. */
+function worktreeFields(text, limit) {
+  const fields = [];
+  for (const line of text.split(/\r?\n/)) {
+    const body = line.trim().replace(LIST_MARKER, '');
+    for (let at = body.indexOf(WORKTREE_PREFIX); at !== -1 && fields.length < limit; at = body.indexOf(WORKTREE_PREFIX, at + 1)) {
+      if (at !== 0 && !afterSeparator(body, at)) continue; // prose such as "the worktree: /x" is no field
+      const rest = body.slice(at + WORKTREE_PREFIX.length);
+      const end = rest.search(VALUE_END);
+      fields.push({ line, value: unquoted((end === -1 ? rest : rest.slice(0, end)).trim()) });
+    }
+    if (fields.length === limit) break;
+  }
+  return fields;
+}
+
+/**
+ * The values of a text's `worktree:` fields (WORKTREE_PREFIX), unquoted, in order; pure (nothing is looked up), and the caller bounds the
+ * text (MAX_SCAN_CHARS, BRIEF_FILE_BYTES). @param {string} text a brief or its head @returns {string[]} at most MAX_WORKTREE_LINES values
+ */
+export const worktreeValues = (text) => worktreeFields(text, MAX_WORKTREE_LINES).map(({ value }) => value);
 
 /** The absolute `.md` paths a prompt names (`~/` is the home folder), at most MAX_BRIEF_FILES; UNC and device paths are left out. */
 function namedBriefFiles(prompt, env) {
@@ -139,6 +169,11 @@ function namedBriefFiles(prompt, env) {
     .filter((word) => word.endsWith('.md') && word.length <= MAX_PATH_CHARS).map((word) => word.replace(HOME_PREFIX, home))
     .filter((path) => isAbsolute(path) && !NETWORK_PATH.test(path));
   return [...new Set(paths)].slice(0, MAX_BRIEF_FILES);
+}
+
+/** The texts searched for `worktree:` fields: the prompt's first MAX_SCAN_CHARS, then the head of each brief file it names. */
+function briefTexts(prompt, env) {
+  return [prompt.slice(0, MAX_SCAN_CHARS), ...namedBriefFiles(prompt, env).map((path) => readHead(path, BRIEF_FILE_BYTES) ?? '')];
 }
 
 const realOrNull = (path) => {
@@ -166,7 +201,7 @@ function linkedWorktree(value, leadFolders, deadline) {
 }
 
 /**
- * The lane worktree a writer brief names: the first `worktree: <absolute path>` line, in the prompt (its first MAX_SCAN_CHARS) or in a
+ * The lane worktree a writer brief names: the first `worktree: <absolute path>` field (worktreeValues), in the prompt (its first MAX_SCAN_CHARS) or in a
  * brief file the prompt names (a regular file, all of its first BRIEF_FILE_BYTES; at most MAX_BRIEF_FILES), that linkedWorktree accepts.
  * A worktree another running writer already holds is refused later, under the launch record's lock (lib/agent-launches.mjs `held`).
  * Why: a lead that made a writer's worktree itself (`git worktree add -b <branch> <path> <base>`) gives the writer its own folder as surely as `isolation: "worktree"`.
@@ -182,8 +217,7 @@ export function laneWorktreeOf(prompt, cwd, env) {
     const leadFolder = realOrNull(typeof cwd === 'string' ? cwd : process.cwd());
     if (leadFolder === null) return null; // without the lead's folder it cannot be told apart
     const leadFolders = [leadFolder, ...(env.CLAUDE_PROJECT_DIR ? [realOrNull(env.CLAUDE_PROJECT_DIR)] : [])].filter((path) => path !== null);
-    const briefs = namedBriefFiles(prompt, env).map((path) => readHead(path, BRIEF_FILE_BYTES) ?? '');
-    const values = [prompt.slice(0, MAX_SCAN_CHARS), ...briefs].flatMap(worktreeValues).slice(0, MAX_WORKTREE_LINES);
+    const values = briefTexts(prompt, env).flatMap(worktreeValues).slice(0, MAX_WORKTREE_LINES);
     const deadline = performance.now() + WORKTREE_DEADLINE_MS;
     for (const value of values) {
       const folder = linkedWorktree(value, leadFolders, deadline);
@@ -192,6 +226,38 @@ export function laneWorktreeOf(prompt, cwd, env) {
     return null;
   } catch {
     return null; // fail closed: an unchecked line is no isolation
+  }
+}
+
+const FOLDER_REFUSED = 'names no worktree this writer can take: git must list it as a linked worktree that is not the lead\'s folder '
+  + 'and that no running writer of this session holds.';
+const FIELD_NOT_READ = 'was not read: start a line with `worktree: <absolute path>` (or `- worktree:`), or put it after `·`, `|`, `;` '
+  + 'or `,` in a header line.';
+
+/** @returns {string} the line without control, format and separator characters, cut to MAX_QUOTED_LINE_CHARS (the last one "…") */
+function quotedLine(line) {
+  const printable = line.slice(0, MAX_PATH_CHARS).replace(UNPRINTABLE, '').trim();
+  return printable.length > MAX_QUOTED_LINE_CHARS ? `${printable.slice(0, MAX_QUOTED_LINE_CHARS - 1)}…` : printable;
+}
+
+/**
+ * The advice line for a writer the isolation gate sends back, quoting the brief line that meant to name its worktree: the first
+ * `worktree:` field (its folder was refused: not a linked worktree, the lead's folder, or held by a running writer), else the first line
+ * holding `worktree:` in any case (not read as a field). Searched as laneWorktreeOf searches; the quote is cleaned and cut (quotedLine).
+ * @param {unknown} prompt tool_input.prompt
+ * @param {Record<string, string | undefined>} env HOME / USERPROFILE for `~/` in a named brief file
+ * @returns {string} the advice line; '' when no line names a worktree and on any failure
+ */
+export function worktreeLineAdvice(prompt, env) {
+  try {
+    if (typeof prompt !== 'string') return '';
+    const texts = briefTexts(prompt, env);
+    const field = texts.flatMap((text) => worktreeFields(text, 1))[0];
+    const line = field?.line ?? texts.flatMap((text) => text.split(/\r?\n/)).find((candidate) => NEAR_MISS.test(candidate));
+    if (line === undefined) return '';
+    return `The brief line \`${quotedLine(line)}\` ${field === undefined ? FIELD_NOT_READ : FOLDER_REFUSED}`;
+  } catch {
+    return ''; // the advice still comes, without the quote
   }
 }
 
