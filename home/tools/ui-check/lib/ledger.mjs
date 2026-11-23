@@ -126,6 +126,12 @@ const COUNTS = ['pixels', 'drift', 'rows'];
 const gained = (now, before) => COUNTS.some((k) => (now[k] ?? 0) < (before[k] ?? 0)) && COUNTS.every((k) => (now[k] ?? 0) <= (before[k] ?? 0));
 
 /**
+ * The same capture as the other row: the same sha256 and the same counts. A ledger row's file is not kept, so its hash cannot be read
+ * again; a recorded hash that matches with other counts (a hand-edited row) is not identical and is judged on its counts.
+ */
+const sameCapture = (row, other) => row.sha256 === other.sha256 && COUNTS.every((k) => (row[k] ?? 0) === (other[k] ?? 0));
+
+/**
  * Compare a round with the previous one and annotate its rows (mutates `current.states`: `noGainRounds`, so the next round can see the streak).
  * @param {object} current this round's ledger
  * @param {object} prev the previous round's ledger
@@ -139,7 +145,7 @@ export function compareRounds(current, prev) {
     const failing = row.status === 'fail';
     const noGain = failing && !gained(row, old);
     row.noGainRounds = noGain ? (old.noGainRounds ?? 0) + 1 : 0;
-    const verdict = row.sha256 === old.sha256 ? 'identical' : failing ? (noGain ? 'no-gain' : 'gain') : 'pass';
+    const verdict = sameCapture(row, old) ? 'identical' : failing ? (noGain ? 'no-gain' : 'gain') : 'pass';
     return { key: row.key, verdict: noGain && verdict === 'identical' ? 'identical, no-gain' : verdict, pixelDelta: row.pixels - old.pixels, rowDelta: row.rows - old.rows, plateau: row.noGainRounds >= PLATEAU_ROUNDS };
   });
 }
@@ -160,7 +166,7 @@ export function mismatchLine(current, reference) {
 function referenceVerdict(row, ref) {
   if (!ref) return 'new';
   if (ref.scale !== row.scale) return 'different-pixel-ratio';
-  if (row.sha256 === ref.sha256) return 'identical';
+  if (sameCapture(row, ref)) return 'identical';
   if (COUNTS.some((k) => (row[k] ?? 0) > (ref[k] ?? 0))) return 'worse';
   if (COUNTS.some((k) => (row[k] ?? 0) < (ref[k] ?? 0))) return 'better';
   return 'equal';

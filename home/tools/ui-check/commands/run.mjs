@@ -1,9 +1,10 @@
 // Purpose: `run` - the one call of a UI round: `ui-coverage scaffold` (states file from the matrix) + `batch` + `ui-coverage check`,
 // then the numbers: per-state counts, failing rows with crop paths (native scale, at most 2,576 px on the long edge, lib/crops.mjs),
 // the round table against `--prev`, the "0 worse" table against `--no-worse <reference run>`, the `--self-test` determinism check, and the
-// `same:` table against `--same <base run>` (lib/same-run.mjs: per responsive capture identical / equal / changed / new / missing).
+// `same:` table against `--same <base run>` (lib/same-run.mjs: per responsive capture identical / equal / changed / new / missing / refused).
 // Exports: options, runRoot, run. Exit 0 every record passes, the matrix check passes, nothing is worse and the self-test is clean / 1 otherwise /
-// 2 usage or setup error (an open states entry without a url, a bad flag, an unreadable ledger).
+// 2 usage or setup error (an open states entry without a url, a bad flag, an unreadable ledger, a --same base in this run's own --out
+// folder or with no head or this run's own head).
 // Invariants: images are printed only for failures, as crops; PASS and FAIL are the numbers, never a look at an image. `--step
 // <road>.s<N>` and the commit sha of HEAD are stored in ledger.json, so a baseline run on the base tip is that step's start record.
 // The ledger also stores `root`, the git top-level of the folder the run started in, and with `--same` its `same` section; `--same` never
@@ -21,7 +22,7 @@ import { attributeStrict } from '../lib/attribution-records.mjs';
 import { writeCrops } from '../lib/crops.mjs';
 import { UsageError } from '../lib/errors.mjs';
 import { compareReference, formatReference, formatRounds, readLedger, readLedgerFile, writeLedger } from '../lib/ledger.mjs';
-import { compareSame, formatSame } from '../lib/same-run.mjs';
+import { baseRefusal, compareSame, formatSame } from '../lib/same-run.mjs';
 import { describeConditions, readConditions } from '../../ui-coverage/lib/conditions.mjs';
 import { executeBatch } from './batch.mjs';
 
@@ -86,8 +87,40 @@ export function runRoot(cwd = process.cwd()) {
 async function sameLines(base, batch) {
   if (!batch.ledger) return ['same: 0 rows (no ledger: nothing ran)'];
   const same = await compareSame(batch.ledger, base, batch.outDir);
-  writeLedger(batch.outDir, { ...batch.ledger, same: { ref: same.ref, mismatch: same.mismatch, rows: same.rows } });
+  writeLedger(batch.outDir, { ...batch.ledger, same: { ref: same.ref, mismatch: same.mismatch, refused: same.refused, rows: same.rows } });
   return formatSame(same);
+}
+
+const CASE_BLIND_PLATFORMS = new Set(['darwin', 'win32']); // APFS and NTFS by default: `Out` and `out` are one folder
+
+/** The real path of a folder that may not exist yet: its nearest existing ancestor through realpath, then the rest as given. */
+function realFolderPath(dir) {
+  const rest = [];
+  let probe = path.resolve(dir);
+  while (!fs.existsSync(probe) && path.dirname(probe) !== probe) {
+    rest.unshift(path.basename(probe));
+    probe = path.dirname(probe);
+  }
+  return path.join(fs.realpathSync.native(probe), ...rest);
+}
+
+/** Do two folder paths name one folder (links, /tmp and /private/tmp, letter case on a case-blind platform)? A link to the ledger file is resolved by the caller. */
+function sameFolder(a, b) {
+  const [left, right] = [realFolderPath(a), realFolderPath(b)];
+  return CASE_BLIND_PLATFORMS.has(process.platform) ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
+
+/**
+ * Refuse a `--same` base before anything runs: this run overwrites its --out folder (a base there would be compared with this run's
+ * own captures), and a base that names no head or this run's own head proves nothing about the change (lib/same-run.mjs baseRefusal).
+ * @param {{file: string, ledger: object}} sameBase the base ledger as readLedgerFile returned it
+ * @param {{flag: string, outDir: string, head: string|null}} run the --same value as given, this run's --out and git head
+ * @throws {UsageError}
+ */
+function checkSameBase(sameBase, { flag, outDir, head }) {
+  if (sameFolder(path.dirname(fs.realpathSync.native(sameBase.file)), outDir)) throw new UsageError(`--same ${flag}: names this run's own --out folder; give the base run's folder`);
+  const refused = baseRefusal(sameBase.ledger, head);
+  if (refused) throw new UsageError(`--same ${flag}: ${refused}`);
 }
 
 /** Lines for the failing records: the first findings and the crop paths of the pixel region. */
@@ -151,10 +184,10 @@ export async function run(argv) {
   const facts = matrixFacts(matrix, values.strict);
   prepareStates(matrix, statesFile, values['base-url']);
   const outDir = path.resolve(values.out ?? path.join(os.tmpdir(), 'ui-check', 'run', new Date().toISOString().replace(/[:.]/g, '-')));
-  // This run overwrites its --out folder, so a base run in that folder would be compared with this run's own captures.
-  if (sameBase && path.resolve(path.dirname(sameBase.file)) === outDir) throw new UsageError(`--same ${values.same}: names this run's own --out folder; give the base run's folder`);
+  const head = headSha();
+  if (sameBase) checkSameBase(sameBase, { flag: values.same, outDir, head });
   const batchValues = { states: statesFile, only: values.only, out: outDir, jobs: values.jobs, project: values.project, prev: values.prev };
-  const measured = await executeBatch(batchValues, { step: values.step ?? null, head: headSha(), root: runRoot(), runDir: outDir, ...facts });
+  const measured = await executeBatch(batchValues, { step: values.step ?? null, head, root: runRoot(), runDir: outDir, ...facts });
   const batch = facts.rule === 'strict' ? { ...measured, ...attributeStrict(measured, matrix) } : measured; // P3f class rule
   const lines = [`rule: ${facts.rule}`, describeConditions(facts.conditions), countsLine(batch.records), ...(batch.lines ?? []), ...failingLines(batch.records)];
   if (batch.rounds) lines.push('rounds (against --prev):', ...formatRounds(batch.rounds));

@@ -221,25 +221,32 @@ missing or unreadable), `findings` (finding ids `check element`, hints left out)
 Playwright `pageerror`: throws and unhandled rejections, not `console.error`; at most 50, 300 characters each). Every responsive record
 in `results.json` with a screenshot carries `capture` and `pageErrors`; page errors never change a verdict. Older ledgers without
 these fields read as before.
-- `--prev RUN` (the previous round's `--out` folder or its `ledger.json`): per state `identical`, `gain`, `no-gain` (a failing state
+- `--prev RUN` (the previous round's `--out` folder or its `ledger.json`): per state `identical` (same sha256 and counts), `gain`, `no-gain` (a failing state
   whose pixels and rows did not go down) or `new`, with the change in pixels and rows; `PLATEAU` after 2 no-gain rounds in a row:
   change approach (figma-pixel-perfect step 5), never lower the bar.
-- `--no-worse RUN`: against the lane's reference run (a `run` on the base tip at lane start), per state `identical`, `equal` (same
+- `--no-worse RUN`: against the lane's reference run (a `run` on the base tip at lane start), per state `identical` (same sha256 and counts: a
+  matching hash with other counts is judged on the counts), `equal` (same
   counts, other bytes), `better`, `worse`, `new` (INFO: no reference row) or `missing`; any `worse`, `missing` or a different pixel
   ratio fails (exit 1). Always against the reference, never the previous round, so a state worse in round 2 and unchanged in round 3
   still fails. A reference made with another comparator (name, version or options) or renderer prints the `different comparator` /
   `different renderer` line and exits 1: take a new reference on the base tip, never on the lane tip (diff counts do not carry
   between comparators).
 - `--same RUN` (a base run's `--out` folder or its `ledger.json`, read once before anything runs; unreadable exits 2 naming `--same`):
-  is each responsive capture the same render as the base run's (a run of the same matrix and states on the base tip)? Per capture
-  (`lib/same-run.mjs`): `identical` (same sha256), `equal` (other bytes, but odiff with the ledger's comparator options and the colour
-  metric both count 0 px), `changed` (a pixel differs or the size does; the diff image is under `<out>/same/`), `new` (no base row),
-  `missing` (a base row this run lacks, or a capture absent or unreadable on either side: never identical) or `other-renderer` (the
-  base was made with another comparator or renderer: every row, never compared). Each row also lists `newFindings` (finding ids
-  the base row lacks) and `newPageErrors` (page errors beyond the base row's, counted per message). Printed as
-  `same: <i> identical, <e> equal, <c> changed, <n> new, <m> missing` (`same: 0 rows` when there is no capture), then each row that is
-  not identical or equal or has something new; stored in the ledger as `same: {ref: {file, sha256, head, createdAt}, mismatch, rows}`.
-  It never changes the exit code: the check plan reads it. Writes only under this run's `--out`.
+  is each responsive capture the same render as the base run's (a run of the same matrix and states on the base tip)? Exits 2 before
+  anything runs when RUN is this run's own `--out` folder (compared by real path, so a link, `/tmp` against `/private/tmp` or, on macOS
+  and Windows, other letter case is the same folder), or when the base ledger records no git head or this run's own head (commit the
+  change first: a base of the same commit proves nothing). Per capture (`lib/same-run.mjs`): `identical` (same sha256), `equal` (other
+  bytes, the same decoded RGBA pixels: 0 px differ, no tolerance), `changed` (any pixel differs in any channel, or the size does; the
+  exact count, then odiff and the colour metric with the diff image under `<out>/same/`), `new` (no base row), `missing` (a base row
+  this run lacks, or a capture on either side that does not count: absent, unreadable, a link, outside its run folder, or bytes that
+  no longer hash to the sha256 its ledger recorded; never identical), `other-renderer` (the base was made with another comparator or
+  renderer: every row, never compared) or `refused` (the same head check, for a caller other than `run`: every row, never compared).
+  A capture counts only when its bytes, read now from a plain file inside its run's real folder, hash to its recorded sha256; the
+  verdict is made from those bytes. Each row also lists `newFindings` (finding ids the base row lacks) and `newPageErrors` (page errors
+  beyond the base row's, counted per message). Printed as `same: <i> identical, <e> equal, <c> changed, <n> new, <m> missing`
+  (`same: 0 rows` when there is no capture), then each row that is not identical or equal or has something new; stored in the
+  ledger as `same: {ref: {file, sha256, head, createdAt}, mismatch, refused, rows}`. It never changes the exit code: the check plan
+  reads it. Writes only under this run's `--out`.
 - `--self-test`: captures every compare state a second time (into `<out>/self-test`); a state whose two captures differ in sha256
   is a failing `nondeterministic` finding.
 - Pass rule: `--strict`, or `rule: strict` in the matrix (`ui-coverage init --rule strict`), makes every compare strict (the stricter
