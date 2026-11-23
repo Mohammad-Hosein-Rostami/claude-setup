@@ -6,20 +6,20 @@
 // are only passed to decide(); nothing they name is executed.
 import { PINNED_HOME } from './pin-home.mjs';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdirSync, realpathSync, symlinkSync } from 'node:fs';
 import * as nodeModule from 'node:module';
-import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { after, test } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { makeTempDir, removeTempDir } from './temp-dir-helpers.mjs';
 
-const TEMP = mkdtempSync(join(tmpdir(), 'cs-test-scratch-rm-'));
+const TEMP = makeTempDir('scratch-rm-'); // `<tmpdir>/cs-test-scratch-rm-XXXXXX`: TEMP itself is a cs-test folder
 process.env.TMPDIR = TEMP; // the guard reads its temp root when it loads, so it loads after this
 const SESSION_ID = '8e63904d-6ae5-474c-9b08-920c34e5c97d';
 process.env.CLAUDE_CODE_SESSION_ID = SESSION_ID; // the session the guard runs in (Claude Code sets it for its hooks)
 const { decide } = await import('../home/hooks/pre-bash-guard.mjs');
-after(() => rmSync(TEMP, { recursive: true, force: true }));
+after(() => removeTempDir(TEMP));
 
 const REAL_TEMP = realpathSync(TEMP); // on macOS `/var/folders/...` is `/private/var/folders/...`
 const SESSION = join(TEMP, 'claude-501', '-Users-owner-proj', SESSION_ID);
