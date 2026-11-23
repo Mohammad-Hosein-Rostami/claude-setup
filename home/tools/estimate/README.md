@@ -74,6 +74,10 @@ deliver:1 | report to owner | S | | 2026-11-14T10:30Z |
   entries stay in the log, uncounted.
 - Long jobs: over 6 h of median work a `Long job:` line says it cannot be predicted closer than half a day and a `Limits:` line
   names the 5 h and 7 d resets last seen for this terminal's account (`CLAUDE_ACCOUNT`, `lib/limits-store.mjs`).
+- Job under model s1 (owner decision 2026-11-23): a hand-over to a new session is the same job and only checks its promise. A
+  hand-over while a started row is still open (it runs across it) does not end the job: the promise is kept and scored at the
+  hand-over that does end it, and a road with such a row is in the job, never `not started`. A row started at the hand-over
+  itself is the next job's.
 
 ## Output (exit 0, stdout)
 
@@ -101,6 +105,11 @@ Check: row b12 (M) has taken 3 h 10 of work, longer than every finished M row (2
 - No open row: `Finish: now (all 12 rows are done; the hand-over is recorded when this turn ends)`; after a `deliver:` row:
   `Finish: handed over Mon 16 Nov 17:54 (12 rows, 3 h 05 of work)` and the track record line.
 - Work is `35 min` under an hour, else `2 h 35`.
+- Model s1 (the CLI's model): it computes a likely and an 80% time, nothing else, so line 1 reads `Finish: Mon 16 Nov 20:50
+  (likely; 80% by 21:40; local +03:30, now 19:05)` and the step and long-job lines say `80%:`. `Held:` and `Moved:` give way to
+  `Promise: given Mon 16 Nov 18:10: 80% by 21:40; now on time.` (`, 22:00 with the 20 min of pauses since` from 5 pause minutes
+  up; `now 25 min of work later, because 3 rows were added (O2, O3, O4)` or `now 15 min of work earlier` from 10 minutes of
+  work up), and no such line before the promise is made; the track record counts jobs `done by the promise given`.
 
 ## Roads (estimates per step)
 

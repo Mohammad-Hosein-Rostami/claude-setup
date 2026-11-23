@@ -3,10 +3,13 @@
 // Exports: formatEstimate(result, inputs) -> string (a road's block starts `Finish: step N of M`, `Steps:`, `Total:`; a finish block ends with the Progress line, before the Check lines; a refusal text
 // too; inputs.limits, the account's newest limits sample (limits-store.mjs), is named beside a long job); formatRefusal(result) -> string; stepLine(result, inputs) -> the road step line or null; workText(minutes) -> '35 min' |
 // '2 h 35'; hoursText(minutes) -> '99 h' from 10 hours up, else workText; plural, listed (shared with segment-text.mjs).
+// Model s1 results (`model: 's1'`) get its own labels: the likely and the 80% time, the Promise line (never "unchanged": the
+// job's clock moves, the promise does not) and the record of promises; c3 results keep the 85% and 95% labels and Held or Moved.
 // Invariants: pure apart from reading the system time zone (`Intl`, so `TZ` is honoured) when none is given. Clock times are on
 // the local clock, rounded up to CLOCK_STEP_MS; a refusal text never contains `Finish:` or a clock time. Rows are named by id,
 // never by their text.
 import { clockText, dayText, gridded, localDate, offsetText, systemTimeZone } from './local-clock.mjs';
+import { LATE_MIN } from './job-rows.mjs';
 import { roadStepOf } from './road-steps.mjs';
 
 const LISTED_ROWS = 5;
@@ -27,6 +30,11 @@ const LONG_JOB_MIN = 6 * MIN_PER_HOUR;
 const MS_PER_SEC = 1000;
 const EXCLUDES = 'Excludes: pauses (nights, usage limits, waiting for you) move the time hour for hour; rework after hand-over; new requests.';
 
+/** Model s1 gives a likely and an 80% time and a promise; a c3 result (older callers and tests) has 85% and 95% and a commitment. */
+const isS1 = (result) => result.model === 's1';
+/** The confidence of the upper time a result carries: never a number its model does not compute. */
+const upperLabel = (result) => (isS1(result) ? '80%' : '85%');
+
 export const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
 /** The first few names of a list, then how many more, so a line stays readable on a table of hundreds of rows. */
 export const listed = (names) => (names.length <= LISTED_ROWS ? names.join(', ') : `${names.slice(0, LISTED_ROWS).join(', ')} and ${names.length - LISTED_ROWS} more`);
@@ -46,11 +54,12 @@ const day = (ms, timeZone) => `${dayText(ms, timeZone)} ${clockText(ms, timeZone
 /** A clock, with its weekday when it falls on another local day than `sameDayAs`. */
 const clockOn = (ms, sameDayAs, timeZone) => `${localDate(ms, timeZone) === localDate(sameDayAs, timeZone) ? '' : `${dayText(ms, timeZone).split(' ')[0]} `}${clockText(ms, timeZone)}`;
 
-/** The shown clock is the median (backtest model c2b); the 85% and 95% clocks follow it. */
+/** The shown clock is the likely one; model s1 has one more, its 80% clock (c3 results: the 85% and 95% clocks follow it). */
 function finishLine(result, timeZone) {
   const up = (ms) => gridded(ms, timeZone, true);
   const clock = up(result.finish.clockMs);
   const where = `local ${offsetText(result.nowMs, timeZone)}, now ${clockText(result.nowMs, timeZone)}`;
+  if (isS1(result)) return `Finish: ${day(clock, timeZone)} (likely; 80% by ${clockOn(up(result.numbers.v2.job.p80Ms), clock, timeZone)}; ${where})`;
   return `Finish: ${day(clock, timeZone)} (likely; 85% by ${clockOn(up(result.finish.p85Ms), clock, timeZone)}, 95% by ${clockOn(up(result.finish.lateMs), clock, timeZone)}; ${where})`;
 }
 
@@ -82,8 +91,10 @@ export function stepLine(result, inputs = {}) {
   if (!result?.road) return null;
   const timeZone = inputs.timeZone ?? systemTimeZone();
   const at = (ms) => clockOn(gridded(ms, timeZone, true), result.nowMs, timeZone);
-  const record = result.record ? ` · last ${plural(result.record.of, 'step')}: ${result.record.met} by the 85% time` : '';
-  return `step ${result.road.step} by ${at(result.road.stepClockMs)} (85%: ${at(result.road.stepP85Ms)})${record}`;
+  // Model s1's record counts jobs done by their promise, not steps.
+  const recordText = isS1(result) ? `${plural(result.record?.of, 'job')}: ${result.record?.met} by the promise` : `${plural(result.record?.of, 'step')}: ${result.record?.met} by the 85% time`;
+  const record = result.record ? ` · last ${recordText}` : '';
+  return `step ${result.road.step} by ${at(result.road.stepClockMs)} (${upperLabel(result)}: ${at(result.road.stepP85Ms)})${record}`;
 }
 
 /** The range of past jobs around the shown time, from 20 scored jobs of this model; below that it says so with the count. */
@@ -111,9 +122,10 @@ function unlistedLine({ covers, work }) {
 const resetText = (window, nowMs, timeZone) => (Number.isFinite(window?.resets_at) ? clockOn(window.resets_at * MS_PER_SEC, nowMs, timeZone) : '?');
 
 /** Beside a job over LONG_JOB_MIN of work: why one clock is not to be trusted, the work left and the limit resets last seen. */
-function longJobLines({ work, nowMs }, limits, timeZone) {
+function longJobLines(result, limits, timeZone) {
+  const { work, nowMs } = result;
   if (work.p50 <= LONG_JOB_MIN) return [];
-  const lines = [`Long job: ${hoursText(work.p50)} of work left (85%: ${hoursText(work.p85)}); a job over about 6 h of work cannot be predicted closer than half a day: new requests and limit stops decide it.`];
+  const lines = [`Long job: ${hoursText(work.p50)} of work left (${upperLabel(result)}: ${hoursText(work.p85)});a job over about 6 h of work cannot be predicted closer than half a day: new requests and limit stops decide it.`];
   if (!limits) return [...lines, 'Limits: no limit sample seen for this account yet.'];
   const age = workText((nowMs - limits.t) / MS_PER_MIN);
   return [...lines, `Limits: 5h resets ${resetText(limits.five_hour, nowMs, timeZone)}, 7d resets ${resetText(limits.seven_day, nowMs, timeZone)} (seen ${age} ago).`];
@@ -136,10 +148,33 @@ function commitLine({ commit, nowMs, road }, timeZone) {
   return `Moved: at ${clockOn(moved.atMs, nowMs, timeZone)} from ${from}, ${causeText(moved, road)}; unchanged since.${pauses}`;
 }
 
+/** A later reason of the promise's difference as the c3 cause texts name it (over usual has no single row, so it reads as the pace). */
+const S1_CAUSE = { 'rows-added': 'rows-added', 'over-usual': 'pace', faster: 'ahead' };
+
+/** Where the job stands against its promise, in working minutes (a pause is never lateness); under LATE_MIN either way is on time. */
+function diffText(diff, road) {
+  if (diff === null || Math.abs(diff.min) < LATE_MIN) return 'on time';
+  if (diff.min < 0) return `${workText(-diff.min)} of work earlier`;
+  const reason = diff.reasons.find((each) => each.min > 0);
+  return `${workText(diff.min)} of work later${reason === undefined ? '' : `, ${causeText({ cause: S1_CAUSE[reason.kind], ids: reason.ids }, road)}`}`;
+}
+
+/**
+ * Model s1's promise line: when it was given, its 80% clock, the clock the pauses since then moved it to, and the difference now.
+ * It never says the time is unchanged: the promise is fixed, the job's own clock is line 1. No promise yet: no line.
+ */
+function promiseLines({ promise, diff, pauses, numbers, nowMs, road }, timeZone) {
+  if (promise === null) return [];
+  const at = (ms) => clockOn(gridded(ms, timeZone, true), nowMs, timeZone);
+  const moved = pauses.min >= PAUSE_SHOWN_MIN ? `, ${at(numbers.v2.promise.movedMs)} with the ${workText(pauses.min)} of pauses since` : '';
+  return [`Promise: given ${day(promise.atMs, timeZone)}: 80% by ${at(promise.p80Ms)}${moved}; now ${diffText(diff, road)}.`];
+}
+
 function recordLine(result) {
   const { record, pool } = result;
   if (record === null) return `Track record: no job scored yet; learned from ${plural(pool.rows, 'finished row')} and ${plural(pool.jobs, 'job')}.`;
-  return `Track record: ${record.met} of the last ${plural(record.of, 'job')} ${record.of === 1 ? 'was' : 'were'} done by the first 85% time given.`;
+  const by = isS1(result) ? 'done by the promise given' : 'done by the first 85% time given';
+  return `Track record: ${record.met} of the last ${plural(record.of, 'job')} ${record.of === 1 ? 'was' : 'were'} ${by}.`;
 }
 
 /**
@@ -190,7 +225,7 @@ export function formatEstimate(result, inputs = {}) {
     case 'handed-over': return [`Finish: handed over ${day(result.handedOverMs, timeZone)} (${plural(result.rows, 'row')}, ${workText(result.workedMin)} of work)`, recordLine(result), ...checkLines(result.checks ?? [])].join('\n');
     case 'finish': return [
       ...(result.road ? roadLines(result, timeZone) : [finishLine(result, timeZone)]), ...rangeLine(result, timeZone), ...longJobLines(result, inputs.limits ?? null, timeZone), coversLine(result),
-      ...unlistedLine(result), EXCLUDES, commitLine(result, timeZone), recordLine(result), ...progressLine(result.progress), ...checkLines(result.checks),
+      ...unlistedLine(result), EXCLUDES, ...(isS1(result) ? promiseLines(result, timeZone) : [commitLine(result, timeZone)]), recordLine(result), ...progressLine(result.progress), ...checkLines(result.checks),
     ].join('\n');
     default: throw new Error(`no finish block for state ${result.state}`);
   }

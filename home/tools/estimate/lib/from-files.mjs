@@ -22,7 +22,7 @@ import { finishResult, forecastSeedText, runMinOf, settle } from './finish-resul
 import { nearestRank, referencePool } from './forecast.mjs';
 import { INSTANT_FORMAT, parseInstant, parseWorkItems } from './items.mjs';
 import { jobInputs } from './job-inputs.mjs';
-import { jobScope } from './job-rows.mjs';
+import { closingHandOvers, jobScope } from './job-rows.mjs';
 import { AGENT_KINDS, MAX_RUN_MIN, MIN_RUN_MIN, kindOf, kindPools, rowState } from './kinds.mjs';
 import { progressOf } from './progress.mjs';
 import { poolRuns, promiseRecord, scoredSteps } from './store-pools.mjs';
@@ -99,9 +99,12 @@ function measure(statusPath, items, options) {
   // The growth of past jobs (the `Not listed yet` line, H3) still comes from the size pool's jobs: s1 adds no growth model.
   const sizePool = referencePool([...others, { id, rows: own.rows.filter((row) => row.cost > 0), jobs: own.jobs }], readSeed(options.seedFile));
   const handOvers = items.filter((item) => item.kind === 'deliver' && item.done !== null).map((item) => item.done).sort((a, b) => a - b);
+  // The hand-overs that ended a job (owner decision 2026-11-23: one a started row ran across only checks the promise).
+  const closings = closingHandOvers(items);
   return {
     id, stored, sessions, runs, intervals, jobs, own, pools: kindPools(pooled), runCount: pooled.filter((run) => AGENT_KINDS.includes(run.k) && isRun(run.runMin)).length,
     growth: sizePool.growth, jobCount: sizePool.jobCount, scored: scoredSteps(tables), lastHandOver: handOvers.at(-1) ?? null,
+    closings, jobStart: closings.at(-1) ?? null,
   };
 }
 
@@ -123,7 +126,7 @@ function closedResult(items, scope, facts, options) {
   const { table, recorded } = settle(options.statusPath, items, facts, options, (base) => ({ ...base, promise: null }));
   if (facts.lastHandOver !== null && (lastDone === null || facts.lastHandOver >= lastDone)) {
     const job = facts.jobs.at(-1);
-    return { result: { state: 'handed-over', nowMs, handedOverMs: facts.lastHandOver, rows: job?.ids.length ?? 0, workedMin: job?.minutes ?? 0, progress: null, checks, record: promiseRecord(table.log), pool: poolCounts(facts) }, recorded };
+    return { result: { state: 'handed-over', model: 's1', nowMs, handedOverMs: facts.lastHandOver, rows: job?.ids.length ?? 0, workedMin: job?.minutes ?? 0, progress: null, checks, record: promiseRecord(table.log), pool: poolCounts(facts) }, recorded };
   }
   const rows = done.filter((item) => rowState(item) === 'done').map((item) => ({ size: item.size, done: true, elapsedMin: 0 }));
   const progress = progressOf({ workedMin: 0, p50LeftMin: null, committedLeftMin: null, rows, pool: { medians: {} }, moved: false, rowsAdded: false });
@@ -158,7 +161,7 @@ export function estimateFile(path, { now, stateDir = null, projectsDir = join(ho
   const nowMin = Math.floor(nowMs / MS_PER_MIN);
   const options = { statusPath, nowMin, stateDir, projectsDir, sessionId, record: recording, seedFile, seedRunsFile, cli, realClock: now === undefined, account, limitsDir, env };
   const facts = { ...measure(statusPath, items, options), nowMs: nowMin * MS_PER_MIN };
-  const scope = jobScope(items, facts.lastHandOver);
+  const scope = jobScope(items, facts.jobStart);
   const run = () => {
     if (!items.some(isWorkRow)) return noTimeResult(items, facts, options);
     if (!scope.items.some((item) => ['open', 'waiting'].includes(rowState(item)))) return closedResult(items, scope, facts, options);

@@ -1,7 +1,7 @@
 // What model s1 learns from the store and the repo's seed (estimate-spec R2, section 5b): the agent runs that make the kind pools,
 // with the seed runs a store table already holds left out, and the scored steps that refit the conformal margin.
 // Exports: seedTablesInStore(seedRuns, tables) -> string[], poolRuns(tables, seedRuns) -> { k, runMin }[], scoredSteps(tables),
-// recordSteps(stored, now, closedAtOf, clock) (the table's step records), scoredPromiseLog(log, promise, items, intervals) and
+// recordSteps(stored, now, closedAtOf, clock) (the table's step records), scoredPromiseLog(log, promise, closings, intervals) and
 // promiseRecord(log) (the promises scored at their hand-over).
 // Dedupe (README "Backtest and seed"): the store already holds the frozen tables once their rows carry `k` and `runMin`, so a
 // seed table `tN` is in the store when one store table has, for every run of `tN`, a row of the same kind `k` whose done minute
@@ -99,22 +99,20 @@ export function recordSteps(stored, now, closedAtOf, { intervals, nowMs }) {
 }
 
 /**
- * The log with the job's promise scored once its hand-over is done (R9: a deliver row scores the promise): met when the working
- * minutes from the promise to the hand-over are within the promised work (pauses never count, E3).
+ * The log with the job's promise scored once the hand-over that ends its job is done (R9; owner decision 2026-11-23: a hand-over
+ * inside the job only checks the promise, it does not score it): met when the working minutes from the promise to that hand-over
+ * are within the promised work (pauses never count, E3).
  * @param {object[]} log the table's log
  * @param {{ atMs: number, p80Ms: number, workMin: number } | null} promise the stored promise (commitment.mjs shape) or null
- * @param {object[]} items parser items
+ * @param {number[]} closings the hand-overs that ended a job (job-rows.mjs closingHandOvers), epoch ms
  * @param {[number, number][]} intervals working intervals (epoch minutes)
  * @returns {object[]} the log, with one `{ model: 's1', at, promise, scored }` entry added for a newly handed-over promise
  */
-export function scoredPromiseLog(log, promise, items, intervals) {
+export function scoredPromiseLog(log, promise, closings, intervals) {
   if (!isPlainObject(promise) || !Number.isFinite(promise.atMs) || !Number.isFinite(promise.workMin)) return log;
   const at = new Date(promise.atMs).toISOString();
   if (log.some((entry) => entry?.model === 's1' && entry.at === at)) return log;
-  let handOverMs = null;
-  for (const item of items) {
-    if (item.kind === 'deliver' && item.done !== null && item.done >= promise.atMs && (handOverMs === null || item.done < handOverMs)) handOverMs = item.done;
-  }
+  const handOverMs = closings.find((ms) => ms >= promise.atMs) ?? null;
   if (handOverMs === null) return log;
   const workedMin = workedMinutes(intervals, promise.atMs / MS_PER_MIN, handOverMs / MS_PER_MIN);
   return [...log, { model: 's1', at, promise: { p80Ms: promise.p80Ms, workMin: promise.workMin }, scored: { met: workedMin <= promise.workMin, workedMin, handedOverMs: handOverMs } }];

@@ -44,13 +44,14 @@ test('open rows exit 0 with the Finish block on the local clock (TZ honoured), t
   const all = result.stdout.trimEnd().split('\n');
   assert.match(all.find((line) => line.startsWith('Not in this time:')) ?? 'Not in this time: none', /^Not in this time: (none|work not listed yet, usually about (\d+ min|\d+ h \d\d) more \(\d+% of the work left in past jobs\)\.)$/);
   const lines = all.filter((line) => !line.startsWith('Not in this time:'));
-  assert.match(lines[0], /^Finish: \w{3} \d+ Nov \d\d:\d\d \(likely; 85% by (\w{3} )?\d\d:\d\d, 95% by (\w{3} )?\d\d:\d\d; local \+00:00, now 01:00\)$/);
-  // Model s1: the past-jobs band (`Range:`) is retired with the hold (estimate-spec section 7); no promise from a --now run.
+  assert.match(lines[0], /^Finish: \w{3} \d+ Nov \d\d:\d\d \(likely; 80% by (\w{3} )?\d\d:\d\d; local \+00:00, now 01:00\)$/, 'model s1 computes a likely and an 80% time, no 85% or 95%');
+  // Model s1: the past-jobs band (`Range:`) is retired with the hold (estimate-spec section 7); a --now run makes no promise, so
+  // no Promise line (and never a Held line that calls a moving clock unchanged).
   assert.ok(!lines.some((line) => line.startsWith('Range:')));
   assert.match(lines[1], /^Covers: 2 open rows \(1 running; 1 S, 1 M\); (\d+ min|\d+ h \d\d) of work left in this time\.$/);
   assert.equal(lines[2], 'Excludes: pauses (nights, usage limits, waiting for you) move the time hour for hour; rework after hand-over; new requests.');
-  assert.equal(lines[3], 'Held: given Tue 10 Nov 01:00, unchanged since.');
-  assert.match(lines[4], /^Track record: no job scored yet; learned from \d+ finished rows and \d+ jobs\.$/);
+  assert.ok(!lines.some((line) => /^(Held|Moved|Promise):/.test(line)));
+  assert.match(lines[3], /^Track record: no job scored yet; learned from \d+ finished rows and \d+ jobs\.$/);
   assert.equal(result.stderr, '');
   assert.equal(run(status, '--now', NOW, ...projects).stdout, result.stdout);
 });

@@ -1,7 +1,7 @@
 // Tests for estimateFile (home/tools/estimate/lib/from-files.mjs), model s1, the one function behind the CLI and the status line:
 // states, the clocks across a pause, the job's one promise (made by a recorded CLI run at the real clock, never re-made, late in
-// working minutes only), the hand-over, what is recorded (rows with k/runMin, the upgrade of a c3 file), the capped log under two
-// runs at once, the store key, held and stalled rows, pause reasons from the limits log and the owner's questions, the seed dedupe
+// working minutes only, kept across a hand-over inside the job), the hand-over, the text (no Held line, the 80% time only),
+// what is recorded (rows with cost, k and runMin, the upgrade of a c3 file), the capped log (alone and under two runs at once), the store key, held and stalled rows, pause reasons from the limits log and the owner's questions, the seed dedupe
 // and the status line numbers (per-row minutes, late with its cause, v2 rounded once, the byte cap).
 // Synthetic tables, transcripts and seeds only; the clock is passed in except where the promise needs the real clock.
 import test from 'node:test';
@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { promiseJobKey } from '../home/tools/estimate/lib/finish-result.mjs';
 import { UsageError, estimateFile } from '../home/tools/estimate/lib/from-files.mjs';
+import { MAX_CACHE_IDS, MAX_CACHE_ROWS, jobNumbers } from '../home/tools/estimate/lib/job-rows.mjs';
 import { formatEstimate } from '../home/tools/estimate/lib/report.mjs';
 import { MAX_CACHE_BYTES, readEntry, writeEntry } from '../home/tools/estimate/lib/segment-cache.mjs';
 import { resultSegment } from '../home/tools/estimate/lib/segment-text.mjs';
@@ -107,6 +108,21 @@ test('late against the promise: rows added after it make the job later, with the
   assert.equal(late.progress.tag, '+rows');
 });
 
+test('R3: the text never calls a clock that moved unchanged, and states only the confidence model s1 computes', async () => {
+  const world = await setup();
+  const first = (await world.run(1)).result;
+  const firstText = formatEstimate(first, { timeZone: 'UTC' });
+  storePromise(world, 1, first.job.p80, [{ id: 'D1', likelyMin: 30 }, { id: 'O1', likelyMin: 70 }]);
+  const added = statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5 }), ...['O2', 'O3', 'O4'].map((id) => row({ id }))]);
+  const later = (await world.run(1, added)).result;
+  assert.notEqual(later.finish.clockMs, first.finish.clockMs, 'the rows added move the finish');
+  const text = formatEstimate(later, { timeZone: 'UTC' });
+  assert.doesNotMatch(`${firstText}\n${text}`, /unchanged|Held:|Moved:|85%|95%/);
+  assert.ok(!firstText.split('\n').some((line) => line.startsWith('Promise:')), 'no promise yet: no Promise line');
+  assert.match(text, /^Finish: \w{3} \d+ Nov \d\d:\d\d \(likely; 80% by (\w{3} )?\d\d:\d\d; local \+00:00, now 01:00\)$/m);
+  assert.match(text, /^Promise: given \w{3} \d+ Nov 01:00: 80% by (\w{3} )?\d\d:\d\d; now (\d+ min|\d+ h \d\d) of work later, because 3 rows were added \(O2, O3, O4\)\.$/m);
+});
+
 test('the status line numbers: each open row\'s kind median and likely minutes left; held rows are out', async () => {
   const doc = statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5 }), row({ id: 'P1', evidence: 'parked: later' }), row({ id: 'W1', evidence: 'waiting: which one?' })]);
   const { run } = await setup(doc);
@@ -133,6 +149,23 @@ test('the hand-over: no open row and a deliver row after every done row is hande
   assert.deepEqual(result.record, { met: scored.scored.met ? 1 : 0, of: 1 });
 });
 
+test('a hand-over while a started row runs is the same job (owner decision 2026-11-23): the promise is kept, scored only at the job\'s end', async () => {
+  const world = await setup();
+  const first = (await world.run(0.6)).result;
+  storePromise(world, 0.6, first.job.p80, [{ id: 'D1', likelyMin: 30 }, { id: 'O1', likelyMin: 70 }]);
+  const handOver = (n, hours) => row({ id: `deliver:${n}`, item: 'report', raw: { done: iso(hours) }, evidence: '-' });
+  const midJob = statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5 }), handOver(1, 0.7)]);
+  const kept = (await world.run(0.8, midJob)).result;
+  assert.equal(kept.state, 'finish');
+  assert.equal(kept.promise?.atMs, at(0.6), 'O1 ran across the hand-over at 0.7 h: it only checks the promise');
+  assert.deepEqual(world.stored().log.filter((entry) => entry.model === 's1'), []);
+  const ended = statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5, doneH: 0.9 }), handOver(1, 0.7), handOver(2, 0.95)]);
+  const { result } = await world.run(1, ended);
+  assert.equal(result.state, 'handed-over');
+  const scored = world.stored().log.find((entry) => entry.model === 's1');
+  assert.deepEqual([scored.scored.handedOverMs, scored.scored.workedMin], [at(0.95), 21]); // worked from 0:36 to the job's end at 0:57
+});
+
 test('all done without a hand-over says so; no work row is the one refusal left', async () => {
   const { run } = await setup();
   const { result } = await run(1, statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5, doneH: 1 })]));
@@ -155,7 +188,7 @@ test('without a store nothing is read or written; with one the rows are stored w
   assert.equal(existsSync(join(root, 'state')), false);
   const recorded = await run(1);
   assert.deepEqual([recorded.inputs.recorded, recorded.inputs.sessions], [true, 1]);
-  assert.deepEqual(stored().rows.map((each) => [each.size, each.k, each.runMin]), [['S', 'task', 30]]);
+  assert.deepEqual(stored().rows.map((each) => [each.size, each.cost, each.k, each.runMin]), [['S', 30, 'task', 30]], 'the c3 cost stays beside k and runMin (spec section 9: add, not replace)');
   assert.deepEqual(Object.keys(stored().added).sort(), ['D1', 'O1']);
   assert.deepEqual(stored().sessions, []);
   assert.equal(existsSync(join(stateDir, 'session', `${SESSION}.json`)), false);
@@ -190,6 +223,16 @@ test('two refreshes at once: under the table lock no first or scored entry is lo
   assert.ok(runs.some((each) => each.stdout === 'recorded'));
   const kept = new Set(stored().log.map((entry) => entry.at));
   assert.deepEqual(before.filter((entry) => entry.first || entry.scored).map((entry) => entry.at).filter((entryAt) => !kept.has(entryAt)), []);
+});
+
+test('the log is capped on a recorded run: the newest 200 entries and every older first and scored entry, nothing else', async () => {
+  const world = await setup();
+  const before = Array.from({ length: 250 }, (_, k) => ({ at: new Date(at(-10) + k * MIN_MS).toISOString(), ids: ['gone'], p50: 10, raw85: 20, p85: 20, first: k < 5, model: 'c3', ...(k % 10 === 0 ? { scored: { met: true } } : {}) }));
+  updateTable(world.stateDir, world.statusPath, (table) => ({ ...table, log: before }));
+  await world.run(1);
+  const older = before.slice(0, 50).filter((entry) => entry.first || entry.scored);
+  assert.equal(older.length, 9, 'k < 5 and every 10th: 0-4, 10, 20, 30, 40');
+  assert.deepEqual(world.stored().log.map((entry) => entry.at), [...older, ...before.slice(50)].map((entry) => entry.at));
 });
 
 test('F3: the store key comes from the real path: a linked STATUS.md and its target share one table file', async () => {
@@ -246,7 +289,7 @@ test('F4: a 300-row job stays under the cache byte cap with 64 rows and its late
   const many = statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5 }), ...Array.from({ length: 300 }, (_, k) => row({ id: longId(k) }))]);
   const { result } = await world.run(1, many);
   assert.equal(result.numbers.rows.length, 64);
-  assert.deepEqual([result.numbers.lateCause.count, result.numbers.lateCause.ids.length], [300, 64]);
+  assert.deepEqual([result.numbers.lateCause.count, result.numbers.lateCause.ids.length], [300, 16]);
   const cache = join(world.root, 'cache');
   const entry = { path: world.statusPath, ...resultSegment(result), mtimeMs: 1, size: 1e6, computedAt: Date.now(), refreshStartedAt: Date.now() };
   assert.ok(Buffer.byteLength(JSON.stringify(entry)) < MAX_CACHE_BYTES, `${Buffer.byteLength(JSON.stringify(entry))} bytes`);
@@ -255,4 +298,20 @@ test('F4: a 300-row job stays under the cache byte cap with 64 rows and its late
   const r18 = { ...entry, numbers: { finishMs: at(2), p85Ms: at(3), leftMin: 30, workedMin: 10, rowsDone: 1, rowsTotal: 2, rows: [{ id: 'O1', expectMin: 9, leftMin: 3, startedMs: null }] } };
   assert.ok(writeEntry(cache, world.statusPath, r18));
   assert.deepEqual(readEntry(cache, world.statusPath).numbers, r18.numbers);
+});
+
+test('F4: 64 rows, 64 stalled ids and two reasons of 100 long ids stay under the cache byte cap; every id list keeps its count', () => {
+  const longId = (prefix, k) => `${prefix}-row-with-a-rather-long-name-${String(k).padStart(4, '0')}`;
+  const ids = (prefix) => Array.from({ length: 100 }, (_, k) => longId(prefix, k));
+  const nowMs = at(1);
+  const numbers = jobNumbers({ nowMs, workedMin: 300, rows: ids('o').map((id, k) => ({ id, done: false, expectMin: 22.5, leftMin: 13.3, startedMs: nowMs - k })) }, {
+    job: { p50: 300, p80: 400 }, step: null, waiting: 0, parked: 0, stalled: ids('o').slice(0, 64), promise: { atMs: nowMs - 1e6, p80Ms: nowMs + 1e6, workMin: 200 },
+    diff: { min: 120, reasons: [{ kind: 'rows-added', min: 100, ids: ids('a') }, { kind: 'over-usual', min: 40, ids: ids('o') }] }, pauses: { min: 0, byReason: {} },
+  });
+  const entry = { path: '/Users/u/p/STATUS.md', kind: 'finish', text: 'done by 13:20', highMs: 1, progress: null, numbers, mtimeMs: 1, size: 1, computedAt: nowMs, refreshStartedAt: nowMs };
+  assert.ok(Buffer.byteLength(JSON.stringify(entry)) < MAX_CACHE_BYTES, `${Buffer.byteLength(JSON.stringify(entry))} bytes`);
+  assert.equal(numbers.rows.length, MAX_CACHE_ROWS);
+  assert.deepEqual([numbers.v2.stalled.length, numbers.v2.stalledCount], [MAX_CACHE_IDS, 64]);
+  assert.deepEqual(numbers.v2.diff.reasons.map((reason) => [reason.ids.length, reason.count]), [[MAX_CACHE_IDS, 100], [MAX_CACHE_IDS, 100]]);
+  assert.deepEqual([numbers.lateCause.ids.length, numbers.lateCause.count], [MAX_CACHE_IDS, 100]);
 });

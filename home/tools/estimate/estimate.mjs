@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // CLI of the finish estimate: reads the `## Work items` table of a STATUS.md and the working time in the session transcripts, and
-// prints the one committed finish time of the job (line 1, `Finish:`, the median; the 85% and 95% clocks beside it), what it covers and excludes, whether it held or moved and why,
+// prints the one committed finish time of the job (line 1, `Finish:`, the likely time; the 80% clock beside it), what it covers and excludes, the promise and where the job stands against it,
 // the track record and any Check lines (paste the block as-is; never quote a number of your own). Beside a job over about 6 h of
 // work it names the limit resets last seen for this terminal's account (CLAUDE_ACCOUNT, lib/limits-store.mjs). Clock times use the system time
 // zone (`TZ` is honoured). The estimator design and the exact lines are in README.md.

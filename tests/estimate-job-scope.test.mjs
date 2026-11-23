@@ -1,14 +1,15 @@
 // Tests of the job's scope (estimate-spec R15, job-rows.mjs jobScope, through estimateFile): the PC case, where 26 of 27 rows
 // belonged to another session's road that nobody had started since the last hand-over. That road stays out of the job total and
 // the promise and is named once (`Queued: road <id>: <n> rows, not started`); it joins when one of its rows starts; a parked road
-// stays out without a Queued line. Synthetic tables and transcripts only.
+// stays out without a Queued line. A hand-over a started row runs across is the same job (owner decision 2026-11-23).
+// Synthetic tables and transcripts only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { estimateFile } from '../home/tools/estimate/lib/from-files.mjs';
-import { jobScope } from '../home/tools/estimate/lib/job-rows.mjs';
-import { formatEstimate } from '../home/tools/estimate/lib/report.mjs';
+import { closingHandOvers, jobScope } from '../home/tools/estimate/lib/job-rows.mjs';
+import { formatEstimate, stepLine } from '../home/tools/estimate/lib/report.mjs';
 import { SESSION, iso, row, seedRows, statusDoc, writeSeed, writeTranscript } from './estimate-tables.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -54,25 +55,47 @@ test('R15: once one of its rows starts after the hand-over the road joins the jo
   assert.deepEqual(result.queued, []);
   assert.equal(result.numbers.rowsTotal, 27);
   assert.deepEqual([result.road.name, result.road.step, result.numbers.v2.step.lanesTotal], ['pc', 1, 9]);
+  assert.match(stepLine(result, { timeZone: 'UTC' }), /^step 1 by \d\d:\d\d \(80%: \d\d:\d\d\)$/, 'model s1: the 80% time, not 85%');
   assert.ok(!formatEstimate(result, { timeZone: 'UTC' }).includes('Queued:'));
 });
 
-test('R15: a road started only before the last hand-over stays queued; a parked road stays out without a Queued line', () => {
-  const before = estimate([row({ id: 'pc.s1.lane1', startedH: 0 }), HAND_OVER, MINE, ...pcRoad().slice(1)]);
-  assert.deepEqual(before.queued, [{ road: 'pc', rows: 26 }]);
+test('R15 (owner decision 2026-11-23): a road lane started before a mid-job hand-over and still open is in the job, never "not started"', () => {
+  const result = estimate([DONE_BEFORE, HAND_OVER, row({ id: 'pc.s1.lane1', startedH: 0.1 }), ...pcRoad().slice(1)]);
+  assert.equal(result.state, 'finish', 'the hand-over at 0.2 h is inside the job: the lane ran across it');
+  assert.deepEqual(result.queued, []);
+  assert.equal(result.numbers.rowsTotal, 27, 'D0 and the 26 road rows: one job');
+  assert.equal(result.road.name, 'pc');
+  assert.ok(!formatEstimate(result, { timeZone: 'UTC' }).includes('Queued:'));
+});
+
+test('R15: a road whose started rows were all done before the hand-over that ended the job stays queued; a parked road stays out without a Queued line', () => {
+  const before = estimate([row({ id: 'pc.s1.lane1', startedH: 0, doneH: 0.1 }), HAND_OVER, MINE, ...pcRoad().slice(1)]);
+  assert.deepEqual(before.queued, [{ road: 'pc', rows: 25 }]);
   const parked = estimate([DONE_BEFORE, HAND_OVER, MINE, ...pcRoad({ evidence: 'parked: web later' })]);
   assert.deepEqual([parked.queued, parked.numbers.rowsTotal], [[], 1]);
   assert.ok(!formatEstimate(parked, { timeZone: 'UTC' }).includes('Queued:'));
 });
 
-test('jobScope: with no hand-over any started road row joins; done non-road rows before the hand-over are out', () => {
+test('closingHandOvers: a hand-over a started row runs across is no job end; a row started at the hand-over is the next job\'s', () => {
+  const deliver = { id: 'deliver:1', kind: 'deliver', started: null, done: 20, evidence: '-' };
+  const across = [{ id: 'D0', kind: 'build', started: 0, done: 10, evidence: 'x' }, deliver, { id: 'rd.s1.a', kind: 'build', started: 5, done: 25, evidence: 'x' }];
+  assert.deepEqual(closingHandOvers(across), []);
+  const atIt = [{ id: 'D0', kind: 'build', started: 0, done: 10, evidence: 'x' }, deliver, { id: 'A2', kind: 'build', started: 20, done: null, evidence: 'x' }];
+  assert.deepEqual(closingHandOvers(atIt), [20]);
+  const parked = { id: 'rd.s1.a', kind: 'build', started: 5, done: null, evidence: 'parked: web later' };
+  assert.deepEqual(closingHandOvers([...across.slice(0, 2), parked]), [20], 'a parked row never holds a job open');
+  assert.deepEqual(jobScope([...across.slice(0, 2), parked, { id: 'rd.s1.b', kind: 'build', started: null, done: null, evidence: 'x' }], 20).queued, [{ road: 'rd', rows: 1 }]);
+});
+
+test('jobScope: a started open road row always joins; done non-road rows before the job start are out', () => {
   const items = [
     { id: 'D0', kind: 'build', started: 0, done: 10, evidence: 'x' },
     { id: 'deliver:1', kind: 'deliver', started: null, done: 20, evidence: '-' },
     { id: 'A1', kind: 'build', started: 30, done: null, evidence: 'x' },
     { id: 'rd.s1.a', kind: 'build', started: 5, done: null, evidence: 'x' },
   ];
-  assert.deepEqual(jobScope(items, 20).items.map((item) => item.id), ['A1']);
-  assert.deepEqual(jobScope(items, 20).queued, [{ road: 'rd', rows: 1 }]);
+  assert.deepEqual(jobScope(items, 20).items.map((item) => item.id), ['A1', 'rd.s1.a']);
   assert.deepEqual(jobScope(items, null).items.map((item) => item.id), ['D0', 'A1', 'rd.s1.a']);
+  const closed = [...items.slice(0, 3), { ...items[3], done: 15 }, { id: 'rd.s1.b', kind: 'build', started: null, done: null, evidence: 'x' }];
+  assert.deepEqual([jobScope(closed, 20).items.map((item) => item.id), jobScope(closed, 20).queued], [['A1'], [{ road: 'rd', rows: 1 }]]);
 });

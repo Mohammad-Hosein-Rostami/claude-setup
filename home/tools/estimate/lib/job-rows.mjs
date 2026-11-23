@@ -1,10 +1,12 @@
 // The current job's rows (estimate-spec R15, R8, R9) and the numbers the status line cache stores for it (R10, section 12).
-// Exports: MAX_CACHE_ROWS, LATE_MIN, jobScope(items, lastHandOver), likelyLeftMin(pool, elapsedMin), promiseRows(rows, facts),
-// roundUpMs(ms), jobNumbers(job, view).
+// Exports: MAX_CACHE_ROWS, MAX_CACHE_IDS, LATE_MIN, closingHandOvers(items), jobScope(items, jobStart), likelyLeftMin(pool, elapsedMin),
+// promiseRows(rows, facts), roundUpMs(ms), jobNumbers(job, view).
+// Job (owner decision 2026-11-23, spec question 2 (a)): a hand-over to a new session is the same job and only checks its promise;
+// the job begins at the latest hand-over across which no work row was in progress (closingHandOvers), else at the table's start.
 // Scope (R15, the PC case: 26 of 27 rows were another session's paused road): the job is every non-road work row open now or done
-// after the last hand-over, plus every row of each road with at least one row started (or done) after the last hand-over; any
-// other road with open rows is queued (out of the job total and the promise, named once). A road joins the job when its first
-// row starts. A parked row is out of every number (kinds.mjs rowState); a road whose open rows are all parked is not queued, it is
+// since the job began, plus every row of each road with a row started (or done) since then or a started row still open (a
+// started open row is never "not started"); any other road with open rows is queued (out of the job total and the promise,
+// named once). A road joins the job when its first row starts. A parked row is out of every number (kinds.mjs rowState); a road whose open rows are all parked is not queued, it is
 // parked. No row is carried over a hand-over any more (R8): rows nobody works on are parked (R3), not guessed from first sightings.
 // Numbers v2 (spec section 12): every clock rounded up to 5 minutes here and nowhere else (R10); the R18 fields (finishMs, p85Ms,
 // leftMin, rows ...) stay beside `v2` for one model change, filled from s1, so an old reader still draws the job.
@@ -15,6 +17,9 @@ import { roadStepOf } from './road-steps.mjs';
 
 /** Open rows kept in the cache numbers, started rows first: a cache entry stays well under its byte cap on a table of hundreds of rows. */
 export const MAX_CACHE_ROWS = 64;
+/** Ids kept per id list of the numbers (stalled rows, the late cause, each reason of the difference; each list keeps its full
+ *  count): 64 rows of long ids take about 7 KB, so four lists of 16 keep an entry under MAX_CACHE_BYTES (16384) (F4). */
+export const MAX_CACHE_IDS = 16;
 /** A job runs late once it is this many working minutes past its promise: a smaller difference is the 5-minute grid, not news. */
 export const LATE_MIN = 10;
 const MS_PER_MIN = 60_000;
@@ -26,32 +31,50 @@ const MEDIAN = 0.5;
 const R18_CAUSE = { 'rows-added': 'rows-added', 'over-usual': 'slow-row', faster: 'ahead' };
 const tenths = (minutes) => Math.round(minutes * TENTHS) / TENTHS;
 const isWorkRow = (item) => item.kind !== 'deliver';
-const afterHandOver = (ms, lastHandOver) => ms !== null && ms !== undefined && (lastHandOver === null || ms > lastHandOver);
+const afterHandOver = (ms, jobStart) => ms !== null && ms !== undefined && (jobStart === null || ms > jobStart);
 
 /** @returns {number | null} ms rounded up to the 5-minute grid (R10), null stays null */
 export const roundUpMs = (ms) => (Number.isFinite(ms) ? Math.ceil(ms / CLOCK_GRID_MS) * CLOCK_GRID_MS : null);
 
+/** True when a work row was in progress across `atMs`: started before it and not done by then (a row started at a hand-over is the
+ *  next job's). A parked row is out of every number, so it never holds a job open (another session's paused road, R15). */
+const runsAcross = (item, atMs) => item.started !== null && item.started < atMs && (item.done === null || item.done > atMs) && rowState(item) !== 'parked';
+
+/**
+ * The hand-overs that ended a job (owner decision 2026-11-23, spec question 2 (a): a hand-over to a new session is the same job
+ * and only checks its promise): those across which no work row was in progress. A hand-over while a started row was still open
+ * is a check inside the job, not its end.
+ * @param {object[]} items parser items
+ * @returns {number[]} their times (epoch ms), oldest first
+ */
+export function closingHandOvers(items) {
+  const work = items.filter(isWorkRow);
+  return items.filter((item) => item.kind === 'deliver' && item.done !== null && !work.some((row) => runsAcross(row, item.done)))
+    .map((item) => item.done).sort((a, b) => a - b);
+}
+
 /**
  * The current job (R15).
  * @param {object[]} items parser items
- * @param {number | null} lastHandOver the last hand-over (epoch ms), null when none
+ * @param {number | null} jobStart where the job began (the last of closingHandOvers), null when the job is the whole table
  * @returns {{ items: object[], roads: string[], queued: { road: string, rows: number }[] }} items: the job's rows in table order
- *   (a joined road with all its rows, so its steps read right; deliver rows left out); roads: the joined roads; queued: the
- *   roads left out with their open, unparked rows
+ *   (a joined road with all its rows, so its steps read right; deliver rows left out); roads: the joined roads (a row started
+ *   or done since the job began, or a started row still open); queued: the roads left out with their open, unparked rows
  */
-export function jobScope(items, lastHandOver) {
+export function jobScope(items, jobStart) {
   const work = items.filter(isWorkRow);
   const joined = new Set();
   const openOf = new Map();
   for (const item of work) {
     const road = roadStepOf(item.id)?.road;
     if (road === undefined) continue;
-    if (afterHandOver(item.started, lastHandOver) || afterHandOver(item.done, lastHandOver)) joined.add(road);
+    const startedOpen = item.started !== null && item.done === null && rowState(item) !== 'parked';
+    if (startedOpen || afterHandOver(item.started, jobStart) || afterHandOver(item.done, jobStart)) joined.add(road);
     if (rowState(item) === 'open') openOf.set(road, (openOf.get(road) ?? 0) + 1);
   }
   const inJob = (item) => {
     const road = roadStepOf(item.id)?.road;
-    return road === undefined ? item.done === null || afterHandOver(item.done, lastHandOver) : joined.has(road);
+    return road === undefined ? item.done === null || afterHandOver(item.done, jobStart) : joined.has(road);
   };
   const queued = [...openOf].filter(([road]) => !joined.has(road)).map(([road, rows]) => ({ road, rows }));
   return { items: work.filter(inJob), roads: [...joined], queued };
@@ -89,10 +112,10 @@ export function promiseRows(rows, { poolOf, elapsedOf, runOf }) {
   });
 }
 
-/** The R18 late cause of the promise difference's largest later reason (its ids cut to MAX_CACHE_ROWS, count = all of them). */
+/** The R18 late cause of the promise difference's largest later reason (its ids cut to MAX_CACHE_IDS, count = all of them). */
 function lateCauseOf(diff) {
   const reason = diff?.reasons.find((each) => each.min > 0);
-  return reason === undefined ? null : { cause: R18_CAUSE[reason.kind], ids: reason.ids.slice(0, MAX_CACHE_ROWS), count: reason.ids.length };
+  return reason === undefined ? null : { cause: R18_CAUSE[reason.kind], ids: reason.ids.slice(0, MAX_CACHE_IDS), count: reason.ids.length };
 }
 
 /** A range of minutes from now as the numbers carry it: minutes in tenths, clocks rounded up (R10). */
@@ -101,10 +124,10 @@ const rangeOf = (range, nowMs) => ({
   p50Ms: roundUpMs(nowMs + range.p50 * MS_PER_MIN), p80Ms: roundUpMs(nowMs + range.p80 * MS_PER_MIN),
 });
 
-/** The v2 diff: minutes and reasons with their ids cut to MAX_CACHE_ROWS (count = all). */
+/** The v2 diff: minutes and reasons with their ids cut to MAX_CACHE_IDS (count = all). */
 const cachedDiff = (diff) => (diff === null ? null : {
   min: tenths(diff.min),
-  reasons: diff.reasons.map((reason) => ({ kind: reason.kind, min: tenths(reason.min), ids: reason.ids.slice(0, MAX_CACHE_ROWS), count: reason.ids.length })),
+  reasons: diff.reasons.map((reason) => ({ kind: reason.kind, min: tenths(reason.min), ids: reason.ids.slice(0, MAX_CACHE_IDS), count: reason.ids.length })),
 });
 
 /**
@@ -128,7 +151,7 @@ export function jobNumbers(job, view) {
     firstBudgetMin: view.promise === null ? null : tenths(view.promise.workMin), lateMin, lateCause: lateMin === null ? null : lateCauseOf(view.diff),
     rows: open.map((row) => ({ id: row.id, expectMin: tenths(row.expectMin), leftMin: tenths(row.leftMin), startedMs: row.startedMs })),
     v2: {
-      model: 's1', job: jobRange, step, waiting: view.waiting, parked: view.parked, stalled: view.stalled.slice(0, MAX_CACHE_ROWS),
+      model: 's1', job: jobRange, step, waiting: view.waiting, parked: view.parked, stalled: view.stalled.slice(0, MAX_CACHE_IDS), stalledCount: view.stalled.length,
       promise, diff: cachedDiff(view.diff),
       pauses: { min: tenths(view.pauses.min), byReason: Object.fromEntries(Object.entries(view.pauses.byReason).map(([reason, min]) => [reason, tenths(min)])) },
     },

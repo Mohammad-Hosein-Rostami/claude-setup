@@ -6,6 +6,7 @@
 // Items are parser items ({ id, kind, started, done } with epoch-ms stamps or null); a work row is any row whose kind is not 'deliver',
 // and a deliver row's done time is a hand-over. Costs and shares are in minutes; the costs of the done rows add up to the minutes
 // in which at least one of them ran.
+import { closingHandOvers } from './job-rows.mjs';
 
 /** Minutes of silence still counted as work: a foreground command or a think writes nothing for a while. Working hours at
  *  5 / 10 / 15 / 30 minutes moved by at most 2.3 h of 12 on the four measured tables (design 3.1), so 10 is not a fitted value. */
@@ -69,9 +70,10 @@ export function rowCosts(items, intervals) {
   return costs;
 }
 
-/** The earliest started stamp (ms) of the current job: the work rows open or done after the last hand-over; null when none started. */
+/** The earliest started stamp (ms) of the current job: the work rows open or done after the last hand-over that ended a job (a
+ *  hand-over a started row ran across only checks the promise, owner decision 2026-11-23); null when none started. */
 function currentJobStart(items) {
-  const lastHandOver = handOverTimes(items).at(-1) ?? -Infinity;
+  const lastHandOver = closingHandOvers(items).at(-1) ?? -Infinity;
   const current = items.filter((item) => isStartedWorkRow(item) && (item.done === null || item.done > lastHandOver));
   return current.length === 0 ? null : Math.min(...current.map((item) => item.started));
 }

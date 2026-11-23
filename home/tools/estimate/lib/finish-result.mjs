@@ -1,14 +1,14 @@
 // The finish result of model s1 and the store change every run makes (estimate-spec sections 4-7, 12): split out of from-files.mjs,
 // which reads the inputs and picks the state.
-// Exports: forecastSeedText(id, openRows), runMinOf(item, intervals), promiseJobKey(id, lastHandOver), settle(statusPath, items,
+// Exports: forecastSeedText(id, openRows), runMinOf(item, intervals), promiseJobKey(id, jobStart), settle(statusPath, items,
 // facts, options, change), finishResult(items, scope, facts, options).
 // Flow of a finish: the slots (measuredSlots, with the stall context), the s1 runs of the job's rows (forecastRuns, with each
 // row's agent), the `now` road's current step by the pick (stepRange of s1 and throughput, plus the conformal margin of the
 // store's scored steps), then under the table lock the store change and the promise (promiseOf), then the pauses since the
 // promise with their reasons and the promise's difference in working minutes (promiseDiff: a pause is never lateness, E3).
 // The job's range is s1's, never shorter than its current step's pick (a job cannot end before its current step).
-// Job (owner question 2 of the spec is still open): a promise belongs to the job after the last hand-over (promiseJobKey), the
-// boundary the c3 commitment had; answer (a) "a hand-over only checks the promise" changes promiseJobKey alone.
+// Job (owner decision 2026-11-23, spec question 2 (a)): a hand-over to a new session is the same job and only checks its promise;
+// the promise is keyed on the job start (the last of job-rows.mjs closingHandOvers) and scored only at the hand-over that ends the job.
 // Invariants: the change passed to settle is quick (no scan, no simulation: the table lock is taken as abandoned after 0.5 s);
 // the numbers round every clock once (job-rows.mjs); a held row (parked, waiting) leaves every work number.
 import { cappedLog, promiseDiff, promiseOf, scoreLog } from './commitment.mjs';
@@ -39,12 +39,13 @@ export const forecastSeedText = (id, openRows) => `${id}|${openRows.map((row) =>
 /** A done row's run: its working minutes from start to done (0 without a start), as the seed runs measure them (freeze-data.mjs). */
 export const runMinOf = (item, intervals) => (item.started === null || item.done === null ? 0 : workedMinutes(intervals, item.started / MS_PER_MIN, item.done / MS_PER_MIN));
 
-/** The promise's job key (commitment.mjs promiseOf): the table and its last hand-over, so each hand-over starts a job (see the header). */
-export const promiseJobKey = (id, lastHandOver) => `${id}|${lastHandOver === null ? 'first' : iso(lastHandOver)}`;
+/** The promise's job key (commitment.mjs promiseOf): the table and where its job began (the last of job-rows.mjs closingHandOvers), so a hand-over
+ *  inside the job keeps the promise and only a closing one starts a new job (see the header). */
+export const promiseJobKey = (id, jobStart) => `${id}|${jobStart === null ? 'first' : iso(jobStart)}`;
 
 /** The stored table in the new shape (F1): fresh rows and jobs, no c3 commit, the old c3 entries and the promise scored. */
 function baseTable(table, items, facts) {
-  const log = cappedLog(scoredPromiseLog(scoreLog(Array.isArray(table.log) ? table.log : [], items, facts.intervals), table.promise ?? null, items, facts.intervals));
+  const log = cappedLog(scoredPromiseLog(scoreLog(Array.isArray(table.log) ? table.log : [], items, facts.intervals), table.promise ?? null, facts.closings, facts.intervals));
   return { ...table, rows: facts.own.rows, jobs: facts.own.jobs, commit: null, log, promise: table.promise ?? null, steps: Array.isArray(table.steps) ? table.steps : [], waitSeen: isPlainObject(table.waitSeen) ? table.waitSeen : {} };
 }
 
@@ -107,10 +108,11 @@ function rowNumbers(rows, helpers) {
   });
 }
 
-/** The earliest start of the job's rows after the last hand-over (epoch ms), null before any. */
-function jobStartOf(rows, lastHandOver) {
+/** The earliest start of the job's rows since the job began (epoch ms), null before any: a joined road's rows of an earlier job (all done
+ *  before it began, since no row ran across its start) do not count. */
+function firstStartOf(rows, jobStart) {
   let start = null;
-  for (const item of rows) if (item.started !== null && (lastHandOver === null || item.started > lastHandOver) && (start === null || item.started < start)) start = item.started;
+  for (const item of rows) if (item.started !== null && (jobStart === null || item.started >= jobStart) && (start === null || item.started < start)) start = item.started;
   return start;
 }
 
@@ -153,7 +155,7 @@ export function finishResult(items, scope, facts, options) {
     runOf: (item) => runMinOf(item, facts.intervals),
   };
   const rowsNow = promiseRows(scope.items, helpers);
-  const fresh = { job: promiseJobKey(facts.id, facts.lastHandOver), p80Ms: nowMs + forecast.job.p80 * MS_PER_MIN, workLeftMin: forecast.job.p80, rows: rowsNow };
+  const fresh = { job: promiseJobKey(facts.id, facts.jobStart), p80Ms: nowMs + forecast.job.p80 * MS_PER_MIN, workLeftMin: forecast.job.p80, rows: rowsNow };
   const stepNow = forecast.road === null ? null : { road: forecast.road.step.road, step: forecast.road.step.step, p80Min: forecast.road.s1.p80 };
   const allRoads = roadsOf(items, rowState);
   const { table, recorded } = settle(options.statusPath, items, facts, options, (base, locked) => ({
@@ -162,7 +164,7 @@ export function finishResult(items, scope, facts, options) {
     steps: recordSteps(base.steps, stepNow, closedAtOf(allRoads), { intervals: facts.intervals, nowMs }),
     waitSeen: Object.fromEntries(forecast.runs.waiting.map((row) => [row.id, typeof base.waitSeen[row.id] === 'string' ? base.waitSeen[row.id] : iso(nowMs)])),
   }));
-  const jobStartMs = jobStartOf(scope.items, facts.lastHandOver);
+  const jobStartMs = firstStartOf(scope.items, facts.jobStart);
   const told = promiseFacts(table, facts, forecast, rowsNow, jobStartMs);
   const rows = rowNumbers(scope.items, helpers);
   const workedMin = jobStartMs === null ? 0 : workedMinutes(facts.intervals, jobStartMs / MS_PER_MIN, options.nowMin);

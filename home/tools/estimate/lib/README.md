@@ -47,8 +47,9 @@ The parts of the `estimate` tool. `../estimate.mjs` (the CLI) and `../statusline
 - Model s1 wired in (`from-files.mjs` no longer runs the c3 forecast; `backtest.mjs` alone replays it): `from-files.mjs` reads
   the inputs and picks the state; `finish-result.mjs` builds the finish (slots, runs, the current step's pick, the promise under
   the table lock, the pauses since it, the promise's difference in worked minutes) and the store change every run makes;
-  `job-rows.mjs` the job's scope (R15: a road nobody started since the last hand-over is queued, out of the job and the promise;
-  no carried rows any more) and the cache numbers (`v2` beside the R18 fields, clocks rounded up to 5 min once);
+  `job-rows.mjs` the job (a hand-over to a new session is the same job and only checks its promise, owner
+  decision 2026-11-23; the job begins at the last hand-over no work row ran across) and its scope (R15: a road nobody started
+  in the job, with no started row open, is queued, out of the job and the promise; no carried rows any more) and the cache numbers (`v2` beside the R18 fields, clocks rounded up to 5 min once);
   `job-view.mjs` the road and step views, pauses by reason and the stalled and queued Check facts; `job-inputs.mjs` this
   session's row agents, the owner waits and the account's limits record (`readLimitRecord`), with transcript cursors under
   `<state>/facts/`; `store-pools.mjs` the kind pools' runs (the seed runs a store table already holds left out) and the step
