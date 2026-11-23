@@ -41,6 +41,15 @@ while it is live: a row of its current step was started or finished since the se
 a stale road is hidden and reads `idle` in `/where`; a board file written before this rule (no `live`) counts as live. `nothing
 started`, the open rows, the finish trend and the road's steps are in `/where`.
 
+An entry of the estimate's model s1 (`numbers.v2` in the cache) draws the job row and the step's now row as likely–80% ranges
+(estimate-spec section 7, `lib/range-rows.mjs`): `job     █████████░ 44/45 rows · 2 h 57–3 h 28 work left · done 12:50–13:20 if no
+pause · 42 parked` and `now     step 13 of 14 · █████ 5/5 lanes landed · 55 min–2 h 59 left · step done 10:45–12:50`. The job row
+then ends with its one promise: `on time for 13:20`, `25 min later than promised 13:20: 3 rows added` (yellow, red past the job's
+80% margin), `30 min earlier than promised 13:50`, and `moved 1 h 20 by pauses: ...` from 5 min of pauses; `1 waits for you`
+(magenta) and `42 parked` come before it. Parked leaves first when the row is full, then the waits; the words then get shorter
+(no `if no pause`, then the short words) before the promise leaves, so no number is cut at 80, 100 or 150 columns. The job bar
+counts rows (the cache carries no job lane count). An entry without `v2`, or with one of the wrong shape, draws the rows above.
+
 The agents row (RC8) is one summary whatever the number of agents: running counts the quiet ones, done is finished in the last
 10 min, only the agents that need a look are named (quiet first, then over their usual time), as many as fit and then `+K more`,
 and `all done ~19:49` only when no job or now row shows a clock.
@@ -149,6 +158,6 @@ marker holds no agent).
 Files: `board.mjs` (the CLI and the lines), `lib/refresh.mjs` (build, refresh, the board file, the claim, the detached start),
 `lib/agents.mjs`, `lib/read-part.mjs` (a bounded read of a plain file), `lib/agent-transcript.mjs`, `lib/progress.mjs`, `lib/pools.mjs`, `lib/git-state.mjs`, `lib/job-facts.mjs`,
 `lib/repo-stats.mjs`, `lib/repos.mjs`, `lib/trusted-repos.mjs`, `lib/cache-file.mjs` (what the refresh reads), `lib/render.mjs` (the status line rows; `home/statusline.mjs` only reads and writes), `lib/work-row.mjs` (the
-job and now rows), `lib/layout.mjs` (row budget, agents summary row, `/where` counts row and packing), `lib/agent-rows.mjs` (agent rows), `lib/git-rows.mjs`
+job and now rows), `lib/range-rows.mjs` (model s1's job and step rows from `numbers.v2`), `lib/layout.mjs` (row budget, agents summary row, `/where` counts row and packing), `lib/agent-rows.mjs` (agent rows), `lib/git-rows.mjs`
 (the status line git rows and `/where` git rows), `lib/stat-rows.mjs` (`/where`: the road row, the trend), `lib/cells.mjs` (look and palette, glyphs, bars, durations, clocks, fitting a row to a width; shared by every surface),
 `lib/tree.mjs` (the `/where` tree, plain text).

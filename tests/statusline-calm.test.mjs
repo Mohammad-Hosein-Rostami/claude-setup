@@ -244,7 +244,7 @@ test('F8: the session row draws with no board (statusline.mjs prints it alone wh
 });
 
 test('F2: the row modules read no file, start nothing and keep no clock of their own (a render is drawn from the files statusline.mjs read)', () => {
-  for (const name of ['render', 'layout', 'work-row', 'stat-rows', 'git-rows', 'cells']) {
+  for (const name of ['render', 'layout', 'work-row', 'range-rows', 'stat-rows', 'git-rows', 'cells']) {
     const source = readFileSync(fileURLToPath(new URL(`../home/tools/board/lib/${name}.mjs`, import.meta.url)), 'utf8');
     assert.doesNotMatch(source, /from 'node:|Date\.now\(\)/, name);
   }
