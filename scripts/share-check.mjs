@@ -1,23 +1,29 @@
 #!/usr/bin/env node
 // Purpose: refuse private words in the shared repo (owner rule R22): the owner's name, home paths, account, machine and work-project
-//   names listed one per line in `personal/share-deny.txt` (git-ignored, the person's own) must not reach tracked core files or
-//   commit messages.
-// Usage: node scripts/share-check.mjs [--deny <file>] [--staged] [--history] [<path>...]
-//   (no mode)   the tracked files of the working tree (only those under <path>... when given)
-//   --staged    the index blobs of the files added or changed in the index (what the next commit holds; for a pre-commit hook)
-//   --history   every commit message of every ref, and the commits whose changes add or remove a deny word, per word
-// Output: one `<file>:<line>: <deny word>` per hit (a history hit: `share-check: history <word>: ...`); `share-check: skipped <file>
-//   (<why>)` for a file not read (binary, over 2 MiB, a submodule, missing); one summary line. Exit 1 on a hit, 0 when clean,
+//   names listed one per line in `personal/share-deny.txt` (git-ignored, the person's own) must not reach tracked core files, their
+//   paths or commit messages.
+// Usage: node scripts/share-check.mjs [--deny <file>] [--staged | --history | --commit-msg <file>] [<path>...]
+//   (no mode)          the tracked files of the working tree and their paths (only those under <path>... when given)
+//   --staged           the index blobs and paths of the files added or changed in the index (what the next commit holds; pre-commit)
+//   --history          every commit message of every ref, and every commit whose changes hold a deny word: in the old or the new
+//                      content of a changed file, or in its path (scripts/share-check/history.mjs)
+//   --commit-msg <f>   the message of the commit being made (the commit-msg hook, .githooks/commit-msg), without git's comment lines
+//                      and what follows the scissors line, as git commits it
+// Output: one `<file>:<line>: <deny word>` per hit in content, `<file>:name: <deny word>` for a word in a path, `commit message:<line>:
+//   <deny word>` (a history hit: `share-check: history <word>: ...`); `share-check: skipped <file> (<why>)` for an entry with no content
+//   to read (a submodule, missing in the working tree, not a regular file); one summary line. Exit 1 on a hit, 0 when clean,
 //   0 with `share-check: not run (no deny list at <path>)` when there is no list, 2 with `share-check: error: <why>` on any failure.
-// Exports: DENY_LIST_PATH, FILE_MAX_BYTES, parseDenyList, wordPattern, findHits, readDenyList, main.
+// Exports: DENY_LIST_PATH, readDenyList, main.
 // Invariants:
 // - Trust boundary: the output never holds a line's text or the list; only file names (quoted and escaped when they hold a control
 //   character, so a name cannot print a fake line), line numbers and the deny word that matched.
 // - Read only: no file is written and git takes no optional lock, so two commits in two worktrees can run it at once.
 // - The default list is `personal/share-deny.txt` of the main checkout (the parent of git's common folder), so a lane worktree, which
 //   has no `personal/`, finds the same list; it never comes from the commit or the index.
-// - Words match literally (regex characters included), case-insensitively, and only as whole words: a letter or digit next to
-//   the word means no hit (`ice` never hits `service`); `_`, `-`, `/` and spaces are separators.
+// - Matching (scripts/share-check/match.mjs): literal, case-insensitive, whole words or identifier parts, after NFKC folding and
+//   with zero-width characters removed; an entry's spaces match any white space, a line break included.
+// - No content is skipped for its size or its bytes: binary and UTF-16 files are searched too (match.mjs); a file too large to read
+//   is an error.
 // - Fail closed: an unreadable list, an unreadable tracked file or a git failure exits 2 with why; never a silent 0.
 import { spawnSync } from 'node:child_process';
 import { lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
@@ -25,67 +31,20 @@ import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { readPlainFile } from '../home/hooks/lib/plain-file.mjs';
 import { escaped } from '../home/hooks/lib/shown-name.mjs';
+import { checkHistory } from './share-check/history.mjs';
+import { findHits, findHitsInBytes, nameWords, parseDenyList, wordPattern } from './share-check/match.mjs';
 
 export const DENY_LIST_PATH = ['personal', 'share-deny.txt']; // below the main checkout
-export const FILE_MAX_BYTES = 2 * 1024 * 1024; // a larger tracked file is listed as skipped, not read
 const DENY_MAX_BYTES = 1024 * 1024; // a word list larger than this is refused (exit 2)
-const BINARY_PROBE_BYTES = 8000; // git's own binary test: a NUL byte in the first 8000 bytes
-const GIT_MAX_BUFFER_BYTES = 512 * 1024 * 1024; // the commit messages of a long history, the index list of a big repo
-const HISTORY_SHAS_SHOWN = 10; // short commit ids printed per word; the rest is counted
-const SHORT_SHA = 12;
+const MESSAGE_MAX_BYTES = 1024 * 1024; // a commit message larger than this is refused (exit 2)
+const GIT_MAX_BUFFER_BYTES = 512 * 1024 * 1024; // the blobs of a long history, the index list of a big repo
+const SCISSORS = /^.*-{24} >8 -{24}$/m; // git's cut line (`git commit -v`): what follows it is not committed
 const EXIT = Object.freeze({ clean: 0, hit: 1, error: 2 });
-const WORD_CHAR = /[\p{L}\p{N}]/u;
 // git config that would make a read run a program the repository names (as in home/hooks/lib/gated-folder.mjs). The git
 // environment is kept on purpose: under a pre-commit hook GIT_INDEX_FILE names the index the commit is made from.
 const HARDENED = ['-c', 'core.fsmonitor=false', '-c', 'log.showSignature=false'];
 
 class CheckError extends Error {}
-
-/**
- * The deny words of a list: one per line, `#` lines and blank lines left out, CRLF and a BOM accepted, duplicates (any case) once.
- * @param {string} text the list file
- * @returns {string[]} the words, trimmed, in list order
- */
-export function parseDenyList(text) {
-  const seen = new Set();
-  const words = [];
-  for (const raw of text.replace(/^﻿/, '').split(/\r?\n/)) {
-    const word = raw.trim();
-    if (word === '' || word.startsWith('#') || seen.has(word.toLowerCase())) continue;
-    seen.add(word.toLowerCase());
-    words.push(word);
-  }
-  return words;
-}
-
-/**
- * The pattern of one deny word: literal, case-insensitive, with a word boundary on each side whose edge is a letter or digit.
- * @param {string} word a deny word
- * @returns {RegExp} a global, Unicode pattern
- */
-export function wordPattern(word) {
-  const literal = word.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
-  const before = WORD_CHAR.test(word.at(0) ?? '') ? '(?<![\\p{L}\\p{N}])' : '';
-  const after = WORD_CHAR.test(word.at(-1) ?? '') ? '(?![\\p{L}\\p{N}])' : '';
-  return new RegExp(`${before}${literal}${after}`, 'giu');
-}
-
-/**
- * The hits of the deny words in a text: one per line and word.
- * @param {string} text the content
- * @param {{word: string, pattern: RegExp}[]} denied the words with their patterns (wordPattern)
- * @returns {{line: number, word: string}[]} 1-based line numbers, in line order
- */
-export function findHits(text, denied) {
-  const hits = [];
-  text.split('\n').forEach((line, index) => {
-    for (const { word, pattern } of denied) {
-      pattern.lastIndex = 0;
-      if (pattern.test(line)) hits.push({ line: index + 1, word });
-    }
-  });
-  return hits;
-}
 
 /** git in `cwd` as raw bytes; throws CheckError with git's first error line on a failure. */
 function git(cwd, args, input) {
@@ -117,10 +76,7 @@ export function readDenyList(cwd, explicit) {
   }
 }
 
-/** Why a file's bytes are not read as text, or null. */
-const binaryReason = (bytes) => (bytes.subarray(0, BINARY_PROBE_BYTES).includes(0) ? 'binary' : null);
-
-/** One tracked file of the working tree: `{ text }` or `{ skip }`. A symlink is checked by its target, as git stores it. */
+/** One tracked file of the working tree: `{ bytes }` or `{ skip }`. A symlink is checked by its target, as git stores it. */
 function readTracked(top, name) {
   const path = join(top, name);
   let info;
@@ -130,18 +86,13 @@ function readTracked(top, name) {
     if (error.code === 'ENOENT') return { skip: 'missing in the working tree' };
     throw new CheckError(`${name} not readable (${error.code})`);
   }
-  if (info.isSymbolicLink()) return { text: readlinkSync(path) };
   if (info.isDirectory()) return { skip: 'a submodule' };
-  if (!info.isFile()) return { skip: 'not a regular file' };
-  if (info.size > FILE_MAX_BYTES) return { skip: 'over 2 MiB' };
-  let bytes;
+  if (!info.isFile() && !info.isSymbolicLink()) return { skip: 'not a regular file' };
   try {
-    bytes = readFileSync(path);
+    return { bytes: info.isSymbolicLink() ? readlinkSync(path, { encoding: 'buffer' }) : readFileSync(path) };
   } catch (error) {
     throw new CheckError(`${name} not readable (${error.code})`);
   }
-  const skip = binaryReason(bytes);
-  return skip === null ? { text: bytes.toString('utf8') } : { skip };
 }
 
 const pathspecs = (paths) => ['--', ...(paths.length === 0 ? [':/'] : paths)];
@@ -152,21 +103,10 @@ function treeFiles(cwd, paths) {
   return nulList(git(cwd, ['ls-files', '-z', '--full-name', ...pathspecs(paths)])).map((name) => ({ name, read: () => readTracked(top, name) }));
 }
 
-/** Blob ids, types and sizes for `shas` (`cat-file --batch-check`). */
-function blobSizes(cwd, shas) {
-  const lines = git(cwd, ['cat-file', '--batch-check=%(objectname) %(objecttype) %(objectsize)'], `${shas.join('\n')}\n`).toString('utf8');
-  return new Map(lines.trim().split('\n').map((line) => line.split(' ')).map(([sha, type, size]) => [sha, { type, size: Number(size) }]));
-}
-
-/** One staged entry: `{ text }` or `{ skip }`, from its index blob. */
-function readStaged(cwd, { mode, sha }, sizes) {
+/** One staged entry: `{ bytes }` or `{ skip }`, from its index blob (a symlink's blob is its target). */
+function readStaged(cwd, { mode, sha }) {
   if (mode === '160000') return { skip: 'a submodule' };
-  const blob = sizes.get(sha);
-  if (blob?.type !== 'blob') throw new CheckError(`index entry ${sha} is not a readable blob`);
-  if (blob.size > FILE_MAX_BYTES) return { skip: 'over 2 MiB' };
-  const bytes = git(cwd, ['cat-file', 'blob', sha]);
-  const skip = mode === '120000' ? null : binaryReason(bytes);
-  return skip === null ? { text: bytes.toString('utf8') } : { skip };
+  return { bytes: git(cwd, ['cat-file', 'blob', sha]) };
 }
 
 /** The files added or changed in the index, read from their index blobs (names relative to the top). */
@@ -175,35 +115,39 @@ function stagedFiles(cwd, paths) {
   // diff names are relative to the top from any folder; a rename counts as a new file, so its whole content is checked
   const changed = nulList(git(cwd, ['diff', '--cached', '--name-only', '-z', '--no-renames', '--diff-filter=ACMT', ...pathspecs(paths)]));
   if (changed.length === 0) return [];
-  const entries = nulList(git(top, ['ls-files', '-s', '-z', '--', ...changed.map((name) => `:(literal)${name}`)])).map((entry) => {
+  return nulList(git(top, ['ls-files', '-s', '-z', '--', ...changed.map((name) => `:(literal)${name}`)])).map((entry) => {
     const [meta, name] = entry.split('\t');
     const [mode, sha] = meta.split(' ');
-    return { mode, sha, name };
+    return { name, read: () => readStaged(top, { mode, sha }) };
   });
-  const sizes = blobSizes(top, [...new Set(entries.map((entry) => entry.sha))]);
-  return entries.map((entry) => ({ name: entry.name, read: () => readStaged(top, entry, sizes) }));
 }
 
 /** A file name as printed: as it is, or quoted and escaped when it holds a control or format character (repository text, P5). */
 const shownFile = (name) => (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(name) ? `"${escaped(name)}"` : name);
+
+/** The hit lines of one file: the words of its path, then those of its content; `skip` when it has no content to read. */
+function fileHits({ name, read }, denied) {
+  const shown = shownFile(name);
+  const lines = nameWords(name, denied).map((word) => `${shown}:name: ${word}`);
+  const content = read();
+  if (content.skip !== undefined) return { lines, skip: content.skip };
+  return { lines: [...lines, ...findHitsInBytes(content.bytes, denied).map((hit) => `${shown}:${hit.line}: ${hit.word}`)] };
+}
 
 /** Checks files and prints hits, skips and the summary; returns the exit code. */
 function checkFiles(files, denied, what) {
   let hitCount = 0;
   const hitFiles = new Set();
   let skipped = 0;
-  for (const { name, read } of files) {
-    const content = read();
-    if (content.skip !== undefined) {
+  for (const file of files) {
+    const { lines, skip } = fileHits(file, denied);
+    if (skip !== undefined) {
       skipped += 1;
-      console.log(`share-check: skipped ${shownFile(name)} (${content.skip})`);
-      continue;
+      console.log(`share-check: skipped ${shownFile(file.name)} (${skip})`);
     }
-    for (const hit of findHits(content.text, denied)) {
-      hitCount += 1;
-      hitFiles.add(name);
-      console.log(`${shownFile(name)}:${hit.line}: ${hit.word}`);
-    }
+    for (const line of lines) console.log(line);
+    hitCount += lines.length;
+    if (lines.length > 0) hitFiles.add(file.name);
   }
   const counts = `${files.length - skipped} ${what} checked, ${skipped} skipped, ${denied.length} words`;
   if (files.length === 0) console.log(`share-check: clean (0 ${what}: ${what === 'files' ? 'nothing tracked' : 'nothing added or changed in the index'})`);
@@ -212,34 +156,29 @@ function checkFiles(files, denied, what) {
   return hitCount === 0 ? EXIT.clean : EXIT.hit;
 }
 
-/** The ERE of a deny word for `git log -G`: literal, with a non-alphanumeric (or line end) boundary where the word has a letter edge. */
-function gitWordPattern(word) {
-  const literal = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const before = WORD_CHAR.test(word.at(0) ?? '') ? '(^|[^[:alnum:]])' : '';
-  const after = WORD_CHAR.test(word.at(-1) ?? '') ? '([^[:alnum:]]|$)' : '';
-  return `${before}${literal}${after}`;
+/** Checks the message of the commit being made, as git will commit it (comments and the part below the scissors left out). */
+function checkCommitMessage(cwd, file, denied) {
+  let text;
+  try {
+    text = readPlainFile(file, MESSAGE_MAX_BYTES);
+  } catch (error) {
+    throw new CheckError(`commit message ${file} not readable (${error.code ?? error.message})`);
+  }
+  const cut = text.search(SCISSORS);
+  // git's own clean-up, so core.commentChar is honoured as git commit honours it
+  const message = git(cwd, ['stripspace', '--strip-comments'], cut === -1 ? text : text.slice(0, cut)).toString('utf8');
+  const hits = findHits(message, denied);
+  for (const hit of hits) console.log(`commit message:${hit.line}: ${hit.word}`);
+  const counts = `${denied.length} words`;
+  console.log(hits.length === 0 ? `share-check: commit message clean (${counts})` : `share-check: ${hits.length} hits in the commit message (${counts}); reword it`);
+  return hits.length === 0 ? EXIT.clean : EXIT.hit;
 }
 
-/** Prints, per deny word, the commits whose message holds it and those whose changes add or remove it; returns the exit code. */
-function checkHistory(cwd, denied) {
-  const messages = nulList(git(cwd, ['log', '--all', '-z', '--format=%H%n%B'])).map((record) => {
-    const cut = record.indexOf('\n');
-    return { sha: record.slice(0, cut === -1 ? undefined : cut), text: cut === -1 ? '' : record.slice(cut + 1) };
-  });
-  let hitWords = 0;
-  for (const entry of denied) {
-    const inMessages = messages.filter(({ text }) => findHits(text, [entry]).length > 0).map(({ sha }) => sha);
-    const inChanges = gitText(cwd, ['log', '--all', '--format=%H', '-i', '-E', `-G${gitWordPattern(entry.word)}`]).split('\n').filter(Boolean);
-    const commits = [...new Set([...inMessages, ...inChanges])];
-    if (commits.length === 0) continue;
-    hitWords += 1;
-    const shown = commits.slice(0, HISTORY_SHAS_SHOWN).map((sha) => sha.slice(0, SHORT_SHA)).join(' ');
-    const more = commits.length > HISTORY_SHAS_SHOWN ? ` +${commits.length - HISTORY_SHAS_SHOWN} more` : '';
-    console.log(`share-check: history ${entry.word}: ${commits.length} commits (messages ${inMessages.length}, changes ${inChanges.length}): ${shown}${more}`);
-  }
-  const counts = `${messages.length} commits, ${denied.length} words`;
-  console.log(hitWords === 0 ? `share-check: history clean (${counts})` : `share-check: history: ${hitWords} words found (${counts})`);
-  return hitWords === 0 ? EXIT.clean : EXIT.hit;
+/** Refuses option sets that mix checks. */
+function checkOptions(values, positionals) {
+  const modes = ['staged', 'history', 'commit-msg'].filter((mode) => values[mode] !== undefined && values[mode] !== false);
+  if (modes.length > 1) throw new CheckError(`--${modes.join(' and --')} are separate checks: run one at a time`);
+  if (modes.length === 1 && modes[0] !== 'staged' && positionals.length > 0) throw new CheckError(`--${modes[0]} takes no path`);
 }
 
 /** Runs one check from the command-line arguments and returns its exit code; never throws. */
@@ -247,15 +186,15 @@ export function main(argv, cwd = process.cwd()) {
   try {
     const { values, positionals } = parseArgs({
       args: argv, allowPositionals: true,
-      options: { deny: { type: 'string' }, staged: { type: 'boolean' }, history: { type: 'boolean' } },
+      options: { deny: { type: 'string' }, staged: { type: 'boolean' }, history: { type: 'boolean' }, 'commit-msg': { type: 'string' } },
     });
-    if (values.staged && values.history) throw new CheckError('--staged and --history are separate checks: run one at a time');
-    if (values.history && positionals.length > 0) throw new CheckError('--history checks the whole history and takes no path');
+    checkOptions(values, positionals);
     const { path, words } = readDenyList(cwd, values.deny);
     if (words === null) return notRun(`no deny list at ${path}`);
     if (words.length === 0) return notRun(`no words in ${path}`);
     const denied = words.map((word) => ({ word, pattern: wordPattern(word) }));
-    if (values.history) return checkHistory(cwd, denied);
+    if (values.history) return checkHistory(cwd, denied, { git, fail: (why) => new CheckError(why) }) === 0 ? EXIT.clean : EXIT.hit;
+    if (values['commit-msg'] !== undefined) return checkCommitMessage(cwd, values['commit-msg'], denied);
     return values.staged ? checkFiles(stagedFiles(cwd, positionals), denied, 'staged files') : checkFiles(treeFiles(cwd, positionals), denied, 'files');
   } catch (error) {
     // every failure, a bad option or a bug included, is exit 2: exit 1 means a hit and must never come from a crash

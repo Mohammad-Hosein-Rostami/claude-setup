@@ -1,6 +1,7 @@
 // Tests of scripts/share-check.mjs (lane share-scrub, spec layering §4): hits print `<file>:<line>: <word>` and never the line or the
-// list; a missing list is "not run" (exit 0); an unreadable list or a git failure is exit 2; binary and over-2-MiB files are listed as
-// skipped; --staged reads index blobs; --history counts commits per word; CRLF lists, `#` comments, literal and word-bounded matching.
+// list; a missing list is "not run" (exit 0); an unreadable list or a git failure is exit 2; binary and large files are read, not
+// skipped (review R1); --staged reads index blobs; --history counts commits per word; CRLF lists, `#` comments, literal and word-bounded
+// matching. The evasion cases (UTF-16, NFKC, split names, paths, camelCase) and --commit-msg are in share-check-evasions.test.mjs.
 // Every repo is a throw-away one in the temp folder (tests/git-tidy-helpers.mjs); the deny words here are made-up, neutral ones.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,13 +9,14 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { FILE_MAX_BYTES, findHits, parseDenyList, wordPattern } from '../scripts/share-check.mjs';
+import { findHits, parseDenyList, wordPattern } from '../scripts/share-check/match.mjs';
 import { CLEAN_ENV, addWorktree, commit, git, makeRepo } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const CLI = fileURLToPath(new URL('../scripts/share-check.mjs', import.meta.url));
 const WORD = 'zebracorp';
 const LINE_TEXT = 'the quiet harbour line'; // text beside a hit that must never be printed
+const OLD_SIZE_CAP_BYTES = 2 * 1024 * 1024; // the size above which the first version skipped a file
 
 const check = (cwd, ...args) => spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf8', env: CLEAN_ENV });
 
@@ -79,19 +81,21 @@ test('an unreadable or missing named list and a git failure exit 2 with why, nev
   assert.match(unknown.stderr, /^share-check: error: /m);
 });
 
-test('a binary file and one over 2 MiB are listed as skipped, not read and not counted clean silently', () => {
+// Review R1: a skipped file was a clean pass, so a private word in a binary or large file got through. Both are read now.
+test('a binary file and one over 2 MiB are read, in the tree and in the index, never skipped as clean', () => {
   const dir = repoWithList();
   writeFileSync(join(dir, 'logo.bin'), Buffer.concat([Buffer.from([0, 1, 2]), Buffer.from(WORD)]));
-  writeFileSync(join(dir, 'big.txt'), `${WORD}\n${'x'.repeat(FILE_MAX_BYTES)}`);
+  writeFileSync(join(dir, 'big.txt'), `${'x'.repeat(OLD_SIZE_CAP_BYTES)}\n${WORD}\n`);
   git(dir, 'add', 'logo.bin', 'big.txt');
+  const staged = check(dir, '--staged');
+  assert.equal(staged.status, 1, staged.stdout + staged.stderr);
+  assert.match(staged.stdout, /^big\.txt:2: zebracorp$/m);
+  assert.match(staged.stdout, /^logo\.bin:1: zebracorp$/m);
   git(dir, 'commit', '-q', '-m', 'add files');
   const result = check(dir);
-  assert.equal(result.status, 0, result.stdout);
-  assert.match(result.stdout, /^share-check: skipped big\.txt \(over 2 MiB\)$/m);
-  assert.match(result.stdout, /^share-check: skipped logo\.bin \(binary\)$/m);
-  assert.match(result.stdout, /^share-check: clean \(1 files checked, 2 skipped, 2 words\)$/m);
-  const staged = check(dir, '--staged');
-  assert.match(staged.stdout, /^share-check: clean \(0 staged files: nothing added or changed in the index\)$/m);
+  assert.equal(result.status, 1, result.stdout);
+  assert.doesNotMatch(result.stdout, /^share-check: skipped/m);
+  assert.match(result.stdout, /^share-check: 2 hits in 2 files \(3 files checked, 0 skipped, 2 words\)/m);
 });
 
 test('--staged reads the index blobs, not the working tree, and names with spaces and unicode', () => {
@@ -108,7 +112,8 @@ test('--staged reads the index blobs, not the working tree, and names with space
   const forged = `x\nnotes.md:9: ${WORD}`; // a file name that would print a fake hit line of its own
   writeFileSync(join(dir, forged), `${WORD}\n`);
   git(dir, 'add', '--', forged);
-  assert.deepEqual(check(dir, '--staged').stdout.split('\n').filter((text) => text.endsWith(`: ${WORD}`)), [`"x\\nnotes.md:9: ${WORD}":1: ${WORD}`]);
+  const forgedShown = `"x\\nnotes.md:9: ${WORD}"`; // the name holds the word too (review R4): one hit by name, one by content
+  assert.deepEqual(check(dir, '--staged').stdout.split('\n').filter((text) => text.endsWith(`: ${WORD}`)), [`${forgedShown}:name: ${WORD}`, `${forgedShown}:1: ${WORD}`]);
   git(dir, 'rm', '-q', '--cached', '--', forged);
   writeFileSync(join(dir, 'other.md'), `${WORD}\n`);
   assert.equal(check(dir, '--staged').status, 0, 'an untracked file is not in the commit');
