@@ -1,7 +1,8 @@
-// Shared wording for guard reasons: a destructive rule's reason starts with DESTRUCTIVE_PREFIX so its dialog stands out, a literal secret's
-// reason comes from secretReason, and a reason only the backstop parser found ends with BACKSTOP_MARK.
+// Shared wording for guard reasons: a destructive rule's reason starts with DESTRUCTIVE_PREFIX so its dialog stands out, and a reason only
+// the backstop parser found ends with BACKSTOP_MARK. secretReason and isSecretOnlyReason keep the wording of the literal-secret ask that
+// owner decision R22-G1 retired (no guard rule gives it now; only tests read it, so both can go together in one cleanup).
 // Exports: DESTRUCTIVE_PREFIX, destructive(what) -> reason, MAX_COMMAND_CHARS, BACKSTOP_MARK, secretReason(kind), isSecretOnlyReason(reason),
-// secretKindOf(reason) -> kind | undefined; shown(target) -> a path as a reason repeats it (moved here from lib/rm-paths.mjs, which re-exports it).
+// shown(target) -> a path as a reason repeats it (moved here from lib/rm-paths.mjs, which re-exports it).
 import { QUOTED_MARK } from './shell-words.mjs';
 
 export const DESTRUCTIVE_PREFIX = 'DESTRUCTIVE: ';
@@ -15,7 +16,6 @@ const SECRET_REASON_SUFFIX = '); prefer an env var or a file the tool reads';
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const SECRET_REASON = `${escapeRegExp(SECRET_REASON_PREFIX)}([^)]*)${escapeRegExp(SECRET_REASON_SUFFIX)}(?:${escapeRegExp(BACKSTOP_MARK)})?`;
 const SECRET_ONLY_REASONS = new RegExp(`^${SECRET_REASON}(?:; ${SECRET_REASON})*$`);
-const ONE_SECRET_REASON = new RegExp(`^${SECRET_REASON}$`);
 
 /**
  * @param {string} kind what findLiteralSecret found ("an Anthropic API key", ...)
@@ -28,12 +28,6 @@ export const secretReason = (kind) => `${SECRET_REASON_PREFIX}${kind}${SECRET_RE
  * @returns {boolean} true when every reason is a literal-secret reason (with or without the "(matched in raw text)" mark)
  */
 export const isSecretOnlyReason = (reason) => SECRET_ONLY_REASONS.test(reason);
-
-/**
- * @param {string} reason ONE ask reason (not a joined list)
- * @returns {string | undefined} the secret kind when it is a literal-secret reason (marked or not), else undefined
- */
-export const secretKindOf = (reason) => ONE_SECRET_REASON.exec(reason)?.[1];
 
 const MAX_SHOWN_TARGET_CHARS = 120; // how much of a target a reason repeats: the reason goes into the dialog and back to the model
 const LINE_BREAKS = /[\r\n]+/g;
