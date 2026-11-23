@@ -92,8 +92,8 @@ export function reasonOf(summaries, { baseWhy } = {}) {
     if (summary.fresh.length > MAX_REASON_LINES_PER_CHECK) lines.push(`  ... and ${summary.fresh.length - MAX_REASON_LINES_PER_CHECK} more`);
     if (summary.old.length > 0) lines.push(`  ${summary.old.length} old failures (also at the base, not yours)`);
     const unknown = summary.unknown?.length ?? 0;
-    if (unknown > 0) lines.push(`  ${unknown} unknown failures (in files you did not change, no base to compare: not blamed)`);
+    if (unknown > 0) lines.push(`  ${unknown} unknown failures (off your change, no base to compare: not blamed)`);
   }
-  if (baseWhy) lines.push(`The base was not compared (${baseWhy}): these failures may be older than your change.`);
+  if (baseWhy) lines.push(`The base was not compared (${baseWhy}): these failures may be older than your change (failures off your change are not blamed).`);
   return lines.join('\n');
 }

@@ -2,12 +2,10 @@
 // typecheck can be run there to find out which failures are old, and the cache of those old failures.
 // Exports: baseTree(top, base, {deadlineMs, stableFor, env}) -> Promise<{dir, cleanup} | {unavailable}>, cachedBase(repoId, base, label, env?) -> Promise<Set | null>,
 //   saveBase(repoId, base, label, ids, env?) -> Promise<boolean>.
-// Go (`stableFor: 'go'`, X33): the tree goes in the repo's one stable folder `<HOME>/.claude/state/done-check/base-go/<sha256 of the real git
-//   common dir>/tree` instead of a temp folder, emptied and refilled on each use, so the path in Go's cache keys stays the same across lanes
-//   and rebases. Its lock (`lock` beside the tree, lib/lock-file.mjs: O_EXCL, never followed) is refreshed every LOCK_HEARTBEAT_MS while
-//   held, so only a lock left unrefreshed LOCK_STALE_MS by a killed run is ever broken, never a live holder's; a held lock answers `base folder
-//   busy`. cleanup releases the lock (only while it is still this run's file) and keeps the tree; process exit releases it too. Each Go base
-//   run removes, under their own lock, other repos' folders whose tree was not made for 7 days (P15: the same bound as the answer cache).
+// Go (`stableFor: 'go'`, X33): the tree goes in the repo's one stable folder (lib/base-go-folder.mjs:
+//   `<HOME>/.claude/state/done-check/base-go/<hash>/tree`) instead of a temp folder, emptied and refilled under its lock on each use, so the
+//   path in Go's cache keys stays the same across lanes and rebases; a held lock answers `base folder busy`; cleanup releases the lock and
+//   keeps the tree.
 // How the tree is made: `git read-tree <base>` into a temp index (GIT_INDEX_FILE) and `git checkout-index -a --prefix=<dir>/`, so the real index,
 //   worktree list and HEAD never change and no `.git` is written. Each real node_modules folder of the worktree (at the root and next to a package.json
 //   of the base tree) is shadowed by a folder of links to the same targets, except a link into the worktree's own packages, which points at the base copy
@@ -24,12 +22,12 @@
 //   a bad argument type is answered as unavailable, null or false.
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, lutimesSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { devNull, homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { gitOut, worktreeOf } from '../../../hooks/lib/gated-folder.mjs';
-import { isPrivateFile, lstatOrNull, privateFolder, readSessionFile, sameNode, writeSessionFile } from '../../../hooks/lib/session-store.mjs';
-import { releaseLock, takeLock } from '../../disk-free/lib/lock-file.mjs';
+import { isPrivateFile, privateFolder, readSessionFile, writeSessionFile } from '../../../hooks/lib/session-store.mjs';
+import { claimStableFolder } from './base-go-folder.mjs';
 import { BASE_DEADLINE_MS } from './contract.mjs';
 
 const TEMP_PREFIX = 'done-check-base-';
@@ -43,17 +41,7 @@ const REPOSITORY_VARIABLES = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR'];
 // same hardening as gated-folder's runGit (which cannot take GIT_INDEX_FILE): no program the repository names runs
 const HARDENED = ['-c', 'core.fsmonitor=false', '-c', 'safe.bareRepository=explicit', '-c', `core.hooksPath=${devNull}`, '-c', 'log.showSignature=false'];
 
-// The stable Go base folder (X33): <state>/base-go/<sha256 of the repo's real git common dir>/{tree,index,lock}, one per repo for every
-// worktree and base, so Go's build cache (its keys hold each package's folder) is reused instead of growing by the module per new path.
-const STABLE_FOLDER = 'base-go';
-const STABLE_NAME = /^[0-9a-f]{64}$/;
-const LOCK_NAME = 'lock';
-const LOCK_HEARTBEAT_MS = 5_000; // the holder refreshes its lock's mtime this often while it holds it
-const LOCK_STALE_MS = 60_000; // a lock not refreshed for this long is a killed run's (12 missed refreshes): only then is it broken
-const STABLE_IDLE_MS = 7 * 24 * 60 * 60 * 1000; // a repo's folder unused this long is removed, like the base answer cache's 7 days
-
 const liveRoots = new Set();
-const heldLocks = new Set(); // the release functions of the stable-folder locks this process holds
 let exitHookSet = false;
 
 /** Runs git with `indexFile` as its index, without a shell and without waiting past `timeoutMs`; resolves {ok, why}. */
@@ -115,12 +103,11 @@ function makeRoot() {
   return root;
 }
 
-/** At process exit: remove this run's temp folders and release its stable-folder locks. */
+/** At process exit: remove this run's temp folders. */
 function setExitHook() {
   exitHookSet = true;
   process.once('exit', () => {
     for (const path of [...liveRoots]) removeFolder(path);
-    for (const release of [...heldLocks]) release();
   });
 }
 
@@ -223,77 +210,18 @@ export async function baseTree(top, base, { deadlineMs = BASE_DEADLINE_MS, stabl
   }
 }
 
-/** The lock of one stable folder, refreshed while held; null when a live run holds it. `release` removes it only while it is ours. */
-function holdLock(folder) {
-  const path = join(folder, LOCK_NAME);
-  if (!takeLock(path, Date.now(), LOCK_STALE_MS)) return null;
-  const mine = lstatSync(path);
-  const owns = () => {
-    try {
-      const now = lstatOrNull(path);
-      return now !== null && sameNode(now, mine);
-    } catch {
-      return false; // unreadable: never touch or remove what may not be ours
-    }
-  };
-  const touch = () => {
-    try {
-      if (owns()) lutimesSync(path, new Date(), new Date()); // a fresh mtime tells others the holder is alive
-    } catch (error) {
-      console.error(`done-check base-run: could not refresh ${path}: ${error.message}`); // the lock may then be taken as stale
-    }
-  };
-  const beat = setInterval(touch, LOCK_HEARTBEAT_MS);
-  beat.unref();
-  const release = () => {
-    if (!heldLocks.delete(release)) return;
-    clearInterval(beat);
-    try {
-      if (owns()) releaseLock(path);
-    } catch (error) {
-      console.error(`done-check base-run: could not release ${path}: ${error.message}`); // it goes stale after LOCK_STALE_MS
-    }
-  };
-  heldLocks.add(release);
-  if (!exitHookSet) setExitHook();
-  return release;
-}
-
-/** Removes one other repo's stable folder when its tree was not made for STABLE_IDLE_MS, under its lock (never a held one). */
-function removeIfIdle(folder) {
-  const info = lstatSync(folder);
-  const usedMs = lstatOrNull(join(folder, 'tree'))?.mtimeMs ?? info.mtimeMs; // the tree folder is made anew on every use
-  if (!info.isDirectory() || Date.now() - usedMs < STABLE_IDLE_MS) return;
-  if (takeLock(join(folder, LOCK_NAME), Date.now(), LOCK_STALE_MS)) removeFolder(folder); // the lock goes with the folder
-}
-
-/** Removes the idle stable folders of other repos; one that vanished or cannot be read is named and left to the next run. */
-function sweepIdleFolders(parent, own) {
-  for (const name of readdirSync(parent).filter((entry) => STABLE_NAME.test(entry) && join(parent, entry) !== own)) {
-    try {
-      removeIfIdle(join(parent, name));
-    } catch (error) {
-      console.error(`done-check base-run: could not sweep ${join(parent, name)}: ${error.message}`);
-    }
-  }
-}
-
-/** The repo's stable Go base folder, emptied and refilled with the base under its lock (see baseTree). */
+/** The repo's stable Go base folder (lib/base-go-folder.mjs), refilled with the base under its lock; cleanup releases the lock. */
 async function stableTree(tree, base, deadlineAt, env) {
-  const parent = join(stateFolder(env), STABLE_FOLDER);
-  const folder = join(parent, createHash('sha256').update(realpathSync.native(tree.commonDir)).digest('hex'));
-  if (!stateIsPlain(env) || privateFolder(parent) === undefined || privateFolder(folder) === undefined) return { unavailable: 'the stable base folder is not a plain folder of this user' };
-  const release = holdLock(folder);
-  if (release === null) return { unavailable: 'base folder busy' };
+  if (!stateIsPlain(env)) return { unavailable: 'the done-check state folder is not a plain folder of this user' };
+  const claimed = claimStableFolder(stateFolder(env), tree.commonDir);
+  if (claimed.unavailable !== undefined) return claimed;
   try {
-    sweepIdleFolders(parent, folder);
-    for (const name of ['tree', 'index']) rmSync(join(folder, name), { recursive: true, force: true }); // links inside are removed, never followed
-    const made = await fillTree(tree.top, base, folder, deadlineAt);
-    if (made.unavailable === undefined) return { dir: made.treeDir, cleanup: release };
-    release();
+    const made = await fillTree(tree.top, base, claimed.folder, deadlineAt);
+    if (made.unavailable === undefined) return { dir: made.treeDir, cleanup: claimed.release };
+    claimed.release();
     return { unavailable: made.unavailable };
   } catch (error) {
-    release();
+    claimed.release();
     return { unavailable: `the base tree could not be made: ${error.message}` };
   }
 }

@@ -4,7 +4,8 @@
 // What it decides: a kind FAILs when it has a failure the base does not have (types, lint, tests) or any weakened-test item; a new test
 //   failure that passes when its test file runs once more at head is `flaky`, shown in the line and never a FAIL; with no base (only a
 //   Scope a caller builds without one: ownChange always gives a git worktree its HEAD), a test failure in a file the change does not hold
-//   is `unknown` (it may be another agent's or older): its kind is a FAIL that does not block, and the run is `left-open`, so a failing
+//   is `unknown` (it may be another agent's or older), and so is any failure off the change when the base could not be compared
+//   (base-compare.mjs `onChange`): its kind is a FAIL that does not block, and the run is `left-open`, so a failing
 //   test is never shown or stored as ok and never reused as green; a kind that could not run is `not-run` and never blocks and is never
 //   ok. At a stop (`where: 'stop'`) a FAIL with a new failure blocks, except when the same change key was blocked before or the agent was
 //   blocked MAX_BLOCKS_IN_A_ROW times already: then it is `left-open` (the caller, the hook, owns that count and passes it as
@@ -87,7 +88,9 @@ function membersOf({ scope, plan, results, answers, flaky }) {
     const old = oldIds ? result.failures.filter((failure) => oldIds.has(failure.id)) : [];
     const isFlaky = (failure) => flaky.get(index)?.has(failure.id) === true;
     const notOld = result.result === 'fail' ? result.failures.filter((failure) => !old.includes(failure)) : [];
-    const unknown = notOld.filter((failure) => isUnknownOrigin(scope, cmd, failure));
+    // a base that could not be compared names the failures on the change; the others may be older than it: unknown, never blocking
+    const offChange = (failure) => answer?.onChange !== undefined && !answer.onChange.has(failure.id);
+    const unknown = notOld.filter((failure) => isUnknownOrigin(scope, cmd, failure) || offChange(failure));
     const fresh = notOld.filter((failure) => !unknown.includes(failure) && !isFlaky(failure));
     const flakyCount = notOld.filter((failure) => !unknown.includes(failure) && isFlaky(failure)).length;
     const judged = result.result === 'fail' ? (fresh.length > 0 || unknown.length > 0 ? 'fail' : 'ok') : result.result;

@@ -9,16 +9,20 @@
 //   jest or node --test file list; a test file the base does not have cannot be an old failure). Answers are cached per (repo, base, package,
 //   kind, command and test files) through base-run.mjs. All base work (tree and runs) shares one budget. A run that cannot be read, a base
 //   tree that cannot be made, no git base, or a command shape it does not know answer `unavailable`: the caller then says the failures "may
-//   be older than your change", never that they are old.
+//   be older than your change", never that they are old. With a git base such an answer names the failures on the change (`onChange`:
+//   a changed file, on a changed line when the failure has one, or the Go package folder of a changed file); only those may block, the others
+//   are unknown (shown, never blocking), so a base that cannot be made never blocks on failures that may be old (X33).
 // Flaky: a test that newly fails at head (not an old failure) is run once more at head, its test file alone; one that passes the second time
 //   is flaky (the caller reports it and does not block). A rerun that cannot finish or read leaves the failure new.
-// Invariants: nothing throws for a bad base; the temp base tree is removed on every path (P15); the head results are never changed here.
+// Invariants: nothing throws for a bad base; the temp base tree is removed on every path (P15), a Go base releases the stable folder
+//   (lib/base-go-folder.mjs); the head results are never changed here.
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join, posix, relative } from 'node:path';
 import { baseTree, cachedBase, saveBase } from './base-run.mjs';
 import { goArgsOf, goPackageArg, withGoArgs } from './go-plan.mjs';
 import { runPlan } from './run-checks.mjs';
+import { changedLines } from './scope.mjs';
 
 const COMPARED_KINDS = new Set(['types', 'tests']);
 const BUILD_INFO_FLAG = '--tsBuildInfoFile';
@@ -30,7 +34,8 @@ const isCompared = (cmd) => COMPARED_KINDS.has(cmd.kind) || cmd.parse === 'gofmt
 const hashOf = (parts) => createHash('sha256').update(parts.join('\0')).digest('hex').slice(0, ARGS_HASH_CHARS);
 
 /**
- * @typedef {{ oldIds: Set<string> } | { unavailable: string }} BaseAnswer the ids that also fail at the base, or why they are unknown
+ * @typedef {{ oldIds: Set<string> } | { unavailable: string, onChange?: Set<string> }} BaseAnswer the ids that also fail at the base, or why
+ *   they are unknown and (with a git base) which failure ids lie on the change (changed file and line, or a Go package folder of a changed file)
  */
 
 const withSlashes = (path) => path.replaceAll('\\', '/');
@@ -139,17 +144,55 @@ export async function compareWithBase({ scope, plan, results, repoId, budgetMs, 
     else missing.push(entry);
   }
   if (missing.length === 0) return answers;
-  const tree = await baseTree(scope.top, scope.base, { deadlineMs: budgetMs });
+  // a Go command gets the repo's stable base folder, so Go's build cache (keyed by package folder) is hit again by the next base
+  const stableFor = missing.some((entry) => entry.cmd.parse) ? 'go' : undefined;
+  const tree = await baseTree(scope.top, scope.base, { deadlineMs: budgetMs, stableFor, env });
   if (tree.unavailable) {
     for (const entry of missing) answers.set(entry.index, { unavailable: tree.unavailable });
-    return answers;
+  } else {
+    try {
+      await runAtBase({ wanted: missing, scope, tree, repoId, leftMs: budgetMs - (Date.now() - startedAt), answers, env });
+    } finally {
+      tree.cleanup();
+    }
   }
-  try {
-    await runAtBase({ wanted: missing, scope, tree, repoId, leftMs: budgetMs - (Date.now() - startedAt), answers, env });
-  } finally {
-    tree.cleanup();
-  }
+  await markOnChange(scope, results, answers);
   return answers;
+}
+
+/** The changed line ranges of `file` (scope.mjs changedLines), or null when git cannot tell: the failure then counts as on the change. */
+async function rangesOf(scope, file) {
+  try {
+    return await changedLines(scope.top, scope.base, file);
+  } catch {
+    return null; // a diff that fails keeps the failure blocking, never lets it through
+  }
+}
+
+/** True when `failure` lies on the change: a Go package folder holding a changed file, or a changed file (on a changed line, when it has one). */
+async function isOnChange(scope, failure, rangesFor) {
+  const changed = [...scope.files, ...scope.wide, ...(scope.named ?? [])];
+  if (failure.file.endsWith('/')) return changed.some((file) => `${posix.dirname(file) === '.' ? '.' : posix.dirname(file)}/` === failure.file);
+  if (!changed.includes(failure.file)) return false;
+  if (failure.line === undefined) return true;
+  const ranges = await rangesFor(failure.file);
+  const end = failure.endLine ?? failure.line;
+  return ranges === null || ranges.some(([start, stop]) => start <= end && failure.line <= stop);
+}
+
+/**
+ * For each answer whose base could not be compared, the failure ids that lie on the change (`onChange`): only those may block; the
+ * others may be older than the change, so the caller shows them as unknown and does not block (X33).
+ */
+async function markOnChange(scope, results, answers) {
+  const known = new Map();
+  const rangesFor = (file) => { if (!known.has(file)) known.set(file, rangesOf(scope, file)); return known.get(file); };
+  for (const [index, answer] of answers) {
+    if (answer.unavailable === undefined) continue;
+    const onChange = new Set();
+    for (const failure of results[index].failures) if (await isOnChange(scope, failure, rangesFor)) onChange.add(failure.id);
+    answer.onChange = onChange;
+  }
 }
 
 /**
