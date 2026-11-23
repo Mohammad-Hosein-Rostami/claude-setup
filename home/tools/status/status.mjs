@@ -1,8 +1,14 @@
 // STATUS.md helper: the mechanical edits of the work table and the two lists, so the lead stops hand-editing them with sed.
 // Usage (in the folder that holds STATUS.md, or --file <path> before the command; the clock is always the system's, tests pass `now`):
 //   add <id> <item> <size>   new row at the end of the `## Work items` table, size S|M|L, started empty (rows are listed first)
-//   start <id>               started = now, when work on the row begins; a set started or done cell is never changed
-//   done <id> <evidence>     done = now (started too when it is empty: such a row costs 0); a set done cell is never changed
+//   start <id>               started = now, when work on the row begins; a set started or done cell is never changed; on a
+//                            parked or waiting row it clears the hold (and keeps a set started)
+//   done <id> <evidence>     done = now (started too when it is empty: such a row costs 0); a set done cell is never changed;
+//                            a hold at the head of the evidence is cleared, so a done row never reads as parked or waiting
+//   park <id|road> "<why>"   `parked: <why>` at the head of the evidence of the open row, or of every open row of the road
+//                            (`<road>.s<N>.*`): out of the estimate until `start` (estimate-spec R3); all rows or none
+//   wait <id> "<question>"   `waiting: <question>` the same way on one open row: it waits for the owner (R4); park and wait
+//                            exit 2 on an unknown id, a done row, a road with every row done, or a name both a row id and a road
 //   deliver "<what>"         a hand-over row `deliver:N | deliver: <what> | S | - | <now> | -`, N one above the highest
 //   deliver --auto           the same, only when no work row is open and one was done after the last hand-over (the Stop hook
 //                            hooks/status-deliver.mjs runs it); otherwise nothing changes and the message says why
@@ -16,7 +22,7 @@
 //   done takes predictor flags (--model, --effort, --files-planned, --suite-s, --review-rounds, --writers; status-predictors.mjs)
 //   show                     where the job stands in at most 5 lines, the finish from the estimate cache (status-show.mjs)
 //   log "<text>"             a dated line in STATUS.log.md beside STATUS.md, hidden from git (status-log.mjs); STATUS.md is not touched
-// After a changed add|start|done the estimate refresh and the board refresh start at once (segment-cache.mjs refreshNow,
+// After a changed add|start|done|park|wait the estimate refresh and the board refresh start at once (segment-cache.mjs refreshNow,
 // board/lib/refresh.mjs startBoardRefresh).
 // Exports: runStatus(argv, { cwd, now, sessionId, stateDir }) -> { code, message }; the CLI prints message (stdout for 0) and exits code.
 // Invariants: touches only the one line it adds or changes (a superseding rule also marks the rule it replaces); rows are only those of the one table under `## Work items` (header
@@ -44,15 +50,15 @@ import { readStatusFile, replaceStatusFile } from './status-file.mjs';
 import { appendLog } from './status-log.mjs';
 import { recordPredictors, splitPredictorFlags } from './status-predictors.mjs';
 import { showStatus } from './status-show.mjs';
-import { DEFECT_TABLE, insertRow, isEmpty, oneLine, rowIndex, rowToChange, stamp, tableToEdit, writeRow } from './status-table.mjs';
+import { DEFECT_TABLE, holdText, insertRow, isEmpty, oneLine, rowIndex, rowsToHold, rowToChange, stamp, tableToEdit, withHold, withoutHold, writeRow } from './status-table.mjs';
 import { BULLET_EDITS } from './status-bullets.mjs';
 
 const SIZES = ['S', 'M', 'L'];
-const USAGE = 'usage: status.mjs [--file STATUS.md] add <id> <item> <size S|M|L> [+ <id> <item> <size> ...] | start <id> [<id> ...] | done <id> <evidence> [--model m --effort e ...] [+ <id> <evidence> ...] | deliver "<what>" | deliver --auto | rule "<text>" [--scope job|project|always] [--supersedes R<n>] | decision "<text>" | next <id> "<step>" | defect <id> "<conditions>" | show | log "<text>"';
+const USAGE = 'usage: status.mjs [--file STATUS.md] add <id> <item> <size S|M|L> [+ <id> <item> <size> ...] | start <id> [<id> ...] | done <id> <evidence> [--model m --effort e ...] [+ <id> <evidence> ...] | park <id|road> "<why>" | wait <id> "<question>" | deliver "<what>" | deliver --auto | rule "<text>" [--scope job|project|always] [--supersedes R<n>] | decision "<text>" | next <id> "<step>" | defect <id> "<conditions>" | show | log "<text>"';
 const READ_COMMANDS = ['show', 'log'];
 // The row rules (they left the always-loaded home/CLAUDE.md, spec-p6 r9-text-procedures): printed with the usage text and after every add.
 export const ROW_RULES = 'rows: every owner request and every owner correction becomes rows before work on it starts; list the whole job first, review and fix rows (`close:`) included; a lane is one row: its landing is that row\'s done evidence (land-lane writes it), no `close:` twin row to land it; a correction\'s item starts `rework:`; a step found later is a new row at once; never fold steps into one row, never clear a done cell; `start` when work on a row begins, `done` with its evidence when it ends; a hand-over is recorded by itself when your turn ends with no open row, `deliver "<what>"` records one while rows stay open; the estimate tool keeps one time and says why when it moves.';
-const REFRESH_COMMANDS = ['add', 'start', 'done'];
+const REFRESH_COMMANDS = ['add', 'start', 'done', 'park', 'wait'];
 const ID = /^[A-Za-z0-9][\w.:-]{0,39}$/; // `7`, `17a`, `close:5`, `rework:12`, `deliver:3`; a leading `-` would read as a bullet
 const RESERVED_ID = /^deliver:/i; // hand-over rows: only `deliver` writes them, numbered
 const DELIVER_ID = /^deliver:(\d+)$/i;
@@ -76,10 +82,27 @@ function startRow(lines, [id], now) {
   if (!id) return { usage: 'start needs <id>' };
   const row = rowToChange(lines, id);
   if (row.error) return row;
-  if (!isEmpty(row.cells[3])) return { error: `${id} is already started (${row.cells[3]}); a started cell is never changed` };
-  row.cells[3] = stamp(now);
+  const { evidence, held } = withoutHold(row.cells[5]);
+  if (!isEmpty(row.cells[3]) && held === null) return { error: `${id} is already started (${row.cells[3]}); a started cell is never changed` };
+  if (isEmpty(row.cells[3])) row.cells[3] = stamp(now);
+  row.cells[5] = evidence;
   writeRow(lines, row);
-  return {};
+  return held === null ? {} : { note: `${id} is no longer ${held}` };
+}
+
+/** `park` (kind `parked`) or `wait` (kind `waiting`): the hold at the head of the evidence of each row rowsToHold names. */
+function holdRows(lines, [target, ...words], kind) {
+  const text = holdText(words.join(' '));
+  const form = kind === 'parked' ? 'park <id|road> "<why>"' : 'wait <id> "<question>"';
+  if (!target || !text) return { usage: `${form} needs both` };
+  if (!ID.test(target)) return { usage: `${form}: the id or road is one plain word of letters, digits and _ . : -` };
+  const found = rowsToHold(lines, target, { byRoad: kind === 'parked' });
+  if (found.usage) return found;
+  for (const row of found.rows) {
+    row.cells[5] = withHold(row.cells[5], `${kind}: ${text}`);
+    writeRow(lines, row);
+  }
+  return found.rows.length > 1 ? { note: `${found.rows.length} open rows of road ${target} ${kind}` } : {};
 }
 
 function finishRow(lines, words, now) {
@@ -92,7 +115,8 @@ function finishRow(lines, words, now) {
   const neverStarted = isEmpty(row.cells[3]);
   if (neverStarted) row.cells[3] = stamp(now);
   row.cells[4] = stamp(now);
-  row.cells[5] = isEmpty(row.cells[5]) ? evidence : `${row.cells[5]}; ${evidence}`;
+  const earlier = withoutHold(row.cells[5]).evidence; // a done row keeps no hold (F1: it must never read as parked)
+  row.cells[5] = isEmpty(earlier) ? evidence : `${earlier}; ${evidence}`;
   writeRow(lines, row);
   return neverStarted ? { note: `${id} was never started, so its work counts 0 minutes: run \`status.mjs start ${id}\` when work on a row begins` } : {};
 }
@@ -136,6 +160,8 @@ const EDITS = {
   add: addRow,
   start: startRow,
   done: finishRow,
+  park: (lines, words) => holdRows(lines, words, 'parked'),
+  wait: (lines, words) => holdRows(lines, words, 'waiting'),
   deliver: deliverRow,
   ...BULLET_EDITS,
   defect: (lines, words) => markDefect(lines, words, DEFECT_TABLE),

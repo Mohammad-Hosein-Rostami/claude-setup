@@ -1,9 +1,13 @@
 // The one `## Work items` table of a STATUS.md: finding it (code fences skipped as the estimator skips them), making it when the
 // section is missing, and reading and writing one row in the style of its header. status.mjs runs the commands on top of it.
-// Exports: WORK_ITEMS, stamp, isEmpty, oneLine, sectionEnd, hiddenEndReason, tableToEdit, rowIndex, insertRow, rowToChange, writeRow, DEFECT_TABLE (the row helpers of `defect`).
+// Exports: WORK_ITEMS, stamp, isEmpty, oneLine, sectionEnd, hiddenEndReason, tableToEdit, rowIndex, insertRow, rowToChange, writeRow, DEFECT_TABLE (the row helpers of `defect`),
+// HOLD_KINDS, holdText, withHold, withoutHold, rowsToHold (the `park` and `wait` holds).
 // Invariants: rows are only the contiguous table rows below the header `id | item | size | started | done | evidence` and its
 // separator; a done cell is never changed (rowToChange refuses it); a section is never made below a code fence left open.
+// A hold (estimate-spec R3, R4) is `parked: <why>` or `waiting: <question>` at the head of an open row's evidence cell, any older
+// evidence kept after `; `: no new column, so a reader that knows no holds still reads the row as an open row with evidence.
 import { findSection, isTableRow, rowCells } from '../estimate/lib/items.mjs';
+import { roadStepOf } from '../estimate/lib/road-steps.mjs';
 
 const COLUMNS = ['id', 'item', 'size', 'started', 'done', 'evidence'];
 export const WORK_ITEMS = 'Work items';
@@ -105,4 +109,55 @@ export const DEFECT_TABLE = {
     return {};
   },
 };
+
+/** The two holds, as the evidence prefix names them: `park` writes `parked:`, `wait` writes `waiting:`. */
+export const HOLD_KINDS = ['parked', 'waiting'];
+// The hold at the head of an evidence cell: its kind, its text up to the evidence separator `;`, then the separator.
+const HOLD_AT_HEAD = new RegExp(`^(${HOLD_KINDS.join('|')}):[^;]*(?:;\\s*|$)`, 'i');
+const CONTROL_CHARS = /\p{Cc}/gu; // a bell or escape in a cell would reach every terminal that prints the row
+const EVIDENCE_SEPARATOR = /;/g; // `;` ends the hold text, so one inside it would cut the hold short
+
+/** The hold's text: one line, no control character, `;` written `,` (see EVIDENCE_SEPARATOR); '' when nothing is left. */
+export const holdText = (text) => oneLine(text.replace(CONTROL_CHARS, ' ')).replace(EVIDENCE_SEPARATOR, ',');
+
+/**
+ * @param {string} evidence an evidence cell as rowCells gives it
+ * @returns {{ evidence: string, held: string | null }} the cell without its hold, and the hold's kind (`parked`, `waiting`) or null
+ */
+export function withoutHold(evidence) {
+  const match = HOLD_AT_HEAD.exec(evidence);
+  return match === null ? { evidence, held: null } : { evidence: evidence.slice(match[0].length), held: match[1].toLowerCase() };
+}
+
+/** The evidence cell with `hold` at its head, in place of an older hold; other evidence stays after `; `. */
+export function withHold(evidence, hold) {
+  const rest = withoutHold(evidence).evidence;
+  return isEmpty(rest) ? hold : `${hold}; ${rest}`;
+}
+
+const isHandOver = (cells) => /^deliver:/i.test(cells[0]) || /^\s*deliver:/i.test(cells[1]);
+
+/**
+ * The open rows a `park` or `wait` changes: the row whose id is `target`, or, with `byRoad`, every open row of the road `target`
+ * (ids `<road>.s<N>.<rest>`, the estimator's roadStepOf).
+ * @param {string[]} lines the file's lines
+ * @param {string} target a row id, or a road id when `byRoad`
+ * @param {{ byRoad: boolean }} options whether a road may be named
+ * @returns {{ rows: { at: number, cells: string[], header: string }[] } | { usage: string }} usage (exit 2, nothing changed) for
+ *   no table, an unknown target, a hand-over row, a done row, a road with every row done, or a name that is a row id and a road
+ */
+export function rowsToHold(lines, target, { byRoad }) {
+  const table = workTable(lines);
+  if (table === null || table.header === -1) return { usage: `no row ${target}: there is no \`## ${WORK_ITEMS}\` table with its header` };
+  const at = rowIndex(lines, table, target);
+  const road = target.toLowerCase();
+  const roadRows = byRoad ? table.rows.filter((i) => roadStepOf(rowCells(lines[i])[0])?.road === road) : [];
+  if (at !== -1 && roadRows.length > 0) return { usage: `${target} is a row id and also a road (${roadRows.length} rows): it would be read two ways, so nothing is parked` };
+  const found = at === -1 ? roadRows : [at];
+  if (found.length === 0) return { usage: `no row${byRoad ? ' or road' : ''} ${target} in the \`## ${WORK_ITEMS}\` table` };
+  if (found.some((i) => isHandOver(rowCells(lines[i])))) return { usage: `${target} is a hand-over row: it cannot be parked or wait` };
+  const open = found.filter((i) => isEmpty(rowCells(lines[i])[4]));
+  if (open.length === 0) return { usage: at === -1 ? `every row of road ${target} is done: nothing to hold` : `${target} is already done (${rowCells(lines[at])[4]}): a done row is never held` };
+  return { rows: open.map((i) => ({ at: i, cells: rowCells(lines[i]), header: lines[table.header] })) };
+}
 
