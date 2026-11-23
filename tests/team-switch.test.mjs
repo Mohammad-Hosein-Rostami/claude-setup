@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,7 +26,7 @@ const LOCAL_IGNORED_BY_GIT = { '.gitignore': `${LOCAL}\nnode_modules/\n` }; // h
 
 /** A project folder holding the given files (path relative to it -> text); `git` 'init' makes it a repo, 'commit' commits them too. */
 function project(files = {}, git = null) {
-  const dir = makeTempDir('team-switch-');
+  const dir = realpathSync(makeTempDir('team-switch-')); // the real path: the temp folder may be a link (macOS /var), and git and a hook's cwd see the real one
   for (const [path, text] of Object.entries(files)) {
     mkdirSync(join(dir, path, '..'), { recursive: true });
     writeFileSync(join(dir, path), text);
