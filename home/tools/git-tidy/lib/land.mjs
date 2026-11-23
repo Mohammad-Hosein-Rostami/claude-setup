@@ -14,6 +14,8 @@
 //   Before anything (`tip`): a branch that is not at the `tip` sha the caller gave is refused as `tip-moved` with nothing changed.
 //   A full land fast-forwards only the `tip` sha the caller gave (the commit its own checks ran on): when the rebase rewrites it (the base
 //   moved after the caller rebased and checked it), the result is `base-moved` with the new tip, the lane stays rebased and nothing lands.
+//   A lane held by a pool folder (`.claude/worktrees/lane-<n>`, lib/lane-pool.mjs) is detached at the landed sha right after the
+//   fast-forward and before cleanup, so prune deletes its branch and keeps the folder for the next lane (`detached`).
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,6 +25,7 @@ import { landedFrom, oversizeAdded } from './land-checks.mjs';
 import { runCheck } from './check.mjs';
 import { upstreamState } from './upstream.mjs';
 import { pruneRepo, refuseUnsafeApply } from './prune.mjs';
+import { detachLandedSlot } from './lane-pool.mjs';
 import { inProgressOperation, listWorktrees, openRepo } from './repo.mjs';
 
 const PATHS_PER_LOOKUP = 200; // paths given to one `git ls-files` call, so a big lane never exceeds the argument limit
@@ -142,7 +145,8 @@ function cleanUp(atBase, branch) {
  * @returns {{ status: 'landed'|'rebased'|'conflict'|'base-moved'|'ui-proof'|'new-file-size'|'upstream-moved'|'tip-moved', tip: string, upstream: object|null, from: string|null,
  *   patchesChanged: number, removed: string[], cleanupRefused: string|null, findings: object[], files: string[], why: string|null }} `tip`
  *   is the lane's tip after the rebase, `from` the base tip before the fast-forward (landed only), `files` the conflicting files (or the
- *   oversize ones), `removed` what cleanup removed (`<kind> <name or path>`), `findings` what `check` still reports on the base afterwards
+ *   oversize ones), `removed` what cleanup removed (`<kind> <name or path>`), `findings` what `check` still reports on the base afterwards;
+ *   a landing also carries `detached: { folder: string|null, why?: string }`, the pool folder left detached at the landed sha (null: none)
  * @throws {UsageError} when the base folder is not ready (not checked out, tracked changes, an untracked path in the way), the lane
  *   is missing or is the base, or a rebase or merge is unfinished somewhere; any other git failure throws an Error
  */
@@ -169,6 +173,7 @@ export function landLane(repo, branch, { rebaseOnly = false, tip: expectedTip = 
   if (fastForward(repo, baseFolder, tip).moved) return result('base-moved', { patchesChanged });
   const from = landedFrom(repo, readBefore);
   const atBase = openRepo(baseFolder, repo.base);
+  const detached = detachLandedSlot(atBase, branch, tip); // a pool lane folder stays, detached at the landed sha, for the next lane
   const { removed, cleanupRefused } = cleanUp(atBase, branch);
-  return result('landed', { from, patchesChanged, removed, cleanupRefused, findings: runCheck(atBase).findings, upstream });
+  return result('landed', { from, patchesChanged, removed, cleanupRefused, findings: runCheck(atBase).findings, upstream, detached });
 }

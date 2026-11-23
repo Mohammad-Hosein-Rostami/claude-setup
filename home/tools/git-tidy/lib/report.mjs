@@ -7,12 +7,19 @@ const line = ({ kind, subject, detail }) => `${kind} ${subject} ${detail}`;
 const ONE_LINE_BREAKERS = new Set(['merge-commit', 'tangled-ref', 'merged-branch', 'merged-tag', 'superseded-copy', 'agent-leftover']);
 const baseLine = ({ base, baseSource }) => `base: ${base} (${baseSource})`;
 
-/** `check` result as text (`base: <branch> (<how chosen>)`, items, then `git-tidy: N findings, M hints (base B)`) or as `{ base, findings, hints }` JSON. */
-export function formatCheck({ base, baseSource, findings, hints }, json) {
-  if (json) return JSON.stringify({ base, findings, hints }, null, 2);
+// Info items (check.mjs) are neither findings nor hints: `lane folders: 3 free`, `not started: <branch> in <path> ...`.
+const INFO_LABELS = Object.freeze({ 'lane-folders': 'lane folders', 'not-started-lane': 'not started' });
+const infoLine = ({ kind, subject, detail }) => `${INFO_LABELS[kind] ?? kind}: ${subject}${detail ? ` ${detail}` : ''}`;
+
+/**
+ * `check` result as text (`base: <branch> (<how chosen>)`, findings, hints, info lines, then `git-tidy: N findings, M hints (base B)`)
+ * or as `{ base, findings, hints }` JSON, plus `info` when there is any (info never counts as a finding or a hint).
+ */
+export function formatCheck({ base, baseSource, findings, hints, info = [] }, json) {
+  if (json) return JSON.stringify({ base, findings, hints, ...(info.length > 0 ? { info } : {}) }, null, 2);
   const oneLine = findings.some((finding) => ONE_LINE_BREAKERS.has(finding.kind)) ? 'no' : 'yes';
   const summary = `git-tidy: ${findings.length} findings, ${hints.length} hints (base ${base}), all local refs on one line: ${oneLine}`;
-  return [baseLine({ base, baseSource }), ...[...findings, ...hints].map(line), summary].join('\n');
+  return [baseLine({ base, baseSource }), ...[...findings, ...hints].map(line), ...info.map(infoLine), summary].join('\n');
 }
 
 const NOT_REMOVED = new Set(['kept', 'failed']);
@@ -62,5 +69,6 @@ export function formatLand(result, json) {
   const outcome = findings.length === 0 ? ['check: clean'] : findings.map(line);
   const refused = cleanupRefused === null ? [] : [`cleanup skipped: ${cleanupRefused}`];
   const waived = typeof result.uiWaived === 'string' ? [`ui-proof: waived by owner decision (${result.uiWaived})`] : [];
-  return [`landed ${tip}`, ...(from ? [`from ${from}`] : []), ...waived, ...upstreamLines, ...removed.map((entry) => `removed ${entry}`), ...refused, ...outcome].join('\n');
+  const detached = typeof result.detached?.folder === 'string' ? [`lane folder ${result.detached.folder} detached at ${tip} (kept for the next lane)`] : [];
+  return [`landed ${tip}`, ...(from ? [`from ${from}`] : []), ...waived, ...upstreamLines, ...detached, ...removed.map((entry) => `removed ${entry}`), ...refused, ...outcome].join('\n');
 }

@@ -29,7 +29,9 @@
 // something it planned to (the line says why); both 2 for a usage error, a folder that is not a git repository, a base
 // branch that cannot be found, a git command that fails unexpectedly, or (prune --apply) a repository in the middle of a
 // rebase, merge or similar, or a base not given with --base while main, master or develop all exist.
-// Invariants: logic lives in lib/; this file parses arguments, prints and sets the exit code. Only `prune --apply` writes.
+//        git-tidy.mjs lane claim|list|release|reclaim --repo <abs> ...: the lane folder pool, its own flags and exit codes (lib/lane-cli.mjs)
+// Invariants: logic lives in lib/; this file parses arguments, prints and sets the exit code. Only `prune --apply`, `land` and `lane`
+//   (claim, release, reclaim) write.
 import { runCheck } from './lib/check.mjs';
 import { UsageError } from './lib/git.mjs';
 import { readFileSync } from 'node:fs';
@@ -37,6 +39,7 @@ import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { landLane } from './lib/land.mjs';
+import { runLaneCommand } from './lib/lane-cli.mjs';
 import { landedRange } from './lib/landed-range.mjs';
 import { pruneRepo } from './lib/prune.mjs';
 import { openRepo } from './lib/repo.mjs';
@@ -48,7 +51,7 @@ const EXIT_NOT_FOUND = 1;
 const MAX_BRIEF_BYTES = 1024 * 1024; // a brief is text; the first MB is what the commit gate reads too
 const UI_PROOF_TIMEOUT_MS = 60_000;
 const TOOLS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..');
-const USAGE = 'usage: git-tidy.mjs check [dir] [--base <branch>] [--json]\n       git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--include-recent] [--json]\n       git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] [--tip <sha>] [--brief <file>] [--owner-waive-ui <reason> --status-file <abs> --close-row <road row id>] [--json]\n       git-tidy.mjs range <sha> [dir] [--base <branch>] [--landed <sha>] [--json]';
+const USAGE = 'usage: git-tidy.mjs check [dir] [--base <branch>] [--json]\n       git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--include-recent] [--json]\n       git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] [--tip <sha>] [--brief <file>] [--owner-waive-ui <reason> --status-file <abs> --close-row <road row id>] [--json]\n       git-tidy.mjs range <sha> [dir] [--base <branch>] [--landed <sha>] [--json]\n       git-tidy.mjs lane claim|list|release|reclaim --repo <abs> ... (run `git-tidy.mjs lane` for its usage)';
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const COMMANDS = ['check', 'prune', 'land', 'range'];
 const VALUE_FLAGS = {
@@ -168,6 +171,7 @@ async function runLand(repo, options) {
 }
 
 async function main(argv) {
+  if (argv[0] === 'lane') return runLaneCommand(argv.slice(1)); // its own flags and exit codes (lib/lane-cli.mjs)
   try {
     const options = parseArgs(argv);
     const repo = openRepo(options.dir, options.base);

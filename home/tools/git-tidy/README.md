@@ -185,3 +185,57 @@ A live lane worktree made by Bash or kept by a workflow is locked (`git worktree
 the in-work check leave it alone; agent worktrees are locked by Claude Code itself while the agent runs. `land` unlocks the
 landed lane's own worktree before its cleanup removes it (no other lock is touched). A lock over a day old is the hint
 `stale-lock?`.
+
+## lane (the lane folder pool)
+
+Lanes reuse folders instead of making a new worktree each time, so a folder's caches (the Go build cache keys on the path,
+node_modules) stay warm, and no folder is left behind:
+
+- `lane claim --repo <abs> --branch <name> --base <40-hex sha> [--json]` takes the pool lock, then hands out the lowest free
+  `<main worktree>/.claude/worktrees/lane-<n>`: it switches the folder to the branch (a new branch at `--base`; an existing one as
+  it is, never reset), runs `git clean -ffdx` but keeps `node_modules` (any depth) when none of `pnpm-lock.yaml`, `yarn.lock`,
+  `package-lock.json`, `bun.lock`, `bun.lockb`, `package.json` differ between the folder's old HEAD and the new tip (`.venv` the
+  same for `uv.lock`, `poetry.lock`, `Pipfile.lock`, `requirements*.txt`, `pyproject.toml`), and locks the worktree with
+  `cs-lane-pool <branch>`. When every folder is busy it adds the lowest unused `lane-<n>` (no cap); a stale entry whose folder is
+  gone is removed and made again. Then it installs what the tip needs (`lib/lane-prep.mjs`, below). Output: `lane: <folder>`,
+  `kept: node_modules` or `kept: none`, `installed: <command> in <folder>, ...` or `installed: none`. Exit 0 ready, 1 an install
+  failed (`lane not ready: ...`, the worktree, `to finish:` and `to release:` lines on stderr; the folder stays claimed and is not
+  handed out), 2 usage (a short or unknown sha, a branch name `git check-ref-format --branch` refuses or that starts with `-` or
+  `refs/`, a branch already checked out in another folder: named), 4 the pool lock stayed held by another live claim for 60 s,
+  14 a git command failed. `--json` prints `{ folder, slot, created, kept, branch, base, record, ready, installs }`.
+- `lane list --repo <abs> [--json]`: one line per folder, `lane-<n> free|busy|missing <why>`.
+- `lane release --repo <abs> --folder <abs> [--json]`: frees a folder whose branch is landed and whose tree is clean: detach,
+  remove its `cs-lane-pool` lock, delete the branch (prune's compare-and-delete; kept when its reflog holds commits found nowhere
+  else). Exit 0 released, 3 refused with why (not a pool folder, someone else's lock, unfinished work, not landed).
+- `lane reclaim --repo <abs> [--json]`: removes, with `git worktree remove` (never `--force`), each free folder unused for 24 hours
+  (`RECLAIM_IDLE_MS`; use = its HEAD reflog, HEAD or index changed). When the repository was used in that time (a folder holds a
+  branch, or a free one was used), its lowest free folder stays. Exit 0, 1 when a removal failed.
+- `land` detaches the landed lane's pool folder at the landed sha right after the fast-forward (and unlocks it), so its cleanup
+  deletes the branch and keeps the folder (`lane folder <path> detached at <sha> (kept for the next lane)`, JSON `detached`).
+
+Free means: a linked worktree of this repository, unlocked, HEAD detached at a commit on the base, no unfinished operation, no
+`index.lock` or `HEAD.lock`, `git status` (untracked files included) empty. Everything else is busy and is never switched,
+cleaned or removed: untracked or uncommitted files, a commit not on the base, a rebase in progress, a git lock, a folder holding a
+branch (also one a crashed claim switched but did not lock), and a folder at `lane-<n>` that is not a worktree of this repository.
+Folder paths are compared as real paths, case-folded on Windows and macOS.
+
+The pool lock is `<git common dir>/cs-lane-pool.lock` (one per repository, `<pid> <random> <what>` inside). It is stale only when
+its pid is gone or it is over 120 s old; one breaker at a time removes a stale lock and never one that changed since it looked.
+Installs run after the lock is released.
+
+Installs (`lib/lane-prep.mjs`): for each tracked lockfile of the claimed tip, in that lockfile's folder: `package-lock.json` →
+`npm ci`, `pnpm-lock.yaml` → `pnpm install --frozen-lockfile`, `yarn.lock` → `yarn install --immutable` (one per folder, in that
+order). The command comes from the lockfile's name only, runs as argv with no shell, and the program is taken from an absolute
+PATH folder outside the lane folder (on Windows the package manager's JavaScript entry beside its `.cmd` runs under node). A
+folder whose `node_modules/.cs-lane-prep.json` names the same lockfile sha256 is skipped. The lockfile's own lifecycle scripts run
+as the package manager runs them in any checkout.
+
+Each claim records the folder as made, and each reclaim removal as gone, in the job-made record
+(`tools/disk-free/lib/job-made.mjs`, under the session id of `CLAUDE_CODE_SESSION_ID`); with no session id a stderr line says the
+record was not written, so the job-leftover sweep leaves that folder alone.
+
+`check` prints `lane folders: <n> free[, <m> busy][, <k> missing]` as an info line (JSON `info`), never a finding or a hint, and a
+branch at the base with no commit of its own (`isNotStarted`) in a locked linked worktree as `not started: <branch> in <path> ...`
+instead of `merged-branch` and `merged-worktree`. An unlocked fresh worktree stays a finding.
+
+Uninstall: the pool folders are plain detached worktrees; `git worktree remove <folder>` or `lane reclaim` removes them.

@@ -2,14 +2,17 @@
 // Exports: runCheck.
 // Invariants: reads only. A finding is a fact (merge commit, merged branch or worktree, stale worktree, a folder whose branch moved
 //   under it, edits in the base folder) and sets exit 1;
-//   a hint (kind ends in `?`) is context and never does. Items are `{ kind, subject, detail }`. A git command that fails
+//   a hint (kind ends in `?`) is context and never does; an info item (a not-started lane in a locked worktree, the lane folder count)
+//   is neither. Items are `{ kind, subject, detail }`. A git command that fails
 //   throws (exit 2): a check that cannot read must never report clean.
 import { copyFindings } from './copies.mjs';
-import { gitFlag, gitText, runGit } from './git.mjs';
+import { gitFlag, gitText, runGit, UsageError } from './git.mjs';
 import { findLeftovers } from './leftovers.mjs';
 import { isBackupTag } from './tags.mjs';
 import { tangledRefs } from './tangled.mjs';
 import { changedFileCount, currentBranch, ignoredFiles, inProgressOperation, listWorktrees } from './repo.mjs';
+import { isNotStarted } from './reflog.mjs';
+import { poolSlots } from './lane-slots.mjs';
 
 const IGNORED_SHOWN = 5;
 // earlier branch positions compared with a folder's index; the landing that moved a branch under its folder is recent
@@ -151,10 +154,39 @@ function dirtyBaseFindings(repo, worktrees) {
   });
 }
 
-/** Runs every check on `repo` (from openRepo). Returns `{ findings, hints }`. */
+// A lane in flight: a merged (so: at the base) branch checked out in a locked linked worktree that has no commit of its own yet
+// (reflog.mjs isNotStarted). A fresh lane is not a leftover, so it is info, never `merged-branch` or `merged-worktree`. An unlocked
+// fresh worktree stays a finding: nothing says anyone works there.
+function notStartedLanes(repo, leftovers, worktrees) {
+  const merged = new Set(leftovers.mergedBranches.map((entry) => entry.name));
+  const held = worktrees.filter((tree) => !tree.main && !tree.missing && tree.locked && tree.branch !== null && merged.has(tree.branch));
+  return new Map(held.filter((tree) => isNotStarted(repo, tree.branch)).map((tree) => [tree.branch, tree.path]));
+}
+
+const notStartedInfo = (notStarted) => [...notStarted].map(([branch, path]) => item('not-started-lane', branch, `in ${path} (locked, no commit of its own yet)`));
+
+// `lane folders: <n> free[, <m> busy][, <k> missing]`: one info line for the pool (lane-slots.mjs); idle folders are neither findings
+// nor hints (road gate line 3 stays PASS). A repository without a main worktree folder has no pool.
+function laneFolderInfo(repo) {
+  if (repo.bare) return [];
+  let slots;
+  try {
+    slots = poolSlots(repo);
+  } catch (error) {
+    if (error instanceof UsageError) return [];
+    throw error;
+  }
+  if (slots.length === 0) return [];
+  const counts = ['free', 'busy', 'missing'].map((state) => [state, slots.filter((slot) => slot.state === state).length]);
+  const [[, free], ...rest] = counts;
+  return [item('lane-folders', [`${free} free`, ...rest.filter(([, count]) => count > 0).map(([state, count]) => `${count} ${state}`)].join(', '), '')];
+}
+
+/** Runs every check on `repo` (from openRepo). Returns `{ findings, hints, info }`; info items never count as findings or hints. */
 export function runCheck(repo, now = Date.now()) {
   const leftovers = findLeftovers(repo);
   const worktrees = listWorktrees(repo);
+  const notStarted = notStartedLanes(repo, leftovers, worktrees);
   const tangled = tangledRefItems(repo);
   const mergedTags = leftovers.tags.filter((t) => t.state === 'patch-equal');
   const copies = copyFindings(repo, leftovers);
@@ -163,9 +195,9 @@ export function runCheck(repo, now = Date.now()) {
     ...mergeCommitFindings(repo),
     ...tangled.findings,
     ...copies,
-    ...leftovers.mergedBranches.filter((b) => !reportedAsCopy.has(b.name)).map((b) => item('merged-branch', b.name, `${b.short} ${b.state}`)),
+    ...leftovers.mergedBranches.filter((b) => !reportedAsCopy.has(b.name) && !notStarted.has(b.name)).map((b) => item('merged-branch', b.name, `${b.short} ${b.state}`)),
     ...mergedTags.filter((t) => isBackupTag(t.name)).map((t) => item('merged-tag', t.name, `${t.short} ${t.state}`)),
-    ...leftovers.mergedWorktrees.map((w) => item('merged-worktree', w.path, `branch ${w.branch}`)),
+    ...leftovers.mergedWorktrees.filter((w) => !notStarted.has(w.branch)).map((w) => item('merged-worktree', w.path, `branch ${w.branch}`)),
     ...leftovers.staleWorktrees.map((w) => item('stale-worktree', w.path, 'folder missing')),
     ...staleCheckoutFindings(worktrees),
     ...dirtyBaseFindings(repo, worktrees),
@@ -177,7 +209,7 @@ export function runCheck(repo, now = Date.now()) {
   const hints = [
     ...publishedMergeHint(repo), ...unmerged, ...unlandedLaneHints(repo, leftovers.states.filter((b) => b.state === 'unmerged' && !reportedAsCopy.has(b.name)), now), ...unmergedTags,
     ...mergedTags.filter((t) => !isBackupTag(t.name)).map((t) => item('merged-tag?', t.name, `${t.short} ${t.state}`)), ...tangled.hints, ...mergedRemoteHints(repo),
-    ...(repo.bare ? [] : behindBaseHint(repo)), ...worktreeHints(worktrees, now), ...ignoredFileHints(leftovers.mergedWorktrees), ...shallowHint(repo),
+    ...(repo.bare ? [] : behindBaseHint(repo)), ...worktreeHints(worktrees, now), ...ignoredFileHints(leftovers.mergedWorktrees.filter((w) => !notStarted.has(w.branch))), ...shallowHint(repo),
   ];
-  return { findings, hints };
+  return { findings, hints, info: [...notStartedInfo(notStarted), ...laneFolderInfo(repo)] };
 }
