@@ -12,6 +12,8 @@ The parts of the `estimate` tool. `../estimate.mjs` (the CLI) and `../statusline
   this run's alone (it may fall when rows are added), 99 until every row is done; `expectedMinutes` per row.
 - `commitment.mjs` (pure): first, hold or move (earlier or later) the committed median budget; scoring, widening, range, track
   record, counted per model id.
+- `commitment.mjs` (model s1): `promiseOf`, the job's one finish promise (80% clock and work, made once by a recorded CLI run at
+  the real clock; a c3, torn or stale record is none) and `promiseDiff`, minutes later or earlier with at most two reasons.
 - `job-rows.mjs` (pure): the rows carried over the last hand-over and the cache numbers (per open row `expectMin`).
 - `road-steps.mjs` (pure): a road's steps from row ids `<road>.s<N>.`, the current step, the step shares of the Total (rounded to add up; a share is not the step's own median) and `result.road` / `progress.road`.
 - `limits-store.mjs`: the last-seen usage limits per account (`~/.claude/state/limits/<account>.json` and its 7-day `.jsonl`);

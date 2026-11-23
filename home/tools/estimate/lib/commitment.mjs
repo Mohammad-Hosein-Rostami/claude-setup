@@ -11,8 +11,14 @@
 // A commitment written before c3 has neither: `first` is taken from it while it never moved, else unknown (null).
 // Every log entry carries the model id; widening, band and track record count only entries of the current model, so their counts
 // restart at a model change (R69).
+// Model s1 (estimate spec R9, R11; owner R22-E2, E3): PROMISE_MODEL, promiseOf(stored, fresh, nowMs), promiseDiff(promise, fresh,
+// workedSinceMin, rowsNow, rowsAtPromise). The job's one finish promise, { model, job, atMs, p80Ms, workMin, rows }, is the 80%
+// clock and the 80% work it stood for; only a recorded CLI run at the real clock makes it, once per job, and nothing moves it: it
+// has no hold band. Later or earlier is measured in working minutes, so a pause never counts as late (the caller moves the shown
+// clocks by the pauses). A stored record that is not a whole s1 promise of this job (a c3 `commit`, a torn or future one) is no
+// promise. The c3 functions above stay for from-files.mjs and the c3 replay in backtest.mjs until s1 is wired in.
 // Invariants: pure (no I/O, no clock); returns new objects and never changes its arguments. Times are ISO strings in the stored
-// objects and epoch minutes in `context.nowMin`; work is in minutes.
+// c3 objects, epoch ms in the s1 promise and epoch minutes in `context.nowMin`; work is in minutes.
 import { nearestRank } from './forecast.mjs';
 import { workedMinutes } from './worked.mjs';
 
@@ -162,4 +168,117 @@ export function trackRecord(log) {
   const recent = scoredFirsts(log).slice(-TRACK_RECORD_JOBS);
   if (recent.length === 0) return null;
   return { met: recent.filter((entry) => entry.scored.met).length, of: recent.length };
+}
+
+/** The model of the promise record this code reads and writes; a record of any other model or shape is no promise (spec F3). */
+export const PROMISE_MODEL = 's1';
+/** A reason smaller than this share of the difference is not told (spec section 7). */
+const REASON_MIN_SHARE = 0.1;
+
+const isPlainObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
+const isFiniteNumber = (value) => typeof value === 'number' && Number.isFinite(value);
+const isMinutes = (value) => isFiniteNumber(value) && value >= 0;
+
+/** True for a list of { id, likelyMin } with unique non-empty ids and minutes >= 0. */
+function isRowList(rows) {
+  if (!Array.isArray(rows)) return false;
+  const ids = new Set();
+  for (const row of rows) {
+    if (!isPlainObject(row) || typeof row.id !== 'string' || row.id === '' || ids.has(row.id) || !isMinutes(row.likelyMin)) return false;
+    ids.add(row.id);
+  }
+  return true;
+}
+
+const copyRows = (rows) => rows.map(({ id, likelyMin }) => ({ id, likelyMin }));
+
+/** The stored record as a promise of this job made by nowMs, or null when it is anything else: missing, torn, c3, another job's, from the future. */
+function storedPromiseOf(stored, job, nowMs) {
+  if (!isPlainObject(stored) || stored.model !== PROMISE_MODEL || stored.job !== job) return null;
+  const { atMs, p80Ms, workMin, rows } = stored;
+  if (!isFiniteNumber(atMs) || atMs > nowMs || !isFiniteNumber(p80Ms) || p80Ms < atMs || !isMinutes(workMin) || !isRowList(rows)) return null;
+  return { model: PROMISE_MODEL, job, atMs, p80Ms, workMin, rows: copyRows(rows) };
+}
+
+/** Only a recorded CLI run at the real clock may make the promise (spec F1): never a status-line refresh, a `--now` run or a run that could not take the table lock. */
+const mayPromise = (run) => isPlainObject(run) && run.cli === true && run.realClock === true && run.recorded === true;
+
+/** Throws a TypeError when this run's own numbers are malformed: they come from the forecast, so a bad one is a bug, not data. */
+function assertFresh(fresh, nowMs) {
+  if (!isFiniteNumber(nowMs)) throw new TypeError('promiseOf: nowMs must be a finite epoch ms');
+  if (!isPlainObject(fresh) || typeof fresh.job !== 'string' || fresh.job === '') throw new TypeError('promiseOf: fresh.job must be a non-empty string');
+  if (!isFiniteNumber(fresh.p80Ms) || fresh.p80Ms < nowMs) throw new TypeError('promiseOf: fresh.p80Ms must be a finite epoch ms at or after now');
+  if (!isMinutes(fresh.workLeftMin)) throw new TypeError('promiseOf: fresh.workLeftMin must be minutes >= 0');
+  if (!isRowList(fresh.rows)) throw new TypeError('promiseOf: fresh.rows must be unique { id, likelyMin } rows');
+}
+
+/**
+ * The job's one promise (spec R9, owner R22-E2): the stored one while it is a whole s1 promise of this job, else a new one when
+ * this run may make it, else none. Pure and idempotent, so two runs under the caller's table lock keep the first run's promise.
+ * @param {unknown} stored the stored promise record, read from the store as data (anything that is not one reads as none)
+ * @param {{ job: string, p80Ms: number, workLeftMin: number, rows: { id: string, likelyMin: number }[],
+ *   run: { cli: boolean, realClock: boolean, recorded: boolean } }} fresh this run: the caller's key of the current job, its 80%
+ *   clock and 80% working minutes left, every row of the job with its likely working minutes (a done row its own), and how it ran
+ * @param {number} nowMs this run's clock, epoch ms
+ * @returns {{ model: 's1', job: string, atMs: number, p80Ms: number, workMin: number, rows: { id: string, likelyMin: number }[] } | null}
+ *   the promise to store and show (a new object), null when there is none
+ * @throws {TypeError} when nowMs or fresh is malformed
+ */
+export function promiseOf(stored, fresh, nowMs) {
+  assertFresh(fresh, nowMs);
+  const kept = storedPromiseOf(stored, fresh.job, nowMs);
+  if (kept !== null || !mayPromise(fresh.run)) return kept;
+  return { model: PROMISE_MODEL, job: fresh.job, atMs: nowMs, p80Ms: fresh.p80Ms, workMin: fresh.workLeftMin, rows: copyRows(fresh.rows) };
+}
+
+/** Each row's share of the difference: an added row its likely minutes, a dropped row minus its promised minutes, a kept row its change. */
+function rowParts(rowsNow, rowsAtPromise) {
+  const promisedMin = new Map(rowsAtPromise.map((row) => [row.id, row.likelyMin]));
+  const nowIds = new Set(rowsNow.map((row) => row.id));
+  const kept = rowsNow.map(({ id, likelyMin }) => {
+    if (!promisedMin.has(id)) return { kind: 'rows-added', id, min: likelyMin };
+    const changeMin = likelyMin - promisedMin.get(id);
+    return { kind: changeMin > 0 ? 'over-usual' : 'faster', id, min: changeMin };
+  });
+  const dropped = rowsAtPromise.filter((row) => !nowIds.has(row.id)).map((row) => ({ kind: 'faster', id: row.id, min: -row.likelyMin }));
+  return [...kept, ...dropped];
+}
+
+const largestFirst = (a, b) => Math.abs(b.min) - Math.abs(a.min) || (a.id ?? a.kind).localeCompare(b.id ?? b.kind);
+
+/** The told reasons: the parts on the difference's side summed per kind, none under REASON_MIN_SHARE of it. At most two (spec section
+ *  7) by construction: a later side has two kinds (rows-added, over-usual), an earlier side one (faster). */
+function toldReasons(diffMin, parts) {
+  const side = Math.sign(diffMin);
+  const byKind = new Map();
+  for (const part of parts.filter((each) => side !== 0 && Math.sign(each.min) === side).sort(largestFirst)) {
+    const reason = byKind.get(part.kind) ?? { kind: part.kind, min: 0, ids: [] };
+    reason.min += part.min; // the reasons are this call's own objects: added to in place, so 5,000 rows stay linear
+    reason.ids.push(part.id);
+    byKind.set(part.kind, reason);
+  }
+  const floorMin = REASON_MIN_SHARE * Math.abs(diffMin);
+  return [...byKind.values()].filter((reason) => Math.abs(reason.min) >= floorMin).sort(largestFirst);
+}
+
+/**
+ * How much later (+) or earlier (-) than promised the job now runs, and why (spec R9, section 7): (worked since the promise + the
+ * fresh 80% work left) - the promised work, in working minutes, so a pause never counts as late (spec F2; it moves the clocks,
+ * R11). Reasons are on the difference's side only: rows added (their likely minutes), rows over usual (minutes past what was
+ * promised for them), rows faster or dropped (negative); unrounded, the numbers round once (R10).
+ * @param {{ workMin: number }} promise the job's promise (promiseOf)
+ * @param {{ workLeftMin: number }} fresh this run's 80% working minutes left
+ * @param {number} workedSinceMin working minutes since the promise (pauses excluded)
+ * @param {{ id: string, likelyMin: number }[]} rowsNow every row of the job now, done ones with their own minutes
+ * @param {{ id: string, likelyMin: number }[]} rowsAtPromise the promise's rows
+ * @returns {{ min: number, reasons: { kind: 'rows-added'|'over-usual'|'faster', min: number, ids: string[] }[] }} ids largest first
+ * @throws {TypeError} when an argument is malformed
+ */
+export function promiseDiff(promise, fresh, workedSinceMin, rowsNow, rowsAtPromise) {
+  if (!isPlainObject(promise) || !isMinutes(promise.workMin)) throw new TypeError('promiseDiff: promise.workMin must be minutes >= 0');
+  if (!isPlainObject(fresh) || !isMinutes(fresh.workLeftMin)) throw new TypeError('promiseDiff: fresh.workLeftMin must be minutes >= 0');
+  if (!isMinutes(workedSinceMin)) throw new TypeError('promiseDiff: workedSinceMin must be minutes >= 0');
+  if (!isRowList(rowsNow) || !isRowList(rowsAtPromise)) throw new TypeError('promiseDiff: rows must be unique { id, likelyMin } rows');
+  const min = workedSinceMin + fresh.workLeftMin - promise.workMin;
+  return { min, reasons: toldReasons(min, rowParts(rowsNow, rowsAtPromise)) };
 }

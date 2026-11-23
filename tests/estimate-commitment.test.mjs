@@ -1,9 +1,10 @@
 // Tests for home/tools/estimate/lib/commitment.mjs: the first / hold / move decision with its stored cause, the hold band, the
 // kept first budget and latest later cause, scoring at the hand-over, the widening factor and the track record (current model
-// only). Expected values are hand arithmetic on the estimator design 3.8-3.9 and spec R18 E2.
+// only); the s1 promise: made once per job by a recorded CLI run only, torn or c3 records read as none, late or early in working
+// minutes with at most two reasons. Expected values are hand arithmetic on the estimator design 3.8-3.9, spec R18 E2 and R22 R9.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MODEL_ID, band, firstCommitmentOf, nextCommitment, scoreLog, trackRecord, widening } from '../home/tools/estimate/lib/commitment.mjs';
+import { MODEL_ID, PROMISE_MODEL, band, firstCommitmentOf, nextCommitment, promiseDiff, promiseOf, scoreLog, trackRecord, widening } from '../home/tools/estimate/lib/commitment.mjs';
 
 const BASE_MIN = Date.parse('2026-11-16T10:00Z') / 60_000;
 const isoAt = (minute) => new Date((BASE_MIN + minute) * 60_000).toISOString();
@@ -118,4 +119,95 @@ test('trackRecord counts the met first commitments among the last 10 scored; nul
   assert.equal(trackRecord([{ first: true, raw85: 1 }]), null);
   const log = [scoredFirst(2, false), scoredFirst(2, false), ...Array.from({ length: 9 }, () => scoredFirst(1)), scoredFirst(2, false), { first: false, scored: { met: true } }];
   assert.deepEqual(trackRecord(log), { met: 9, of: 10 });
+});
+
+// Model s1: the job's one finish promise (spec R9, R11, section 7; owner R22-E2, E3; contract F1-F3).
+const NOW_MS = msAt(0);
+const LATER_MS = msAt(45);
+const CLI_RUN = { cli: true, realClock: true, recorded: true };
+const ROWS = [{ id: 'a', likelyMin: 40 }, { id: 'b', likelyMin: 40 }, { id: 'c', likelyMin: 40 }];
+const freshRun = (run, more = {}) => ({ job: 'job-1', p80Ms: msAt(150), workLeftMin: 120, rows: ROWS, run, ...more });
+const made = promiseOf(null, freshRun(CLI_RUN), NOW_MS);
+
+test('promiseOf: the first recorded CLI run at the real clock makes the promise: its 80% clock, 80% work and rows', () => {
+  assert.deepEqual(made, { model: PROMISE_MODEL, job: 'job-1', atMs: NOW_MS, p80Ms: msAt(150), workMin: 120, rows: ROWS });
+  assert.notEqual(made.rows, ROWS, 'the rows are copied, not shared with the caller');
+});
+
+test('promiseOf: a status-line refresh, a --now run or a run that could not take the table lock makes no promise (F1)', () => {
+  for (const run of [{ ...CLI_RUN, cli: false }, { ...CLI_RUN, realClock: false }, { ...CLI_RUN, recorded: false }, undefined, 'cli', { cli: 1, realClock: 1, recorded: 1 }]) {
+    assert.equal(promiseOf(null, freshRun(run), NOW_MS), null, JSON.stringify(run));
+  }
+});
+
+test('promiseOf: the promise is made once per job; later runs of any kind keep it, so two runs under the lock keep the first', () => {
+  const laterFresh = { p80Ms: msAt(400), workLeftMin: 300, rows: [...ROWS, { id: 'd', likelyMin: 90 }] };
+  assert.deepEqual(promiseOf(made, freshRun(CLI_RUN, laterFresh), LATER_MS), made, 'a later CLI run keeps it: no hold band, no move');
+  assert.deepEqual(promiseOf(made, freshRun({ ...CLI_RUN, cli: false }, laterFresh), LATER_MS), made, 'a status-line refresh shows it');
+  const second = promiseOf(promiseOf(null, freshRun(CLI_RUN), NOW_MS), freshRun(CLI_RUN, laterFresh), NOW_MS + 1);
+  assert.equal(second.atMs, NOW_MS, 'the second of two parallel CLI runs reads the first one\'s promise and keeps it');
+});
+
+test('promiseOf: a promise of another job is stale: none for a refresh, a new one for a recorded CLI run', () => {
+  const nextJob = (run) => freshRun(run, { job: 'job-2', p80Ms: msAt(200) });
+  assert.equal(promiseOf(made, nextJob({ ...CLI_RUN, cli: false }), LATER_MS), null);
+  assert.deepEqual(promiseOf(made, nextJob(CLI_RUN), LATER_MS), { ...made, job: 'job-2', atMs: LATER_MS, p80Ms: msAt(200) });
+});
+
+test('promiseOf: a c3 commit record, a torn, future or malformed record reads as no promise, without error (F3)', () => {
+  const c3Commit = { at: isoAt(0), budgetMin: 90, ids: ['a', 'b'], moved: null, first: { at: isoAt(0), budgetMin: 90 }, laterCause: null };
+  const torn = [
+    c3Commit, { ...c3Commit, model: 'c3' }, undefined, null, '{"model":"s1","job":"jo', [made], 42,
+    { ...made, model: 'c3' }, { model: 's1', job: 'job-1' }, { ...made, atMs: Number.NaN }, { ...made, atMs: String(NOW_MS) },
+    { ...made, atMs: LATER_MS + 1 }, { ...made, p80Ms: NOW_MS - 1 }, { ...made, workMin: -1 }, { ...made, workMin: Infinity },
+    { ...made, rows: null }, { ...made, rows: [{ id: 'a', likelyMin: 1 }, { id: 'a', likelyMin: 2 }] }, { ...made, rows: [{ id: 'a' }] },
+    { ...made, rows: [{ id: '', likelyMin: 1 }] }, { ...made, rows: [null] },
+  ];
+  for (const stored of torn) {
+    assert.equal(promiseOf(stored, freshRun({ ...CLI_RUN, cli: false }), LATER_MS), null, JSON.stringify(stored));
+    assert.equal(promiseOf(stored, freshRun(CLI_RUN), LATER_MS).atMs, LATER_MS, 'a recorded CLI run makes the job\'s promise in its place');
+  }
+});
+
+test('promiseOf: malformed numbers of this run are a bug and throw', () => {
+  assert.throws(() => promiseOf(null, freshRun(CLI_RUN), Number.NaN), TypeError);
+  for (const bad of [{ job: '' }, { p80Ms: NOW_MS - 1 }, { workLeftMin: -5 }, { rows: [{ id: 'a', likelyMin: Number.NaN }] }]) {
+    assert.throws(() => promiseOf(null, freshRun(CLI_RUN, bad), NOW_MS), TypeError, JSON.stringify(bad));
+  }
+});
+
+const diff = (workedSinceMin, workLeftMin, rowsNow) => promiseDiff(made, { workLeftMin }, workedSinceMin, rowsNow, made.rows);
+
+test('promiseDiff: later = worked since + fresh 80% work left - promised work; rows added and over usual are the reasons', () => {
+  const rowsNow = [{ id: 'a', likelyMin: 40 }, { id: 'b', likelyMin: 55 }, { id: 'c', likelyMin: 40 }, { id: 'd', likelyMin: 20 }];
+  assert.deepEqual(diff(50, 105, rowsNow), { min: 35, reasons: [{ kind: 'rows-added', min: 20, ids: ['d'] }, { kind: 'over-usual', min: 15, ids: ['b'] }] });
+});
+
+test('promiseDiff: late by a slow row is not blamed on small added rows; a reason under 10 % of the difference is dropped (R27)', () => {
+  const rowsNow = [{ id: 'a', likelyMin: 150 }, ...ROWS.slice(1), { id: 'x', likelyMin: 5 }, { id: 'y', likelyMin: 6 }];
+  assert.deepEqual(diff(120, 120, rowsNow), { min: 120, reasons: [{ kind: 'over-usual', min: 110, ids: ['a'] }] }, '11 of 120 is under 12: dropped');
+  const atTenth = [{ id: 'a', likelyMin: 148 }, ...ROWS.slice(1), { id: 'x', likelyMin: 6 }, { id: 'y', likelyMin: 6 }];
+  assert.deepEqual(diff(120, 120, atTenth).reasons.map((reason) => reason.min), [108, 12], '12 of 120 is 10 %: kept');
+});
+
+test('promiseDiff: earlier is negative; rows faster or dropped are its reasons, largest first, never an added row', () => {
+  const rowsNow = [{ id: 'a', likelyMin: 25 }, { id: 'b', likelyMin: 10 }, { id: 'e', likelyMin: 15 }];
+  assert.deepEqual(diff(30, 40, rowsNow), { min: -50, reasons: [{ kind: 'faster', min: -85, ids: ['c', 'b', 'a'] }] });
+});
+
+test('promiseDiff: on time when the difference is 0, whatever the rows did; at most two reasons', () => {
+  const rowsNow = [{ id: 'a', likelyMin: 60 }, ...ROWS.slice(1), { id: 'd', likelyMin: 30 }];
+  assert.deepEqual(diff(60, 60, rowsNow), { min: 0, reasons: [] });
+  assert.equal(diff(60, 110, rowsNow).reasons.length, 2);
+});
+
+test('promiseDiff: a pause is no lateness: three wall hours with two paused and one worked count as one hour (F2, R22-E3)', () => {
+  assert.deepEqual(diff(60, 60, ROWS), { min: 0, reasons: [] });
+});
+
+test('promiseDiff: malformed arguments throw', () => {
+  assert.throws(() => promiseDiff(null, { workLeftMin: 1 }, 0, [], []), TypeError);
+  assert.throws(() => diff(-1, 10, ROWS), TypeError);
+  assert.throws(() => diff(0, Number.NaN, ROWS), TypeError);
+  assert.throws(() => diff(0, 10, [{ id: 'a', likelyMin: 1 }, { id: 'a', likelyMin: 1 }]), TypeError);
 });
