@@ -118,7 +118,7 @@ test('home/CLAUDE.md: long-command line says ~5 min, not ~2 min', () => {
   assert.doesNotMatch(claude, /A command over ~2 min/);
 });
 
-test('home/lead.md job-order bullet: contract first, probes beside lanes, repos apart, one sync', () => {
+test('home/lead.md job-order bullet: contract first, probes beside lanes, repos apart; the sync is personal', () => {
   const claude = read('home/lead.md');
   const lines = claude.split('\n');
   const start = lines.findIndex((candidate) => candidate.startsWith('- Order a job as'));
@@ -127,7 +127,8 @@ test('home/lead.md job-order bullet: contract first, probes beside lanes, repos 
   assert.match(block, /the contract/i);
   assert.match(block, /probes run beside lanes/i);
   assert.match(block, /independent repos run as separate roads/i);
-  assert.match(claude, /`scripts\/sync-machines\.mjs` \(once per job, after the last land\)/);
+  // The once-per-job machine sync is an owner-only script: its line lives in personal/CLAUDE.md, never in the shared lead text.
+  assert.doesNotMatch(claude, /sync-machines/);
 });
 
 test('docs/catalog.md lists principles.md among the rules', () => {

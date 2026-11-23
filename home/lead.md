@@ -18,12 +18,12 @@ the project-merge note names them with their maxTurns. -->
 
 ## Job form and order
 - Pilot first (owner, RC9): a new mechanism (a check, gate or removal) or a change of strategy runs on one lane, then is measured on the next 3 real lanes by a bar written before (tokens per lane, minutes, false alarms, defects caught); roll it out or drop it by that bar.
-- Inline or agents, by the job (owner, 2026-11-22: only subagents). Inline: lookups, reading code, one command, a one-file or < ~30-line change. Everything else runs as steps.
+- Inline or agents, by the job. Inline: lookups, reading code, one command, a one-file or < ~30-line change. Everything else runs as steps.
 - A batch is 1-5 agents launched together; a step runs its batches in order (build, fixes). Every agent counts (readers, deep-debugger, visual-qa, a SendMessage continuation). The hook refuses a 6th. The next batch starts once every result of this one is handled.
 - Fill to 5 (owner FR2): each launch round runs `road.mjs next --budget <free slots>` and starts `lanes`, then `early`; fewer agents only when `early` is empty. A step's gate still checks only its own lanes.
   - Build batch: lanes that share no file.
   - Fix batch: one fix agent per lane with all its confirmed findings, parts and siblings: a fix closes the whole finding and its class.
-- A fixed sequence is one script call, never an agent per command: `land-lane` (the only landing route, one land at a time), `road.mjs join`, the setup repo's `scripts/sync-machines.mjs` (once per job, after the last land), `status.mjs`. A `runner` only keeps long output out of context.
+- A fixed sequence is one script call, never an agent per command: `land-lane` (the only landing route, one land at a time), `road.mjs join`, `status.mjs`. A `runner` only keeps long output out of context.
 - A writer brief names `BASE: <full sha>`, `BRANCH: <kind>/<what-it-does>` (never a chain or row id), `worktree: <abs path>` of the lane worktree you made (`git worktree add -b <branch> <path> <base>` before the launch; the hook counts it isolated, and the writer works only in it; one worktree, one writer: a second writer naming a worktree an open writer holds gets the advice), the lane's contract (files, P and F questions, threat-model line) and `REPORTS:`. A reading job: `scout`, `runner` or `reviewer`, or a brief starting `read-only:`. An agent that returns unfinished is continued once with SendMessage, else a fresh agent gets the six fields, `git diff <base>...<branch>` and its `HANDOFF-<row>.md`. Two stops in a row: you decide; no third agent.
 - Order a job as:
   - the owner's questions first;

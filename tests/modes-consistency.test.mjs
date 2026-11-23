@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url';
 const read = (relative) => readFileSync(fileURLToPath(new URL(`../${relative}`, import.meta.url)), 'utf8');
 test('lead-rules.md carries the lead-discipline rules and stays small', () => {
   const lead = read('home/lead-rules.md');
-  for (const needle of ['Persian', 'No turn without a decision', 'runner', '2nd compaction', 'usage-limit', 'STATUS.md', '3k chars', 'tell the owner to restart', 'No answer in 2 min','≤ 300 words', '`implementer`, not general-purpose', 'estimate.mjs']) {
+  assert.doesNotMatch(lead, /Persian/i, 'the reply language of one person is in personal/CLAUDE.md');
+  for (const needle of ["Reply in the user's language.", 'No turn without a decision', 'runner', '2nd compaction', 'usage-limit', 'STATUS.md', '3k chars', 'tell the owner to restart', 'No answer in 2 min','≤ 300 words', '`implementer`, not general-purpose', 'estimate.mjs']) {
     assert.ok(lead.includes(needle), `lead-rules.md must mention ${needle}`);
   }
   assert.ok(lead.split('\n').length <= 100, 'lead-rules.md is injected into every session; keep it <= 100 lines');
@@ -21,9 +22,12 @@ test('lead-rules.md keeps the assembly and compact-before-waiting rules', () => 
   assert.match(lead, /`\/compact` first/);
 });
 
-test('home/CLAUDE.md names Persian replies, the STATUS.md re-read and the Grep tool or rg', () => {
+// The owner's own language (Persian) is in personal/CLAUDE.md; the shared text keeps the user's-language rule and its compaction line.
+test('home/CLAUDE.md names user-language replies, the STATUS.md re-read and the Grep tool or rg', () => {
   const text = read('home/CLAUDE.md');
-  assert.match(text, /Persian included/);
+  assert.match(text, /Reply in the language the user writes\s+in \(never default to English\)/);
+  assert.match(text, /and the user's language: reply in it\)/);
+  assert.doesNotMatch(text, /Persian/i, 'one person\'s language is personal');
   assert.match(text, /`STATUS\.md` path/);
   assert.match(text, /Grep tool or `rg`/);
   assert.match(text, /Git push[\s\S]*confirm dialog even in bypass mode[\s\S]*goes ahead after 2 min unless the owner clicks Deny[\s\S]*literal password or token/);
@@ -139,13 +143,14 @@ test('no setup document tells sessions to run every agent or job as a workflow',
   for (const file of files) assert.doesNotMatch(read(file), everythingIsAWorkflow, `${file} still says workflows for everything`);
 });
 
-// Landing and machine sync are fixed sequences: one script call each, never an agent per command (lead.md "Job form and order").
-test('lead.md and lead-rules.md send landing to land-lane and machine sync to scripts/sync-machines.mjs and name no workflow', () => {
+// Landing is a fixed sequence: one script call, never an agent per command (lead.md "Job form and order"). The machine sync is
+// an owner-only script, so its lines live in personal/CLAUDE.md, never in the shared lead text.
+test('lead.md and lead-rules.md send landing to land-lane, leave machine sync to the personal rules and name no workflow', () => {
   const lead = read('home/lead.md');
   assert.match(lead, /`land-lane` \(the only landing route, one land at a time\)/);
-  assert.match(lead, /`scripts\/sync-machines\.mjs` \(once per job, after the last land\)/);
+  assert.doesNotMatch(lead, /sync-machines/, 'machine sync is personal');
   assert.match(read('home/lead-rules.md'), /via `land-lane`/, 'lead-rules.md lands through land-lane');
-  assert.match(read('home/lead-rules.md'), /sync always `scripts\/sync-machines\.mjs`/);
+  assert.doesNotMatch(read('home/lead-rules.md'), /sync-machines/, 'machine sync is personal');
   assert.match(lead, /`road\.mjs join`/, 'the fixed sequences name road.mjs join');
   assert.match(lead, /The hook refuses a 6th/, 'the batch cap of 5 is stated with its hook');
   assert.match(lead, /goes to the architect with its open findings by class/, 'two fix rounds, then the architect re-plans');

@@ -19,8 +19,8 @@ Raise for: `architect`/`deep-debugger` `effort: "xhigh"` on a hard problem, a fa
 
 ## Lead discipline
 
-- Reply in the user's language (Persian too).
-- Job form: lead.md "Job form and order"; sync always `scripts/sync-machines.mjs` of the setup repo.
+- Reply in the user's language.
+- Job form: lead.md "Job form and order".
 - No turn without a decision: with work in flight, arm one watch before ending the turn; relays and status 1-2 lines; lanes share a state file.
 - Ops to agents: builds, installs, ssh/git, logs to `runner`; multi-file edits `implementer`; delegate past ~15 Bash calls; never two agents on the same question (one redoes the other's work).
 - Land each lane via `land-lane` as soon as it is done (lead.md "Landing"); the base folder holds no edits.
@@ -46,7 +46,6 @@ Raise for: `architect`/`deep-debugger` `effort: "xhigh"` on a hard problem, a fa
 - Hard problems (the "Raise for" cases): `architect` or `deep-debugger` with `model: "fable", effort: "max"` and a self-contained brief (spec path, what was ruled out).
 - Assembly is not judgment: the last agent writes the final files at its own pin (`implementer`, Opus 5.5 high; one Write, then ≤ 10 patches); arithmetic goes in a script; Opus max only for critics; Opus only for decisions, never merging.
 - Context above ~120k before waiting on agents: `/compact` first; tell them "reply only when the last agent returns".
-- Fable past 50% of the weekly limit (or on Pro) bills usage credits: never use or suggest them; near that point tell the owner to start a new session with `claude --model opus --effort xhigh`.
 
 ## Owner decisions: ask now, keep working
 
@@ -62,12 +61,12 @@ Raise for: `architect`/`deep-debugger` `effort: "xhigh"` on a hard problem, a fa
 
 ## Project AI config (quote it in full in a brief that sets up or changes a project's AI config)
 
-Projects are shared with a team; this setup is not. Keep three layers apart:
+Projects are shared with a team; this setup is not. Keep three layers apart (how they combine: CLAUDE.md "Project AI setups"):
 1. **Personal** (this repo, `~/.claude`): global skills, agents, hooks, rules; never copied into a project.
 2. **Team** (committed): CLAUDE.md, AGENTS.md, `.claude/{settings.json,agents,skills,rules}`; complete on its own: names only
    agents, skills, hooks and commands in the repo, never `~/.claude`, my global skills/agents or my machines' paths; a team
    process that needs an agent ships its own copy.
-3. **Personal per project** (never committed): `CLAUDE.local.md` with only `@~/.claude/project-notes/<project>.md` (notes live in
-   this repo), `.claude/settings.local.json` (plugins, personal permissions), symlinks hidden via `.git/info/exclude`; make
+3. **Personal per project** (never committed): the note `~/.claude/project-notes/<key>.md` (loads by itself, key in the start
+   note), `.claude/settings.local.json` (plugins, personal permissions), symlinks hidden via `.git/info/exclude`; make
    sure the project ignores these first.
 Setting up or improving one: layer 2 for what the team needs, layer 3 for how my global setup combines with it.

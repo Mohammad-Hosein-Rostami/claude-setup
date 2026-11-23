@@ -7,8 +7,11 @@ import { fileURLToPath } from 'node:url';
 
 const read = (path) => readFileSync(fileURLToPath(new URL(`../${path}`, import.meta.url)), 'utf8');
 
+// The owner's own machine names live in personal/CLAUDE.md; the shared text keeps the rule without them.
 test('home/CLAUDE.md: a command the owner must run names the machine and the folder', () => {
-  assert.match(read('home/CLAUDE.md'), /command the owner must run is given with the machine \(MacBook, PC or server\) and the folder/);
+  const text = read('home/CLAUDE.md');
+  assert.match(text, /command the owner must run is given with the machine and the folder it runs in\./);
+  assert.doesNotMatch(text, /MacBook/i, 'machine names are personal');
 });
 
 test('home/CLAUDE.md names the status tool for STATUS.md row edits', () => {

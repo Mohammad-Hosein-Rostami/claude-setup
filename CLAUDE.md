@@ -1,8 +1,10 @@
 # claude-setup (this repo's own working rules)
 
-This repo is the owner's personal Claude Code setup. `home/` is symlinked live into `~/.claude`, so an edit there is
+This repo is a shareable Claude Code setup. `home/` is symlinked live into `~/.claude`, so an edit there is
 live in every running session at once. A half-written hook breaks Bash everywhere.
 
+- Shared text (`home/`, `docs/`, this file) holds no one's private facts (name, machines, accounts, billing, own standing
+  rules); those go in `personal/CLAUDE.md` (git-ignored, its own git repo; template in `personal.example/`).
 - Edit hooks, the guard and tools in a git worktree (`scripts/lane-new.sh <name>`). To land: rebase onto main, then
   fast-forward (`git merge --ff-only`), through `land-lane`. Parallel agents each use their own worktree; never edit the main
   checkout while others work.
@@ -14,4 +16,5 @@ live in every running session at once. A half-written hook breaks Bash everywher
   `scripts/install.sh`.
 - Never push unless the owner says so.
 - Add or change a skill, agent, tool or hook: update `docs/catalog.md` in the same commit.
-- Work habits for day-to-day use are in `docs/daily-use.md`; the global rules the sessions load are `home/CLAUDE.md`.
+- Work habits for day-to-day use are in `docs/daily-use.md`; the global rules the sessions load are `home/CLAUDE.md`
+  (shared), then `personal/CLAUDE.md` (yours).

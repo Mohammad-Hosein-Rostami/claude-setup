@@ -1,7 +1,7 @@
 # Global instructions (all projects)
 
-Owner: Pejvak. MacBook and PC on macOS (zsh); a Windows machine (PowerShell + Git Bash) and Linux are tested. Node 22 or newer, pnpm. Reply in the language the
-user writes in (Persian included, never default to English); keep prose short and plain. Do not narrate tool calls.
+Tested on macOS (zsh), Windows (PowerShell + Git Bash) and Linux. Node 22 or newer, pnpm. Reply in the language the user writes
+in (never default to English); keep prose short and plain. Do not narrate tool calls.
 
 The main session also gets the lead rules at session start (`~/.claude/lead-rules.md` and `~/.claude/lead.md`). Workers: follow your
 agent file and the caller's prompt.
@@ -16,8 +16,7 @@ agent file and the caller's prompt.
   spends the wait). Interactive sessions continue by themselves after a reset within 24 h (at most 3 times);
   schedule one wake a few minutes after the reset only where that does not reach: a weekly reset over 24 h, after
   an exit, `-p` and background runs, or once those continuations are spent (a wake over 1 h is a scheduled task, not ScheduleWakeup).
-- Subscription only: never `/fast`, `/code-review ultra` or usage credits, since they bill beyond the plan. Usage credits are off on
-  every account (owner, 2026-11-19); a headless run names a non-Fable model, since a `-p` run on Fable would bill them.
+- Subscription only: never `/fast`, `/code-review ultra` or usage credits, since they bill beyond the plan.
 - `STATUS.md` row edits go through `node ~/.claude/tools/status/status.mjs add|start|done|deliver|rule|decision` only, never a typed time (the tool writes it); the lead plans the rows.
 
 ## Checks
@@ -58,7 +57,7 @@ Invoke these with the Skill tool before writing code, in every project; a `skill
 - Owner decisions (scope, money, irreversible, credentials, a product fact the repo lacks such as length, timer, role, copy, brand
   name or design system vs local, real trade-offs): the lead asks them (lead rules), an agent posts them as "Agents (workers)" says.
   Technical choices: pick the default, say so in one line.
-- Final answers: what changed and what was not run. No recap of the process. A command the owner must run is given with the machine (MacBook, PC or server) and the folder it runs in.
+- Final answers: what changed and what was not run. No recap of the process. A command the owner must run is given with the machine and the folder it runs in.
 
 ## Working method (quality)
 
@@ -81,6 +80,21 @@ Invoke these with the Skill tool before writing code, in every project; a `skill
 - Certainty before building: research more and analyse better first; align with Claude Code and the models as Anthropic documents them; never plan what the tool cannot do.
 - Other projects: leave other projects and their gits alone; a job changes, cleans or runs nothing in another project's repo or another session unless the owner asks.
 - No push unless the owner asks; confirm every outward-facing action.
+
+## Project AI setups (every project, nothing listed per project)
+
+- A project's own AI setup and this one both apply. At session start the `project-merge` note names what the project brings
+  (instructions, rules, skills, agents, hooks, settings, MCP) and its personal note.
+- Project facts, commands and conventions always win in that repo: how its code, files, tests, commits, branches and docs look,
+  and which commands build, lint and test it (C17).
+- Same topic in both: the stricter rule applies (more checks or review, fewer permissions, the stronger model or effort, the
+  higher accuracy bar, pixel-perfect included). Neither stricter: follow the project and add one line to its personal note.
+- Checks, guards and hooks of both always run; a project file never switches ours off (the note and doctor name one that tries).
+- Skills: ours wins a same-name clash, so also read the project's hidden SKILL.md the note names. Agents: a project agent named
+  like one of ours replaces ours in that project; for a project agent of the same role, brief ours (or theirs, if stricter) and
+  add the other's file to the brief as instructions.
+- Never edit the project's committed AI files (CLAUDE.md, AGENTS.md, `.claude/`) unless the owner asks for a team change. How the
+  setups combine goes in `~/.claude/project-notes/<key>.md` (key in the note); it loads by itself, no `CLAUDE.local.md` needed.
 
 ## Agents (workers)
 
@@ -137,8 +151,8 @@ over a line here, and an agent file names the lines that do not fit it (`runner`
 
 ## Compact instructions
 
-When compacting, keep these sections, in this order: goal (the user's goal and constraints, and the user's language: reply in it,
-Persian included), rules (the standing rules, and the `STATUS.md` path for multi-day work: re-read it after compaction), decisions
+When compacting, keep these sections, in this order: goal (the user's goal and constraints, and the user's language: reply in it),
+rules (the standing rules, and the `STATUS.md` path for multi-day work: re-read it after compaction), decisions
 (made, and why), files touched (paths), last check (failing checks with the exact error), open questions, next (the next step). Drop
 exploration dead-ends, full file contents, and tool output already acted on.
 
@@ -153,6 +167,4 @@ exploration dead-ends, full file contents, and tool output already acted on.
 - The guard bounces a command once with the fix when part of it can be rewritten (C30): send the rewrite. A quality rule (a
   hand-edited lockfile, a merge that can create a merge commit, a branch moved without `merge --ff-only`, a wait by sleeping) is
   denied once with advice: follow it. Report a bounced secret's kind to the owner.
-- Reading files, `.env` included, is allowed. An agent may read a saved token (the `claude-account` store) or its terminal's token
-  when it needs one (owner, 2026-11-19); printing it into a reply, a report or a command line, or committing it, stays forbidden.
-  Never print or commit secrets or `.env` contents; never put a literal password or token in a command (use env vars or files).
+- Reading files, `.env` included, is allowed. Never print or commit secrets or `.env` contents; never put a literal password or token in a command (use env vars or files).
