@@ -8,7 +8,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import pngjs from 'pngjs';
 import { responsiveRecords } from '../lib/batch-records.mjs';
@@ -24,7 +24,14 @@ const COVERAGE_CLI = path.join(here, '..', '..', 'ui-coverage', 'ui-coverage.mjs
 const RENDERER = { platform: 'darwin-arm64', chromium: '151.0.7922.34' };
 const project = process.env.UI_CHECK_PROJECT;
 
-const tempDir = (label) => fs.mkdtempSync(path.join(os.tmpdir(), `cs-test-same-${label}-`));
+const made = [];
+/** A new cs-test temp folder, removed when the file's tests end. */
+const tempDir = (label) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `cs-test-same-${label}-`));
+  made.push(dir);
+  return dir;
+};
+after(() => made.forEach((dir) => fs.rmSync(dir, { recursive: true, force: true })));
 
 /** A 4x4 grey PNG; `dot` paints one pixel red; `bytes` picks the encoder settings, so equal pixels can have other bytes. */
 function png({ dot = false, bytes = 'small' } = {}) {
