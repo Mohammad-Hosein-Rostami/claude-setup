@@ -5,12 +5,14 @@
 // Invariants: every child runs in its own process group (POSIX) and the whole group is killed at the deadline, at its exit (strays) and when
 //   this process exits; on Windows `taskkill /T /F` ends the tree. A result that cannot be read is not-run (error), never ok; a run
 //   with 0 tests is `none`; a tool that prints more than MAX_OUTPUT_BYTES is read from its result file only, else not-run (error).
-//   Nothing here throws for a bad command: a missing program, a crash or a bad file gives a not-run result for that command alone.
+//   Nothing here throws for a bad command: a missing program, a crash or a bad file gives a not-run result for that command alone. go vet
+//   that names folders build constraints leave empty (lib/go-parse.mjs) runs once more without them, within the same deadline.
 import { spawn } from 'node:child_process';
 import { lstatSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { basename, join, relative, sep } from 'node:path';
 import { POOL_SIZE } from './contract.mjs';
-import { parseGofmtList, parseGoTestJson, parseGoVet } from './go-parse.mjs';
+import { excludedPackageDirs, parseGofmtList, parseGoTestJson, parseGoVet } from './go-parse.mjs';
+import { goArgsOf, goPackageArg, withGoArgs } from './go-plan.mjs';
 import { parseEslintJson, parseJestJson, parseTap, parseTsc, parseVitestJson } from './parse.mjs';
 
 const BYTES_PER_MIB = 1024 * 1024;
@@ -92,20 +94,46 @@ function readResultFile(file) {
   }
 }
 
-/** Runs `cmd` (already mapped into the folder it runs in) and returns its CheckResult; `lines` finds changed lines for lint. */
-async function checkOne(cmd, running, lookupFor) {
+/** go vet's paths minus the folders it named as left out by build constraints; null when it named none of its paths. */
+function vetArgsLeft(cmd, text) {
+  const excluded = new Set(excludedPackageDirs(text, cmd.goModule ?? '').map(goPackageArg));
+  const args = goArgsOf(cmd);
+  const left = args.filter((arg) => !excluded.has(arg));
+  return left.length < args.length ? left : null;
+}
+
+/**
+ * go vet stops at a folder that build constraints leave empty on this machine and vets none of the others, so it runs again without
+ * those folders (they are valid Go for another OS or tag, never a failure); none left is `none`.
+ */
+async function vetAgain(cmd, left, ms, run) {
+  if (left.length === 0) return { kind: cmd.kind, label: cmd.label, result: 'none', ms, failures: [], total: 0 };
+  if (run.isExpired()) return notRun(cmd, 'time', ms);
+  const again = await checkOne(withGoArgs(cmd, left), run);
+  return { ...again, label: cmd.label, ms: ms + again.ms };
+}
+
+/**
+ * Runs `cmd` (already mapped into the folder it runs in) and returns its CheckResult.
+ * @param {object} cmd the command
+ * @param {{ running: Set<object>, lookupFor: Function, isExpired: () => boolean }} run the started commands (killed at the deadline),
+ *   the changed-lines lookup for lint, and whether the deadline has passed
+ */
+async function checkOne(cmd, run) {
   const started = Date.now();
   if (cmd.outputFile) rmSync(cmd.outputFile, { force: true }); // an old file must never be read as this run's result
-  const run = startCommand(cmd);
-  running.add(run);
-  const ended = await run.done;
-  running.delete(run);
+  const child = startCommand(cmd);
+  run.running.add(child);
+  const ended = await child.done;
+  run.running.delete(child);
   const ms = Date.now() - started;
   if (ended.timedOut) return notRun(cmd, 'time', ms);
   if (ended.spawnFailed || ended.signal !== null) return notRun(cmd, 'error', ms); // could not start, or killed mid-write by a signal
   const resultText = cmd.outputFile ? readResultFile(cmd.outputFile) : ended.truncated ? null : ended.stdout;
   if (resultText === null) return notRun(cmd, 'error', ms); // no result file, or output cut at the cap: even exit 0 is not a pass
-  const parsed = await parseFor(cmd, resultText, lookupFor);
+  const vetLeft = cmd.parse === 'go-vet' ? vetArgsLeft(cmd, resultText) : null;
+  if (vetLeft !== null) return vetAgain(cmd, vetLeft, ms, run);
+  const parsed = await parseFor(cmd, resultText, run.lookupFor);
   const verdict = judge(cmd, parsed, ended.code);
   return { kind: cmd.kind, label: cmd.label, ms, failures: parsed?.failures ?? [], ...(parsed ? { total: parsed.total } : {}), ...verdict };
 }
@@ -125,7 +153,8 @@ function judge(cmd, parsed, code) {
   if (cmd.kind === 'types' && !parsed) return code === 0 ? { result: 'ok', total: 0 } : { result: 'not-run', why: 'error' };
   if (!parsed) return { result: 'not-run', why: 'error' };
   if (parsed.failures.length > 0) return { result: 'fail' };
-  if (cmd.kind === 'tests' && code !== 0) return { result: 'not-run', why: 'error' }; // red exit but no failing test named: unknown cause
+  // red exit but no failing test named: unknown cause, unless go test named packages build constraints leave out (its exit 1 for them)
+  if (cmd.kind === 'tests' && code !== 0 && !(parsed.excluded > 0)) return { result: 'not-run', why: 'error' };
   if (cmd.parse === 'gofmt' && code !== 0) return { result: 'not-run', why: 'error' }; // gofmt could not read a file (a syntax error): not clean
   return { result: cmd.kind === 'tests' && parsed.total === 0 ? 'none' : 'ok' };
 }
@@ -180,16 +209,17 @@ export async function runPlan(plan, scope, { deadlineMs, dir }) {
   const lookupFor = changedLinesLookup(scope, roots);
   const results = new Array(cmds.length);
   const running = new Set();
-  const killAll = () => running.forEach((run) => run.kill());
+  const killAll = () => running.forEach((child) => child.kill());
   let expired = false;
+  const run = { running, lookupFor, isExpired: () => expired };
   let next = 0;
   const worker = async () => {
     while (next < cmds.length) {
       const index = next++;
-      results[index] = expired ? notRun(cmds[index], 'time', 0) : await guarded(cmds[index], running, lookupFor, roots, target);
+      results[index] = expired ? notRun(cmds[index], 'time', 0) : await guarded(cmds[index], run, roots, target);
     }
   };
-  const timer = setTimeout(() => { expired = true; [...running].forEach((run) => run.abort()); }, deadlineMs);
+  const timer = setTimeout(() => { expired = true; [...running].forEach((child) => child.abort()); }, deadlineMs);
   process.once('exit', killAll); // a hook killed from outside must not leave its tools running
   try {
     await Promise.all(Array.from({ length: Math.min(POOL_SIZE, cmds.length) }, worker));
@@ -202,10 +232,10 @@ export async function runPlan(plan, scope, { deadlineMs, dir }) {
 
 const realpathOr = (path) => { try { return realpathSync(path); } catch { return path; } };
 
-async function guarded(cmd, running, lookupFor, roots, target) {
+async function guarded(cmd, run, roots, target) {
   const started = Date.now();
   try {
-    const result = await checkOne(cmd, running, lookupFor);
+    const result = await checkOne(cmd, run);
     const prefix = relative(target, cmd.cwd); // tools print relative paths from their own folder
     return relativeFailures(result, roots, prefix);
   } catch {

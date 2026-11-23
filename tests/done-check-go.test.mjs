@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { planChecks } from '../home/tools/done-check/lib/detect.mjs';
 import { checkChange } from '../home/tools/done-check/lib/check-change.mjs';
 import { goBinary, planGoChecks } from '../home/tools/done-check/lib/go-plan.mjs';
-import { parseGofmtList, parseGoTestJson, parseGoVet } from '../home/tools/done-check/lib/go-parse.mjs';
+import { excludedPackageDirs, parseGofmtList, parseGoTestJson, parseGoVet } from '../home/tools/done-check/lib/go-parse.mjs';
 import { rangeChange } from '../home/tools/done-check/lib/scope.mjs';
 import { makeDoneCheckRepo } from './done-check-fixture.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -68,7 +68,21 @@ test('go test -json: failing leaf tests, build failures and a panic by package f
   assert.match(result.failures.find((failure) => failure.id === 'buildfail/|build failed').text, /undefined: y/);
   assert.match(result.failures.find((failure) => failure.id === 'testfail/|TestOne').text, /^TestOne: x_test\.go:7: want 1$/);
   assert.ok(result.total >= 6, `total ${result.total}`);
-  assert.deepEqual(parseGoTestJson(sample('go-test-1.27.4-pass.jsonl'), 'example.com/probe'), { failures: [], total: 1 });
+  assert.deepEqual(parseGoTestJson(sample('go-test-1.27.4-pass.jsonl'), 'example.com/probe'), { failures: [], total: 1, excluded: 0 });
+});
+
+test('a package build constraints leave empty is no failure: go test counts it excluded, go vet names its folder', () => {
+  const excludedLine = 'package example.com/m/svc: build constraints exclude all Go files in /m/svc';
+  const events = [
+    { ImportPath: 'example.com/m/svc', Action: 'build-output', Output: '# example.com/m/svc\n' },
+    { ImportPath: 'example.com/m/svc', Action: 'build-output', Output: `${excludedLine}\n` },
+    { ImportPath: 'example.com/m/svc', Action: 'build-fail' },
+    { Action: 'start', Package: 'example.com/m/svc' },
+    { Action: 'fail', Package: 'example.com/m/svc', FailedBuild: 'example.com/m/svc' },
+  ];
+  assert.deepEqual(parseGoTestJson(events.map((event) => JSON.stringify(event)).join('\n'), 'example.com/m'), { failures: [], total: 0, excluded: 1 });
+  assert.deepEqual(excludedPackageDirs(`${excludedLine}\npackage example.com/m: build constraints exclude all Go files in /m\n`, 'example.com/m'), ['svc', '']);
+  assert.deepEqual(excludedPackageDirs('a/a.go:5:2: unreachable code\n', 'example.com/m'), []);
 });
 
 test('go test -json: a cut-off stream, a line that is not JSON or an empty stream is unreadable (null), never a pass', () => {
@@ -223,4 +237,26 @@ test('run: no go on PATH shows types, lint and tests not run, never ok, and does
   assert.equal(verdict.verdict, 'ok');
   for (const kind of ['types', 'lint', 'tests']) assert.deepEqual([verdict.row.checks[kind].result, verdict.row.checks[kind].why], ['not-run', 'go-not-installed'], kind);
   assert.match(verdict.line, /types not run \(go: not installed\) · lint not run \(go: not installed\) · tests not run \(go: not installed\)/);
+});
+
+// ---- build constraints (goprobe2) ----
+
+const OTHER_OS = process.platform === 'win32' ? 'linux' : 'windows';
+const OTHER_OS_PACKAGE = { [`svc/svc_${OTHER_OS}.go`]: `//go:build ${OTHER_OS}\n\npackage svc\n\nfunc S() int { return 1 }\n` };
+const TAGGED_TEST_PACKAGE = { 'integ/integ_test.go': '//go:build integration\n\npackage integ\n\nimport "testing"\n\nfunc TestI(t *testing.T) {}\n' };
+
+test('run: a new package built only on another OS or under a tag is valid Go and does not block', needsGo, (t) => {
+  const repo = goRepo(t, { 'a/a.go': A_ONE }, { ...OTHER_OS_PACKAGE, ...TAGGED_TEST_PACKAGE });
+  const { code, verdict } = runCli(repo);
+  assert.equal(code, 0, `${verdict.line}\n${verdict.reason}`);
+  assert.deepEqual([verdict.row.checks.types.result, verdict.row.checks.tests.result], ['none', 'none'], verdict.line);
+});
+
+test('run: go vet still vets the other folders when one is left empty by build constraints', needsGo, (t) => {
+  const repo = goRepo(t, { 'a/a.go': A_ONE }, { ...OTHER_OS_PACKAGE, 'b/b.go': 'package b\n\nfunc B() int {\n\treturn 1\n\treturn 2\n}\n' });
+  const { code, verdict } = runCli(repo);
+  assert.equal(code, 1, verdict.line);
+  assert.equal(verdict.row.checks.types.new, 1, verdict.line);
+  assert.match(verdict.reason, /b\/b\.go:5 vet: unreachable code/);
+  assert.doesNotMatch(verdict.reason, /build constraints/);
 });

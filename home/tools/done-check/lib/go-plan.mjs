@@ -264,7 +264,7 @@ export function planGoChecks(context, scope, { full = false } = {}) {
  * @param {{ root: string, files: string[], wide: boolean }} module one entry of goModulesOf
  * @param {{ full?: boolean }} [options] `full`: vet and test the whole module (`./...`), as at a land
  * @returns {{ skipped: { kind: string, why: string, label: string }[], cmds: object[] }} Cmds as detect.mjs makes them plus
- *   `parse: 'go-vet'|'gofmt'|'go-test'` (and `goModule`, the module path, on go test)
+ *   `parse: 'go-vet'|'gofmt'|'go-test'` (and `goModule`, the module path, on go vet and go test)
  */
 export function planGo(context, module, { full = false } = {}) {
   const where = module.root === context.top ? '' : `${withSlashes(relative(context.top, module.root))}: `;
@@ -277,12 +277,13 @@ export function planGo(context, module, { full = false } = {}) {
   const skipped = [];
   const goCmds = (parse, kind, label, binary, args, extra = {}) => context.inGroups(module.root, { kind, label, files: args, build: (paths) => [binary, ...FIXED_ARGS[parse], ...paths] })
     .map((cmd) => ({ ...cmd, parse, ...extra }));
-  if (vetArgs.length > 0) cmds.push(...goCmds('go-vet', 'types', 'go vet', context.go, vetArgs));
+  const goModule = modulePathOf(module.root);
+  if (vetArgs.length > 0) cmds.push(...goCmds('go-vet', 'types', 'go vet', context.go, vetArgs, { goModule }));
   if (found.gofmt.length > 0) {
     const gofmt = gofmtBinary(context.env, context.go);
     if (gofmt) cmds.push(...goCmds('gofmt', 'lint', 'gofmt -l', gofmt, found.gofmt.map((file) => `./${file}`)));
     else skipped.push(skip('lint', 'gofmt-not-installed', `${where}lint: gofmt: not installed`));
   }
-  if (testArgs.length > 0) cmds.push(...goCmds('go-test', 'tests', 'go test', context.go, testArgs, { goModule: modulePathOf(module.root) }));
+  if (testArgs.length > 0) cmds.push(...goCmds('go-test', 'tests', 'go test', context.go, testArgs, { goModule }));
   return { skipped: [...skipped, ...notesOf(found, cmds, where)], cmds };
 }

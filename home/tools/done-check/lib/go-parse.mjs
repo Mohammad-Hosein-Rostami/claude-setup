@@ -1,6 +1,10 @@
 // Readers for what the Go tools print (fixes spec section 7, go-checks): `go vet` diagnostics (stderr), the file list of `gofmt -l`, and
 // the event stream of `go test -json`. Same contract as parse.mjs: each reader takes the tool's text and returns { failures, total } or null.
-// Exports: parseGoVet, parseGofmtList, parseGoTestJson.
+// Exports: parseGoVet, parseGofmtList, parseGoTestJson, excludedPackageDirs.
+// A package whose every file is left out by a build constraint on this machine (`//go:build windows`, `_linux.go`, a tag such as
+//   `integration`) is valid Go that this machine does not build: go names it `build constraints exclude all Go files` when it is named on
+//   the command line (`./...` skips it silently). That is never a failure: go test's reader leaves it out (counted in `excluded`), and
+//   excludedPackageDirs finds it in go vet's output so the engine vets the other folders again without it.
 // Invariants: pure (no file, no process, no clock); `null` means "no result could be read" (garbage, the wrong shape, a cut-off stream),
 //   never an empty ok, so the engine reports not-run (error). Ids are `file|name` with no line number: `<file>|vet: <message>` for vet,
 //   `<file>|gofmt` for gofmt, `<package dir>/|<Test/sub>`, `<package dir>/|build failed` and `<package dir>/|package failed` for go test.
@@ -13,6 +17,8 @@ const PACKAGE_HEADER = /^# /; // go vet and the go build output name the package
 const TEST_FRAME = /^\s*(?:=== (?:RUN|PAUSE|CONT|NAME)|--- (?:FAIL|PASS|SKIP))\b/; // go test's own framing lines, not a test's message
 const BUILD_FAILED = 'build failed';
 const PACKAGE_FAILED = 'package failed';
+// go's text for a package with no file left for this GOOS, GOARCH and tag set (go/build's NoGoError with ignored files)
+const ALL_EXCLUDED = /^package (\S+): build constraints exclude all Go files in /;
 const PACKAGE_END_ACTIONS = new Set(['pass', 'fail', 'skip']);
 const TEST_END_ACTIONS = new Set(['pass', 'fail', 'skip']);
 
@@ -140,11 +146,12 @@ function packageFailures(name, pkg, modulePath) {
 /**
  * Reads the `go test -json` event stream (stdout). A failing test is `<package dir>/|<Test/sub>`; a package that did not build is
  * `<package dir>/|build failed`; a package that failed with no failing test (a panic outside a test, TestMain, a timeout) is
- * `<package dir>/|package failed`.
+ * `<package dir>/|package failed`. A package whose files build constraints all leave out is no failure (see the header).
  * @param {string} text the JSON lines go test printed
  * @param {string} [modulePath] the module path of go.mod, so an import path becomes a folder of the module ('' leaves `./x` paths only)
- * @returns {{ failures: object[], total: number } | null} total = tests that ended (pass, fail or skip; 0 = no test ran); null when a line
- *   is not JSON, the stream is empty, or a package started but never ended (a killed or crashed run)
+ * @returns {{ failures: object[], total: number, excluded: number } | null} total = tests that ended (pass, fail or skip; 0 = no test
+ *   ran); excluded = packages left out by build constraints (go exits 1 for them); null when a line is not JSON, the stream is empty, or a
+ *   package started but never ended (a killed or crashed run)
  */
 export function parseGoTestJson(text, modulePath = '') {
   const events = eventsOf(text);
@@ -152,7 +159,19 @@ export function parseGoTestJson(text, modulePath = '') {
   const packages = packagesOf(events);
   if (packages === null || packages.size === 0) return null;
   if ([...packages.values()].some((pkg) => pkg.end === null)) return null; // started (or ran tests) but never ended: cut off
-  const failures = [...packages].flatMap(([name, pkg]) => packageFailures(name, pkg, modulePath));
-  const total = [...packages.values()].reduce((sum, pkg) => sum + pkg.counted, 0);
-  return { failures, total };
+  const isExcluded = (pkg) => pkg.end === 'fail' && pkg.failedBuild && pkg.tests.size === 0 && ALL_EXCLUDED.test(pkg.buildText);
+  const built = [...packages].filter(([, pkg]) => !isExcluded(pkg));
+  const failures = built.flatMap(([name, pkg]) => packageFailures(name, pkg, modulePath));
+  const total = built.reduce((sum, [, pkg]) => sum + pkg.counted, 0);
+  return { failures, total, excluded: packages.size - built.length };
+}
+
+/**
+ * The package folders go vet (or go build) named as left out by build constraints, from what it printed.
+ * @param {string} text go vet's output (stderr)
+ * @param {string} modulePath the module path of go.mod ('' keeps the import path as it is)
+ * @returns {string[]} module-relative folders with `/` ('' for the module root), in the order printed
+ */
+export function excludedPackageDirs(text, modulePath) {
+  return linesOf(text).map((line) => ALL_EXCLUDED.exec(line)?.[1]).filter((name) => name !== undefined).map((name) => packageDirOf(name, modulePath));
 }
