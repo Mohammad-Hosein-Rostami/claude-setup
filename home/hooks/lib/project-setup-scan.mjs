@@ -368,13 +368,16 @@ export function scanProjectSetup(top, cwd, { personalSkillsDir, budgetMs = DEFAU
 /**
  * The env variables the committed project settings set and the local file does not (for our skip switches: team-set ones are ignored).
  * @param {string} top - the project root.
+ * Every env key is read, not the first MAX_KEYS the note shows: a team file with many keys cannot hide a switch past the cap (the
+ * file itself is capped at SETTINGS_MAX_BYTES, so the list stays small).
  * @returns {{ keys: ReadonlySet<string>, readable: boolean }} `readable` false when either file is there but cannot be read as JSON.
  */
 export function teamSetEnv(top) {
   const team = readJson(join(top, TEAM_SETTINGS));
   const local = readJson(join(top, LOCAL_SETTINGS));
-  const localKeys = new Set(keysOf(local.value?.env));
-  return { keys: new Set(keysOf(team.value?.env).filter((key) => !localKeys.has(key))), readable: !team.problem && !local.problem };
+  const allKeys = (value) => (isObject(value) ? Object.keys(value) : []);
+  const localKeys = new Set(allKeys(local.value?.env));
+  return { keys: new Set(allKeys(team.value?.env).filter((key) => !localKeys.has(key))), readable: !team.problem && !local.problem };
 }
 
 /** @typedef {{ instructions: string[], agentsMdLoads: 'native'|'setting'|'import'|'none', rules: number, skills: string[],

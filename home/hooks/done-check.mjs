@@ -25,6 +25,9 @@
 //   An internal error is one guard-log line and a pass; a missing tool folder is silent.
 // Trust: the input crosses the agent boundary: session and agent ids are checked as file names, the folder comes from the hooks' own
 //   records (scope.mjs), never from the input's `cwd`; the line and reason are built by the engine from counts and tool output lines.
+// Team switch (lib/team-switch.mjs): DONE_CHECK_SKIP set by a project's committed .claude/settings.json (not by its settings.local.json)
+//   is ignored: the checks run and the line ends with one ` · team switch DONE_CHECK_SKIP ignored: ...` note, once per stop. The folders
+//   read for it are CLAUDE_PROJECT_DIR, the input's `cwd` and every checked git top: a folder can only make the switch ignored, never honoured.
 // Model and effort (ledger row fields, for `done-check stats`): Claude Code's own records, never the agent's report. The Stop and
 //   SubagentStop input carries `effort.level` (2.1.329 hook input schema: "Present for hooks that fire within a tool-use context (...
 //   Stop, SubagentStop ...) on a model that supports the effort parameter") but no model field, so the model is the `message.model`
@@ -40,6 +43,7 @@ import { logDecision } from './lib/guard-log.mjs';
 import { withSessionLock } from './lib/session-lock.mjs';
 import { isSessionId, readSessionFile, writeSessionFile } from './lib/session-store.mjs';
 import { countedGate } from './lib/stop-block-count.mjs';
+import { switchDirs, trustedSwitch } from './lib/team-switch.mjs';
 import { lastReplyRouting } from './lib/transcript.mjs';
 
 const HOOK_NAME = 'done-check';
@@ -54,6 +58,7 @@ const AGENTS_KEPT = 50;
 const TOPS_KEPT = 8;
 const KEY_CHARS = 16;
 const LEAD = 'lead';
+const SKIP_SWITCH = 'DONE_CHECK_SKIP';
 
 const blocksDir = (env) => join(env.HOME || env.USERPROFILE || homedir(), '.claude', 'state', 'done-check', 'blocks');
 const agentOf = (input) => (typeof input.agent_id === 'string' && input.agent_id !== '' ? input.agent_id : LEAD);
@@ -155,6 +160,18 @@ function nextBlocks(results, state) {
 }
 
 /**
+ * The environment the checks get: DONE_CHECK_SKIP left out when a team file set it (lib/team-switch.mjs).
+ * @returns {{ checkEnv: Record<string, string|undefined>, note: string|null }} note: the one line saying the switch was ignored
+ */
+function checksEnv(input, env, scopes) {
+  const skip = trustedSwitch(env, SKIP_SWITCH, switchDirs(env, input.cwd, ...scopes.map((scope) => scope.top)));
+  if (skip.ignored === null) return { checkEnv: env, note: null };
+  const checkEnv = { ...env };
+  delete checkEnv[SKIP_SWITCH];
+  return { checkEnv, note: skip.ignored };
+}
+
+/**
  * The decision of one stop.
  * @param {object} input the validated Stop or SubagentStop JSON
  * @param {Record<string, string|undefined>} env the process environment (HOME, CLAUDE_PROJECT_DIR, DONE_CHECK_SKIP)
@@ -167,10 +184,11 @@ async function decide(input, env, startedAt, tools) {
   const scopes = await ownChange(input, env);
   if (scopes.length === 0) return null;
   const state = loadBlocks(input, env);
-  const results = await checkScopes(scopes, input, env, state, startedAt, { checkChange, constants });
+  const { checkEnv, note } = checksEnv(input, env, scopes);
+  const results = await checkScopes(scopes, input, checkEnv, state, startedAt, { checkChange, constants });
   const next = nextBlocks(results, state);
   const blocking = results.filter(({ verdict }) => verdict.verdict === 'block');
-  const line = results.map(({ verdict }) => verdict.line).join(' | ');
+  const line = [results.map(({ verdict }) => verdict.line).join(' | '), note].filter(Boolean).join(' · ');
   const saved = state.usable && saveBlocks(input, env, next);
   if (blocking.length === 0 || !saved) return { block: false, line }; // a block that cannot be remembered would repeat: it passes
   return { block: true, line, reason: blocking.map(({ verdict }) => verdict.reason).join('\n\n') };

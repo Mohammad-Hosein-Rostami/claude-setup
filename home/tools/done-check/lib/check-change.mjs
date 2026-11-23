@@ -10,7 +10,7 @@
 //   ok. At a stop (`where: 'stop'`) a FAIL with a new failure blocks, except when the same change key was blocked before or the agent was
 //   blocked MAX_BLOCKS_IN_A_ROW times already: then it is `left-open` (the caller, the hook, owns that count and passes it as
 //   `priorBlocks`). A new failure an owner's false-alarm label already names (same repo and lane, lib/false-alarms.mjs) is `labelled`:
-//   shown, stored as a count, never blocking. At a land or a manual run a new failure always blocks. Empty scope: verdict `skipped`, no ledger row. DONE_CHECK_SKIP=all: verdict `skipped`, no command runs, one ledger row.
+//   shown, stored as a count, never blocking. At a land or a manual run a new failure always blocks. Empty scope: verdict `skipped`, no ledger row. DONE_CHECK_SKIP=all: verdict `skipped`, no command runs, one ledger row (a team file's switch is ignored: hooks/lib/team-switch.mjs).
 // Invariants: the change key mixes the plan fingerprint into Scope.key, so a changed set of commands is a new change. The same key in the
 //   ledger after an ok or reused run (with no time or error not-run) is `reused` and runs no command. The risk classes are always computed
 //   fresh. Result files made for the tools are removed after the run (and old ones of a crashed run after a day). The ledger holds counts
@@ -19,6 +19,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readdirSync, rmSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { worktreeOf } from '../../../hooks/lib/gated-folder.mjs';
+import { switchDirs, switchNames } from '../../../hooks/lib/team-switch.mjs';
 import { compareWithBase, findFlaky } from './base-compare.mjs';
 import { BASE_DEADLINE_MS, CHECK_KINDS, LAND_DEADLINE_MS, MAX_BLOCKS_IN_A_ROW, STOP_DEADLINE_MS } from './contract.mjs';
 import { planChecks } from './detect.mjs';
@@ -205,7 +206,7 @@ export async function checkChange(scopeOrPromise, options) {
     return { verdict, line: lineOf(row, { notes, tries: extra.tries ?? 0 }), reason: extra.reason ?? null, risk: risk.classes, row };
   };
   if (files === 0) return finish('skipped');
-  if ((env.DONE_CHECK_SKIP ?? '').split(',').map((name) => name.trim()).includes('all')) {
+  if (switchNames(env, 'DONE_CHECK_SKIP', switchDirs(env, scope.top)).has('all')) { // a team file's switch is ignored (team-switch.mjs)
     for (const kind of SKIPPED_KINDS) row.checks[kind] = { result: 'not-run', new: 0, old: 0, ms: 0, why: 'skipped-env' };
     return finish('skipped');
   }

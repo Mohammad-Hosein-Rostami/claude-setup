@@ -1,7 +1,9 @@
 // PostToolUse(Edit|Write|MultiEdit): run the project's own `format` script on a code file after it changes (C21). Only a
 // script that exists in the nearest package.json runs.
 // A format script that targets the whole repo (`prettier --write .`, `nx run-many`) is replaced by the tool's binary on the
-// edited file, or skipped; CLAUDE_POST_EDIT_SKIP opts out ("all" or "format"). A format run that outlives the deadline is
+// edited file, or skipped; CLAUDE_POST_EDIT_SKIP opts out ("all" or "format"), but not when only a project's committed
+// .claude/settings.json sets it (lib/team-switch.mjs): then the format runs and the owner gets one warning per session (a
+// `systemMessage`, or a line after the failures). A format run that outlives the deadline is
 // killed with its whole process tree. Silent on success; on failure prints at most 15 `file:line RULE-ID message` lines and
 // exits 2. Never evaluates hook input; on Windows (shell on) the relative path must look safe.
 import { spawn } from 'node:child_process';
@@ -10,6 +12,7 @@ import { dirname, isAbsolute, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readPlainFile } from './lib/plain-file.mjs';
 import { CODE_FILE, diagnostics } from './lib/diagnostics.mjs';
+import { noticeOnce, switchDirs, trustedSwitch } from './lib/team-switch.mjs';
 
 const SAFE_PATH = /^[\w@+=:,./-]+$/; // no `%`: cmd.exe expands %VAR%
 const BUDGET_MS = 18_000; // hook timeout is 20 s
@@ -18,7 +21,7 @@ const FORMAT_SCRIPT = 'format'; // takes the edited file after `--`
 const FORMAT_TOOL = ['prettier', '--write']; // per-file fallback for a broad format script
 const BROAD_SCRIPT = /(^|\s)\.\/?(\s|$)|\*|\brun-many\b|\bnx\b|\bturbo\b|\blerna\b/;
 /** Env var that opts the format run out: "all" or "format". */
-export const SKIP_ENV = 'CLAUDE_POST_EDIT_SKIP'; // set in a project's .claude/settings.json env
+export const SKIP_ENV = 'CLAUDE_POST_EDIT_SKIP'; // the shell or a project's .claude/settings.local.json env; a team file's value is ignored
 
 export { diagnostics, isSamePath } from './lib/diagnostics.mjs';
 
@@ -170,8 +173,15 @@ export async function runStages(checks, ctx) {
   return [];
 }
 
-/** Run the format check for `file`; resolves to the failure lines ([] = all passed or nothing to run). */
-export async function checkFile(file) {
+/** The CLAUDE_POST_EDIT_SKIP value the hook may act on, and the warning when a team file's value was ignored (lib/team-switch.mjs). */
+export const trustedSkip = (env = process.env, cwd = undefined) => trustedSwitch(env, SKIP_ENV, switchDirs(env, cwd));
+
+/**
+ * Run the format check for `file`; resolves to the failure lines ([] = all passed or nothing to run).
+ * @param {string} file the edited file (absolute)
+ * @param {string} [skip] the trusted CLAUDE_POST_EDIT_SKIP value (trustedSkip), read from this process's env by default
+ */
+export async function checkFile(file, skip = trustedSkip().value) {
   if (!isCodeFile(file) || !existsSync(file)) return [];
   const dir = findPackageDir(file);
   if (!dir) return [];
@@ -185,7 +195,7 @@ export async function checkFile(file) {
   } catch (error) {
     return [`${rel}:1 HOOK unreadable package.json in ${dir}: ${error.message}`];
   }
-  const notSkipped = skipFilter(process.env[SKIP_ENV]);
+  const notSkipped = skipFilter(skip);
   const checks = plannedChecks(scripts, rel, toolFinder(dir)).filter((c) => notSkipped(c.name));
   return runStages(checks, { pm: packageManager(dir), cwd: dir, rel, deadline: Date.now() + BUDGET_MS });
 }
@@ -205,10 +215,15 @@ async function main() {
   }
   const file = input?.tool_input?.file_path;
   if (typeof file !== 'string') return;
-  const failures = await checkFile(file);
+  const skip = trustedSkip(process.env, input.cwd);
+  const failures = await checkFile(file, skip.value);
+  // Warn only where the switch would have changed something (a code file), once per session.
+  const warning = skip.ignored !== null && isCodeFile(file) && noticeOnce(input.session_id, SKIP_ENV) ? skip.ignored : null;
   if (failures.length) {
-    process.stderr.write(failures.join('\n') + '\n');
+    process.stderr.write([...failures, ...(warning ? [warning] : [])].join('\n') + '\n');
     process.exitCode = 2;
+  } else if (warning) {
+    process.stdout.write(`${JSON.stringify({ systemMessage: warning })}\n`);
   }
 }
 

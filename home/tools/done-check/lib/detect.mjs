@@ -14,6 +14,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { switchDirs, switchNames } from '../../../hooks/lib/team-switch.mjs';
 import { MAX_NODE_RELATED } from './contract.mjs';
 import { planGoChecks } from './go-plan.mjs';
 import { nodeRelatedTests, testFilesOfGlobs } from './related.mjs';
@@ -262,14 +263,14 @@ function fingerprintOf(context, packages) {
  * What to run for one change: per package a typecheck, a lint and the related tests, as argv commands (nothing is run here).
  * @param {import('./contract.mjs').Scope} scope the change: files, wide files, git top and base
  * @param {NodeJS.ProcessEnv} env the environment: HOME (state folder), PATH (where go and gofmt are found) and DONE_CHECK_SKIP (`all`
- *   or a list of types,lint,tests)
+ *   or a list of types,lint,tests; ignored when a team file sets it, see hooks/lib/team-switch.mjs)
  * @returns {import('./contract.mjs').Plan} commands per package, checks that cannot run with their reason, and a fingerprint of the commands
  * @throws {Error} when the state folder for result files cannot be made
  */
 export function planChecks(scope, env) {
   const stateDir = join(homeOf(env), '.claude', 'state', 'done-check');
   const context = { top: scope.top, git: scope.git, base: scope.base, stateDir };
-  const asked = new Set((env.DONE_CHECK_SKIP ?? '').split(',').map((name) => name.trim()));
+  const asked = switchNames(env, 'DONE_CHECK_SKIP', switchDirs(env, scope.top)); // a team file's switch is ignored (team-switch.mjs)
   const skippedByEnv = PLANNED_KINDS.filter((kind) => asked.has('all') || asked.has(kind));
   const skipped = skippedByEnv.map((kind) => ({ kind, why: 'skipped-env', label: `${kind}: DONE_CHECK_SKIP=${asked.has('all') ? 'all' : kind}` }));
   if (!scope.top || asked.has('all')) return { packages: [], skipped: scope.top ? skipped : PLANNED_KINDS.map((kind) => ({ kind, why: 'no-command', label: `${kind}: no project folder` })), fingerprint: fingerprintOf(context, []) };
