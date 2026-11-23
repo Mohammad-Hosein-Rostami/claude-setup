@@ -21,9 +21,15 @@ Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
   `find -delete`, `eval`, hidden execution, push or publish, production hosts, commands git runs).
 - `rm-kind.mjs`: is an `rm` recursive as far as its option words can be read (an unquoted `$F` where the options stand counts); `moved-text.mjs`: after a `cd`, a recursive `rm` or deleting `find` in quoted text or in the body of a heredoc a program runs asks.
 - `other-deleters.mjs`: deleters other than `rm` (rimraf, `rsync --delete`, PowerShell and `cmd` delete text), judged on the same targets as `rm -r`.
-- `runtime-values.mjs`: values a line gets only when it runs: arithmetic on them asks (bash runs `a[$(cmd)]` inside `$(( ))`), and so
-  does a word filled in from `read`, an array or `"$@"` in a command a rule reads; it also tells `shell-hazards.mjs` which `((` bash
-  reads as arithmetic.
+- `runtime-values.mjs`: values a line gets only when it runs: arithmetic on them is bounced once with the fix, then asks (bash runs
+  `a[$(cmd)]` inside `$(( ))`), and so is a word filled in from `read`, an array or `"$@"` in a command a rule reads; it also tells
+  `shell-hazards.mjs` which `((` bash reads as arithmetic.
+- `loop-values.mjs`: the values of a plain `for` list (`for d in a b c`), so the loop body is judged once per value instead of as a
+  word known only at run time. A list counts only when every item is a plain literal word, the name has one `for` header and is read
+  only as `$NAME` or `${NAME}`, and the line has at most 64 combinations (`MAX_LOOP_READINGS`); the values fill in only between the
+  header and its `done`. Anything else keeps the run-time bounce.
+- `docker-advice.mjs`: advice, never an ask: `docker rm` (also `podman`, `nerdctl`, `container rm`) without `-v` leaves the
+  container's anonymous volumes on disk; the first send gets the fix (`docker rm -fv`, or `run --rm`), the same command again runs.
 - `credential-send.mjs`: asks when a private credential file (`~/.ssh/id_*`, `.aws/credentials`, `.netrc` ...) and a network sender (curl, scp, nc, a cloud upload) are in one command line.
 - `git-run-values.mjs`: the values git runs from a variable or config entry (`GIT_EDITOR`, `GIT_SSH_COMMAND` ...); asks when the guard cannot read what would run. Used by `git-runs.mjs`.
 - `guard-state-write.mjs`: asks before a write, removal, link or FIFO under `~/.claude/private` or the guard's own state (remembered allows, bounce records, log); reading is allowed.
@@ -38,7 +44,8 @@ Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
 - `wait-advice.mjs`: advice, never an ask: a `for|while|until` loop that sleeps 5 s or more, or a single `sleep` of 30 s or more (a sleep loop holds the turn, and a repeated check costs a model call each time). Pure; a time it cannot read (`sleep $n`) gives no advice, and the hook drops the advice for a call sent with `run_in_background: true`.
 - `git-advice.mjs`: all three git advices in one call (merge commit, branch move, a copy of an existing lane branch); the copy-branch advice asks git (one 2 s budget per command line), and any git error or timeout gives no advice.
 - `inert-arguments.mjs`: empties the single-quoted arguments of programs that never run them (echo, printf, grep, rg, jq, sed, git log) before `raw-risk.mjs` looks for dangerous words, only in shapes it can prove harmless.
-- `secrets.mjs`: finds literal secrets in a command and masks them.
+- `secrets.mjs`: finds literal secrets in a command and masks them. A secret asks nothing (owner decision R22-G1): the guard logs one
+  line naming its kind (outcome `secret`), never the value; gitleaks still checks commits.
 - `data-text.mjs`: the parts of a command that `secrets.mjs` treats as data (a stored quoted heredoc body nothing else in the command can run or read, an inert program's quoted argument).
 - `verdict.mjs`: shared wording of the reasons.
 
@@ -50,13 +57,16 @@ Asking and remembering:
 - `question-answered.mjs`: the mark that the owner answered a question in the terminal (hashes of session, agent and question texts only), so the open popup closes.
 - `notify-note.mjs`: the texts and terminal sequences of `notify.mjs` (a question note shows the marker's short header: `a question (Scope)`), the effective channel, and the per-session queue of notes no hook event carries (`queueNote`, `takeNotes`).
 - `question-rejected.mjs`: notices in the session transcript that the owner turned the question down in the terminal ("Chat about this", Esc), which runs no tool and leaves no mark, so the open popup closes.
-- `remembered-ask.mjs`, `allowed-literals.mjs`: per-session memory of secrets the owner already allowed (hashes only).
+- `remembered-ask.mjs`: bounce once, else ask the owner (`askOrBounce`), and the one log line for a literal secret (`logSecretKind`:
+  its kind, no command, no value). `allowed-literals.mjs`: the per-session store of secrets allowed before R22-G1 (hashes only); the
+  guard no longer writes it, and `guard-state-write.mjs` still guards its folder.
 - `answered-commands.mjs`: a command the guard's dialog allowed, handed to `permission-timed-allow.mjs` so Claude Code's own prompt for it opens no second dialog (hashes of session, agent, directory and command only; used once; 10 s window).
 - `bounce-once.mjs`: the first time a command asks because of how it is written (a variable command word, a risky word
-  inside `$(...)` or a heredoc, a literal secret), it is sent back to the agent with the fix instead of the dialog, and any
-  other reason it asks for is named as one that will still ask; the same command again gets the dialog. Per-session store
-  in `~/.claude/state/guard-bounced` (hashes only). `reason-classes.mjs` gives every guard reason a fixed class name.
-  Advice (a quality rule: a hand-edited lockfile, a merge commit) uses the same store: alone, the first send is sent back
+  inside `$(...)` or a heredoc, a word or arithmetic known only at run time), it is sent back to the agent with the fix instead
+  of the dialog, and any other reason it asks for is named as one that will still ask; the same command again gets the dialog.
+  Per-session store in `~/.claude/state/guard-bounced` (hashes only); the bounce log line holds the masked command and the
+  reason, as an ask line does. `reason-classes.mjs` gives every guard reason a fixed class name.
+  Advice (a quality rule: a hand-edited lockfile, a merge commit, `docker rm` without `-v`) uses the same store: alone, the first send is sent back
   with the fix and the same command again runs with no dialog; next to a reason that asks, the advice is only added to it.
 - `session-store.mjs`: the per-session files of `allowed-literals.mjs` and `bounce-once.mjs`. It checks the folder and file
   with lstat, never follows a link or waits on a FIFO, and cleans up only its own old files.

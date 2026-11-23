@@ -29,7 +29,12 @@ test('another session is skipped, as is a line with no session', () => {
   assert.equal(guardAction(guardLine({ session: undefined }), WATCHED), undefined);
 });
 
-test('a secret-ask timeout is skipped but a secret-ask deny is printed', () => {
+test('owner G1: a secret line (the kind, no command) and a bounce line are never printed', () => {
+  assert.equal(guardAction(guardLine({ decision: 'allow', outcome: 'secret', class: 'secret', reason: 'a GitHub token', command: '' }), WATCHED), undefined);
+  assert.equal(guardAction(guardLine({ decision: 'deny', outcome: 'bounce', class: 'variable command word', reason: 'variable command word', command: '$CMD x' }), WATCHED), undefined);
+});
+
+test('a secret-ask timeout written before G1 is skipped but a secret-ask deny is printed', () => {
   assert.equal(guardAction(guardLine({ reason: SECRET_REASON }), WATCHED), undefined);
   assert.equal(guardAction(guardLine({ reason: SECRET_REASON, outcome: 'no-gui' }), WATCHED), undefined);
   assert.match(guardAction(guardLine({ reason: SECRET_REASON, outcome: 'deny' }), WATCHED), /GUARD deny /);

@@ -14,7 +14,7 @@ The `ui-check` tool has its own tests: `pnpm --dir home/tools/ui-check test`.
 
 ## Areas (by file name prefix)
 
-- `pre-bash-guard*`, `secrets-*`, `allowed-literals`, `remembered-ask`, `timed-ask`: the Bash guard hook and its helpers (`home/hooks/lib`).
+- `pre-bash-guard*`, `secrets-*`, `allowed-literals`, `remembered-ask`, `timed-ask`, `guard-bounce-real-run`: the Bash guard hook and its helpers (`home/hooks/lib`).
 - `ask-gate`, `artifact-ask`, `permission-timed-allow`, `agent-*`, `post-edit*`: the other hooks.
 - `ask-queue*`: the `ask` tool's decision queue.
 - `mode*`, `skill-router*`, `statusline`: the session-notes hook (lead rules, compaction notes), the skill router and the status line.

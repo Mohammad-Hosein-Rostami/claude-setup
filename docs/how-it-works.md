@@ -32,9 +32,10 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 2. `skill-router.mjs` reads your prompt and names the skills that fit (for example `ui-quality-pass` for a UI edit).
 3. Claude reads `home/CLAUDE.md` and the rules whose paths match the files it works on.
 4. The lead hands work to agents from `home/agents/`. Each agent file lists its model, tools and size limits.
-5. Before each Bash command, `pre-bash-guard.mjs` checks it. Risky commands (push, `rm -rf`, secrets) open a dialog. When a
-   rewrite would remove the question (a `$VAR` command word, `rm`/`push` inside `$(...)` or a heredoc, a literal secret), the
-   first send is sent back to Claude with the fix instead; the same command sent again opens the dialog.
+5. Before each Bash command, `pre-bash-guard.mjs` checks it. Risky commands (push, `rm -rf`, prod-host writes) open a dialog. When a
+   rewrite would remove the question (a `$VAR` command word, `rm`/`push` inside `$(...)` or a heredoc, a word or arithmetic known
+   only at run time), the first send is sent back to Claude with the fix instead; the same command sent again opens the dialog.
+   A literal secret in a command (a test password) asks nothing; the log names its kind (owner decision R22-G1).
 6. After each edit, `post-edit.mjs` runs the project's formatter.
 7. When an agent or the session stops, `done-check.mjs` runs the project's own type check, lint and related tests on the code that changed
    (section below). The other Stop hooks check the reply against any size cap you gave, and look for uncommitted files and loose branches.
@@ -89,8 +90,10 @@ own rules) and `docs/usage.md`.
 
 Every question the Bash guard asked, and the answer, is one JSON line in `~/.claude/logs/guard.jsonl`
 (`CLAUDE_GUARD_LOG` changes the path). Show the last lines with `tail -n 20 ~/.claude/logs/guard.jsonl`. The outcomes are
-allow, deny, timeout, remembered, bounce (sent back once for a rewrite; the line names the classes in `class` and holds no command
-text), no-gui and dialog-failed. The log never stores secrets. What the guard asks about is in
+allow, deny, timeout, bounce (sent back once for a rewrite; the line names the classes in `class` and holds the reason and the
+masked command, as an ask line does), secret (a literal secret ran unasked; the line names its kind in `reason` and holds no
+command), no-gui and dialog-failed; lines written before owner decision R22-G1 may also say remembered (a secret allowed earlier in
+the session). The log never stores secrets. What the guard asks about is in
 `docs/troubleshooting.md`.
 
 ## Run the tests

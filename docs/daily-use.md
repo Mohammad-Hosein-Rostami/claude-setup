@@ -77,8 +77,9 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   session is connected to Remote Control (those questions wait for an answer). The recommended option is chosen to be safe with nobody there, and each default taken
   is logged. For a big or deleting change the recommended option is "wait for the owner", so a timeout pauses only that part
   (RC10, skill `ask-owner`).
-- Guard dialogs (`git push`, publish, `rm -rf` outside the project or of a whole folder such as `rm -rf *`, prod-host writes, literal secrets) default to
-  Allow and go ahead after 2 min (`CLAUDE_ASK_TIMEOUT_S`; a secret-only ask `CLAUDE_ASK_SECRET_TIMEOUT_S`, also 2 min).
+- Guard dialogs (`git push`, publish, `rm -rf` outside the project or of a whole folder such as `rm -rf *`, prod-host writes) default to
+  Allow and go ahead after 2 min (`CLAUDE_ASK_TIMEOUT_S`). A literal secret in a command (a test password) asks nothing; the
+  guard log names its kind, never the value, and gitleaks still checks commits (owner decision R22-G1).
   Every Claude Code permission prompt (any tool, MCP tools, Agent, plan approval, protected files, any mode, background
   agents and `claude -p`) gets the same dialog and goes ahead after 2 min (`CLAUDE_PERMISSION_TIMEOUT_S`); the dialog
   shows the guard's reason when the guard asked. Questions get their own dialog (above).
