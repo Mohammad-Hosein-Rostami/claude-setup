@@ -309,6 +309,30 @@ test('requestEvidence: talk about the checks, negated clauses and plain UI reque
   for (const text of NO_DESIGN_CASES) assert.deepEqual(requestEvidence(text).design, [], text);
 });
 
+test('requestEvidence: a negator counts only in its own clause and only when it refuses the design work (R4)', () => {
+  const design = [
+    'No shortcuts: make the settings screen pixel perfect',
+    'skip the API part — make it pixel perfect',
+    'skip the API part – make it pixel perfect',
+    'skip the API part - make it pixel perfect',
+    'no API work\nmake it pixel perfect',
+    'no new tests; make it pixel perfect',
+    'this is a full pixel perfect job: build the settings screen',
+    'match the designs',
+    'build it to match the mockups',
+    'follow the frames for the settings page',
+    "I don't know why the header doesn't match the design",
+    'the card does not match the frame',
+    'نمی‌دونم چرا این صفحه مطابق فیگما نیست',
+    'نمیدونم چرا این صفحه مطابق فیگما نیست',
+  ];
+  for (const text of design) assert.ok(requestEvidence(text).design.length > 0, text);
+  const none = ["don't make it pixel perfect", 'no pixel-perfect work on this one', 'skip pixel perfect — just wire the API',
+    'نمی‌خوام پیکسل پرفکت باشه', 'update the design system docs', 'follow the design doc for naming'];
+  for (const text of none) assert.deepEqual(requestEvidence(text).design, [], text);
+  assert.deepEqual(uiClauses('No shortcuts: make the settings screen pixel perfect'), { design: true, ui: true });
+});
+
 test('requestEvidence: a Figma link counts in any clause, even negated or talk (pixel cannot be gamed down)', () => {
   const link = 'figma.com/design/AbC123/Plans';
   for (const text of [`don't use ${link}`, `the ui checks for ${link} are heavy`, `no visual change, see ${link}`, `بدون ${link}`]) {
