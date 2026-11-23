@@ -44,7 +44,7 @@ const NEVER_BOUNCED = [
   ['another deleter outside the project or on a whole folder', 'rimraf /etc'],
   ['another deleter with targets it cannot read', 'rimraf'],
   ['a recursive delete through a link made in the line', 'ln -s .. up && rm -rf up/*'],
-  ['a scratch delete on a line that may make links', 'rm -rf /work/cs-test-a/x && git clone u /work/cs-test-a/x'],
+  ['a scratch delete on a line that may make links', 'rm -rf /work/cs-test-a/x & git clone u /work/cs-test-a/x'], // `&`: the clone may run first (F3)
   ['find deleting through links', 'find -L src -delete'],
   ['rsync --delete through destination links', 'rsync -aK --delete src/ dst/'],
   ["a change to the guard's own files", 'touch ~/.claude/private/prod-hosts'],

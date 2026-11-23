@@ -84,9 +84,13 @@ test('R1: no scratch exemption on a line with a command that may make the link t
     `git clone u ${m} && ${RM} -rf ${m}/old`, `node make-links.mjs; ${RM} -rf ${m}/old`, `cd ${A} && mv ../cs-test-c/l m && ${RM} -rf m/old`,
     `D=$(mktemp -d); mv ${LINKS}/l $D/m && ${RM} -rf $D/m/old`, `S=${S}; mv ${LINKS}/l "$S/m"; ${RM} -rf "$S/m/x"`,
   ].forEach(asksDelete);
-  // the link maker written after the delete: a loop, a pipe or `&` may run it first
+  // the link maker written after the delete: a loop, a pipe, `&`, a group or a function body may run it first (F3)
   [`for i in 1 2; do ${RM} -rf ${m}/old; mv ${LINKS}/l ${m}; done`, `${RM} -rf ${m}/old & mv ${LINKS}/l ${m}`,
-    `${RM} -rf ${m}/old | ln -s ~ ${m}`, `${RM} -rf ${m}/old; bash -c 'mv ${LINKS}/l ${m}'`].forEach(asksDestructive);
+    `${RM} -rf ${m}/old | ln -s ~ ${m}`, `{ ${RM} -rf ${m}/old; } & mv ${LINKS}/l ${m}`, `f() { ${RM} -rf ${m}/old; }; mv ${LINKS}/l ${m}; f`,
+    `setsid ${RM} -rf ${m}/old; mv ${LINKS}/l ${m}`, `(${RM} -rf ${m}/old) & mv ${LINKS}/l ${m}`].forEach(asksDestructive);
+  // F3: after a delete in a plain `&&` / `;` list the delete has finished, also when a nested script makes the link
+  [`${RM} -rf ${m}/old; bash -c 'mv ${LINKS}/l ${m}'`, `${RM} -rf ${m}/old && mv ${LINKS}/l ${m}`, `X=1 ${RM} -rf ${m}/old; ln -s ~ ${m}`,
+    `cd ${A} && ${RM} -rf m/old && git clone u m`].forEach(quiet);
   [`mkdir -p ${m} && ${RM} -rf ${m}/old`, `cd "${S}" && ${RM} -rf fx4`, `D=$(mktemp -d); cp -a x $D/m; ${RM} -rf $D/m`,
     `rsync -a --delete src/ ${A}/dst/`, `D=$(mktemp -d); git clone u $D/r; ${RM} -rf $D/r`, `for d in a b; do echo "$d"; done; ${RM} -rf ${A}/x`].forEach(quiet);
 });

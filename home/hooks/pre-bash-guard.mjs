@@ -88,7 +88,7 @@ import { gitAdvice } from './lib/git-advice.mjs';
 import { waitAdvice, withoutWaitAdvice } from './lib/wait-advice.mjs';
 import { outwardAsk } from './lib/outward.mjs';
 import { hostVariables, readProdHosts, remoteAsk } from './lib/remote.mjs';
-import { TOO_COMPLEX_REASON, checkRm, newScope, newWork, substituteKnownWords, trackAssignments } from './lib/rm-paths.mjs';
+import { TOO_COMPLEX_REASON, checkRm, newScope, newWork, runsInOrder, substituteKnownWords, trackAssignments } from './lib/rm-paths.mjs';
 import { groupBranches } from './lib/bare-glob.mjs';
 import { enterSegment, leaveSegment, maybeFolders, newFolder, possibleFolders } from './lib/cd-folder.mjs';
 import { askOrBounce, logSecretKind } from './lib/remembered-ask.mjs';
@@ -170,12 +170,12 @@ function reasonsOf(command, context) {
     for (const view of segmentViews(seg, scope, loops, readings)) {
       const bareWords = new Set([...(seg.bareWords ?? [])].map((at) => view.readings[0].words[at])); // `$NAME` outside quotes: bash splits its value
       for (const [dir, { words: read, parsed: run }] of possibleFolders(folder, seg, work).flatMap((dir) => view.readings.map((reading) => [dir, reading]))) {
-        const env = { cwd: dir, maybeCwds: [...maybeFolders(folder), ...maybeCwds], groupTargets: groupBranches(segs, index), project, vars: scope.vars,
-          splitWords: scope.splitWords, bareWords, prodHosts, parse, depth: depth + 1, judged, line, work };
+        const env = { cwd: dir, maybeCwds: [...maybeFolders(folder), ...maybeCwds], groupTargets: groupBranches(segs, index), project, vars: scope.vars, splitWords: scope.splitWords,
+          bareWords, prodHosts, parse, depth: depth + 1, judged, line, work, inOrder: runsInOrder({ folder, seg, next: segs[index + 1], depth, before: read.slice(0, run.at) }) };
         reasons.push(...shellHazards({ seg: view.seg, raw: commandOf(view.seg), parsed: run, shellScript, line: command }),
           ...gitRunValueReasons(read, run, env, reasonsOf), ...unreadableNameReasons(run.cmd, command, prodHosts));
         if (run.cmd === undefined) continue;
-        const wrapped = (cmd, args, at) => checkCommand({ cmd, args, assigns: [], before: read.slice(0, at) }, env, []);
+        const wrapped = (cmd, args, at) => checkCommand({ cmd, args, assigns: [], before: read.slice(0, at) }, { ...env, inOrder: false }, []);
         reasons.push(...checkCommand({ ...run, before: read.slice(0, run.at) }, env, segs[index + 1] ?? []), ...scanWrapped(read, run, wrapped));
       }
     }

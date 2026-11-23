@@ -7,10 +7,11 @@
 // withoutRedirects(args) (from lib/shell-words.mjs, read by lib/git-runs.mjs; shown comes from lib/verdict.mjs);
 // DECLARERS (from lib/shell-words.mjs, also read by lib/git-run-values.mjs).
 // An unquoted `$D` whose value has blanks is judged as one path (zsh) and as the words bash splits it into; `X[2]=v` makes X unknown.
-// Variables are tracked in order within one command line and the LAST assignment wins (`D=$(mktemp -d); D=/etc` means /etc).
+// Variables are tracked in order within one command line and the LAST assignment wins (`D=$(mktemp -d); D=/etc` means /etc); on a line
+// with a loop or a function a name written twice is unknown (lib/same-line-values.mjs, also for `VAR=$(mktemp -d TEMPLATE)`).
 // A literal value is used as is, `VAR=$(mktemp -d)` (default location; the tokenizer turns it into MKTEMP_WORD, also with a path
-// suffix `$(mktemp -d)/..` and in backticks) stands for one directory inside the temp dir, `D+=x` appends, and any
-// other value is unknown. `..` is resolved lexically after substitution, so `$D/..` is outside the mktemp directory. A target deeper than
+// suffix `$(mktemp -d)/..` and in backticks) stands for one directory inside the temp dir (a template in a scratch area: its own
+// folder), `D+=x` appends, and any other value is unknown. `..` is resolved lexically after substitution, so `$D/..` is outside the mktemp directory. A target deeper than
 // `$D/x` (`$D/x/y`, `$D/x/`) is let run only while the line holds no command that may make a link there (lib/scratch-area.mjs).
 // Brace expansion in targets (`{/,x}`) is expanded first; one that cannot be listed asks.
 // `$(git rev-parse --show-toplevel)` counts as the project root from a directory inside the project (`rm -rf "$(git rev-parse --show-toplevel)/dist"`).
@@ -34,11 +35,12 @@ import { isAbsolute, join, parse, resolve, sep } from 'node:path';
 import { globbedFolder } from './bare-glob.mjs';
 import { expandBraces } from './braces.mjs';
 import { RECURSIVE_FLAG, rmKind } from './rm-kind.mjs';
-import { claimScratchDelete, deletedPath, followsNoFolderBelow, inScratchArea, isUnder, linkState, sameFile } from './scratch-area.mjs';
+import { defaultMktempDir, isMadeValue, madeFolderOf, restInMadeFolder, sameLineValues, templateFolder, templateOf } from './same-line-values.mjs';
+import { claimScratchDelete, deletedPath, followsNoFolderBelow, inScratchArea, isUnder, linkState, runsInOrder, sameFile } from './scratch-area.mjs';
 import { DECLARERS, GIT_TOPLEVEL_WORD, MKTEMP_WORD, QUOTED_MARK, backtickAssignedNames, withoutRedirects } from './shell-words.mjs';
 import { MAX_COMMAND_CHARS, destructive, shown } from './verdict.mjs';
 
-export { DECLARERS, RECURSIVE_FLAG, isUnder, sameFile, shown, withoutRedirects };
+export { DECLARERS, RECURSIVE_FLAG, isUnder, runsInOrder, sameFile, shown, withoutRedirects };
 const SAFE_TEMP_ROOTS = ['/tmp', '/private/tmp', tmpdir()];
 const HOME_PREFIX = /^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/;
 const GIT_BASH_DRIVE_ROOT = /^\/[a-zA-Z]$/;
@@ -48,7 +50,6 @@ const MKTEMP_NAME = MKTEMP_WORD.slice(1);
 const ANY_VAR = /\$\{(\w+)\}|\$(\w+)/g;
 const ASSIGNMENT = /^([A-Za-z_]\w*)(\+?)=([\s\S]*)$/;
 const SUBSCRIPT_ASSIGNMENT = /^([A-Za-z_]\w*)\[[^\]]*\]\+?=/; // `X[2]=v`: zsh changes part of a scalar, so its value is no longer known
-const MKTEMP_DIR = 'mktemp-variable';
 const BLANKS = /[ \t\n]+/; // where bash splits an unquoted variable's value into words (the default IFS)
 // `-rf`, `--recursive`: what an option word from a variable may hold and still be read (N5); one still holding `$` is judged by lib/rm-kind.mjs
 const PLAIN_OR_UNREAD_OPTION = /^-{1,2}[A-Za-z][A-Za-z-]*$|[$`]/;
@@ -91,12 +92,13 @@ function isBroadRoot(project) {
 /**
  * Variable state for one command line: `vars` maps names to known values (`$TMPDIR`, `$CLAUDE_PROJECT_DIR`, `$PWD` when the
  * directory is known, then every literal assignment seen so far); `assigned` holds the names assigned in the command itself; `unknown`
- * the names `command` assigns from a backtick, whose value the parsers lose (always unknown).
+ * the names `command` assigns from a backtick, whose value the parsers lose (always unknown); `sameLine` the line's `mktemp -d`
+ * templates and the names it may assign again (lib/same-line-values.mjs).
  */
 export function newScope(cwd, project, command = '', work = newWork()) {
-  const vars = new Map([['TMPDIR', tmpdir()], ['CLAUDE_PROJECT_DIR', project], [MKTEMP_NAME, mktempDir()]]);
+  const vars = new Map([['TMPDIR', tmpdir()], ['CLAUDE_PROJECT_DIR', project], [MKTEMP_NAME, defaultMktempDir()]]);
   if (cwd !== null) vars.set('PWD', cwd);
-  return { vars, assigned: new Set(), unknown: backtickAssignedNames(command), splitWords: new Set(), work };
+  return { vars, assigned: new Set(), unknown: backtickAssignedNames(command), sameLine: sameLineValues(command), splitWords: new Set(), work };
 }
 
 /**
@@ -109,8 +111,6 @@ export function newScope(cwd, project, command = '', work = newWork()) {
 export const bashReadings = (word, splitWords) => (splitWords?.has(word) ? [word, ...word.split(BLANKS).filter(Boolean)] : [word]);
 
 export const expandVars = (target, vars) => target.replace(VAR_PREFIX, (whole, name) => (vars.has(name) ? vars.get(name) : whole));
-const mktempDir = () => join(tmpdir(), MKTEMP_DIR);
-const isMktempValue = (value) => typeof value === 'string' && value.startsWith(mktempDir());
 
 /** The value a `NAME=value` word gives ($HOME filled in anywhere: `F="-T $HOME/k"`), or undefined when it cannot be known (`$(...)` other than the mktemp stand-in). */
 function valueOf(raw, vars) {
@@ -122,11 +122,11 @@ function valueOf(raw, vars) {
 /**
  * Updates `vars` for assignments in one segment (a bare `NAME=x` segment or `export NAME=x`), `unset`, `read`. Call after the
  * segment was checked. Names that become unknown are removed, so a later `$NAME` target is unknown.
- * @param {{vars: Map<string, string>, assigned: Set<string>, unknown?: Set<string>}} scope tracked values (modified); names in unknown
- *   are never known
+ * @param {{vars: Map<string, string>, assigned: Set<string>, unknown?: Set<string>, sameLine?: ReturnType<typeof sameLineValues>,
+ *   work?: ReturnType<typeof newWork>}} scope tracked values (modified); names in unknown, and those sameLine calls unstable, are never known
  * @param {string[]} tokens words of this segment
  */
-export function trackAssignments({ vars, assigned, unknown = new Set() }, tokens) {
+export function trackAssignments({ vars, assigned, unknown = new Set(), sameLine = sameLineValues(''), work = newWork() }, tokens) {
   const words = DECLARERS.has(tokens[0]) ? tokens.slice(1) : tokens;
   for (const word of words) {
     if (!ASSIGNMENT.test(word) && !SUBSCRIPT_ASSIGNMENT.test(word)) break;
@@ -141,9 +141,10 @@ export function trackAssignments({ vars, assigned, unknown = new Set() }, tokens
   for (const [, name, append, raw] of assignments) {
     assigned.add(name);
     if (name === 'HOME') vars.set(HOME_ASSIGNED, '');
-    const added = valueOf(raw, vars);
+    const template = templateOf(sameLine, name, raw); // `D=$(mktemp -d T)` (lib/same-line-values.mjs)
+    const added = template !== undefined ? templateFolder(nativePath(template), work) : valueOf(raw, vars);
     const value = append && added !== undefined ? (vars.has(name) ? vars.get(name) + added : undefined) : added; // `D+=x` extends the old value
-    if (value === undefined || unknown.has(name)) vars.delete(name);
+    if (value === undefined || unknown.has(name) || sameLine.unstable(name)) vars.delete(name);
     else vars.set(name, value);
   }
 }
@@ -159,7 +160,7 @@ export function trackAssignments({ vars, assigned, unknown = new Set() }, tokens
 export function substituteKnownWords(tokens, { vars, assigned, splitWords, work = newWork() }) {
   const replace = (whole, braced, plain) => {
     const name = braced ?? plain;
-    if (work.spent || !assigned.has(name) || !vars.has(name) || isMktempValue(vars.get(name))) return whole;
+    if (work.spent || !assigned.has(name) || !vars.has(name) || isMadeValue(vars.get(name), work)) return whole;
     work.expanded += vars.get(name).length;
     work.spent = work.expanded > MAX_LINE_EXPANDED_CHARS;
     return work.spent ? whole : vars.get(name);
@@ -201,9 +202,10 @@ const expandedTarget = (rawTarget, cwd, project, vars) => expandVars(expandHome(
 /**
  * True when the target is inside the project (as written) or in a scratch area (as deleted: deletedPath, inScratchArea). `cwd` is null when
  * an earlier `cd` could not be resolved: then only absolute targets can be judged. `known` is the line's real-path cache (newWork),
- * `links` what this reading of the line may make links with (lib/scratch-area.mjs linkState), `sessionId` the hook input's session_id.
+ * `links` what this reading of the line may make links with (lib/scratch-area.mjs linkState), `work` the line's budget (its session id and
+ * the folders its `mktemp -d` made), `inOrder` whether this delete runs in order (lib/scratch-area.mjs runsInOrder).
  */
-function insideProject(rawTarget, { cwd, project, known, links, sessionId }, vars) {
+function insideProject(rawTarget, { cwd, project, known, links, work, inOrder }, vars) {
   const target = expandedTarget(rawTarget, cwd, project, vars);
   if (target.startsWith('~') || target.includes('$')) return false;
   const native = nativePath(target);
@@ -211,14 +213,11 @@ function insideProject(rawTarget, { cwd, project, known, links, sessionId }, var
   const abs = resolve(cwd ?? project, native);
   const written = isAbsolute(native) ? native : `${cwd ?? project}${sep}${native}`;
   // `$D/..` and `$D/../x` leave the unique directory mktemp made, so they only count as safe while they stay inside it
-  if (target.startsWith(mktempDir()) && abs !== mktempDir() && !isUnder(mktempDir(), abs)) return false;
-  if (abs === mktempDir() || isUnder(mktempDir(), abs)) {
-    const rest = written.startsWith(mktempDir()) ? written.slice(mktempDir().length) : written;
-    return followsNoFolderBelow(rest) || claimScratchDelete(links, target);
-  }
+  const rest = restInMadeFolder({ target, abs, written }, work);
+  if (rest !== undefined) return rest !== null && (followsNoFolderBelow(rest) || claimScratchDelete(links, target, inOrder));
   if (!isBroadRoot(project) && isUnder(project, abs)) return true;
   const deleted = deletedPath(written, known);
-  return deleted !== null && inScratchArea(deleted, sessionId) && claimScratchDelete(links, target);
+  return deleted !== null && inScratchArea(deleted, work.sessionId) && claimScratchDelete(links, target, inOrder);
 }
 
 /**
@@ -228,14 +227,14 @@ function insideProject(rawTarget, { cwd, project, known, links, sessionId }, var
  * (`cwd` null) an absolute target is still judged, against the project root, home, the roots and `heres`, the folders the line may be in (lib/cd-folder.mjs);
  * a relative one was asked about already.
  */
-function emptiesWholeFolder(rawTarget, { cwd, project, heres }, vars) {
+function emptiesWholeFolder(rawTarget, { cwd, project, heres, work }, vars) {
   const target = expandedTarget(rawTarget, cwd, project, vars).replace(QUOTED_MARK, '');
   if (target.startsWith('~') || target.includes('$')) return false;
   const folder = globbedFolder(target);
   const native = nativePath(folder ?? target);
   if (cwd === null && !isAbsolute(native)) return false;
   const abs = resolve(cwd ?? native, native);
-  if (abs === mktempDir() || isUnder(mktempDir(), abs)) return false; // the folder this line's `mktemp -d` made: nothing else is in it
+  if (madeFolderOf(abs, work) !== undefined) return false; // a folder this line's `mktemp -d` made: nothing else is in it
   const isHere = heres.some((here) => sameFile(abs, resolve(nativePath(here))));
   if (folder === undefined) return isHere;
   const wholeFolders = [project, homedir(), ...SAFE_TEMP_ROOTS].map((whole) => resolve(nativePath(whole)));
@@ -272,10 +271,11 @@ const unreadOption = (args, bareWords, splitWords) => args.filter((word) => bare
  * work?: {readings: number, spent: boolean, realPaths?: Map<string, string | null>}, parse?: unknown}} env the
  *   folder and variables of the segment; bareWords are the command's words with a `$NAME` outside quotes; groupTargets are the branches of a
  *   glob group written after the rm (lib/bare-glob.mjs groupBranches); work is the line's budget (newWork), a fresh one when the caller has none;
- *   parse is the parser of this reading of the line (lib/scratch-area.mjs linkState keeps the links each reading may make apart)
+ *   parse is the parser of this reading of the line (lib/scratch-area.mjs linkState keeps the links each reading may make apart); inOrder: the
+ *   rm surely finishes before any later command of the line starts (lib/scratch-area.mjs runsInOrder; false, the default, when unknown)
  * @returns {string | undefined} ask reason when a recursive rm targets something outside the project and the temp dirs (or an unknown variable)
  */
-export function checkRm(args, { cwd, project, vars, splitWords, bareWords = new Set(), groupTargets = [], work = newWork(), maybeCwds = [], parse }) {
+export function checkRm(args, { cwd, project, vars, splitWords, bareWords = new Set(), groupTargets = [], work = newWork(), maybeCwds = [], parse, inOrder = false }) {
   if (work.spent) return TOO_COMPLEX_REASON;
   const odd = unreadOption(args, bareWords, splitWords);
   if (odd !== undefined) return destructive(`rm with an option word from a variable that holds more than option letters (${shown(odd)}), with targets the guard cannot read; check them by hand`);
@@ -290,11 +290,11 @@ export function checkRm(args, { cwd, project, vars, splitWords, bareWords = new 
   if (words.some((word) => expandBraces(word) === null)) return destructive(`${rm} with a brace expansion that cannot be listed (check the targets by hand)`);
   const targets = words.flatMap(expandBraces).flatMap(withParentReading);
   const judged = targets.flatMap((target) => readingsOf(target, cwd, vars).map((reading) => ({ target, reading })));
-  const place = { cwd, project, known: work.realPaths ?? new Map(), links: linkState(work, parse), sessionId: work.sessionId };
+  const place = { cwd, project, known: work.realPaths ?? new Map(), links: linkState(work, parse), work, inOrder };
   const outside = judged.find(({ target, reading }) => !insideProject(target, place, reading));
   if (outside !== undefined) return destructive(`${rm} outside the project (${shown(outside.target)})`);
   const heres = (cwd === null ? maybeCwds : [cwd]).filter((here) => here !== null); // an unknown folder: every folder the line may be in
-  const whole = judged.find(({ target, reading }) => emptiesWholeFolder(target, { cwd, project, heres }, reading));
+  const whole = judged.find(({ target, reading }) => emptiesWholeFolder(target, { cwd, project, heres, work }, reading));
   if (whole === undefined) return undefined;
   return destructive(`${rm} that empties a whole folder (${shown(whole.target)}): the working directory itself, or a bare glob of it, ${WHOLE_FOLDERS}`);
 }
