@@ -33,11 +33,13 @@ How it behaves:
   `--uninstall` treats it as the installer's own only while its first line is the marker; an older install's link into
   `home/` is replaced without a backup, anything else there is backed up first. A repo path an import line cannot carry (a
   space, `@`, `#`, a quote, a non-ASCII letter) stops the install with exit 1 before anything changes.
-- `personal/` (git-ignored by the core repo) is made from `personal.example/` when missing and made its own git repo, so
-  `git clean -fdx` in the clone skips it; an existing one is never overwritten (only `git init` and a missing
-  `project-notes/` folder are added). `~/.claude/project-notes` links to `personal/project-notes`. Notes in
-  `home/project-notes` that git does not track (the owner's own) are moved there; a name already taken sends the core copy to
-  the backup folder. `--uninstall` moves them back and keeps `personal/`.
+- `personal/` (git-ignored by the core repo) is made from `personal.example/` when missing and made its own git repo with a
+  first commit, so `git clean -fdx` in the clone skips it and it has a history to sync; an existing one is never overwritten
+  (only `git init` with a first commit, when it is no repo yet, and a missing `project-notes/` folder are added). The
+  installer's commits use your git name and email, else `claude-setup install`. `~/.claude/project-notes` links to
+  `personal/project-notes`. Notes in `home/project-notes` that git does not track (the owner's own) are moved there and
+  committed; a name already taken sends the core copy to the backup folder. `--uninstall` moves them back and keeps
+  `personal/`.
 - New machine (no record, its own `settings.json`, `~/.claude/CLAUDE.md` neither the installer's marker file nor linked into
   this repo): that `settings.json` is kept as the first, lowest layer under `settings/base.json`, `settings/<os>.json` and
   `settings/local.json`.

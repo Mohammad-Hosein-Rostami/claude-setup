@@ -69,6 +69,9 @@ test('fresh HOME: CLAUDE.md is a regular file of the marker and both imports; pe
     assert.equal(readFileSync(join(repo, 'personal', file), 'utf8'), readFileSync(join(repo, 'personal.example', file), 'utf8'), file);
   }
   assert.ok(existsSync(join(repo, 'personal', '.git')), 'personal/ is its own git repo');
+  const personal = join(repo, 'personal');
+  assert.equal(git(personal, 'log', '--format=%s|%ae').stdout, 'personal layer: first commit by scripts/install.sh|install@claude-setup.invalid\n', 'one first commit; no git identity in the temp HOME: the stand-in');
+  assert.equal(git(personal, 'status', '--porcelain').stdout, '', 'every template file is in that commit');
   assert.equal(readlinkSync(join(home, '.claude', 'project-notes')), join(repo, 'personal', 'project-notes'));
   assert.doesNotMatch(git(repo, 'clean', '-fdxn').stdout, /^Would remove personal\//m, 'git clean -fdx in the clone skips personal/');
   assert.deepEqual(readdirSync(repo).filter((name) => name.startsWith('.personal-')), [], 'no staging folder is left');
@@ -193,6 +196,10 @@ test('owner upgrade: untracked notes in home/project-notes move to personal/proj
   assert.equal(readFileSync(join(repo, 'personal', 'project-notes', 'work-app.md'), 'utf8'), 'work app note\n');
   assert.equal(readFileSync(join(repo, 'personal', 'project-notes', 'taken.md'), 'utf8'), 'personal copy\n', 'never overwritten');
   assert.deepEqual(readdirSync(notes), ['README.md'], 'the tracked README stays, the rest left');
+  const personalLog = git(join(repo, 'personal'), 'log', '--format=%s', '--name-only').stdout;
+  assert.match(personalLog, /^project notes moved here from the core home\/project-notes by scripts\/install\.sh\n\nproject-notes\/work-app\.md\n/, 'the moved note is committed');
+  assert.match(personalLog, /personal layer: first commit by scripts\/install\.sh\n\nproject-notes\/taken\.md\n$/, 'the folder that was no repo got a first commit of what it held');
+  assert.equal(git(join(repo, 'personal'), 'status', '--porcelain').stdout, '');
   const record = JSON.parse(readFileSync(join(home, '.claude', RECORD_NAME), 'utf8'));
   assert.equal(readFileSync(record.backups.find((entry) => entry.path.endsWith('taken.md')).backup, 'utf8'), 'core copy\n');
   assert.equal(run(repo, home, '--uninstall').status, 0);

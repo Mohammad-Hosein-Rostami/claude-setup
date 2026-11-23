@@ -1,6 +1,6 @@
-// Purpose: the personal layer of an install. <repo>/personal/ (git-ignored by the core repo, its own git repo) is made from
-//   personal.example/ when missing; notes the owner kept in the core folder home/project-notes that git does not track move into
-//   personal/project-notes; ~/.claude/project-notes links there; ~/.claude/CLAUDE.md is written as the marker line plus an
+// Purpose: the personal layer of an install. <repo>/personal/ (git-ignored by the core repo, its own git repo with a first
+//   commit, so it has a history to sync) is made from personal.example/ when missing; notes the owner kept in the core folder
+//   home/project-notes that git does not track move into personal/project-notes and are committed there; ~/.claude/project-notes links there; ~/.claude/CLAUDE.md is written as the marker line plus an
 //   @ import of the core home/CLAUDE.md and, while it exists, of personal/CLAUDE.md.
 // Exports: PERSONAL_DIR, PERSONAL_ITEMS, CLAUDE_MD_MARKER, importPath, checkImportPath, claudeMdText, isOwnFile, installPersonal,
 //   restoreMovedNotes.
@@ -29,6 +29,10 @@ const GENERATED = 'generated'; // the record kind of a file the installer writes
 // Characters an `@` import line carries safely: a space ends the path, and @, #, quotes and non-ASCII letters are not proven to.
 const IMPORT_PATH_SHAPE = /^(?:[A-Za-z]:)?\/[A-Za-z0-9._~/-]*$/;
 const OWN_FILE_MAX_BYTES = 1024 * 1024; // the generated file is a few hundred bytes; a bigger one is never the installer's
+// The author of the installer's commits in personal/ when git knows no user name and email (a fresh machine).
+const INSTALL_AUTHOR = { name: 'claude-setup install', email: 'install@claude-setup.invalid' };
+const FIRST_COMMIT_MESSAGE = 'personal layer: first commit by scripts/install.sh';
+const NOTES_COMMIT_MESSAGE = 'project notes moved here from the core home/project-notes by scripts/install.sh';
 
 const lstatOrNull = (path) => {
   try {
@@ -88,13 +92,31 @@ function plainText(path) {
 /** True when `path` is a plain file whose first line starts with `marker` (the installer's own generated file). */
 export const isOwnFile = (path, marker = CLAUDE_MD_MARKER) => plainText(path)?.startsWith(marker) ?? false;
 
-/** git init `dir`; the hardened runner ignores GIT_DIR and the like, so a run from inside a git hook never touches another repo. */
-function gitInit(ctx, dir) {
-  const run = runGit(ctx.repo, ['init', '-q', dir]);
-  if (run.status !== 0) {
-    const why = run.error?.message ?? run.stderr.trim();
-    throw new InstallError(`git init ${dir} failed (${why}); ${PERSONAL_DIR}/ must be its own git repo so git clean -fdx in the clone skips it`);
-  }
+/** git in `dir`, failing with an InstallError naming `what`; the hardened runner ignores GIT_DIR and the like and runs no hook. */
+function gitIn(dir, args, what) {
+  const run = runGit(dir, args);
+  if (run.status === 0) return run;
+  throw new InstallError(`${what} in ${dir} failed (${run.error?.message ?? run.stderr.trim()})`);
+}
+
+/** -c options for a commit by the installer: the user's own name and email when git has them, else a neutral stand-in. */
+function commitIdentity(dir) {
+  const known = runGit(dir, ['config', 'user.email']).status === 0 && runGit(dir, ['config', 'user.name']).status === 0;
+  const identity = known ? [] : ['-c', `user.name=${INSTALL_AUTHOR.name}`, '-c', `user.email=${INSTALL_AUTHOR.email}`];
+  return [...identity, '-c', 'commit.gpgsign=false']; // a signing program must not run in an install
+}
+
+/** Commits `paths` (relative to `dir`, all of what is there when empty) in the personal repo `dir`; nothing to commit is no error. */
+function commitPersonal(dir, paths, message) {
+  gitIn(dir, ['add', '-A', '--', ...(paths.length ? paths : ['.'])], 'git add');
+  if (runGit(dir, ['diff', '--cached', '--quiet', '--', ...paths]).status === 0) return;
+  gitIn(dir, [...commitIdentity(dir), 'commit', '-q', '-m', message, '--', ...paths], 'git commit');
+}
+
+/** Makes `dir` its own git repo with a first commit of what it holds, so it has a history from the start (and git clean skips it). */
+function makeOwnRepo(dir) {
+  gitIn(dir, ['init', '-q'], `git init (${PERSONAL_DIR}/ must be its own git repo so git clean -fdx in the clone skips it)`);
+  commitPersonal(dir, [], FIRST_COMMIT_MESSAGE);
 }
 
 /** Copies personal.example/ to a new folder beside it, makes it a git repo and publishes it as personal/ by one rename. */
@@ -105,7 +127,7 @@ function makePersonal(ctx, dir) {
     const staging = mkdtempSync(join(ctx.repo, `.${PERSONAL_DIR}-`)); // git-ignored, like personal/
     try {
       cpSync(template, staging, { recursive: true, force: false, errorOnExist: true });
-      gitInit(ctx, staging);
+      makeOwnRepo(staging);
       renameSync(staging, dir); // refused when another install published personal/ meanwhile: that one stays
     } catch (error) {
       rmSync(staging, { recursive: true, force: true });
@@ -113,13 +135,14 @@ function makePersonal(ctx, dir) {
       note(ctx, `ok ${dir} (another install made it just now)`);
       return;
     }
-    note(ctx, `made ${dir} from ${TEMPLATE_DIR}/: your own git repo, commit your changes there`);
+    note(ctx, `made ${dir} from ${TEMPLATE_DIR}/: your own git repo with a first commit; commit your changes there`);
   });
 }
 
 /**
  * personal/ made from the template when missing; an existing one only gets what keeps it safe and usable: a git repo of its own
- * and its project-notes folder. A link or a file at either path is left alone (nothing is written through it).
+ * (with a first commit of what it holds, only when this run made the repo) and its project-notes folder. A link or a file at
+ * either path is left alone (nothing is written through it).
  */
 function ensurePersonal(ctx) {
   const dir = personalDir(ctx);
@@ -127,9 +150,9 @@ function ensurePersonal(ctx) {
   if (!stat) return makePersonal(ctx, dir);
   if (!stat.isDirectory()) return warn(`${dir} is not a plain folder (a link or a file); nothing is written into it`);
   if (!existsSync(join(dir, '.git'))) {
-    act(ctx, `git init ${dir}`, () => {
-      gitInit(ctx, dir);
-      note(ctx, `made ${dir} its own git repo (git clean -fdx in the clone now skips it)`);
+    act(ctx, `git init ${dir} and commit what it holds`, () => {
+      makeOwnRepo(dir);
+      note(ctx, `made ${dir} its own git repo with a first commit (git clean -fdx in the clone now skips it)`);
     });
   }
   const notes = join(dir, NOTES);
@@ -155,14 +178,18 @@ function moveNote(ctx, record, from, to) {
     warn(`${to} already exists, so ${from} went to ${saved} instead (compare the two and keep what you need)`);
     return;
   }
-  act(ctx, `move ${from} to ${to}`, () => {
+  return act(ctx, `move ${from} to ${to}`, () => {
     renameSync(from, to);
     record.movedNotes = [...(record.movedNotes ?? []), { from, to }];
     note(ctx, `moved your note ${basename(from)} to ${dirname(to)}`);
+    return true;
   });
 }
 
-/** Moves the owner's untracked notes out of the core folder into personal/project-notes (shared, tracked notes stay). */
+/**
+ * Moves the owner's untracked notes out of the core folder into personal/project-notes (shared, tracked notes stay) and commits
+ * the moved ones in the personal repo, so they are in its history from the move on.
+ */
 function moveOwnNotes(ctx, record) {
   const from = join(ctx.repo, 'home', NOTES);
   const to = join(personalDir(ctx), NOTES);
@@ -171,7 +198,11 @@ function moveOwnNotes(ctx, record) {
   if (names.length === 0) return;
   const intoPlainFolders = isPlainDir(personalDir(ctx)) && isPlainDir(to); // never moved through a link out of the repo
   if (!ctx.dryRun && !intoPlainFolders) return warn(`${to} is not a plain folder; your notes in ${from} stay there`);
-  for (const name of names) moveNote(ctx, record, join(from, name), join(to, name));
+  const moved = names.filter((name) => moveNote(ctx, record, join(from, name), join(to, name)));
+  if (moved.length > 0 && existsSync(join(personalDir(ctx), '.git'))) {
+    commitPersonal(personalDir(ctx), moved.map((name) => `${NOTES}/${name}`), NOTES_COMMIT_MESSAGE);
+    note(ctx, `committed the ${moved.length} moved note(s) in ${personalDir(ctx)}`);
+  }
 }
 
 /** True when the ~/.claude/CLAUDE.md link at `path` is the installer's: recorded as its link, or pointing into home/ of this repo. */
