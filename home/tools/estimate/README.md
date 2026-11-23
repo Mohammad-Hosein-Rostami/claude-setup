@@ -212,20 +212,28 @@ of the median p85 / actual rising from 1.61 to 1.84. The run still exits 1 on th
 27.9 h job stays at 35 of 97 instants within the 85% clock, and the 166-row job is about 3.6 times high; revisit at 40 jobs.
 
 Frozen data for model `s1` (estimate-spec sections 12-13): `node backtest.mjs --freeze <STATUS.md>=<session-id> ... --out <dir>
-[--store <STATUS.md>=<table.json>] [--projects <dir>]` writes `<dir>/backtest-data/t<n>.json`, one per table in the order named
-(a STATUS.md named twice takes both sessions), and `<dir>/seed-runs.json`, and replays nothing (`lib/freeze-files.mjs`,
-`lib/freeze-data.mjs`). A frozen table is `{ v, table, origin, rows, active }`: each row `{ id, road, step, kind, c3Kind, size,
-state, firstSeenMin, startedMin, doneMin }` with its id rewritten (`r1.s3.lane2`, `task4`; roads numbered in table order), `kind`
-by `lib/kinds.mjs`, `c3Kind` the parser's, `state` done, dropped (evidence `dropped:`), open, parked or waiting; `active` the
-sessions' active minutes as `[start, end)` runs within the table's first and last time. Minutes count from `origin`, the first
-minute any of the frozen tables saw a row, so the tables keep their order in time. First-seen is the store copy's `added` time
-(`--store`; a copy of a STATUS.md has another table id), else the row's first stamp. `seed-runs.json` is `{ v, rows: [{ k,
-runMin }] }`: every finished agent-kind row (not dropped) whose working minutes from start to done are 1-240, the pools' boot
-data (R2); a table set with none gives `rows: []` and says so. No row text, id, path or session id is written; the same inputs
+[--store <STATUS.md>=<table.json>] [--projects <dir>]` writes `<dir>/backtest-data/t<n>.json`, one per table (a STATUS.md named
+twice takes both sessions), and `<dir>/seed-runs.json`, and replays nothing (`lib/freeze-files.mjs`, `lib/freeze-data.mjs`).
+A frozen table is `{ v, table, rows, active }`: each row `{ id, road, step, kind, c3Kind, size, state, firstSeenMin, startedMin,
+doneMin }` with its id rewritten (`r1.s3.lane2`, `task4`; roads numbered in table order), `kind` by `lib/kinds.mjs`, `c3Kind`
+the parser's, `state` done, dropped (evidence `dropped:`), open, parked or waiting; `active` the sessions' active minutes as
+`[start, end)` runs within the table's first and last time. Every time is minutes from the table's own first minute: no file
+holds a date, a time of day or a time zone, and the tables keep their order in time only by their number (t1 saw its first row
+first). First-seen is the store copy's `added` time (`--store`; a copy of a STATUS.md has another table id), else the row's
+first stamp. `seed-runs.json` is `{ v, rows: [{ t, k, runMin, doneMin }] }`: every finished agent-kind row (not dropped) whose
+working minutes from start to done are 1-240, the pools' boot data (R2), with its frozen table `t` and its done offset in it; a
+table set with none gives `rows: []` and says so. No row text, id, path, session id or clock time is written; the same inputs
 give the same bytes, so a re-freeze of fresh copies is checked by sha256. A table with a parse problem, a session with no
-transcript, a store file that is not a table file, or a `backtest-data` that is a link or holds other `.json` files exits 2 before
-anything is written. `seed-runs.json` holds the held-out (newest) table's runs too: a replay that holds a table out builds its
-pools from `backtest-data`, not from it.
+transcript, a store file that is not a table file, or a `backtest-data` that is a link or holds other `.json` files exits 2
+before anything is written.
+
+Two rules for whoever pools the seed runs:
+- Held-out table: a replay scored on table `tN` pools `seedRunsWithout(rows, 'tN')` (`lib/freeze-data.mjs`), never all of
+  `seed-runs.json`; the newest table is the held-out one, so its own runs would be the truth.
+- Dedupe with the store (the store already holds the frozen tables, and its rows get `k` and `runMin` from model s1 on): seed
+  table `tN` is in the store when one store table has, for every run of `tN`, a row of the same kind `k` whose done minute
+  (epoch) minus the run's `doneMin` is one and the same shift; then every run of `tN` is left out of the pools. The key is `k` and
+  the done minute, not `runMin` (the store measures its own run minutes).
 
 ## Layout
 

@@ -1,7 +1,6 @@
 {
-  "v": 1,
+  "v": 2,
   "table": "t1",
-  "origin": "2026-11-15T17:13Z",
   "rows": [
     {"id":"task1","road":null,"step":null,"kind":"task","c3Kind":"build","size":"S","state":"done","firstSeenMin":0,"startedMin":0,"doneMin":6},
     {"id":"task2","road":null,"step":null,"kind":"task","c3Kind":"build","size":"S","state":"done","firstSeenMin":59,"startedMin":59,"doneMin":108},

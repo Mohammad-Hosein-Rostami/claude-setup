@@ -150,12 +150,12 @@ function checkedSize(name, text) {
 
 const countBy = (rows) => AGENT_KINDS.map((kind) => [kind, rows.filter((row) => row.k === kind).length]).filter(([, count]) => count > 0);
 
-function summaryLines(loaded, frozen, seedRows, outDir) {
+function summaryLines(loaded, { tables: frozen, sources, seedRows }, outDir) {
   const lines = [`Froze ${frozen.length} table(s) into ${join(outDir, DATA_FOLDER)} and the seed runs into ${join(outDir, SEED_RUNS_FILE)}:`];
   frozen.forEach((table, at) => {
     const done = table.rows.filter((row) => row.doneMin !== null).length;
-    const seen = loaded[at].fromStore ? 'first seen from the store' : 'first seen at the first stamp (no --store)';
-    lines.push(`  ${table.table} = ${loaded[at].statusPath}: ${table.rows.length} rows (${done} done), ${table.active.length} active runs, ${seen}`);
+    const seen = loaded[sources[at]].fromStore ? 'first seen from the store' : 'first seen at the first stamp (no --store)';
+    lines.push(`  ${table.table} = ${loaded[sources[at]].statusPath}: ${table.rows.length} rows (${done} done), ${table.active.length} active runs, ${seen}`);
   });
   if (seedRows.length === 0) lines.push(`${SEED_RUNS_FILE}: no finished agent row with a run of 1-240 working minutes, so it holds no runs`);
   else lines.push(`${SEED_RUNS_FILE}: ${seedRows.length} runs (${countBy(seedRows).map(([kind, count]) => `${kind} ${count}`).join(', ')})`);
@@ -171,12 +171,13 @@ function summaryLines(loaded, frozen, seedRows, outDir) {
 export function freezeCommand(argv) {
   const options = readOptions(argv);
   const loaded = options.tables.map((table) => loadTable(table, options.projectsDir));
-  const { tables, seedRows } = freezeTables(loaded);
+  const frozen = freezeTables(loaded);
+  const { tables, seedRows } = frozen;
   const files = tables.map((table) => checkedSize(`${table.table}.json`, frozenTableText(table)));
   const seed = checkedSize(SEED_RUNS_FILE, seedRunsText(seedRows));
   const dir = dataFolder(options.outDir, files.map((file) => file.name));
   for (const file of files) writeStateText(dir, file.name, file.text);
   writeStateText(options.outDir, seed.name, seed.text);
-  process.stdout.write(`${summaryLines(loaded, tables, seedRows, options.outDir).join('\n')}\n`);
+  process.stdout.write(`${summaryLines(loaded, frozen, options.outDir).join('\n')}\n`);
   return 0;
 }

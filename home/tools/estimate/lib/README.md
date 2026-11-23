@@ -40,7 +40,8 @@ The parts of the `estimate` tool. `../estimate.mjs` (the CLI) and `../statusline
 - `throughput.mjs` (pure): `throughputForecast` (agent rows done per 10 min over the last 3 h), `stepRange` (the current step:
   likely = mean of s1 and throughput, 80% = s1's plus the margin) and `conformalMargin` (27 min until 20 steps are scored).
 - `freeze-data.mjs` (pure, model s1): `freezeTables`, the share-safe frozen copy of real tables (ids rewritten, no text, minutes
-  from one origin) and their seed runs (`{ k, runMin }`, 1-240 working minutes); `frozenTableText`, `seedRunsText`, `MAX_FROZEN_BYTES`.
+  from each table's own first minute, no clock time) and their seed runs (`{ t, k, runMin, doneMin }`, 1-240 working
+  minutes); `seedRunsWithout` (the runs a replay held out on one table may pool), `frozenTableText`, `seedRunsText`, `MAX_FROZEN_BYTES`.
 - `freeze-files.mjs`: `freezeCommand`, `backtest.mjs --freeze`: reads the tables, transcripts and store copies, refuses any bad
   input or output before writing, and writes `backtest-data/t<n>.json` and `seed-runs.json`.
 
