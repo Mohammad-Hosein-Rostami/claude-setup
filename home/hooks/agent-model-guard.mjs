@@ -250,8 +250,8 @@ export async function writerIsolationDeny(input, env = process.env) {
     const { adviceOnce } = await import('./lib/bounce-once.mjs');
     const call = { command: `${type}: isolation ${String(isolation)}: ${String(prompt)}`, cwd, input, hook: 'agent-model-guard', tool: 'Agent' };
     const recorded = adviceOnce([PARALLEL_WRITER_ADVICE], { ...call, logged: { type, class: 'parallel writer without isolation' } }, env);
-    const lines = recorded === '' ? [] : [`Not started: ${PARALLEL_WRITER_ADVICE}`, worktreeLineAdvice(prompt, env), SEND_AGAIN];
-    if (recorded !== '') return denyOutput(lines.filter(Boolean).join('\n')); // the middle line quotes the brief's near-miss line
+    if (recorded !== '') return denyOutput([`Not started: ${PARALLEL_WRITER_ADVICE}`, worktreeLineAdvice(prompt, env), SEND_AGAIN]
+      .filter(Boolean).join('\n')); // the middle line quotes the brief's near-miss line ('' when the brief has none)
     return launchRefusal(record({ isolated: isolated && counted.state !== 'held' })); // the identical retry runs, unless the cap filled
   } catch {
     return ''; // a quality rule, not a safety rule: any failure lets the call run
