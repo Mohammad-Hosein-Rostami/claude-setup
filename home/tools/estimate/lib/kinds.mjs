@@ -23,6 +23,7 @@ const MIN_KIND_RUNS = 10;
 const FALLBACK_AGENT_POOL = [22, 46];
 
 const PREFIX = /^\s*([a-z-]+):/i;
+const CHECK_REST = /^check/i;
 const LAND_REST = /-land$/i;
 const REVIEW_REST = /^review/i;
 const FIX_REST = /^fix/i;
@@ -41,7 +42,7 @@ function prefixOf(item) {
 
 /** The kind of a row of road `<road>.s<N>.<rest>`: gate, land, review, fix or lane (R1 rules 2-6). */
 function roadRowKind(rest, prefix) {
-  if (/^check/i.test(rest)) return 'gate';
+  if (CHECK_REST.test(rest)) return 'gate';
   if (LAND_REST.test(rest)) return 'land';
   if (REVIEW_REST.test(rest) || prefix === 'review') return 'review';
   if (FIX_REST.test(rest) || FIX_PREFIXES.includes(prefix)) return 'fix';

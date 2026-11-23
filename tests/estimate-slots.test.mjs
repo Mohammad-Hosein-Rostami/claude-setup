@@ -118,6 +118,16 @@ test('F4: a step never ends before the step before it; parked and waiting rows a
   assert.deepEqual(withExtra.waiting, [{ id: 'r.s1.d', sinceMs: BASE_MS + (NOW_MIN - 30) * MIN_MS, question: 'which name?' }]);
 });
 
+test('F4: a step whose own rows are all done still ends after the step before it', () => {
+  const rows = itemsOf([
+    { id: 'r.s1.a' }, { id: 'r.s1.check' },
+    ...['b', 'review', 'fix'].map((rest) => ({ id: `r.s2.${rest}`, started: 0, done: 30 })), { id: 'r.s2.check' },
+  ]);
+  const { steps } = forecastRuns(rows, context()).roads.r;
+  assert.deepEqual(steps[1], { p50: 63, p80: 63 });
+  assert.deepEqual(steps[2], { p50: 63, p80: 63 }); // its lanes ended long ago: it ends with step 1, not at 20 + gate
+});
+
 test('F4: a waiting gate row keeps its step current (it is still open)', () => {
   const rows = itemsOf([{ id: 'r.s1.a', started: 0, done: 30 }, { id: 'r.s1.check', evidence: 'waiting: land it?' }, { id: 'r.s2.b' }, { id: 'r.s2.check' }]);
   assert.equal(forecastRuns(rows, context()).roads.r.current, 1);
@@ -134,6 +144,11 @@ test('F5: a stalled row counts its kind median once, the same at 6 h and at 12 h
   const running = forecastRuns(itemsOf([{ id: 'T1', started: NOW_MIN - 85 }]), context({ pools }));
   assert.deepEqual(running.stalled, []);
   assert.ok([5, 15].includes(running.job.p50) && running.job.p80 === 15);
+  // the 90 min floor (U1): a kind whose 95th percentile is 30 does not stall a 60 min row that a longer run still covers
+  const short = kindPools(AGENT_KINDS_RUNS([...Array(19).fill(30), 120]));
+  const sixty = forecastRuns(itemsOf([{ id: 'T1', started: NOW_MIN - 60 }]), context({ pools: short }));
+  assert.deepEqual(sixty.stalled, []);
+  assert.deepEqual(sixty.job, { p50: 60, p80: 60 });
 });
 
 test('R5 with its agent known: active minutes are its elapsed time; 15 quiet working minutes stall it', () => {

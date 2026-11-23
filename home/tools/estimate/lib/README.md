@@ -32,6 +32,13 @@ The parts of the `estimate` tool. `../estimate.mjs` (the CLI) and `../statusline
   `readLimitRecord` gives it every stored sample of the account: the limits file and its 7-day log (the file keeps only 12).
 - `transcript-facts.mjs`: one transcript's active-minute runs and AskUserQuestion waits, read incrementally from a stored cursor
   (only appended bytes, in 1 MiB pieces; an ask never answered closes at the transcript's end).
+- `kinds.mjs` (pure, model s1): a row's kind (`kindOf`: lane, review, fix, followup, plan, task, or the lead's gate, land, deliver),
+  its state (`rowState`: done, open, `parked:`, `waiting:`) and the per-kind pools of 1-240 working minutes (`kindPools`).
+- `slots.mjs` (pure, model s1): `measuredSlots` (agents running at once over the last 2 h, at most 5) and `forecastRuns`, the
+  seeded runs on slots: each open agent row is one run of its kind; a road step ends with its slowest lane plus a review, a fix
+  and its gate, never before the step before it; the job is never shorter than all work over the slots.
+- `throughput.mjs` (pure): `throughputForecast` (agent rows done per 10 min over the last 3 h), `stepRange` (the current step:
+  likely = mean of s1 and throughput, 80% = s1's plus the margin) and `conformalMargin` (27 min until 20 steps are scored).
 
 ## Test
 
