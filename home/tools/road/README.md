@@ -113,7 +113,9 @@ tool installed a markup and style file rule stands in, which counts more lanes a
 
 `join` is the scope judging of one lane, after its writers stopped. The lead passes the sha256 of the road file (from `shasum -a 256`, taken
 when the road was written); a file that hashes differently, an unknown lane or an unreadable road is refused (exit 1). The lane tip is the
-worktree's HEAD, read with git; `--base` must be its ancestor. A lane one of whose needed lanes has not landed on the base in git is
+worktree's HEAD, read with git; `--base` must be the merge-base of that tip and the road's base branch, read in the road's repo at join
+time (exit 1 otherwise, naming the current merge-base): a base past the lane's fork point would hide lane commits from the join that
+land-lane then lands, and after a rebase onto the base branch the merge-base moves with it. A lane one of whose needed lanes has not landed on the base in git is
 refused too (exit 1): the landed `<to>` its row records must be a known commit and an ancestor of the base tip (`needsNotOnBase`).
 land-lane knows no road, so this is the road's needs check before a landing: an early lane goes through join like every lane.
 
@@ -139,7 +141,7 @@ moves a branch itself.
    file's sha256, the lane, its landing row in STATUS.md and the step rows. Refused (exit 1): an unknown lane, no landing row (run
    `rows`), a STATUS.md table with any problem, a step whose check row is done, and two steps open (a check row done after an earlier
    open one).
-2. git reads the lane branch. At `--tip`, `join` runs; its exit 1, 2 or 3 is the exit and land-lane does not run. A join that read
+2. git reads the lane branch. At `--tip`, `join` runs (`--base` must be the current merge-base, above); its exit 1, 2 or 3 is the exit and land-lane does not run. A join that read
    another HEAD than `--tip` is refused. A branch that is gone or at another commit is a re-run after a landing that stopped: the join
    is skipped and land-lane's own restart path decides (it records a landing already made, or refuses with 9 or 14).
 3. `land-lane --repo <road repo> --branch <lane branch> --tip <tip> --base <road base> --status-file <STATUS.md beside the road>

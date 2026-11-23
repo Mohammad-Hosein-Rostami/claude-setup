@@ -160,6 +160,36 @@ test('a worktree HEAD other than --tip is refused: the join judged another commi
   assert.equal(fake.landLaneCalls().length, 0);
 });
 
+test('a --base past the fork point is refused by join and by land (it would hide lane commits that land-lane lands)', async () => {
+  const f = fixture();
+  const outside = commitFiles(f.worktree, { 'notes.txt': 'outside the lane\n' }); // out of scope, below a later in-scope commit
+  const tip = commitFiles(f.worktree, { 'src/later.txt': 'y\n' });
+  const join = (base) => runRoad(['join', f.roadFile, '--road-sha256', f.sha256, '--lane', 'a', '--worktree', f.worktree, '--base', base]);
+  const narrowed = await join(outside);
+  assert.equal(narrowed.code, 1, narrowed.out);
+  assert.match(narrowed.out, new RegExp(`refused: --base ${outside} is not where the lane tip ${tip} leaves main: their merge-base is now ${f.baseSha} `));
+  assert.equal((await join(f.baseSha)).code, 3, 'the true fork point shows the out-of-scope file');
+  const fake = fakeRun();
+  const landed = await land(f, landFlags(f, [], { base: outside, tip }), fake);
+  assert.equal(landed.code, 1, landed.out);
+  assert.match(landed.out, /their merge-base is now/);
+  assert.equal(fake.landLaneCalls().length, 0, 'land-lane must not run after a narrowed join');
+});
+
+test('after a rebase onto the base branch the merge-base is read again: the old base is refused naming the new one', async () => {
+  const f = fixture();
+  const moved = commitFiles(f.repo, { 'main.txt': 'main moved\n' }); // main moves on, as when another lane lands
+  git(f.worktree, 'rebase', '-q', 'main'); // as land-lane leaves a lane after a blocked try (exit 4 or 10)
+  const tip = git(f.worktree, 'rev-parse', 'HEAD');
+  const stale = await land(f, landFlags(f, [], { tip }), fakeRun());
+  assert.equal(stale.code, 1, stale.out);
+  assert.match(stale.out, new RegExp(`their merge-base is now ${moved} .*join with --base ${moved}`));
+  const fresh = fakeRun();
+  const result = await land(f, landFlags(f, [], { base: moved, tip }), fresh);
+  assert.equal(result.code, 0, result.out);
+  assert.equal(fresh.landLaneCalls().length, 1);
+});
+
 test('F1: hostile or bad input and a road with two steps open are refused before any subprocess', async () => {
   const f = fixture();
   const twoOpen = fixture();

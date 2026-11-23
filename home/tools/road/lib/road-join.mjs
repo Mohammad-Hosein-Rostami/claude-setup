@@ -1,7 +1,8 @@
 // Purpose: `road.mjs join`: the scope judging of one built lane. It lists the files of the lane's range that lie outside the lane and counts
 //   its UI files (ui-proof's own function, never its CLI: a crashed CLI exits 1, which reads as "some"). A model reads no number.
 // Exports: joinLane(road, roadSha256, flags) -> { code, out }.
-// Exit: 0 joined clean, 3 joined with findings, 1 refused (hash, lane, base, a running git operation, a HEAD that moved), 2 usage.
+// Exit: 0 joined clean, 3 joined with findings, 1 refused (hash, lane, a running git operation, a HEAD that moved, a --base that is not the
+//   merge-base, read at join time in the road's repo, of the tip and the road's base branch: the join judges the range land-lane lands), 2 usage.
 // Output lines: `joined <sha>`, `finding <id>: <text>`, `ui-files: <n>` and one `ui-file <path>` line per UI file. A line is never made of
 //   text a repo printed: names with control characters are quoted.
 // Invariants: one join at a time per lane worktree (a `road-join.lock` folder in its git dir with the pid; a dead holder's lock is removed);
@@ -134,11 +135,19 @@ function assertHead(worktree, expected) {
   if (headOf(worktree) !== expected) throw new Refused(`HEAD of ${worktree} moved during the join (another join or a person is working there)`);
 }
 
-/** The tip of the lane worktree; the base must be its ancestor. */
-function readTip(options) {
+/**
+ * The tip of the lane worktree. --base must be the merge-base of that tip and the road's base branch in the road's repo, read now: a base
+ * past the fork point would hide lane commits from the join that land-lane then lands, and after a rebase onto the base branch the
+ * merge-base moves to where it was rebased.
+ */
+function readTip(road, options) {
   assertIdle(options.worktree);
   const tip = headOf(options.worktree);
   if (git(options.worktree, ['merge-base', '--is-ancestor', options.base, tip]).exit !== 0) throw new Refused(`--base ${options.base} is not an ancestor of the lane tip ${tip}`);
+  const forkPoint = gitOut(road.repo, ['merge-base', tip, `refs/heads/${road.base}`]).trim();
+  if (forkPoint !== options.base) {
+    throw new Refused(`--base ${options.base} is not where the lane tip ${tip} leaves ${road.base}: their merge-base is now ${forkPoint} (it moves after a rebase onto ${road.base}); join with --base ${forkPoint}`);
+  }
   return tip;
 }
 
@@ -171,7 +180,7 @@ function judge(ctx) {
 }
 
 function judgeLocked(ctx) {
-  ctx.joined = readTip(ctx.options);
+  ctx.joined = readTip(ctx.road, ctx.options);
   const ui = uiFilesOf(ctx);
   assertHead(ctx.options.worktree, ctx.joined);
   const findings = [...scopeFindings(ctx), ...(ui.problem ? [finding('ui-files', ui.problem)] : [])];
@@ -198,7 +207,7 @@ export function joinLane(road, roadSha256, flags) {
     const options = parseFlags(flags);
     json = options.json;
     const { lane, step } = findLane(road, roadSha256, options);
-    const result = judge({ options, lane, step });
+    const result = judge({ road, options, lane, step });
     return { code: result.findings.length === 0 ? EXIT.clean : EXIT.findings, out: render(result, json) };
   } catch (error) {
     if (error instanceof Usage) return { code: EXIT.usage, out: `road: ${error.message}` };
