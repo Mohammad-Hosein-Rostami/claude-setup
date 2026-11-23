@@ -124,7 +124,7 @@ test('line 4: a terminal proof row that is open, malformed, relative or names no
 test('line 4: a changed UI file or a matrix path keeps the web ui-proof path, terminal proof row or not', () => {
   const proof = proofRow(`terminal proof: ${render()} (owner yes 2026-11-22)`);
   const changedUi = terminalGate([proof], { ui: { changed: 1, check: 1 } });
-  assert.match(lineOf(changedUi.result, 4), /^FAIL 4 ui: ui-proof check --against-step rd\.s1 exited 1$/);
+  assert.match(lineOf(changedUi.result, 4), /^FAIL 4 ui: ui-proof check --tip e{40} exited 1$/, 'none: matrices: no step-start record (stepNeedsBaseline)');
   const matrixPath = terminalGate([proof], { matrix: { matrix: 'coverage/matrix.json' }, ui: { check: 1 } });
   assert.match(lineOf(matrixPath.result, 4), /^FAIL 4 ui: ui-proof check --against-step rd\.s1 exited 1$/);
   assert.match(lineOf(terminalGate([], { matrix: { matrix: 'coverage/matrix.json' } }).result, 4), /^PASS 4 ui: visual-qa PASS at e{40}/);
@@ -139,8 +139,8 @@ const fixGate = (lanes, ui, extra = [], status = {}) => gate({ road: roadOf('rd'
 test('line 4: a fix row that lands a UI file needs ui-proof check; a terminal proof row never stands in, with or without a matrix', () => {
   const file = render();
   const terminal = fixGate([lane('x', TERMINAL), lane('y', TERMINAL)], { changed: fixChangesUi, check: 1 }, [proofRow(`terminal proof: ${file} (owner yes 2026-11-22)`)], approved(file));
-  assert.match(lineOf(terminal.result, 4), /^FAIL 4 ui: ui-proof check --against-step rd\.s1 exited 1$/);
-  assert.match(lineOf(fixGate([lane('x'), lane('y')], { changed: fixChangesUi, check: 1 }).result, 4), /^FAIL 4 ui: ui-proof check --against-step rd\.s1 exited 1$/);
+  assert.match(lineOf(terminal.result, 4), /^FAIL 4 ui: ui-proof check --tip d{40} exited 1$/);
+  assert.match(lineOf(fixGate([lane('x'), lane('y')], { changed: fixChangesUi, check: 1 }).result, 4), /^FAIL 4 ui: ui-proof check --tip d{40} exited 1$/);
   const checked = fixGate([lane('x'), lane('y')], { changed: fixChangesUi });
   assert.match(lineOf(checked.result, 4), /^PASS 4 ui: visual-qa PASS at d{40}/);
   assert.deepEqual(checked.calls.filter((argv) => argv[0] === 'changed').map((argv) => argv[2]), [sha('a'), sha('c'), sha('b')], 'the fix range is asked too');

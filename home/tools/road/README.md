@@ -103,7 +103,7 @@ review, test or audit record: a `reviewed <sha> clean` line or a `.reviewed` row
 | `road.mjs rows <road.json> --fix <N> <name>` | adds the audit-fix row `<road>.s<N>.fix-<name>` of step N (an old-form road: with its `-land` row); refused once step N's check row is done | 0, 1, 2 a fix id that would end in `-land` or equal a lane's row |
 | `road.mjs next <road.json> --budget <1-5>` | JSON `{ road, step, of, state: build\|gate\|done, form, held, carried, lanes, early, waiting, writers, baseline }`: the lowest step with an open check row, landed lanes skipped, held lanes named, carried lanes first, at most 5; `early` the later-step lanes that can start now (below), `waiting` `{ name, why }` for every other later lane not landed; `writers` = the smallest of lanes plus early, the budget and 5. It writes nothing and takes no lock | 0, 1 `baseline needed: <road>.s<N>` (a lane matrix of the step has Figma frames and no `ui-proof` step-start record is taken, below "Check plan") or no rows yet, 2 no or bad `--budget` |
 | `road.mjs join <road.json> --road-sha256 <hex> --lane <name> --worktree <abs> --base <40-hex> [--json]` | judges the scope of one built lane (below): prints `joined <sha>`, `finding <id>: <text>`, `ui-files: <n>` and its `ui-file` lines; first refuses a lane whose needed lanes (its `needs`, omitted = every earlier lane) have not landed on the base in git | 0 joined clean, 3 joined with findings, 1 refused, 2 usage |
-| `road.mjs gate <road.json> [--step <N>]` | one line per check (spec-stages section 5): 1 rows (every lane of the step landed), 2 landing ranges, 3 `git-tidy check` (a finding about the branch or worktree of a lane in flight is INFO: a started row not landed of this road or of another road file `road-*.json` beside STATUS.md, matched by the road file's branch, or a worktree an open writer of any session holds, matched by its folder, with the branch checked out there; any other finding, a leftover of a landed lane of this step included, FAILs), 4 UI proof (always runs, when a UI file changed or a lane has a matrix: the landings' check plans, `ui-proof check` on the web path, the terminal proof row on a terminal UI step, below), 5 the measure (INFO). No line runs or asks for a test, a review or an audit | 0 PASS, 1 any FAIL |
+| `road.mjs gate <road.json> [--step <N>]` | one line per check (spec-stages section 5): 1 rows (every lane of the step landed), 2 landing ranges, 3 `git-tidy check` (a finding about the branch or worktree of a lane in flight is INFO: a started row not landed of this road or of another road file `road-*.json` beside STATUS.md, matched by the road file's branch, or a worktree an open writer holds, matched by its folder, with the branch checked out there, only when the STATUS row the writer's brief named (`row: <id>`) is started and not done in this STATUS.md, its session is live in Claude Code's session store (`~/.claude/sessions/<pid>.json` naming it, the pid alive) and the branch has commits not on the base or none yet; any other finding, a leftover of a landed lane or one a stale or planted record names included, FAILs), 4 UI proof (always runs, when a UI file changed or a lane has a matrix: the landings' check plans, `ui-proof check` on the web path, the terminal proof row on a terminal UI step, below), 5 the measure (INFO). No line runs or asks for a test, a review or an audit | 0 PASS, 1 any FAIL |
 
 Every subprocess runs without a shell and with its own timeout. The UI-file rule is the ui-proof tool's (`ui-proof changed`); without that
 tool installed a markup and style file rule stands in, which counts more lanes as UI, never fewer.
@@ -202,8 +202,8 @@ status.mjs done <road>.s<N>.terminal-proof "terminal proof: <path> (owner yes <t
 ```
 
 A step in which any landing range changed a UI file (a lane's or a fix row's `<road>.s<N>.fix-<name>`), or in which a lane has a
-coverage matrix path, never takes this path: it needs its landings' plan proof (below) or `ui-proof check --against-step` and the
-step-start record (`lib/road-gate-ui.mjs`).
+coverage matrix path, never takes this path: it needs its landings' plan proof or the web path's `ui-proof check` (below,
+`lib/road-gate-ui.mjs`).
 
 ## Check plan (gate line 4, `next` baseline)
 
@@ -211,10 +211,13 @@ Nobody labels a lane UI work (owner, 2026-11-23: no kinds, no waivers). `land-la
 evidence (the request, the rebased diff, the screens it reaches; `ui-proof plan`, `home/standards/ui-checks.md`), proves it with
 `ui-proof check --plan`, and ends the landing row's evidence with ` (ui plan <depth>: proved)`, the depth one of `none`, `same`,
 `render`, `visual`, `pixel`. Line 4 reads that suffix only from the landing row land-lane wrote (or its one done correction row, which
-holds the evidence land-lane printed), never from a lane report:
+holds the evidence land-lane printed), never from a lane report. The suffix is only a pointer (STATUS text anyone can type): for each
+UI landing that carries one, line 4 runs `ui-proof check --tip <to> --plan --base <from> [--matrix <lane matrix>]` on that landing's
+range, which reads ui-proof's own records, and FAILs naming the row when that call does not exit 0. A confirmed plan that ui-proof
+prints as `pixel`, or prints with no `plan: <depth>` line (a visual or pixel plan prints today's visual-qa check), is no plan proof.
 
-- every landing of the step that changed a UI file ends with the suffix of a depth other than `pixel`:
-  `PASS 4 ui: <n> landing(s) proved by their plan`, and `ui-proof check --against-step` is not asked;
+- every landing of the step that changed a UI file is proved so with a depth other than `pixel`:
+  `PASS 4 ui: <n> landing(s) proved by their plan`, and no web `ui-proof check` is asked;
 - a `pixel` landing, or a UI landing with no suffix (an older landing, or a suffix with text after it), takes the web path above for
   the whole step; a mixed step (one pixel landing, one render landing) needs the visual-qa step proof, and the landings proved by their
   plan need no step-start record: `PASS 4 ui: visual-qa PASS at <tip>, no state worse than <road>.s<N>; <n> landing(s) proved by their plan`;
@@ -222,10 +225,14 @@ holds the evidence land-lane printed), never from a lane report:
   `none:` matrices the terminal path, one with neither passes as `no UI file changed in the step`;
 - the old waiver suffix ` (ui-proof waived: owner decision)` is no proof: its step takes the web or terminal path.
 
-`next` asks the step-start record (`baseline needed: <road>.s<N>`, exit 1) only when a lane of the current step has a coverage matrix
-with Figma frames: a `figma` section or a non-empty `frames` list (the pixel chain). A relative matrix path is read from the road's
-repo; a matrix that is missing or not JSON counts as one with frames (fail closed). Lanes with UI files and `none:` matrices, or a
-matrix without frames, are proved by their plan at land time instead.
+The step-start record follows one rule for `next` and line 4 (`stepNeedsBaseline`), so line 4 never asks a record `next` said was
+not needed: a lane of the step has a coverage matrix with Figma frames, a `figma` section or a non-empty `frames` list (the pixel
+chain). A relative matrix path is read from the road's repo; a matrix that is missing, not JSON, or of the wrong shape (not an object,
+`figma` not an object, `frames` not a list) counts as one with frames (fail closed). Then `next` prints `baseline needed: <road>.s<N>`
+(exit 1) until the record is taken, and the web path is `ui-proof check --against-step` with the record taken at or before every
+`<from>`. Otherwise the web path is `ui-proof check --tip <tip>` alone: `PASS 4 ui: visual-qa PASS at <tip> (no lane matrix of the
+step has Figma frames: next asked no baseline)`. Lanes with UI files and `none:` matrices, or a matrix without frames, are proved by
+their plan at land time, or by that visual-qa PASS.
 
 ## Walking an `agents` step
 

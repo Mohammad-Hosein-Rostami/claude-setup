@@ -42,8 +42,8 @@ board text) passes line 4 with its terminal proof once the owner approved a real
 <road>.s<N>: owner yes on <abs path> (AskUserQuestion answer)"`, then `status.mjs add <road>.s<N>.terminal-proof "proof: step N
 terminal render approved by the owner" S`, `start`, and `status.mjs done <road>.s<N>.terminal-proof "terminal proof: <abs path> (owner
 yes <the decision's date>)"` (road README, "Terminal UI proof"). Web UI passes line 4 by its check plan: every landing that changed a
-UI file ends with land-lane's ` (ui plan <depth>: proved)`; a pixel landing or one without it needs the visual-qa step proof and the
-step-start record (road README, "Check plan"). There are no waivers. After the gate: one update to the owner with the `Finish:` block of `estimate.mjs STATUS.md` pasted as-is, and a
+UI file ends with land-lane's ` (ui plan <depth>: proved)` and `ui-proof check --plan` confirms it for that landing; a pixel landing or
+one without it needs the visual-qa PASS at the tip, with the step-start record when `next` asked it (road README, "Check plan"). There are no waivers. After the gate: one update to the owner with the `Finish:` block of `estimate.mjs STATUS.md` pasted as-is, and a
 `status.mjs deliver "<step N done>"` row.
 
 ## Failure and carry

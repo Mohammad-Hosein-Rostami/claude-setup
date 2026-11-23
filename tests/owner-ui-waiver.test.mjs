@@ -94,6 +94,8 @@ const landing = (to, from) => `landed ${sha(to)} on main from ${sha(from)}`;
 const row = (id, evidence) => ({ id, item: `build: ${id}`, started: 1, done: 2, evidence });
 const range = (id, from, to) => ({ step: 1, row: id, entry: null, unknown: [], landed: { from: sha(from), to: sha(to) } });
 const RANGES = [range('iceweb.s1.x', 'a', 'b'), range('iceweb.s1.y', 'b', 'c')];
+// The lanes' matrices say none: (no Figma frames), so the web path is the visual-qa check at the tip, no step-start record (stepNeedsBaseline).
+const WEB_FAIL = `FAIL 4 ui: ui-proof check --tip ${sha('c')} exited 1`;
 const WAIVED_ROWS = [row('iceweb.s1.x', `${landing('b', 'a')}${UI_WAIVER_EVIDENCE}`), row('iceweb.s1.y', `${landing('c', 'b')} (skipped)${UI_WAIVER_EVIDENCE}`)];
 
 /** Line 4 with `changed` exits per landing (1 = UI files changed) and `ui-proof check` failing, so only the waiver can PASS. */
@@ -112,21 +114,21 @@ function line4({ rows = WAIVED_ROWS, status = statusWith(DECISION), changed = [1
 // owner's line, so the web or terminal path decides. The rule's own tests above stay for land-lane until the land-plan lane removes it.
 test('line 4: UI landings with the waiver evidence and the owner\'s line are no proof: ui-proof check decides', () => {
   const { line, calls } = line4();
-  assert.equal(line, 'FAIL 4 ui: ui-proof check --against-step iceweb.s1 exited 1');
+  assert.equal(line, WEB_FAIL);
   assert.ok(calls.includes('check'));
 });
 
 test('line 4: the waiver evidence without the owner\'s line for this road (none, another road, UNCONFIRMED) keeps the web path', () => {
   for (const status of [statusWith(), statusWith(DECISION.replace('iceweb', 'iceplat')), statusWith(`${DECISION}: UNCONFIRMED (timeout default)`)]) {
-    assert.equal(line4({ status }).line, 'FAIL 4 ui: ui-proof check --against-step iceweb.s1 exited 1', status);
+    assert.equal(line4({ status }).line, WEB_FAIL, status);
   }
 });
 
 test('line 4: a UI landing without the waiver evidence keeps the web path, the owner\'s line or not', () => {
   const plain = [WAIVED_ROWS[0], row('iceweb.s1.y', landing('c', 'b'))];
-  assert.equal(line4({ rows: plain }).line, 'FAIL 4 ui: ui-proof check --against-step iceweb.s1 exited 1');
+  assert.equal(line4({ rows: plain }).line, WEB_FAIL);
   const middle = [row('iceweb.s1.x', `${landing('b', 'a')}${UI_WAIVER_EVIDENCE} later text`), WAIVED_ROWS[1]];
-  assert.equal(line4({ rows: middle, changed: [1, 0] }).line, 'FAIL 4 ui: ui-proof check --against-step iceweb.s1 exited 1', 'the evidence must end with it');
+  assert.equal(line4({ rows: middle, changed: [1, 0] }).line, WEB_FAIL, 'the evidence must end with it');
   assert.match(line4({ rows: plain, changed: [0, 1] }).line, /^FAIL 4 ui: ui-proof check/, 'the UI landing is the one without it');
   assert.match(line4({ rows: plain, changed: [1, 0] }).line, /^FAIL 4 ui: ui-proof check/, 'only the waived one changed UI: still no proof');
 });
@@ -140,5 +142,5 @@ test('line 4: a step of none: matrices with no UI change takes the terminal proo
 
 test('line 4: the waiver evidence of a done correction row is no proof either', () => {
   const rows = [row('iceweb.s1.x', 'build done'), row('iceweb.s1.x.landed', `${landing('b', 'a')}${UI_WAIVER_EVIDENCE}`), WAIVED_ROWS[1]];
-  assert.match(line4({ rows }).line, /^FAIL 4 ui: ui-proof check --against-step iceweb\.s1 exited 1$/);
+  assert.equal(line4({ rows }).line, WEB_FAIL);
 });

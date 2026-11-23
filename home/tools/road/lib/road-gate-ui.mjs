@@ -4,18 +4,24 @@
 //   TERMINAL_PROOF_SUFFIX; setupReportsFolder().
 // Plan path (ui-kinds-spec.md section 3): land-lane computes each landing's check plan on the rebased diff and, once `ui-proof check
 //   --plan` proved it, ends the landing row's evidence with ` (ui plan <depth>: proved)` (ui-evidence.mjs planEvidence). When every
-//   landing of the step that changed a UI file ends so with a depth other than pixel, line 4 PASSes as proved by their plan. The suffix
-//   is read only from the landing row land-lane wrote (or its one done correction row, which holds the evidence land-lane printed),
-//   never from a lane report. Zero landings that changed a UI file is never "proved". A pixel landing or a UI landing with no suffix
-//   (older landings included) takes the web path, for the whole step; landings proved by their plan then need no step-start record.
+//   landing of the step that changed a UI file is proved so with a depth other than pixel, line 4 PASSes as proved by their plan. The
+//   suffix is read only from the landing row land-lane wrote (or its one done correction row, which holds the evidence land-lane printed),
+//   never from a lane report, and it is only a pointer (STATUS text anyone can type): line 4 confirms it from the tool's own records with
+//   `ui-proof check --tip <to> --plan --base <from> [--matrix <lane matrix>]` for that landing's range, and FAILs when that call does not
+//   exit 0. A confirmed plan that prints no `plan: <depth>` line (ui-proof prints today's visual-qa check for a visual or pixel plan) or
+//   prints pixel takes the web path. Zero landings that changed a UI file is never "proved". A pixel landing or a UI landing with no
+//   suffix (older landings included) takes the web path, for the whole step; landings proved by their plan then need no step-start record.
 // Web path (owner standard: pixel-perfect web UI, never weakened): when any landing range of the step (a lane's or a fix row's
-//   `<road>.s<N>.fix-<name>`) changes UI files (`ui-proof changed` exit 1) or a lane has a coverage matrix path,
-//   `ui-proof check --tip <tip> --against-step <road>.s<N>` exit 0 and the step-start record taken at or before every `<from>`, except a
+//   `<road>.s<N>.fix-<name>`) changes UI files (`ui-proof changed` exit 1) or a lane has a coverage matrix path, a visual-qa PASS at the
+//   tip. When the step needs its step-start record (stepNeedsBaseline, the one rule `road.mjs next` asks it by, so the two never
+//   disagree): `ui-proof check --tip <tip> --against-step <road>.s<N>` exit 0 and the record taken at or before every `<from>`, except a
 //   range proved by its plan, or a range that ended at or before it from a row that is no UI lane and changed no UI file (landed early:
-//   its work is in the record). UI checks always run (owner decision CR5).
-// Baseline (`next`): a step needs its step-start record when a lane of it has a coverage matrix with Figma frames (a `figma` section or
-//   a non-empty `frames` list: the pixel chain); a matrix path that cannot be read as JSON counts as one (fail closed). Lanes with UI
-//   files and no such matrix are proved by their plan at land time instead.
+//   its work is in the record). Otherwise `ui-proof check --tip <tip>` exit 0: no record is asked that `next` said was not needed. UI
+//   checks always run (owner decision CR5).
+// Baseline (`next` and line 4): a step needs its step-start record when a lane of it has a coverage matrix with Figma frames (a `figma`
+//   section or a non-empty `frames` list: the pixel chain). A matrix path that cannot be read as JSON, or a JSON value of the wrong shape
+//   (not an object, `figma` not an object, `frames` not a list), counts as one (fail closed). Lanes with UI files and no such matrix are
+//   proved by their plan at land time, or by a visual-qa PASS at the step tip.
 // Terminal path: a step whose UI is text in a terminal (every lane with a matrix says `none: <reason>`, and no landing range of the step
 //   changed a UI file: the status line and board renderers are `.mjs` that print rows) has no web page for visual-qa to check, so its
 //   proof is the owner's yes on a real render: a done STATUS row `<road>.s<N>.terminal-proof` whose evidence is exactly
@@ -44,6 +50,8 @@ const SETUP_REPORTS = ['Desktop', 'claude-setup-reports']; // under HOME: the se
 const OWNER_DECISIONS = 'Owner decisions'; // the STATUS.md section status.mjs `decision` writes to
 const DECISION_BULLET = /^- (\d{4}-\d{2}-\d{2}) terminal proof (\S+): owner yes on (.+) \(AskUserQuestion answer\)$/;
 const PIXEL = 'pixel'; // the full Figma chain: its landings need the web path's visual-qa step proof, whatever their suffix says
+const PLAN_LINE = /^plan: (\S+)$/m; // the depth `ui-proof check --plan` printed for the range (none for a visual or pixel plan)
+const NOT_BY_PLAN = Object.freeze({ byPlan: false, problem: null });
 
 const pass = (text) => `PASS ${text}`;
 const fail = (text) => `FAIL ${text}`;
@@ -150,7 +158,32 @@ function provedDepth(rows, id) {
   return DEPTHS.find((depth) => evidence.endsWith(planEvidence(depth))) ?? null;
 }
 
-/** True when a matrix file reads as JSON with Figma frames: a `figma` section or a non-empty `frames` list. Unreadable: true (fail closed). */
+/**
+ * Whether a UI landing is proved by its plan. Its row's suffix (a depth other than pixel) is only a pointer: `ui-proof check --plan` for
+ * the landing's own range must confirm it from the tool's records, and a plan it prints as pixel, or with no depth line, is no plan proof.
+ * @returns {{ byPlan: boolean, problem: string | null }} problem: the confirming call failed (line 4 FAILs with it)
+ */
+function planProof(rows, range, ctx) {
+  const claimed = provedDepth(rows, range.row);
+  if (claimed === null || claimed === PIXEL) return NOT_BY_PLAN;
+  const matrix = range.entry?.lane.matrix;
+  const matrixArgs = typeof matrix === 'string' && !matrix.startsWith(NO_MATRIX) ? ['--matrix', resolve(ctx.repo, matrix)] : [];
+  const argv = ['check', '--tip', range.landed.to, '--plan', '--base', range.landed.from, ...matrixArgs, '--repo', ctx.repo];
+  const result = ctx.uiProof(argv);
+  if (result.exit !== 0) {
+    return { byPlan: false, problem: `${range.row} ends with "${planEvidence(claimed).trim()}" but ui-proof check --plan --base ${range.landed.from} --tip ${range.landed.to} exited ${result.exit}` };
+  }
+  const depth = PLAN_LINE.exec(result.out)?.[1];
+  return { byPlan: DEPTHS.includes(depth) && depth !== PIXEL, problem: null };
+}
+
+const isPlainObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/**
+ * True when a matrix file reads as JSON with Figma frames: a `figma` section or a non-empty `frames` list. The keys read are checked for
+ * shape first (C10): a value that is not an object, a `figma` that is not an object or a `frames` that is not a list counts as frames,
+ * like a file that cannot be read or parsed (fail closed: the step keeps its baseline).
+ */
 function matrixHasFigma(path) {
   let matrix;
   try {
@@ -158,13 +191,16 @@ function matrixHasFigma(path) {
   } catch {
     return true; // a missing, unreadable or broken matrix cannot show it has no frames, so the step keeps its baseline
   }
-  const figma = matrix?.figma;
-  return (typeof figma === 'object' && figma !== null) || (Array.isArray(matrix?.frames) && matrix.frames.length > 0);
+  const sound = isPlainObject(matrix) && (matrix.figma === undefined || isPlainObject(matrix.figma))
+    && (matrix.frames === undefined || Array.isArray(matrix.frames));
+  if (!sound) return true;
+  return matrix.figma !== undefined || (matrix.frames !== undefined && matrix.frames.length > 0);
 }
 
 /**
- * Whether `road.mjs next` asks the step-start record of a step: a lane of it has a coverage matrix path (not `none: <reason>`) whose
- * matrix has Figma frames, or cannot be read. A relative matrix path is read from the road's repo.
+ * Whether a step needs its step-start record: a lane of it has a coverage matrix path (not `none: <reason>`) whose matrix has Figma
+ * frames, cannot be read or has the wrong shape. The one rule for both `road.mjs next` (asks the record) and line 4's web path (checks
+ * it), so the two cannot disagree. A relative matrix path is read from the road's repo.
  * @param {object} road a checked road
  * @param {number} step 1-based
  * @returns {boolean}
@@ -193,16 +229,32 @@ export function uiLine(road, rows, ranges, step, ctx) {
   if (changed.some((result) => result.exit !== 0 && result.exit !== 1)) return fail('4 ui: ui-proof changed could not answer');
   const uiChanged = changed.some((result) => result.exit === 1);
   if (matrices.length === 0 && !uiChanged) return pass('4 ui: no UI file changed in the step');
-  const byPlan = own.map((range, index) => changed[index].exit === 1 && ![null, PIXEL].includes(provedDepth(rows, range.row)));
+  const plans = own.map((range, index) => (changed[index].exit === 1 ? planProof(rows, range, ctx) : NOT_BY_PLAN));
+  const unconfirmed = plans.find((plan) => plan.problem !== null);
+  if (unconfirmed !== undefined) return fail(`4 ui: ${unconfirmed.problem}`);
+  const byPlan = plans.map((plan) => plan.byPlan);
   const proved = byPlan.filter(Boolean).length;
   if (proved > 0 && changed.every((result, index) => result.exit !== 1 || byPlan[index])) return pass(`4 ui: ${proved} landing(s) proved by their plan`);
   const label = `${road.road}.s${step}`;
   if (!uiChanged && matrices.every((matrix) => matrix.startsWith(NO_MATRIX))) return terminalProofLine(rows, label, own, ctx);
+  return webLine(own, { label, changed, byPlan, proved, baseline: stepNeedsBaseline(road, step) }, ctx);
+}
+
+/**
+ * The web path: a visual-qa PASS at the tip; when the step needs its step-start record (`baseline`, stepNeedsBaseline), no state worse
+ * than that record and the record taken at or before every from (recordCovers). Without it no record is asked: `next` asked none.
+ */
+function webLine(own, { label, changed, byPlan, proved, baseline }, ctx) {
+  const planned = proved === 0 ? '' : `; ${proved} landing(s) proved by their plan`;
+  if (!baseline) {
+    const proof = ctx.uiProof(['check', '--tip', ctx.tip, '--repo', ctx.repo]);
+    if (proof.exit !== 0) return fail(`4 ui: ui-proof check --tip ${ctx.tip} exited ${proof.exit}`);
+    return pass(`4 ui: visual-qa PASS at ${ctx.tip} (no lane matrix of the step has Figma frames: next asked no baseline)${planned}`);
+  }
   const proof = ctx.uiProof(['check', '--tip', ctx.tip, '--against-step', label, '--repo', ctx.repo]);
   if (proof.exit !== 0) return fail(`4 ui: ui-proof check --against-step ${label} exited ${proof.exit}`);
   const at = RECORD_AT.exec(ctx.uiProof(['has', '--step', label, '--repo', ctx.repo]).out)?.[1];
   const covered = (range, index) => recordCovers(ctx, at, range, { uiChanged: changed[index].exit === 1, byPlan: byPlan[index] });
   if (at === undefined || !own.every(covered)) return fail(`4 ui: the step-start record ${label} was not taken at or before every from`);
-  const planned = proved === 0 ? '' : `; ${proved} landing(s) proved by their plan`;
   return pass(`4 ui: visual-qa PASS at ${ctx.tip}, no state worse than ${label}${planned}`);
 }

@@ -240,19 +240,30 @@ function rangeLines(run, ranges, others, ctx) {
 }
 
 /**
+ * Whether a branch is no landed leftover (line 3's held writers): it has commits not on the base tip, or none yet (its tip is the base
+ * tip). A branch git cannot read, or an ancestor-check error, is a leftover (fail closed: FAIL, never INFO).
+ */
+function branchAhead(run, ctx, branch) {
+  const read = git(run, ctx.repo, ['rev-parse', '--verify', `refs/heads/${branch}^{commit}`]);
+  const head = read.out.trim();
+  if (read.exit !== 0 || !HEX.test(head)) return false;
+  return head === ctx.tip || isAncestor(run, ctx.repo, head, ctx.tip) === 1;
+}
+
+/**
  * Runs the gate for one step.
  * @param {object} road a checked road
  * @param {object[]} items parseWorkItems(...).items
  * @param {number} step 1-based
  * @param {(file: string, argv: string[], timeoutMs: number) => { exit: number, out: string }} run
  * @param {{ isUiPath: (path: string) => boolean, otherRoads?: object[], statusFile?: string, statusText?: string,
- *   held?: { folders: string[], branches: string[] } }} options the UI file test; the other checked roads of the same repo and STATUS.md,
+ *   held?: object[], live?: Set<string> }} options the UI file test; the other checked roads of the same repo and STATUS.md,
  *   whose started lanes are in flight for line 3 and whose landing ranges on the same base count for line 2; the road's STATUS.md path
- *   and text, which line 4's terminal proof reads (its folder, its owner decisions); what open writers hold (road-gate-git.mjs
- *   openWriterFolders), in flight for line 3
+ *   and text, which line 4's terminal proof reads (its folder, its owner decisions); the open writer launches and the live session ids
+ *   (road-gate-git.mjs openWriterFolders, liveSessions), which line 3 weighs with git's answer of branchAhead
  * @returns {{ lines: string[], pass: boolean }}
  */
-export function gateStep(road, items, step, run, { isUiPath, otherRoads = [], statusFile, statusText = '', held = undefined }) {
+export function gateStep(road, items, step, run, { isUiPath, otherRoads = [], statusFile, statusText = '', held = [], live = new Set() }) {
   const rows = new Map(items.map((item) => [item.id.toLowerCase(), item]));
   const start = roadStartTip(road, items);
   const tipRead = git(run, road.repo, ['rev-parse', '--verify', `refs/heads/${road.base}^{commit}`]);
@@ -266,7 +277,8 @@ export function gateStep(road, items, step, run, { isUiPath, otherRoads = [], st
   const lines = [
     ...rowsLine(road, rows, step, isUiPath),
     ...rangeLines(run, ranges, others, ctx),
-    ...gitLines(run('git-tidy', ['check', road.repo, '--base', road.base, '--json'], TOOL_TIMEOUT_MS), road, items, { otherRoads, held }),
+    ...gitLines(run('git-tidy', ['check', road.repo, '--base', road.base, '--json'], TOOL_TIMEOUT_MS), road, items,
+      { otherRoads, held, live, branchAhead: (branch) => branchAhead(run, ctx, branch) }),
     uiLine(road, rows, ranges, step, uiCtx),
     `INFO 5 measure: ${road.steps[step - 1].measure ?? 'none named'}`,
   ];

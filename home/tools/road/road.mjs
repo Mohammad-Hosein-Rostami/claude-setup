@@ -26,9 +26,8 @@
 //   `writers` = min(lanes + early, budget, 5). It writes nothing and takes no lock.
 // Join and gate: `join` first refuses a lane whose needed lanes have not landed on the base in git (land-lane knows no road, so this is
 //   the road's check before a landing); `gate` reads the other road files `road-*.json` beside STATUS.md of the same repo, so a lane in
-//   flight there is INFO on line 3, not FAIL, and their landings count on line 2, and so is a worktree an open writer of any session holds
-//   (lib/road-gate-git.mjs openWriterFolders); it hands the gate the STATUS.md path and text (line 4's terminal proof: the job folder and
-//   the owner decisions). The main guard compares real paths, so the CLI works through the ~/.claude link.
+//   flight there is INFO on line 3, not FAIL, and their landings count on line 2, and so is a worktree a live open writer holds (lib/
+//   road-gate-git.mjs); it hands the gate the STATUS.md path and text (line 4's terminal proof). The main guard compares real paths.
 import { spawnSync } from 'node:child_process';
 import { readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { withSessionLock } from '../../hooks/lib/session-lock.mjs';
@@ -41,7 +40,7 @@ import { runStatus } from '../status/status.mjs';
 import { MAX_ROW_ID_CHARS, LANE_NAME, readRoad, roadClash, roadRows, rowIds, uiMatrixProblems } from './lib/road-file.mjs';
 import { GIT_TIMEOUT_MS, fullSha, gateStep } from './lib/road-gate.mjs';
 import { joinLane } from './lib/road-join.mjs';
-import { openWriterFolders } from './lib/road-gate-git.mjs';
+import { liveSessions, openWriterFolders } from './lib/road-gate-git.mjs';
 import { stepNeedsBaseline } from './lib/road-gate-ui.mjs';
 import { earlyLanes, isOldFormRoad, landedLine, needsNotOnBase, roadStartTip, stepState } from './lib/road-state.mjs';
 
@@ -236,13 +235,14 @@ function next(road, ctx, rest, run, isUiPath) {
   return { code: 0, out: JSON.stringify(result, null, 2) };
 }
 
-function gate(road, ctx, rest, run, isUiPath) {
+async function gate(road, ctx, rest, run, isUiPath) {
   const statusText = statusTextOf(ctx.statusFile);
   const items = parseWorkItems(statusText).items;
   const given = flagValue(rest, '--step');
   const step = given === undefined ? stepState(road, items).step : Number(given);
   if (!Number.isInteger(step) || step < 1 || step > road.steps.length) throw new UsageError(`--step must be 1-${road.steps.length}. ${USAGE}`);
-  const result = gateStep(road, items, step, run, { isUiPath, otherRoads: otherRoads(ctx), statusFile: ctx.statusFile, statusText, held: openWriterFolders(process.env, Date.now()) });
+  const result = gateStep(road, items, step, run, { isUiPath, otherRoads: otherRoads(ctx), statusFile: ctx.statusFile, statusText,
+    held: openWriterFolders(process.env, Date.now()), live: await liveSessions(process.env) });
   return { code: result.pass ? 0 : 1, out: [...result.lines, `road ${road.road} step ${step}: ${result.pass ? 'PASS' : 'FAIL'}`].join('\n') };
 }
 
@@ -285,7 +285,7 @@ export async function runRoad(argv, { run = runProgram, isUiPath = undefined } =
       return { code: 0, out: [...warnings, `road ${ctx.road.road}: ${ctx.road.steps.length} steps, ok`].join('\n') };
     }
     if (command === 'join') return joinAfterNeeds(ctx, rest, run);
-    const result = command === 'rows' ? rows(ctx.road, ctx, rest, run) : command === 'next' ? next(ctx.road, ctx, rest, run, uiPath) : gate(ctx.road, ctx, rest, run, uiPath);
+    const result = command === 'rows' ? rows(ctx.road, ctx, rest, run) : command === 'next' ? next(ctx.road, ctx, rest, run, uiPath) : await gate(ctx.road, ctx, rest, run, uiPath);
     return { ...result, out: [...warnings, result.out].join('\n') };
   } catch (error) {
     return { code: error instanceof UsageError ? 2 : 1, out: `road: ${error.message}` };

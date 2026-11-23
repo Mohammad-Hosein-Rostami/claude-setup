@@ -1,15 +1,17 @@
 // Tests of road-gate.mjs line 2 and the `<close row>.landed` correction row (STATUS row p8-gate-evidence), line 3's worktrees held by an
 // open writer (road-gate-git.mjs, row r22.gate-open-lanes), and line 4's setup reports folder.
 // A fake `run` stands in for git and the tools, so no repo is needed; it records every git argv to show which sha was checked. The open
-// writer records are written by the guard's own recordAgentLaunch into a temp HOME.
+// writer records are written by the guard's own recordAgentLaunch into a temp HOME, and the live session by a Claude Code session file
+// (~/.claude/sessions/<pid>.json) in the same HOME.
 import assert from 'node:assert/strict';
-import { mkdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { recordAgentLaunch } from '../home/hooks/lib/agent-launches.mjs';
 import { gateStep } from '../home/tools/road/lib/road-gate.mjs';
-import { gitLines, openWriterFolders } from '../home/tools/road/lib/road-gate-git.mjs';
+import { gitLines, liveSessions, openWriterFolders } from '../home/tools/road/lib/road-gate-git.mjs';
 import { setupReportsFolder } from '../home/tools/road/lib/road-gate-ui.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -362,48 +364,108 @@ const tidyOf = (...findings) => ({ exit: 1, out: JSON.stringify({ base: 'main', 
 const finding = (kind, subject, detail = '') => ({ kind, subject, detail });
 const LANE_ROAD = { ...ROAD, steps: [{ lanes: [{ name: 'a', branch: 'feat/a', files: ['x.mjs'] }] }] };
 
-/** A worktree folder and a temp HOME whose launch store holds one open writer launched in it, and a reader (which holds nothing). */
+const LIVE = 's-1'; // the session whose Claude Code process (this test's own pid) is alive
+const LANE_ROW = 'r22.lane-a'; // the row the writer's brief names (`row: <id>`), as the lead's STATUS.md holds it
+const openRow = { id: LANE_ROW, item: 'build: lane a', started: DAY, done: null, evidence: '' };
+const ahead = () => true; // git: the branch has commits not on the base, or none yet
+const SIX_DAYS_MS = 6 * 24 * 60 * 60 * 1000;
+
+/** A Claude Code session file `<pid>.json` naming `session` in HOME's session store. */
+function sessionFile(home, pid, session) {
+  mkdirSync(join(home, '.claude', 'sessions'), { recursive: true });
+  writeFileSync(join(home, '.claude', 'sessions', `${pid}.json`), JSON.stringify({ pid, sessionId: session, kind: 'interactive' }));
+}
+
+/**
+ * A worktree folder and a temp HOME whose launch store holds one open writer launched in it by the live session, its brief naming
+ * LANE_ROW, and a reader (which holds nothing).
+ */
 function heldWorld() {
   const home = makeTempDir('road-held-home-');
   const worktree = join(makeTempDir('road-held-repo-'), 'lane');
   mkdirSync(worktree);
   const env = { HOME: home, USERPROFILE: home };
-  assert.equal(recordAgentLaunch('s-1', 'implementer', env, { writer: true, about: { cwd: worktree, description: 'Lane a' } }).state, 'recorded');
+  const about = { cwd: worktree, description: 'Lane a', prompt: `row: ${LANE_ROW}\nBASE: ${START}` };
+  assert.equal(recordAgentLaunch(LIVE, 'implementer', env, { writer: true, about }).state, 'recorded');
   assert.equal(recordAgentLaunch('s-2', 'scout', env, { about: { cwd: join(worktree, '..') } }).state, 'recorded', 'a reader holds nothing');
-  return { env, worktree };
+  sessionFile(home, process.pid, LIVE);
+  return { env, home, worktree };
 }
 
-test('line 3: findings about a worktree an open writer holds, and its branch, are INFO; a lane branch named otherwise still FAILs without it', () => {
+const WORKTREE_FINDINGS = (worktree) => tidyOf(finding('merged-branch', 'feat/a-gate', '739e088 ancestor'), finding('merged-worktree', worktree, 'branch feat/a-gate'));
+
+test('line 3: findings about a worktree a live open writer of an open row holds, and its branch, are INFO; without it FAIL', async () => {
   const { env, worktree } = heldWorld();
   const held = openWriterFolders(env, Date.now());
-  assert.equal(held.folders.length, 1, 'only the writer\'s folder');
-  const tidy = tidyOf(finding('merged-branch', 'feat/a-gate', '739e088 ancestor'), finding('merged-worktree', worktree, 'branch feat/a-gate'));
-  const lines = gitLines(tidy, LANE_ROAD, [], { held });
+  assert.deepEqual(held.map((writer) => writer.row), [LANE_ROW], 'only the writer\'s launch');
+  const live = await liveSessions(env);
+  assert.deepEqual([...live], [LIVE]);
+  const lines = gitLines(WORKTREE_FINDINGS(worktree), LANE_ROAD, [openRow], { held, live, branchAhead: ahead });
   assert.equal(lines[0], 'PASS 3 one git line: git-tidy check clean but for lanes in flight');
-  assert.equal(lines.filter((line) => line.startsWith(`INFO 3 one git line: in flight (held by an open writer in ${worktree}): `)).length, 2, lines.join('\n'));
-  assert.ok(gitLines(tidy, LANE_ROAD, []).every((line) => line.startsWith('FAIL 3 one git line: ')), 'without the open record: FAIL, as before');
+  const info = `INFO 3 one git line: in flight (held by an open writer of row ${LANE_ROW} in ${worktree}): `;
+  assert.equal(lines.filter((line) => line.startsWith(info)).length, 2, lines.join('\n'));
+  assert.ok(gitLines(WORKTREE_FINDINGS(worktree), LANE_ROAD, [openRow]).every((line) => line.startsWith('FAIL 3 one git line: ')), 'without the open record: FAIL, as before');
 });
 
-test('line 3: an open writer holds nothing else: another worktree, a merge commit or a dirty base still FAIL', () => {
+test('R2: a stale or planted record never hides a leftover: dead or unknown session, row done or not open, landed branch all FAIL', async () => {
   const { env, worktree } = heldWorld();
+  const tidy = WORKTREE_FINDINGS(worktree);
+  const allFail = (lines, why) => assert.ok(lines.length === 2 && lines.every((line) => line.startsWith('FAIL 3 one git line: ')), `${why}\n${lines.join('\n')}`);
+  const sixDaysOn = openWriterFolders(env, Date.now() + SIX_DAYS_MS); // a crashed writer's record is still open (age cap 7 days)
+  assert.equal(sixDaysOn.length, 1);
+  allFail(gitLines(tidy, LANE_ROAD, [openRow], { held: sixDaysOn, live: new Set(), branchAhead: ahead }), 'its session is gone');
+  const deadPid = spawnSync(process.execPath, ['-e', '']).pid; // the process has ended: its session file is a leftover
+  const planted = makeTempDir('road-held-planted-');
+  const plantedEnv = { HOME: planted, USERPROFILE: planted };
+  recordAgentLaunch('99999999-aaaa-bbbb-cccc-dddddddddddd', 'implementer', plantedEnv, { writer: true, about: { cwd: worktree, prompt: `row: ${LANE_ROW}` } });
+  sessionFile(planted, deadPid, '99999999-aaaa-bbbb-cccc-dddddddddddd');
+  sessionFile(planted, process.pid, 'another-live-session');
+  const plantedLive = await liveSessions(plantedEnv);
+  assert.ok(!plantedLive.has('99999999-aaaa-bbbb-cccc-dddddddddddd') && plantedLive.has('another-live-session'), 'a dead pid is no live session');
+  allFail(gitLines(tidy, LANE_ROAD, [openRow], { held: openWriterFolders(plantedEnv, Date.now()), live: plantedLive, branchAhead: ahead }), 'made-up session id');
   const held = openWriterFolders(env, Date.now());
+  const live = await liveSessions(env);
+  const rowsCases = [[], [{ ...openRow, done: DAY }], [{ ...openRow, started: null }], [{ ...openRow, id: 'r22.other' }]];
+  for (const items of rowsCases) allFail(gitLines(tidy, LANE_ROAD, items, { held, live, branchAhead: ahead }), `row ${JSON.stringify(items)}`);
+  allFail(gitLines(tidy, LANE_ROAD, [openRow], { held, live, branchAhead: () => false }), 'the branch is an ancestor of the base (landed)');
+  allFail(gitLines(tidy, LANE_ROAD, [openRow], { held, live }), 'no git answer: nothing held');
+});
+
+test('line 3: an open writer holds nothing else: another worktree, a merge commit or a dirty base still FAIL', async () => {
+  const { env, worktree } = heldWorld();
+  const context = { held: openWriterFolders(env, Date.now()), live: await liveSessions(env), branchAhead: ahead };
   const other = join(worktree, '..');
   const tidy = tidyOf(finding('merged-worktree', worktree, 'branch feat/a-gate'), finding('merged-worktree', other, 'branch feat/old'),
     finding('merged-branch', 'feat/old', 'x'), finding('merge-commit', 'abc1234', 'Merge x'));
-  const lines = gitLines(tidy, LANE_ROAD, [], { held });
+  const lines = gitLines(tidy, LANE_ROAD, [openRow], context);
   assert.deepEqual(lines.map((line) => line.split(':')[0]), ['INFO 3 one git line', 'FAIL 3 one git line', 'FAIL 3 one git line', 'FAIL 3 one git line']);
 });
 
-test('line 3: the agent branch of an open launch (Claude Code isolation worktree) is held; no store folder holds nothing', () => {
-  const held = { folders: [], branches: ['worktree-agent-abc'] };
-  const lines = gitLines(tidyOf(finding('agent-leftover', 'worktree-agent-abc', 'x')), LANE_ROAD, [], { held });
-  assert.match(lines[1], /^INFO 3 one git line: in flight \(held by an open writer\): agent-leftover worktree-agent-abc/);
-  assert.deepEqual(openWriterFolders({ HOME: makeTempDir('road-held-none-') }, Date.now()), { folders: [], branches: [] });
+test('line 3: the agent branch of a live open launch (Claude Code isolation worktree) is held by the same rules; no store holds nothing', () => {
+  const writer = { session: LIVE, folder: null, agentBranch: 'worktree-agent-abc', row: LANE_ROW };
+  const tidy = tidyOf(finding('agent-leftover', 'worktree-agent-abc', 'x'));
+  const lines = gitLines(tidy, LANE_ROAD, [openRow], { held: [writer], live: new Set([LIVE]), branchAhead: ahead });
+  assert.match(lines[1], new RegExp(`^INFO 3 one git line: in flight \\(held by an open writer of row ${LANE_ROW}\\): agent-leftover worktree-agent-abc`));
+  assert.match(gitLines(tidy, LANE_ROAD, [openRow], { held: [writer], live: new Set(), branchAhead: ahead })[0], /^FAIL /, 'its session is not live');
+  assert.deepEqual(openWriterFolders({ HOME: makeTempDir('road-held-none-') }, Date.now()), []);
 });
 
-test('gate: the held option reaches line 3 through gateStep', () => {
+test('gate: line 3 through gateStep asks git whether the held branch is ahead of the base or at its tip', async () => {
   const { env, worktree } = heldWorld();
-  const run = (file, argv) => (file === 'git-tidy' ? tidyOf(finding('merged-worktree', worktree, 'branch feat/a-gate')) : fakeRun([TO]).run(file, argv));
-  const result = gateStep(LANE_ROAD, [startRow, row('rd.s1.a', landedText(TO))], 1, run, { isUiPath: () => false, held: openWriterFolders(env, Date.now()) });
-  assert.match(result.lines.find((line) => / 3 /.test(line)), /^PASS 3 one git line: git-tidy check clean but for lanes in flight/);
+  const OLD = 'd'.repeat(40);
+  const gateWith = (branchHead, isAncestorExit) => {
+    const { run: base } = fakeRun([TO]);
+    const run = (file, argv) => {
+      if (file === 'git-tidy') return tidyOf(finding('merged-worktree', worktree, 'branch feat/a-gate'));
+      if (file === 'git' && argv.includes('refs/heads/feat/a-gate^{commit}')) return { exit: 0, out: `${branchHead}\n` };
+      if (file === 'git' && argv.includes(OLD) && argv.includes('--is-ancestor')) return { exit: isAncestorExit, out: '' };
+      return base(file, argv);
+    };
+    const items = [startRow, row('rd.s1.a', landedText(TO)), openRow];
+    return gateStep(LANE_ROAD, items, 1, run, { isUiPath: () => false, held: openWriterFolders(env, Date.now()), live: new Set([LIVE]) }).lines.find((line) => / 3 /.test(line));
+  };
+  assert.match(gateWith(TO, 0), /^PASS 3 one git line: git-tidy check clean but for lanes in flight/, 'no commits yet: at the base tip');
+  assert.match(gateWith(OLD, 1), /^PASS 3 one git line: git-tidy check clean but for lanes in flight/, 'commits not on the base');
+  assert.match(gateWith(OLD, 0), /^FAIL 3 one git line: merged-worktree /, 'an ancestor of the base: a landed leftover');
+  assert.match(gateWith(OLD, 128), /^FAIL 3 one git line: merged-worktree /, 'git cannot answer: FAIL');
 });
