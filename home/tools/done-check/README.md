@@ -76,14 +76,14 @@ nearest `go.mod`) the checks are:
 | Check | Command (run in the module folder) | Failure id |
 |---|---|---|
 | types | `go vet ./<dir> ...` of the package folders of the changed `.go` files | `<file>\|vet: <message>` |
-| lint | `gofmt -l ./<file> ...` of the changed `.go` files | `<file>\|gofmt` |
+| lint | `gofmt -d ./<file> ...` of the changed `.go` files, one failure per drift hunk | `<file>\|gofmt <hash of the lines the hunk changes>` |
 | tests | `go test -json ./<dir> ...` of those folders, and of the nearest folder of `.go` files above a changed Go data file | `<dir>/\|<Test/sub>`, `<dir>/\|build failed`, `<dir>/\|package failed` |
 
 A `go.mod`, `go.sum` or `go.work` change vets and tests the whole module (`./...`); a deleted package (its folder holds no `.go` file
 any more) vets the whole module, since an importer may break anywhere. `vendor/` is never run (a vendor-only change says `tests not
 run (no-related)`), `testdata`, `_x` and `.x` folders are data, and a path with a control character is named, not passed. All three
-compare with the base like the JS checks: the base reruns the same paths (go test: the failing package folders), so a file the base has
-unformatted too, a vet finding it has too or a test that fails there too is old and never blocks. No go on PATH gives `types`, `lint`
+compare with the base like the JS checks: the base reruns the same paths (go test: the failing package folders), so a drift hunk the base has
+too (same changed lines; gofmt joins nearby drift, and drift between repeated lines, into one hunk, so new drift next to old drift blocks with it), a vet finding it has too or a test that fails there too is old and never blocks. A package that build constraints leave empty on this machine (another OS, a tag) is valid Go: go test leaves it out and go vet runs again without it. No go on PATH gives `types`, `lint`
 and `tests` `not run (go: not installed)` (gofmt missing alone: `lint not run (gofmt: not installed)`); a `.go` file in no module is `not-supported`. go and gofmt come
 from PATH (gofmt beside the real go first); `GOFLAGS`, `GOTOOLCHAIN` and Go's own build and test caches are the caller's. Known limits:
 go test output over 8 MiB is not read (`not run (error)`), and the base tree is a new temp folder per run, so a base build of a big
@@ -99,7 +99,7 @@ module may not finish within the 30 s base budget (the failures are then called 
 | `lib/verdict-text.mjs` | the line and the block reason |
 | `lib/code-lines.mjs` | which lines of a JS or TS text hold code (risk classes skip comment-only edits) |
 | `lib/false-alarms.mjs` | the hashed ids of new failures and which of them a false-alarm label lets through |
-| `lib/go-plan.mjs`, `lib/go-parse.mjs` | the Go commands of a change, and the readers of go vet, gofmt -l and go test -json |
+| `lib/go-plan.mjs`, `lib/go-parse.mjs` | the Go commands of a change, and the readers of go vet, gofmt -d and go test -json |
 | `lib/*.mjs` (others), `risk-rules.json` | scope, detect, run, parse, base tree, ledger, weakened-test scan, risk classes |
 
 The ledger is `~/.claude/state/done-check/ledger.jsonl` (counts only, no file names). Tests: `node --test tests/done-check-*.test.mjs`.

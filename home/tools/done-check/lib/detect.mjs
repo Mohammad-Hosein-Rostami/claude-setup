@@ -1,6 +1,6 @@
 // Decides which commands the done-check runs for one change (design 3.2): per package (the nearest package.json of each changed file) a
 // typecheck, a lint of the changed files and the related tests, as fixed argv commands; per Go module (the nearest go.mod of each changed
-// .go file, go.mod/go.sum/go.work or Go data file) go vet, gofmt -l and go test through lib/go-plan.mjs. It runs nothing and reads no
+// .go file, go.mod/go.sum/go.work or Go data file) go vet, gofmt -d and go test through lib/go-plan.mjs. It runs nothing and reads no
 // tool output. Go's files never reach the JS planner, so a Go-only change names no JS check; a JS-only change plans exactly as before.
 // Exports: planChecks(scope, env) -> Plan.
 // Invariants: scripts come from the BASE commit's package.json (`git ls-tree` + `cat-file`), the worktree copy only when there is no git

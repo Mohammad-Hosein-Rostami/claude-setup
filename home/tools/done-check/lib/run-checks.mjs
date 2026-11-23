@@ -11,7 +11,7 @@ import { spawn } from 'node:child_process';
 import { lstatSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { basename, join, relative, sep } from 'node:path';
 import { POOL_SIZE } from './contract.mjs';
-import { excludedPackageDirs, parseGofmtList, parseGoTestJson, parseGoVet } from './go-parse.mjs';
+import { excludedPackageDirs, parseGofmtDiff, parseGoTestJson, parseGoVet } from './go-parse.mjs';
 import { goArgsOf, goPackageArg, withGoArgs } from './go-plan.mjs';
 import { parseEslintJson, parseJestJson, parseTap, parseTsc, parseVitestJson } from './parse.mjs';
 
@@ -21,7 +21,7 @@ const MAX_RESULT_FILE_BYTES = 64 * BYTES_PER_MIB; // a tool's json result file b
 const EVERY_LINE = [[1, Number.MAX_SAFE_INTEGER]];
 const TEST_PARSERS = { vitest: parseVitestJson, jest: parseJestJson };
 // The Go commands name their reader (`cmd.parse`, lib/go-plan.mjs); go test needs the module path to turn import paths into folders.
-const GO_PARSERS = { 'go-vet': (text) => parseGoVet(text), gofmt: (text) => parseGofmtList(text), 'go-test': (text, cmd) => parseGoTestJson(text, cmd.goModule ?? '') };
+const GO_PARSERS = { 'go-vet': (text) => parseGoVet(text), gofmt: (text) => parseGofmtDiff(text), 'go-test': (text, cmd) => parseGoTestJson(text, cmd.goModule ?? '') };
 const STDERR_PARSERS = new Set(['go-vet']);
 
 const slashed = (path) => path.replaceAll('\\', '/');
@@ -155,7 +155,7 @@ function judge(cmd, parsed, code) {
   if (parsed.failures.length > 0) return { result: 'fail' };
   // red exit but no failing test named: unknown cause, unless go test named packages build constraints leave out (its exit 1 for them)
   if (cmd.kind === 'tests' && code !== 0 && !(parsed.excluded > 0)) return { result: 'not-run', why: 'error' };
-  if (cmd.parse === 'gofmt' && code !== 0) return { result: 'not-run', why: 'error' }; // gofmt could not read a file (a syntax error): not clean
+  if (cmd.parse === 'gofmt' && code !== 0) return { result: 'not-run', why: 'error' }; // exit 1 with no drift: gofmt could not read a file
   return { result: cmd.kind === 'tests' && parsed.total === 0 ? 'none' : 'ok' };
 }
 

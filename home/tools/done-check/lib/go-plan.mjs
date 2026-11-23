@@ -1,9 +1,9 @@
 // Decides the Go commands the done-check runs for one change (fixes spec section 7, go-checks): per Go module touched by the change,
-// `go vet` (types), `gofmt -l` (lint) and `go test -json` (tests) as fixed argv commands. It runs nothing and reads no tool output.
+// `go vet` (types), `gofmt -d` (lint) and `go test -json` (tests) as fixed argv commands. It runs nothing and reads no tool output.
 // Exports: GO_FILE, isGoWide(path), goBinary(env), goDataFiles(top, paths), goModulesOf(top, paths), planGoChecks(context, scope, { full }),
 //   planGo(context, module, { full }), goArgsOf(cmd), withGoArgs(cmd, args), goPackageArg(dir).
 // What runs (not full): go vet and go test of the package folders of the changed .go files; a changed non-Go file (testdata, an embedded
-//   .sql) adds go test of the nearest folder above it that holds .go files; gofmt -l of the changed .go files. A go.mod, go.sum or
+//   .sql) adds go test of the nearest folder above it that holds .go files; gofmt -d of the changed .go files. A go.mod, go.sum or
 //   go.work change, a deleted package (its folder holds no .go file any more: an importer may break anywhere) or `full` widens vet (and,
 //   except for the deleted package, test) to `./...` of the module. vendor/ is never run; `testdata`, `_x` and `.x` folders are data
 //   (the go tool skips them as packages).
@@ -25,7 +25,7 @@ const MAX_DATA_CANDIDATES = 200; // changed non-Go files looked up at most; more
 const VENDOR = 'vendor';
 const TESTDATA = 'testdata';
 /** The fixed arguments of each Go command; the paths follow them. */
-const FIXED_ARGS = Object.freeze({ 'go-vet': ['vet'], gofmt: ['-l'], 'go-test': ['test', '-json'] });
+const FIXED_ARGS = Object.freeze({ 'go-vet': ['vet'], gofmt: ['-d'], 'go-test': ['test', '-json'] });
 const KINDS = ['types', 'lint', 'tests'];
 
 const withSlashes = (path) => path.split(sep).join('/');
@@ -281,7 +281,7 @@ export function planGo(context, module, { full = false } = {}) {
   if (vetArgs.length > 0) cmds.push(...goCmds('go-vet', 'types', 'go vet', context.go, vetArgs, { goModule }));
   if (found.gofmt.length > 0) {
     const gofmt = gofmtBinary(context.env, context.go);
-    if (gofmt) cmds.push(...goCmds('gofmt', 'lint', 'gofmt -l', gofmt, found.gofmt.map((file) => `./${file}`)));
+    if (gofmt) cmds.push(...goCmds('gofmt', 'lint', 'gofmt -d', gofmt, found.gofmt.map((file) => `./${file}`)));
     else skipped.push(skip('lint', 'gofmt-not-installed', `${where}lint: gofmt: not installed`));
   }
   if (testArgs.length > 0) cmds.push(...goCmds('go-test', 'tests', 'go test', context.go, testArgs, { goModule }));

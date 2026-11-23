@@ -16,7 +16,7 @@ the panic trace were replaced by `/work/proj` (the module) and `/work/go` (GOROO
 | Sample | Command (run in the module folder) |
 |---|---|
 | `go-vet-1.27.4.txt` | `go vet ./vettype ./vetan ./ok` (exit 1, stderr; stdout is empty) |
-| `gofmt-1.27.4-list.txt` | `gofmt -l ./fmtbad/x.go ./ok/ok.go` (exit 0, stdout) |
+| `gofmt-1.27.4-diff.txt` | `gofmt -d ./fmtbad/x.go ./ok/ok.go` (exit 1 for the drift, stdout), with `fmtbad/x.go` holding two drift hunks |
 | `go-test-1.27.4-fail.jsonl` | `go test -json ./testfail ./buildfail ./ok ./notests ./panics "./two words"` (exit 1, stdout) |
 | `go-test-1.27.4-pass.jsonl` | `go test -json ./ok` (exit 0, stdout) |
 

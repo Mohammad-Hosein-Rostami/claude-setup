@@ -2,8 +2,8 @@
 // failures does the base commit have too (old, not the agent's) and which does it not (new).
 // Exports: compareWithBase({ scope, plan, results, repoId, budgetMs, env }) -> Promise<Map<number, BaseAnswer>>,
 //   findFlaky({ scope, plan, results, answers, budgetMs }) -> Promise<Map<number, Set<string>>>.
-// Rules: only `types` and `tests` commands that failed are compared (lint looks at changed lines only), and `gofmt -l` (it lists whole
-//   files: one the base has unformatted too is old). Go commands run again at the base with the same paths (go test: the failing package
+// Rules: only `types` and `tests` commands that failed are compared (lint looks at changed lines only), and `gofmt -d` (one failure per
+//   drift hunk, matched by the lines it changes: a hunk the base has too is old, drift the change adds is new). Go commands run again at the base with the same paths (go test: the failing package
 //   folders), minus those the base lacks. A typecheck runs again at the
 //   base as it is; tests run again at the base for the failing test files only (the command is rebuilt from the head command: a vitest or
 //   jest or node --test file list; a test file the base does not have cannot be an old failure). Answers are cached per (repo, base, package,
@@ -25,7 +25,7 @@ const BUILD_INFO_FLAG = '--tsBuildInfoFile';
 const NO_BASE = 'no git base';
 const ARGS_HASH_CHARS = 16;
 
-/** True for a command whose failures are compared with the base: types and tests, and gofmt (it lists whole files, not changed lines). */
+/** True for a command whose failures are compared with the base: types and tests, and gofmt (one failure per drift hunk, matched by content). */
 const isCompared = (cmd) => COMPARED_KINDS.has(cmd.kind) || cmd.parse === 'gofmt';
 const hashOf = (parts) => createHash('sha256').update(parts.join('\0')).digest('hex').slice(0, ARGS_HASH_CHARS);
 

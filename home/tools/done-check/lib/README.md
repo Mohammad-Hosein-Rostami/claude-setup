@@ -10,8 +10,8 @@ ledger row, one status line.
 - `contract.mjs`: the shared vocabulary (check kinds, results, caps, JSDoc types); data only, imports nothing.
 - `scope.mjs`: which code files a change touched, the base to compare with, and a key that is the same before and after the commit.
 - `detect.mjs`: decides the typecheck, lint and related-test commands per package; runs nothing. Go's files go to `go-plan.mjs`.
-- `go-plan.mjs`: the Go commands per module of a change (go vet, gofmt -l, go test -json of the changed package folders); runs nothing.
-- `go-parse.mjs`: readers for go vet, gofmt -l and go test -json output, with the same contract as `parse.mjs`.
+- `go-plan.mjs`: the Go commands per module of a change (go vet, gofmt -d, go test -json of the changed package folders); runs nothing.
+- `go-parse.mjs`: readers for go vet, gofmt -d (drift hunks) and go test -json output, with the same contract as `parse.mjs`.
 - `script-words.mjs`: reads a package.json script as plain words and matches it to tsc, vitest, jest or `node --test`.
 - `related.mjs`: picks the `node:test` files a change can break (changed, importing a changed file, or naming its path).
 - `run-checks.mjs`: runs the planned commands in a small pool under one deadline and turns each output into a result.

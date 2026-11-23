@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { planChecks } from '../home/tools/done-check/lib/detect.mjs';
 import { checkChange } from '../home/tools/done-check/lib/check-change.mjs';
 import { goBinary, planGoChecks } from '../home/tools/done-check/lib/go-plan.mjs';
-import { excludedPackageDirs, parseGofmtList, parseGoTestJson, parseGoVet } from '../home/tools/done-check/lib/go-parse.mjs';
+import { excludedPackageDirs, parseGofmtDiff, parseGoTestJson, parseGoVet } from '../home/tools/done-check/lib/go-parse.mjs';
 import { rangeChange } from '../home/tools/done-check/lib/scope.mjs';
 import { makeDoneCheckRepo } from './done-check-fixture.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -54,10 +54,21 @@ test('go vet: a type error and an analyzer finding, ids file|vet: message withou
   assert.equal(parseGoVet('go: cannot find main module\n'), null);
 });
 
-test('gofmt -l: each listed file is one lint failure file|gofmt; an empty list is clean; a line that is not a .go path is unreadable', () => {
-  assert.deepEqual(parseGofmtList(sample('gofmt-1.27.4-list.txt')).failures.map((failure) => [failure.kind, failure.id]), [['lint', './fmtbad/x.go|gofmt']]);
-  assert.deepEqual(parseGofmtList(''), { failures: [], total: 0 });
-  assert.equal(parseGofmtList('open x.go: permission denied\n'), null);
+test('gofmt -d: each drift hunk is one lint failure, its id the file and a hash of its changed lines only; garbage or a cut hunk is unreadable', () => {
+  const text = sample('gofmt-1.27.4-diff.txt');
+  const { failures, total } = parseGofmtDiff(text);
+  assert.equal(total, 2);
+  assert.deepEqual(failures.map((failure) => [failure.kind, failure.file, failure.line, failure.endLine]), [['lint', './fmtbad/x.go', 3, 3], ['lint', './fmtbad/x.go', 11, 13]]);
+  assert.ok(failures.every((failure) => /^\.\/fmtbad\/x\.go\|gofmt [0-9a-f]{16}$/.test(failure.id)), failures.map((failure) => failure.id).join());
+  // the same drift lower in the file (other line numbers, other context) keeps its id: the base compare matches hunks by content
+  const moved = text.replace('@@ -1,6 +1,6 @@\n package fmtbad\n \n', '@@ -40,6 +40,6 @@\n // other\n \n');
+  assert.deepEqual(parseGofmtDiff(moved).failures.map((failure) => failure.id), failures.map((failure) => failure.id));
+  const firstHunk = text.slice(text.indexOf('@@ -1,6'), text.indexOf('@@ -8'));
+  const twice = `${text}${text.endsWith('\n') ? '' : '\n'}${firstHunk}`;
+  assert.deepEqual(parseGofmtDiff(twice).failures.map((failure) => failure.id.slice(-2)).filter((end) => end === '#2'), ['#2']); // a repeated hunk is counted, not merged
+  assert.deepEqual(parseGofmtDiff(''), { failures: [], total: 0 });
+  assert.equal(parseGofmtDiff('./x.go:2:8: expected \')\', found \'EOF\'\n'), null);
+  assert.equal(parseGofmtDiff(text.split('\n').slice(0, -3).join('\n')), null); // the last hunk cut off
 });
 
 test('go test -json: failing leaf tests, build failures and a panic by package folder; skipped packages are no failure', () => {
@@ -259,4 +270,21 @@ test('run: go vet still vets the other folders when one is left empty by build c
   assert.equal(verdict.row.checks.types.new, 1, verdict.line);
   assert.match(verdict.reason, /b\/b\.go:5 vet: unreachable code/);
   assert.doesNotMatch(verdict.reason, /build constraints/);
+});
+
+const OLD_DRIFT = 'package a\n\nfunc  A() int { return 1 }\n';
+
+test('run: new gofmt drift next to old drift in the same file blocks (goprobe5: gofmt joins them into one hunk)', needsGo, (t) => {
+  const repo = goRepo(t, { 'a/a.go': OLD_DRIFT }, { 'a/a.go': `${OLD_DRIFT}\nfunc   B() int {return 2}\n` });
+  const { code, verdict } = runCli(repo);
+  assert.equal(code, 1, verdict.line);
+  assert.deepEqual([verdict.row.checks.lint.result, verdict.row.checks.lint.new], ['fail', 1], verdict.line);
+});
+
+test('run: new gofmt drift far from old drift blocks alone; the old hunk stays old', needsGo, (t) => {
+  const repo = goRepo(t, { 'a/a.go': OLD_DRIFT }, { 'a/a.go': `${OLD_DRIFT}${[1, 2, 3, 4, 5, 6, 7, 8].map((n) => `\n// note ${n}`).join('')}\n\nfunc   B() int {return 2}\n` });
+  const { code, verdict } = runCli(repo);
+  assert.equal(code, 1, verdict.line);
+  assert.deepEqual([verdict.row.checks.lint.result, verdict.row.checks.lint.new, verdict.row.checks.lint.old], ['fail', 1, 1], verdict.line);
+  assert.match(verdict.reason, /a\/a\.go: not gofmt-formatted at line 14/);
 });
