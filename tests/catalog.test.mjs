@@ -2,7 +2,8 @@
 // (.gitattributes). Union keeps both sides' lines and cannot tell a duplicated or lost row from a good one, so these tests catch that.
 // Exports: readTables, duplicateKeys, missingFiles (the checks, so the fixture test can run them on a small catalog).
 // Invariants: (1) the first cell of a row is unique within its table; (2) every file a row of a file table names exists;
-// (3) two lanes that each append a row to the same table rebase one after the other with no conflict and keep both rows.
+// (3) two lanes that each append a row to the same table rebase one after the other with no conflict and keep both rows;
+// (4) the session-notes entries (this catalog and home/hooks/README.md) give its deadline the prune only, never the project-agents child.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -86,6 +87,17 @@ test('the settings hooks row names only hook files that exist, and the session-n
   const scripts = namesOf(hooksRow[1]).filter((name) => name.endsWith('.mjs'));
   assert.deepEqual(scripts.filter((name) => !existsSync(join(REPO, 'home', 'hooks', name))), [], 'hook files the row names but home/hooks lacks');
   assert.ok(scripts.includes('session-notes.mjs'), 'the row names session-notes.mjs');
+});
+
+// Review R3 of agents-note: the project-agents child moved to project-merge.mjs, so session-notes' 4 s deadline bounds only the prune.
+test('the session-notes catalog row and hooks README entry give its deadline the prune only, not the project-agents child', () => {
+  const sessionNotesRow = readTables(readFileSync(CATALOG, 'utf8')).flatMap((table) => table.rows).find(([key]) => key === '`session-notes.mjs`');
+  assert.ok(sessionNotesRow, 'the catalog has a session-notes.mjs row');
+  assert.match(sessionNotesRow.join('|'), /One deadline of 4,000 ms from the hook's start \(`HOOK_BUDGET_MS`, below the 5 s timeout of its two entries in `settings\/base\.json`\) bounds the prune\./);
+  const readmeEntry = readFileSync(join(REPO, 'home', 'hooks', 'README.md'), 'utf8').split('\n').find((line) => line.startsWith('- `session-notes.mjs`'));
+  assert.ok(readmeEntry, 'home/hooks/README.md has a session-notes.mjs entry');
+  assert.match(readmeEntry, /One 4 s deadline below the hook timeout covers the prune of its state files \(`lib\/state-files\.mjs`\);/);
+  assert.doesNotMatch(readmeEntry, /deadline[^.;]*covers the project-agents child/);
 });
 
 test('the key check finds a row that was added twice, and the path check finds a row whose file is gone', () => {
