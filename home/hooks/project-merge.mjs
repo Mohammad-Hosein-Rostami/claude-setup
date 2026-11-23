@@ -18,7 +18,7 @@
 // child what is left. Not covered: a read that hangs inside the kernel (a dead network mount) cancels this hook; only this note is lost.
 import { readdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isSubagentStart } from './session-notes.mjs';
 import { runGit } from './lib/gated-folder.mjs';
@@ -95,15 +95,22 @@ export function ourSetup(home, coreHome = CORE_HOME) {
   };
 }
 
+/** The file an `@` import in a CLAUDE.local.md names: `~/` from the home folder, a relative path from the file's own folder. */
+const importTarget = (dir, path, home) => (path.startsWith('~/') ? join(home, path.slice(2)) : isAbsolute(path) ? path : join(dir, path));
+
 /** The notes for the keys, each marked shared or personal, and imported when CLAUDE.local.md loads that very file. */
 function notesFor(identity, setup, { home, coreHome }) {
   const personalDir = join(home, '.claude', 'project-notes');
   const sharedDir = join(coreHome, 'project-notes');
-  const importedDir = setup?.localImportsNote ? realOr(personalDir) : undefined;
+  // Compared by spelling, never resolved: the import text is repository data, and a stat through it could stall (P1).
+  const imported = new Set((setup?.localNoteImports ?? []).map(({ dir, path }) => importTarget(dir, path, home)));
+  const personalReal = realOr(personalDir); // our own folders, so resolving them is safe; today the two are one real folder
+  const spellings = (note) => [note.path, join(note.dir, `${note.key}.md`),
+    ...(realOr(note.dir) === personalReal ? [join(personalDir, `${note.key}.md`)] : [])];
   return findNotes(identity.keys, [sharedDir, personalDir]).map((note) => ({
     ...note,
     kind: note.dir === sharedDir ? 'shared' : 'personal',
-    imported: importedDir !== undefined && realOr(note.dir) === importedDir,
+    imported: spellings(note).some((path) => imported.has(path)),
   }));
 }
 

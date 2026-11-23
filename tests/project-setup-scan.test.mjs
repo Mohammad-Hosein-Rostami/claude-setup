@@ -151,3 +151,40 @@ test('teamSetEnv: env keys the committed settings set and the local file does no
   const broken = project({ '.claude/settings.json': '{ not json' });
   assert.deepEqual(teamSetEnv(broken.top), { keys: new Set(), readable: false });
 });
+
+test('review R2: every linked folder or file the walk does not follow is named, never skipped silently', { skip: !POSIX && 'needs symlinks' }, () => {
+  const fixture = project({ '.claude/x.md': 'x', 'team/handoff/SKILL.md': 'x', 'team/rule.md': 'x', 'real-skill/SKILL.md': 'x', 'src/app/CLAUDE.md': 'x' });
+  const link = (target, path) => {
+    mkdirSync(dirname(join(fixture.top, path)), { recursive: true });
+    symlinkSync(join(fixture.top, target), join(fixture.top, path));
+  };
+  link('team', '.claude/skills');
+  link('team', '.claude/rules');
+  link('team', '.claude/agents/shared');
+  link('src', 'linked-src');
+  mkdirSync(join(fixture.top, '.claude', 'commands'));
+  const setup = scanProjectSetup(fixture.top, join(fixture.top, 'linked-src', 'app'), { personalSkillsDir: fixture.personalSkillsDir, ours: OURS });
+  assert.deepEqual(setup.skillLinks, ['.claude/skills']);
+  assert.deepEqual(setup.notChecked, ['.claude/skills (a link: not followed)', '.claude/agents/shared (a link: not followed)', '.claude/rules (a link: not followed)']);
+  const nested = project({ '.claude/skills/handoff/README.md': 'x', 'elsewhere/SKILL.md': 'x' });
+  symlinkSync(join(nested.top, 'elsewhere', 'SKILL.md'), join(nested.top, '.claude', 'skills', 'handoff', 'SKILL.md'));
+  assert.deepEqual(scan(nested).hiddenSkills, [{ name: 'handoff', path: '.claude/skills/handoff/SKILL.md' }], 'a linked SKILL.md still counts');
+});
+
+test('review R2: a link on the way down to the session folder is named', { skip: !POSIX && 'needs symlinks' }, () => {
+  const fixture = project({ 'real/web/CLAUDE.md': 'x' });
+  symlinkSync(join(fixture.top, 'real'), join(fixture.top, 'pkg'));
+  const here = join(fixture.top, 'pkg', 'web');
+  const setup = scanProjectSetup(fixture.top, here, { personalSkillsDir: fixture.personalSkillsDir, ours: OURS });
+  assert.deepEqual(setup.notChecked, [], 'a session folder reached through a link is read at its real path');
+  const gone = join(fixture.top, 'pkg', 'web', 'removed'); // cannot be resolved, so the walk goes down by its spelling
+  const lexical = scanProjectSetup(fixture.top, gone, { personalSkillsDir: fixture.personalSkillsDir, ours: OURS });
+  assert.deepEqual(lexical.notChecked, ['pkg (a link on the way to the session folder: it and the folders below it not read)']);
+});
+
+test('review R1: CLAUDE.local.md project-notes imports are kept with their folder, each one', () => {
+  const fixture = project({ 'CLAUDE.local.md': '@~/.claude/project-notes/proj.md\nsee @docs/project-notes/onboarding.md\n' });
+  assert.deepEqual(scan(fixture).localNoteImports, [
+    { dir: fixture.top, path: '~/.claude/project-notes/proj.md' }, { dir: fixture.top, path: 'docs/project-notes/onboarding.md' },
+  ]);
+});

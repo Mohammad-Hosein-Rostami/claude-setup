@@ -156,11 +156,13 @@ export function leadNote(setup, notes, agentNote, identity) {
  * A worker's note (SubagentStart): the project skills ours hide, and the notes.
  * @param {import('./project-setup-scan.mjs').ProjectSetup | null} setup - the scan; null when there is no project to read.
  * @param {{ key: string, path: string, text: string, cut: boolean, kind: 'shared' | 'personal', imported: boolean }[]} notes - as leadNote.
- * @returns {string} at most WORKER_NOTE_MAX_CHARS; '' when there is no hidden skill and no note to show.
+ * @returns {string} at most WORKER_NOTE_MAX_CHARS; '' when there is no hidden skill, no linked skills folder and no note to show.
  */
 export function workerNote(setup, notes) {
   const hidden = setup?.hiddenSkills.length ? fitted(`Project skills hidden by ours of the same name (${DATA_LABEL}; read the project's copy too): `,
     hiddenItems(setup), LINE_ROOM.worker) : '';
-  if (!hidden && notes.every(({ imported }) => imported)) return '';
-  return joined([hidden || NOTES_ONLY_HEADER], notes, WORKER_NOTE_MAX_CHARS);
+  const linked = setup?.skillLinks.length ? fitted(`Project skills folders that are links, not read (${DATA_LABEL}; a skill there may share a name with ours: check it): `,
+    setup.skillLinks.map(shownFile), LINE_ROOM.worker) : '';
+  if (!hidden && !linked && notes.every(({ imported }) => imported)) return '';
+  return joined([hidden || linked ? '' : NOTES_ONLY_HEADER, hidden, linked], notes, WORKER_NOTE_MAX_CHARS);
 }

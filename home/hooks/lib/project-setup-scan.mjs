@@ -20,7 +20,7 @@ import { readAgentFile } from './agent-file-walk.mjs';
 import { frontmatterOf, plainFrontmatter } from './agent-frontmatter.mjs';
 import { readHead } from './gated-folder.mjs';
 import { readPlainFile } from './plain-file.mjs';
-import { shownPath } from './shown-name.mjs';
+import { quotedPath, shownPath } from './shown-name.mjs';
 
 export const OUR_SWITCHES = ['DONE_CHECK_SKIP', 'CLAUDE_POST_EDIT_SKIP', 'CLAUDE_SKILL_ROUTER'];
 export const SHOWN_VALUE_KEYS = ['model', 'effortLevel', 'ANTHROPIC_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL_FORCE',
@@ -45,7 +45,9 @@ const SETTINGS_MAX_BYTES = 256 * 1024; // a real settings file is a few KiB; a 5
 const DEFAULT_BUDGET_MS = 1000;
 const MD_FILE = /\.md$/i;
 const AGENTS_IMPORT = /(?:^|\s)@(?:\.\/)?AGENTS\.md(?=\s|$)/m;
-const NOTE_IMPORT = /(?:^|\s)@\S*project-notes\/[^\s/]+\.md(?=\s|$)/m;
+const NOTE_IMPORTS = /(?:^|\s)@(\S*project-notes\/[^\s/]+\.md)(?=\s|$)/gm; // the path of each project-notes import
+const MAX_NOTE_IMPORTS = 20; // project-notes imports of one CLAUDE.local.md looked at
+const PLAIN_PATH = /^[\w.-]{1,64}(?:\/[\w.-]{1,64}){0,8}$/; // a relative path shown as it is; anything else quoted
 const UNCERTAIN_GLOB = /[[\]{}()!+@\\]/; // glob syntax globMatches does not model: such a pattern "may hide" ours
 const CLAUDE_ENV = /^(?:ANTHROPIC|CLAUDE)_/; // variables that change how Claude Code itself runs
 const REPLACING_KEYS = ['statusLine', 'outputStyle', 'agent', 'apiKeyHelper']; // project scalars that win over ours
@@ -57,6 +59,11 @@ const isObject = (value) => value !== null && typeof value === 'object' && !Arra
 const byName = (a, b) => (a.name < b.name ? -1 : Number(a.name > b.name));
 const keysOf = (value) => (isObject(value) ? Object.keys(value).slice(0, MAX_KEYS) : []);
 const shownRel = (rel, name) => (rel === '' ? name : shownPath(rel, name));
+/** A relative path from the repository as the note shows it: as it is when plain, else quoted and escaped. */
+const shownRelPath = (path) => {
+  const cut = path.lastIndexOf('/') + 1;
+  return PLAIN_PATH.test(path) ? path : quotedPath(path.slice(0, cut), path.slice(cut));
+};
 
 /** The real path of the session folder, or the input itself when it is no string or cannot be resolved. */
 function realOrSelf(path) {
@@ -76,9 +83,15 @@ function lstatOrNull(path) {
   }
 }
 
-/** The entries of a real folder (not a link), sorted, taking each from the scan's entry budget; `state.cut` when it ran out. */
-function listFolder(dir, state) {
-  if (!lstatOrNull(dir)?.isDirectory()) return [];
+/**
+ * The entries of a real folder, sorted, taking each from the scan's entry budget; `state.cut` when it ran out. A link there is
+ * not followed: its shown path goes to `state.linked`, so the note names it (F4: never skipped silently).
+ * @param {string} dir - the folder. @param {object} state - the scan's budget. @param {string} shown - the folder's path from the root.
+ */
+function listFolder(dir, state, shown) {
+  const stat = lstatOrNull(dir);
+  if (stat?.isSymbolicLink()) state.linked.push(shown);
+  if (!stat?.isDirectory()) return [];
   const entries = [];
   let handle;
   try {
@@ -99,11 +112,13 @@ function listFolder(dir, state) {
 /** `*.md` files under a folder, subfolders included up to MAX_DEPTH; a link is listed by name (`link`), never entered. */
 function markdownFiles(dir, rel, state, depth = 0) {
   const found = [];
-  for (const entry of listFolder(dir, state)) {
+  for (const entry of listFolder(dir, state, rel.slice(0, -1))) {
     const path = join(dir, entry.name);
-    if (entry.isDirectory() && depth < MAX_DEPTH) found.push(...markdownFiles(path, `${rel}${entry.name}/`, state, depth + 1));
+    const isMarkdown = MD_FILE.test(entry.name);
+    if (entry.isSymbolicLink() && !isMarkdown) state.linked.push(`${rel}${entry.name}`); // a linked subfolder
+    else if (entry.isDirectory() && depth < MAX_DEPTH) found.push(...markdownFiles(path, `${rel}${entry.name}/`, state, depth + 1));
     else if (entry.isDirectory()) state.cut = true;
-    else if ((entry.isFile() || entry.isSymbolicLink()) && MD_FILE.test(entry.name)) found.push({ path, name: entry.name, link: entry.isSymbolicLink() });
+    else if ((entry.isFile() || entry.isSymbolicLink()) && isMarkdown) found.push({ path, name: entry.name, link: entry.isSymbolicLink() });
   }
   return found;
 }
@@ -116,7 +131,9 @@ function projectFolders(top, cwd, setup) {
   for (let level = 0; level <= Math.min(below.length, MAX_FOLDER_LEVELS); level += 1) {
     const parts = below.slice(0, level);
     const dir = join(top, ...parts);
-    if (level > 0 && !lstatOrNull(dir)?.isDirectory()) break; // a link on the way down: the folders below it are not read
+    const way = level > 0 ? lstatOrNull(dir) : null;
+    if (way?.isSymbolicLink()) setup.notChecked.push(`${shownRelPath(parts.join('/'))} (a link on the way to the session folder: it and the folders below it not read)`);
+    if (level > 0 && !way?.isDirectory()) break;
     const rel = parts.length ? `${parts.join('/')}/` : '';
     const claude = lstatOrNull(join(dir, '.claude'));
     if (claude?.isSymbolicLink()) setup.notChecked.push(`${shownRel(rel, '.claude')} (a link: not followed)`);
@@ -157,7 +174,10 @@ function scanInstructions(folders, setup, { ours }) {
       claudeFiles += 1;
       const head = stat.isFile() ? instructionHead(join(dir, name)) : '';
       imported ||= AGENTS_IMPORT.test(head);
-      if (name === LOCAL_FILE) setup.localImportsNote ||= NOTE_IMPORT.test(head);
+      if (name === LOCAL_FILE) {
+        const paths = [...head.matchAll(NOTE_IMPORTS)].slice(0, MAX_NOTE_IMPORTS).map((match) => match[1]);
+        setup.localNoteImports.push(...paths.map((path) => ({ dir, path })));
+      }
     }
   }
   if (!hasAgents) setup.agentsMdLoads = 'none';
@@ -176,8 +196,10 @@ function scanSkills(folders, setup, { state, personalSkills }) {
   for (const { claude, rel } of folders) {
     if (!claude) continue;
     const dir = join(claude, 'skills');
-    for (const entry of listFolder(dir, state)) {
-      const isSkill = entry.isSymbolicLink() || (entry.isDirectory() && lstatOrNull(join(dir, entry.name, 'SKILL.md'))?.isFile());
+    if (lstatOrNull(dir)?.isSymbolicLink()) setup.skillLinks.push(`${rel}.claude/skills`);
+    for (const entry of listFolder(dir, state, `${rel}.claude/skills`)) {
+      const skillFile = entry.isDirectory() ? lstatOrNull(join(dir, entry.name, 'SKILL.md')) : null;
+      const isSkill = entry.isSymbolicLink() || skillFile?.isFile() || skillFile?.isSymbolicLink();
       if (!isSkill) continue;
       setup.skills.push(entry.name);
       if (personalSkills.has(entry.name.toLowerCase())) setup.hiddenSkills.push({ name: entry.name, path: `${rel}.claude/skills/${entry.name}/SKILL.md` });
@@ -324,9 +346,9 @@ function personalSkillNames(dir) {
  */
 export function scanProjectSetup(top, cwd, { personalSkillsDir, budgetMs = DEFAULT_BUDGET_MS, ours = NO_OURS }) {
   const setup = { instructions: [], agentsMdLoads: 'none', rules: 0, skills: [], hiddenSkills: [], agents: [], hooks: [], overrides: [],
-    mcp: [], localImportsNote: false, notChecked: [] };
+    mcp: [], localNoteImports: [], skillLinks: [], notChecked: [] };
   const deadline = performance.now() + budgetMs;
-  const context = { ours, state: { entries: MAX_ENTRIES, cut: false }, personalSkills: personalSkillNames(personalSkillsDir) };
+  const context = { ours, state: { entries: MAX_ENTRIES, cut: false, linked: [] }, personalSkills: personalSkillNames(personalSkillsDir) };
   const folders = projectFolders(top, cwd, setup);
   for (const [name, scan] of PARTS) {
     if (performance.now() > deadline) setup.notChecked.push(`${name} (time budget used up)`);
@@ -338,6 +360,7 @@ export function scanProjectSetup(top, cwd, { personalSkillsDir, budgetMs = DEFAU
       }
     }
   }
+  for (const path of context.state.linked) setup.notChecked.push(`${shownRelPath(path)} (a link: not followed)`);
   if (context.state.cut) setup.notChecked.push(`folders past ${MAX_ENTRIES} entries or ${MAX_DEPTH} levels (the rest not listed)`);
   return setup;
 }
@@ -357,7 +380,9 @@ export function teamSetEnv(top) {
 /** @typedef {{ instructions: string[], agentsMdLoads: 'native'|'setting'|'import'|'none', rules: number, skills: string[],
  *  hiddenSkills: {name: string, path: string}[], agents: {name: string, mark: string}[], hooks: {event: string, count: number}[],
  *  overrides: {key: string, value: string|null, effect: 'weaker-model'|'our-switch'|'hides-our-rules'|'permission-mode'|'hooks-off'|'replaces-ours'}[],
- *  mcp: string[], localImportsNote: boolean, notChecked: string[] }} ProjectSetup
+ *  mcp: string[], localNoteImports: {dir: string, path: string}[], skillLinks: string[], notChecked: string[] }} ProjectSetup
+ * `localNoteImports`: each `@...project-notes/<x>.md` import of a CLAUDE.local.md, with the folder that file is in (the hook resolves
+ * it and calls a note imported only when it is that very file). `skillLinks`: .claude/skills folders that are links (not read).
  * `instructions`, `skills`, `hiddenSkills`, `agents[].name`, `hooks[].event`, `overrides[].key` (env names), `overrides[].value`
  * and `mcp` are raw repository text (the text layer quotes them); `agents[].mark` and `notChecked` are this file's own words
  * (paths in them already shown by shown-name.mjs). */
