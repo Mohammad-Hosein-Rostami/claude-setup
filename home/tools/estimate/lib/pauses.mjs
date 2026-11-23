@@ -1,6 +1,7 @@
 // The pauses of a job and why they happened (estimate spec R11, owner decision E3): the clocks assume no pause ("13:20 if no
 // pause"); a pause moves them hour for hour, and its reason is shown.
-// Exports: pausesOf(intervals, asks, limits, sinceMs, nowMs) -> pauses, PAUSE_REASONS, LIMIT_END_SLACK_MIN.
+// Exports: pausesOf(intervals, asks, limits, sinceMs, nowMs) -> pauses, readLimitRecord(account, { dir }) -> record | null,
+// PAUSE_REASONS, LIMIT_END_SLACK_MIN.
 // Rules:
 // - A pause is a silence of more than IDLE_GAP_MIN minutes in all of the job's transcripts together (the activity runs of every
 //   session linked to the table): between two runs, or from the last run to now (a pause still going on). Shorter silences are
@@ -12,8 +13,16 @@
 //   within LIMIT_END_SLACK_MIN after a 5-hour reset that a sample of the job's own account recorded at 100 % (a pause still going
 //   on also counts while that reset is still ahead); else `no activity`.
 // - Two machines (F4): only the record of the job's account is read; a record of any other account is never used.
-// Invariants: pure (no I/O, no clock); runs are epoch minutes, everything else epoch ms; malformed runs, asks and samples are
-// skipped (a skipped sample can only turn `usage limit` into `no activity`, never invent a pause).
+// - The samples: readLimitRecord gives every stored sample of one account, the limits file (its newest MAX_SAMPLES) and the 7-day
+//   log beside it, because the 100 % sample behind a pause leaves the file about an hour after work resumes. The log is read
+//   whole within MAX_LOG_BYTES, its writer's cap, through hooks/lib/plain-file.mjs (no link followed, no FIFO waited on); a log
+//   over the cap, with a second hard link or not a plain file is not read (one stderr line); a torn or foreign line is skipped.
+// Invariants: pausesOf is pure (no I/O, no clock); runs are epoch minutes, everything else epoch ms; malformed runs, asks and
+// samples are skipped (a skipped sample can only turn `usage limit` into `no activity`, never invent a pause).
+import { fstatSync, readSync } from 'node:fs';
+import { join } from 'node:path';
+import { NOT_PLAIN_FILE, readPlainFileWith } from '../../../hooks/lib/plain-file.mjs';
+import { MAX_LOG_BYTES, isAccountName, limitsDir, readLimits } from './limits-store.mjs';
 import { IDLE_GAP_MIN } from './worked.mjs';
 
 /** The reasons a pause can have, in the order they are tried. */
@@ -24,6 +33,9 @@ const [WAITING, LIMIT, IDLE] = PAUSE_REASONS;
 const MS_PER_MIN = 60_000;
 const MS_PER_S = 1000;
 const FULL_PERCENT = 100;
+const LOG_SUFFIX = '.jsonl';
+const LINE_BREAK = '\n';
+const MISSING_CODES = new Set(['ENOENT', 'ENOTDIR']);
 
 const isMs = (value) => Number.isFinite(value) && value >= 0;
 const isRun = (run) => Array.isArray(run) && run.length === 2 && run.every(Number.isFinite) && run[0] < run[1];
@@ -72,7 +84,8 @@ function reasonOf(silence, waits, resets) {
  * @param {{ fromMs: number, toMs: number }[]} asks the owner waits: AskUserQuestion intervals of the main transcripts (asksOf),
  *   the live asking marker to now, and each `waiting:` row from its start to now
  * @param {{ account: string | null, records: ({ account: string, samples: object[] } | null)[] }} limits the job's account and the
- *   limits records read (limits-store.mjs readLimits); records of another account are not used (F4)
+ *   limits records read (readLimitRecord: the file and its 7-day log; readLimits alone keeps only the newest 12 samples);
+ *   records of another account are not used (F4)
  * @param {number} sinceMs the start of the counted time (the promise), epoch ms
  * @param {number} nowMs now, epoch ms
  * @returns {{ fromMs: number, toMs: number, reason: 'waiting for you'|'usage limit'|'no activity' }[]} oldest first; the pauses over
@@ -90,4 +103,56 @@ export function pausesOf(intervals, asks, limits, sinceMs, nowMs) {
     const toMs = Math.min(silence.toMs, nowMs);
     return toMs > fromMs ? [{ fromMs, toMs, reason: reasonOf(silence, waits, resets) }] : [];
   });
+}
+
+const refused = (path, why) => Object.assign(new Error(`${path}: ${why}`), { code: NOT_PLAIN_FILE });
+const isLogSample = (sample) => sample !== null && typeof sample === 'object' && isMs(sample.t)
+  && (sample.five_hour === null || typeof sample.five_hour === 'object');
+
+/** The text of a limits log, '' when there is none; a refused or unreadable log is named on stderr and reads as ''. */
+function logText(path) {
+  try {
+    return readPlainFileWith(path, (fd, size) => {
+      if (size > MAX_LOG_BYTES) throw refused(path, `larger than ${MAX_LOG_BYTES} bytes, its writer's cap`);
+      if (fstatSync(fd).nlink > 1) throw refused(path, 'it has a second hard link');
+      const buffer = Buffer.alloc(size);
+      let read = 0;
+      for (let got = -1; read < size && got !== 0; read += got) got = readSync(fd, buffer, read, size - read, read);
+      return buffer.toString('utf8', 0, read);
+    });
+  } catch (error) {
+    if (MISSING_CODES.has(error?.code)) return '';
+    process.stderr.write(`estimate: ${path} is not read for pause reasons: ${error.message}\n`);
+    return '';
+  }
+}
+
+/** The samples of a log's text, oldest first as written; torn or foreign lines are skipped. */
+function logSamples(text) {
+  return text.split(LINE_BREAK).flatMap((line) => {
+    if (line === '') return [];
+    try {
+      const sample = JSON.parse(line);
+      return isLogSample(sample) ? [sample] : [];
+    } catch {
+      return []; // a torn line of a killed writer (limits-store.mjs drops it at its next rewrite)
+    }
+  });
+}
+
+/**
+ * Every stored limits sample of one account, for pause reasons: the limits file and its 7-day log (see the header).
+ * @param {string} account the job's account name
+ * @param {{ dir?: string }} [options] the limits folder (default ~/.claude/state/limits)
+ * @returns {{ account: string, samples: object[] } | null} samples oldest first; null for a name that is not an account or when
+ *   neither the file nor the log holds a sample
+ */
+export function readLimitRecord(account, { dir = limitsDir() } = {}) {
+  if (!isAccountName(account)) return null;
+  const fileSamples = readLimits(account, { dir })?.samples ?? [];
+  const both = [...logSamples(logText(join(dir, `${account}${LOG_SUFFIX}`))), ...fileSamples];
+  // The file's samples are also lines of the log: keep each once (same time, same 5-hour window).
+  const unique = new Map(both.map((sample) => [`${sample.t}|${JSON.stringify(sample.five_hour)}`, sample]));
+  const samples = [...unique.values()].sort((a, b) => a.t - b.t);
+  return samples.length === 0 ? null : { account, samples };
 }

@@ -2,9 +2,10 @@
 // home/tools/estimate/lib/transcript-facts.mjs (AskUserQuestion tool_use to tool_result, F3, F5). All data is synthetic.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, linkSync, mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { LIMIT_END_SLACK_MIN, PAUSE_REASONS, pausesOf } from '../home/tools/estimate/lib/pauses.mjs';
+import { MAX_LOG_BYTES, readLimits, recordSample } from '../home/tools/estimate/lib/limits-store.mjs';
+import { LIMIT_END_SLACK_MIN, PAUSE_REASONS, pausesOf, readLimitRecord } from '../home/tools/estimate/lib/pauses.mjs';
 import { asksOf, readTranscriptFacts } from '../home/tools/estimate/lib/transcript-facts.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -57,6 +58,46 @@ test('F4: limits of another account, or no job account, are never used', () => {
   assert.equal(pausesOf(intervals, [], other, at(0), at(70))[0].reason, IDLE);
   assert.equal(pausesOf(intervals, [], noAccount, at(0), at(70))[0].reason, IDLE);
   assert.equal(pausesOf(intervals, [], null, at(0), at(70))[0].reason, IDLE);
+});
+
+/** A limits folder written by the real writer: a 100 % sample at minute 9, then 14 later samples after work resumed. */
+function limitsFixture(t) {
+  const root = makeTempDir('est-pauses-limits-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = join(root, 'limits');
+  mkdirSync(dir);
+  const resetS = at(60) / 1000;
+  assert.equal(recordSample('me', { five_hour: { used_percentage: 100, resets_at: resetS }, seven_day: null }, { dir, now: at(9) }), true);
+  for (let k = 1; k <= 14; k += 1) {
+    recordSample('me', { five_hour: { used_percentage: k * 3, resets_at: resetS + 5 * 3600 }, seven_day: null }, { dir, now: at(65 + 5 * k) });
+  }
+  return dir;
+}
+
+test('R3: the reason of a usage-limit pause still holds once its sample has left the 12-sample file (read from the 7-day log)', (t) => {
+  const dir = limitsFixture(t);
+  const intervals = runs([0, 10], [65, 140]);
+  const reasonWith = (record) => pausesOf(intervals, [], { account: 'me', records: [record] }, at(0), at(140))[0].reason;
+  assert.equal(reasonWith(readLimits('me', { dir })), IDLE, 'the file alone has lost the 100 % sample');
+  assert.equal(reasonWith(readLimitRecord('me', { dir })), LIMIT);
+  assert.equal(readLimitRecord('../me', { dir }), null);
+  assert.equal(readLimitRecord('nobody', { dir }), null);
+});
+
+test('R3: a log with a second hard link, a linked log or a torn line is not trusted; the file still counts', (t) => {
+  const dir = limitsFixture(t);
+  const log = join(dir, 'me.jsonl');
+  appendFileSync(log, '{"t":17954');
+  assert.equal(readLimitRecord('me', { dir }).samples.length, 15, 'the torn line is skipped');
+  linkSync(log, join(dir, 'second-name'));
+  assert.equal(readLimitRecord('me', { dir }).samples.length, 12, 'only the file: the hard-linked log is refused');
+  rmSync(join(dir, 'second-name'));
+  renameSync(log, join(dir, 'elsewhere.jsonl'));
+  symlinkSync(join(dir, 'elsewhere.jsonl'), log);
+  assert.equal(readLimitRecord('me', { dir }).samples.length, 12, 'a link at the log name is not followed');
+  rmSync(log);
+  writeFileSync(log, `${JSON.stringify(fullAt(1, 60))}\n${' '.repeat(MAX_LOG_BYTES)}\n`);
+  assert.equal(readLimitRecord('me', { dir }).samples.length, 12, 'a log over its writer\'s cap is not read');
 });
 
 test('waiting for you is tried before usage limit; a wrong call shape throws', () => {

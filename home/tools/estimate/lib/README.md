@@ -27,8 +27,9 @@ The parts of the `estimate` tool. `../estimate.mjs` (the CLI) and `../statusline
 - `row-agents.mjs` (pure): `rowAgents` links each open, started row to this session's subagent working on it (its launch record's
   row, else a description naming exactly one row or `Lane <lane>`; anything ambiguous maps to none) with its active minutes;
   `quietRows` lists rows whose agent has been silent 15 working minutes, or, with no agent, open past max(95th percentile, 90).
-- `pauses.mjs` (pure): `pausesOf`, the silences over 10 min in all of the job's transcripts since the promise, each with its
+- `pauses.mjs`: `pausesOf` (pure), the silences over 10 min in all of the job's transcripts since the promise, each with its
   reason (`waiting for you`, `usage limit` from the job's own account only, `no activity`); the clocks assume no pause.
+  `readLimitRecord` gives it every stored sample of the account: the limits file and its 7-day log (the file keeps only 12).
 - `transcript-facts.mjs`: one transcript's active-minute runs and AskUserQuestion waits, read incrementally from a stored cursor
   (only appended bytes, in 1 MiB pieces; an ask never answered closes at the transcript's end).
 
