@@ -7,8 +7,8 @@
 // session's board file (tools/board/lib/refresh.mjs), its asking marker (hooks/lib/asking-marker.mjs: a question waits 2 minutes
 // (RC3), and the alert row must show at once, not after the board's idle refresh every 60 s) and this account's last-seen limits
 // file (tools/estimate/lib/limits-store.mjs).
-// Writes (spec-p5 `r9-statusline`, last-seen files): this account's limit sample when `rate_limits` changed (CLAUDE_ACCOUNT; none
-// without it, so accounts never mix) and the session's last-seen cost (~/.claude/state/last-seen/<session>.json, the API-price
+// Writes (spec-p5 `r9-statusline`, last-seen files): this account's limit sample, with this session's id, when `rate_limits`
+// brought news that no other session's newer sample already holds (CLAUDE_ACCOUNT; none without it, so accounts never mix) and the session's last-seen cost (~/.claude/state/last-seen/<session>.json, the API-price
 // equivalent `/where` shows; `$` is not on the line, audit case 11).
 // Spawns: only the claimed detached refreshes (the estimate cache's and the board's, one at a time each); no git, no launcher.
 // Never blank: an error while drawing prints the session row and a `status line error: <reason>` line; an error before that (reading
@@ -54,7 +54,7 @@ function sessionBoard(d, nowMs) {
 function render(d) {
   const nowMs = Date.now();
   const account = process.env.CLAUDE_ACCOUNT;
-  recordSample(account, d.rate_limits);
+  recordSample(account, d.rate_limits, { session: d.session_id });
   writeLastSeen(d);
   const duration = d.cost?.total_duration_ms;
   const segment = estimateSegment({

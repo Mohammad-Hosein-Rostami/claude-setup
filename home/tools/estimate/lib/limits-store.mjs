@@ -1,29 +1,55 @@
-// The last-seen usage limits per account: the status line render writes a sample when the status input's `rate_limits` changed;
-// the estimate (reset times beside a long job), the board and the pane read them. One format, one owner (display design 4.6 rows
-// 1 and 11; spec-p5 `r9-board` "Limit samples per account").
+// The last-seen usage limits per account: the status line render writes a sample when the status input's `rate_limits` brought
+// news; the estimate (reset times beside a long job), the board and the pane read them. One format, one owner (display design 4.6
+// rows 1 and 11; spec-p5 `r9-board` "Limit samples per account"; fixes-spec X12 for many sessions on one account).
 // Exports: limitsDir(), isAccountName(name), readLimits(account, deps) -> { account, samples } | null, latestSample(file) -> sample | null,
-// recordSample(account, rateLimits, deps) -> boolean; MAX_SAMPLES, LOG_KEEP_MS.
-// Files: ~/.claude/state/limits/<account>.json = { account, samples: [{ t, five_hour, seven_day }] } (oldest first, at most
+// recordSample(account, rateLimits, deps) -> boolean; MAX_SAMPLES, LOG_KEEP_MS, MAX_LOG_BYTES.
+// Files: ~/.claude/state/limits/<account>.json = { account, samples: [{ t, session?, five_hour, seven_day }] } (oldest first, at most
 // MAX_SAMPLES; each window { used_percentage, resets_at } as the status input gives it, resets_at in epoch seconds, or null when the
-// input had none), < 1 KB, temp file and rename; ~/.claude/state/limits/<account>.jsonl = one sample per line, lines older than
-// LOG_KEEP_MS dropped at the next write (the 7-day time series of the token view).
-// Invariants: no account name, no file (a sample with no account would mix accounts); a gap is never filled by a guess; a sample is
-// stored only when a value changed; nothing here throws (any failure reads as no file, or a write that returns false).
-import { readFileSync, writeFileSync } from 'node:fs';
+// input had none; `session` is the writing session's id, absent in samples written before it was stored), < 8 KB, temp file and
+// rename; ~/.claude/state/limits/<account>.jsonl = one sample per line, appended; <account>.lock while a session stores a sample.
+// Invariants:
+// - No account name, no file (a sample with no account would mix accounts); a gap is never filled by a guess; nothing here throws
+//   (any failure reads as no file, or a write that returns false).
+// - Many sessions on one account write at once, each with its own view of the limits, some older than others. A sample is stored
+//   only when it is news and behind the newest stored one in no window (see isNews), so an older view never undoes a newer one
+//   (two sessions alternating 43% and 63% of one window stored the sawtooth before). The check and the write run under the
+//   account's lock (hooks/lib/session-lock.mjs), so two sessions never both store against the same newest sample.
+// - The log line is one write on an O_APPEND handle opened without following a link; a torn last line (a writer killed mid-line)
+//   gets a line break first, so the next line stays whole and the torn one is dropped at the next rewrite.
+// - The log never passes MAX_LOG_BYTES, the byte cap its writer and readers share: before a line would pass it, the log is rewritten
+//   to its newest half. It is also rewritten once its first line is LOG_TRIM_SLACK_MS older than LOG_KEEP_MS (about once a day),
+//   so it holds the 7 days the token view needs and no more. A rewrite is a temp file `<account>.jsonl.<hex>.tmp` and a rename.
+import { randomBytes } from 'node:crypto';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, renameSync, rmSync, writeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { isPrivateFile, isSessionId, lstatOrNull, readSessionFile, writeSessionFile } from '../../../hooks/lib/session-store.mjs';
+import { withSessionLock } from '../../../hooks/lib/session-lock.mjs';
+import {
+  CREATE_FLAGS, FILE_MODE, isPrivateFile, isSessionId, lstatOrNull, privateFolder, readSessionFile, sameNode, TEMP_NAME_BYTES, writeSessionFile,
+} from '../../../hooks/lib/session-store.mjs';
 
 /** Samples kept per account: the pace needs two, twelve cover an hour of 5-minute changes. */
 export const MAX_SAMPLES = 12;
 /** The jsonl log keeps 7 days, the longest limit window. */
 export const LOG_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
-/** A limits file of 12 samples is about 1 KB; anything bigger was not written here. */
+/** How much older than LOG_KEEP_MS the first log line may get before the old lines go: one rewrite a day, not one per sample. */
+const LOG_TRIM_SLACK_MS = 24 * 60 * 60 * 1000;
+/** The limits file's byte cap for its writer and its reader: 12 samples of ~250 bytes (a 100-character session id) are 3 KB. */
 const MAX_FILE_BYTES = 8192;
-/** The 7-day log at one change per 5 minutes is about 2016 lines of ~120 bytes. */
-const MAX_LOG_BYTES = 1024 * 1024;
+/** The log's byte cap for its writer and every reader: 7 days at one change per 5 minutes is about 2016 lines of ~170 bytes. */
+export const MAX_LOG_BYTES = 1024 * 1024;
+/** At the cap the oldest half of the log goes and writing goes on. */
+const KEEP_LOG_BYTES = MAX_LOG_BYTES / 2;
+/** Bytes read from the start of the log to date its first line; a sample line is about 170 bytes. */
+const FIRST_LINE_BYTES = 1024;
+// O_APPEND: each line lands at the end; O_NOFOLLOW and O_NONBLOCK (POSIX only): never through a link, never stuck on a FIFO.
+const APPEND_FLAGS = constants.O_RDWR | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+const LINE_BREAK = '\n';
 const WINDOWS = ['five_hour', 'seven_day'];
 const MAX_PERCENT = 100;
+const AHEAD = 1;
+const NO_NEWS = 0;
+const BEHIND = -1;
 
 /** @returns {string} the folder of the limits files */
 export const limitsDir = () => join(homedir(), '.claude', 'state', 'limits');
@@ -62,40 +88,134 @@ export function readLimits(account, { dir = limitsDir() } = {}) {
 /** @returns {object | null} the newest sample of a limits file */
 export const latestSample = (file) => file?.samples.at(-1) ?? null;
 
-const sameValues = (a, b) => a !== null && WINDOWS.every((name) => JSON.stringify(a[name] ?? null) === JSON.stringify(b[name] ?? null));
+/** @returns {number} how one window of a new sample stands to that window of the newest stored sample: AHEAD, NO_NEWS or BEHIND */
+function windowStanding(next, newest) {
+  if (next === null) return NO_NEWS; // a window the input lacks tells nothing, and the stored one is never filled from a guess
+  if (newest === null) return AHEAD;
+  if (next.resets_at !== null && newest.resets_at !== null && next.resets_at !== newest.resets_at) {
+    return next.resets_at > newest.resets_at ? AHEAD : BEHIND; // a later window is news even at a lower percentage
+  }
+  if (next.used_percentage !== newest.used_percentage) return next.used_percentage > newest.used_percentage ? AHEAD : BEHIND;
+  return next.resets_at !== null && newest.resets_at === null ? AHEAD : NO_NEWS; // the same use, now with its reset time
+}
 
-/** Appends one line to the account's 7-day log and drops lines older than LOG_KEEP_MS; a link or a foreign file is left alone. */
+/** @returns {boolean} true when the sample is ahead of the newest stored one in some window and behind it in none */
+function isNews(sample, newest) {
+  if (newest === null) return true;
+  const standings = WINDOWS.map((name) => windowStanding(sample[name], newest[name] ?? null));
+  return standings.includes(AHEAD) && !standings.includes(BEHIND);
+}
+
+/** @returns {object | null} the sample the status input gives, with the writing session's id when it has a usable one */
+function sampleOf(rateLimits, now, session) {
+  const sample = { t: now, ...(isSessionId(session) ? { session } : {}), five_hour: windowOf(rateLimits.five_hour), seven_day: windowOf(rateLimits.seven_day) };
+  return sample.five_hour === null && sample.seven_day === null ? null : sample;
+}
+
+/** @returns {string} up to length bytes of fd from position, as text */
+function readAt(fd, position, length) {
+  const buffer = Buffer.alloc(length);
+  let read = 0;
+  for (let got = -1; read < length && got !== 0; read += got) got = readSync(fd, buffer, read, length - read, position + read);
+  return buffer.toString('utf8', 0, read);
+}
+
+/** Writes all of text to fd (a short write goes on from where it stopped). */
+function writeAll(fd, text) {
+  const buffer = Buffer.from(text);
+  for (let written = 0; written < buffer.length;) written += writeSync(fd, buffer, written);
+}
+
+/** @returns {number} the sample time of a log line, NaN when the line is not one */
+function lineTime(line) {
+  try {
+    const t = JSON.parse(line)?.t;
+    return Number.isFinite(t) ? t : Number.NaN;
+  } catch {
+    return Number.NaN; // a torn or foreign line has no time
+  }
+}
+
+/** @returns {boolean} true when the log must be rewritten before this line: the line would pass the cap, or the first line is old */
+function needsRewrite(fd, size, lineBytes, now) {
+  if (size + lineBytes > MAX_LOG_BYTES) return true;
+  if (size === 0) return false;
+  const first = readAt(fd, 0, Math.min(size, FIRST_LINE_BYTES)).split(LINE_BREAK, 1)[0];
+  return !(lineTime(first) >= now - LOG_KEEP_MS - LOG_TRIM_SLACK_MS); // NaN (a foreign first line) rewrites too, which drops it
+}
+
+/** @returns {string} the log lines a rewrite keeps: whole samples of the last LOG_KEEP_MS, only the newest half when at the cap */
+function keptLines(fd, size, lineBytes, now) {
+  const from = size + lineBytes > MAX_LOG_BYTES ? size - KEEP_LOG_BYTES : 0;
+  const lines = readAt(fd, from, size - from).split(LINE_BREAK);
+  const whole = from > 0 ? lines.slice(1) : lines; // the first piece may start mid-line
+  return whole.filter((line) => now - lineTime(line) <= LOG_KEEP_MS).map((line) => `${line}${LINE_BREAK}`).join('');
+}
+
+/** Replaces the log by text through a new temp file renamed over it while the folder is still the checked one. */
+function rewriteLog(dir, path, text) {
+  const folder = privateFolder(dir);
+  if (folder === undefined) return false;
+  const temp = `${path}.${randomBytes(TEMP_NAME_BYTES).toString('hex')}.tmp`;
+  try {
+    const fd = openSync(temp, CREATE_FLAGS, FILE_MODE);
+    try {
+      writeAll(fd, text);
+    } finally {
+      closeSync(fd);
+    }
+    if (!sameNode(lstatSync(dir), folder)) return false; // the folder was swapped meanwhile: store nothing
+    renameSync(temp, path);
+    return true;
+  } finally {
+    rmSync(temp, { force: true }); // after the rename nothing is left at that name
+  }
+}
+
+/** Adds one line to the account's log (see the header); a link or a foreign file is left alone. */
 function appendLog(dir, account, sample) {
   const path = join(dir, `${account}.jsonl`);
   const existing = lstatOrNull(path);
-  if (existing === undefined || (existing !== null && (!isPrivateFile(existing) || existing.size > MAX_LOG_BYTES))) return false;
-  const old = existing === null ? [] : readFileSync(path, 'utf8').split('\n').filter((line) => {
-    try {
-      return Number.isFinite(JSON.parse(line).t) && sample.t - JSON.parse(line).t <= LOG_KEEP_MS;
-    } catch {
-      return false; // a broken line is dropped with the old ones
-    }
-  });
-  writeFileSync(path, `${[...old, JSON.stringify(sample)].join('\n')}\n`, { mode: 0o600 });
-  return true;
+  if (existing !== null && !isPrivateFile(existing)) return false; // also where O_NOFOLLOW does not exist (Windows)
+  const line = `${JSON.stringify(sample)}${LINE_BREAK}`;
+  const lineBytes = Buffer.byteLength(line) + LINE_BREAK.length; // room for the break a torn last line needs
+  const fd = openSync(path, APPEND_FLAGS, FILE_MODE);
+  try {
+    const stats = fstatSync(fd);
+    if (!isPrivateFile(stats)) return false; // something else was put there after the lstat
+    if (needsRewrite(fd, stats.size, lineBytes, sample.t)) return rewriteLog(dir, path, keptLines(fd, stats.size, lineBytes, sample.t) + line);
+    const torn = stats.size > 0 && readAt(fd, stats.size - 1, 1) !== LINE_BREAK;
+    writeAll(fd, torn ? `${LINE_BREAK}${line}` : line);
+    return true;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Under the account's lock: stores the sample in the file and the log when it is still news against the newest stored one. */
+function storeSample(dir, account, sample) {
+  const samples = readLimits(account, { dir })?.samples ?? [];
+  if (!isNews(sample, samples.at(-1) ?? null)) return false; // another session stored the same or newer while this one waited
+  const text = JSON.stringify({ account, samples: [...samples, sample].slice(-MAX_SAMPLES) });
+  if (Buffer.byteLength(text) > MAX_FILE_BYTES) return false; // readLimits would refuse it
+  return writeSessionFile(dir, account, text, { sweep: false }) && appendLog(dir, account, sample);
 }
 
 /**
- * Stores a sample when the status input's limits changed since the last one: the file (last MAX_SAMPLES) and one log line.
+ * Stores a sample when the status input's limits are news against the newest stored one: the file (last MAX_SAMPLES) and one log line.
  * @param {string | undefined} account CLAUDE_ACCOUNT; without one nothing is written
  * @param {{ five_hour?: object, seven_day?: object } | undefined} rateLimits the status input's `rate_limits`
- * @param {{ dir?: string, now?: number }} [deps] the folder and the clock (epoch ms; tests)
- * @returns {boolean} true when a new sample was stored
+ * @param {{ dir?: string, now?: number, session?: string }} [deps] the folder and the clock (epoch ms; tests), and the writing
+ *   session's id (the status input's `session_id`; stored only when it is a usable id)
+ * @returns {boolean} true when a new sample was stored; false when it was no news, behind the newest, or could not be written
  */
-export function recordSample(account, rateLimits, { dir = limitsDir(), now = Date.now() } = {}) {
+export function recordSample(account, rateLimits, { dir = limitsDir(), now = Date.now(), session } = {}) {
   try {
     if (!isAccountName(account) || !rateLimits || typeof rateLimits !== 'object') return false;
-    const sample = { t: now, five_hour: windowOf(rateLimits.five_hour), seven_day: windowOf(rateLimits.seven_day) };
-    if (sample.five_hour === null && sample.seven_day === null) return false;
-    const samples = readLimits(account, { dir })?.samples ?? [];
-    if (sameValues(samples.at(-1) ?? null, sample)) return false;
-    const stored = writeSessionFile(dir, account, JSON.stringify({ account, samples: [...samples, sample].slice(-MAX_SAMPLES) }), { sweep: false });
-    return stored && appendLog(dir, account, sample);
+    const sample = sampleOf(rateLimits, now, session);
+    // A first look without the lock: most renders bring nothing new and must not wait for another session's turn.
+    if (sample === null || !isNews(sample, latestSample(readLimits(account, { dir })))) return false;
+    return withSessionLock(dir, account, () => storeSample(dir, account, sample)) === true;
   } catch {
     return false; // the status line must render even when the state folder is unusable
   }
