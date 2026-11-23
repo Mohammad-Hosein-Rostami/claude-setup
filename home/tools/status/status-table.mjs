@@ -1,11 +1,12 @@
 // The one `## Work items` table of a STATUS.md: finding it (code fences skipped as the estimator skips them), making it when the
 // section is missing, and reading and writing one row in the style of its header. status.mjs runs the commands on top of it.
 // Exports: WORK_ITEMS, stamp, isEmpty, oneLine, sectionEnd, hiddenEndReason, tableToEdit, rowIndex, insertRow, rowToChange, writeRow, DEFECT_TABLE (the row helpers of `defect`),
-// HOLD_KINDS, holdText, withHold, withoutHold, rowsToHold (the `park` and `wait` holds).
+// HOLD_KINDS, holdText, startsWithHold, withHold, withoutHold, rowsToHold (the `park` and `wait` holds).
 // Invariants: rows are only the contiguous table rows below the header `id | item | size | started | done | evidence` and its
 // separator; a done cell is never changed (rowToChange refuses it); a section is never made below a code fence left open.
 // A hold (estimate-spec R3, R4) is `parked: <why>` or `waiting: <question>` at the head of an open row's evidence cell, any older
-// evidence kept after `; `: no new column, so a reader that knows no holds still reads the row as an open row with evidence.
+// `waiting:` question and other evidence kept after `; `: no new column, so a reader that knows no holds still reads the row as
+// an open row with evidence.
 import { findSection, isTableRow, rowCells } from '../estimate/lib/items.mjs';
 import { roadStepOf } from '../estimate/lib/road-steps.mjs';
 
@@ -120,19 +121,39 @@ const EVIDENCE_SEPARATOR = /;/g; // `;` ends the hold text, so one inside it wou
 /** The hold's text: one line, no control character, `;` written `,` (see EVIDENCE_SEPARATOR); '' when nothing is left. */
 export const holdText = (text) => oneLine(text.replace(CONTROL_CHARS, ' ')).replace(EVIDENCE_SEPARATOR, ',');
 
-/**
- * @param {string} evidence an evidence cell as rowCells gives it
- * @returns {{ evidence: string, held: string | null }} the cell without its hold, and the hold's kind (`parked`, `waiting`) or null
- */
-export function withoutHold(evidence) {
-  const match = HOLD_AT_HEAD.exec(evidence);
-  return match === null ? { evidence, held: null } : { evidence: evidence.slice(match[0].length), held: match[1].toLowerCase() };
+/** @returns {boolean} true when the text starts with a hold mark (`parked:` or `waiting:`, any case) */
+export const startsWithHold = (text) => HOLD_AT_HEAD.test(text);
+
+/** The holds at the head of an evidence cell, in order ({ kind, text }), and the evidence after them. */
+function splitHolds(evidence) {
+  const holds = [];
+  let rest = evidence;
+  for (let match = HOLD_AT_HEAD.exec(rest); match !== null; match = HOLD_AT_HEAD.exec(rest)) {
+    holds.push({ kind: match[1].toLowerCase(), text: match[0].replace(/;\s*$/, '').trimEnd() });
+    rest = rest.slice(match[0].length);
+  }
+  return { holds, rest };
 }
 
-/** The evidence cell with `hold` at its head, in place of an older hold; other evidence stays after `; `. */
+/**
+ * @param {string} evidence an evidence cell as rowCells gives it
+ * @returns {{ evidence: string, held: string | null }} the cell without any hold at its head, and the kinds that were there
+ *   (`parked`, `waiting`, or `parked and waiting`), or null when it had none
+ */
+export function withoutHold(evidence) {
+  const { holds, rest } = splitHolds(evidence);
+  const kinds = [...new Set(holds.map((hold) => hold.kind))];
+  return { evidence: holds.length === 0 ? evidence : rest, held: kinds.length === 0 ? null : kinds.join(' and ') };
+}
+
+/**
+ * The evidence cell with `hold` at its head. An older `parked:` reason is replaced; every older `waiting:` question stays after
+ * the new hold (the owner's open question is never dropped), then the other evidence, all joined with `; `.
+ */
 export function withHold(evidence, hold) {
-  const rest = withoutHold(evidence).evidence;
-  return isEmpty(rest) ? hold : `${hold}; ${rest}`;
+  const { holds, rest } = splitHolds(evidence);
+  const questions = holds.filter((old) => old.kind === 'waiting' && old.text !== hold).map((old) => old.text);
+  return [hold, ...questions, ...(isEmpty(rest) ? [] : [rest])].join('; ');
 }
 
 const isHandOver = (cells) => /^deliver:/i.test(cells[0]) || /^\s*deliver:/i.test(cells[1]);

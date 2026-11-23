@@ -104,19 +104,26 @@ test('wait writes waiting: <question> on one row and start clears it; wait never
   assert.equal(rowOf(await read(), '1').evidence, '');
 });
 
-test('a new hold replaces the old one, and park of a road keeps no waiting: text in front of it', async () => {
+test('a new park replaces an older park reason; the owner\'s waiting: questions are never dropped, they stay after it', async () => {
   const { run, read } = await project();
   assert.equal(run('wait', 'web.s2.api', 'which port?').code, 0);
   assert.equal(run('park', 'web', 'later').code, 0);
+  assert.equal(run('park', 'web', 'next week').code, 0);
+  assert.equal(run('wait', '1', 'brand name?').code, 0);
+  assert.equal(run('wait', '1', 'logo colour?').code, 0);
+  assert.equal(run('wait', '1', 'logo colour?').code, 0);
   assert.equal(run('park', '1', 'first').code, 0);
   assert.equal(run('park', '1', 'second').code, 0);
   const text = await read();
-  assert.equal(rowOf(text, 'web.s2.api').evidence, 'parked: later; notes kept');
-  assert.equal(rowOf(text, '1').evidence, 'parked: second');
+  assert.equal(rowOf(text, 'web.s2.api').evidence, 'parked: next week; waiting: which port?; notes kept');
+  assert.equal(rowOf(text, '1').evidence, 'parked: second; waiting: logo colour?; waiting: brand name?');
+  assert.equal(run('start', '1').code, 0);
+  assert.equal(rowOf(await read(), '1').evidence, '', 'start clears every hold at the head');
 });
 
-test('done on a held row drops the hold, so a done row never reads as parked or waiting (F1)', async () => {
+test('done on a held row drops every hold, so a done row never reads as parked or waiting (F1)', async () => {
   const { run, read } = await project();
+  assert.equal(run('wait', 'web.s2.api', 'which port?').code, 0);
   assert.equal(run('park', 'web', 'later').code, 0);
   assert.equal(run('wait', '1', 'ok?').code, 0);
   assert.equal(run('done', 'web.s2.api', 'def5678').code, 0);
@@ -124,7 +131,31 @@ test('done on a held row drops the hold, so a done row never reads as parked or 
   const text = await read();
   assert.equal(rowOf(text, 'web.s2.api').evidence, 'notes kept; def5678');
   assert.equal(rowOf(text, '1').evidence, 'ghi9012');
-  assert.doesNotMatch(text, /\| 20\d\d-[^|]*Z \| (parked|waiting):/, 'no row with a done stamp starts its evidence with a hold');
+  assert.doesNotMatch(text, /\| 20\d\d-[^|]*Z \| (parked|waiting):/i, 'no row with a done stamp starts its evidence with a hold');
+});
+
+test('done refuses evidence that starts with a hold mark in any case, with exit 2, nothing written (F1)', async () => {
+  const { run, read } = await project();
+  const before = await read();
+  for (const evidence of ['parked: later', 'waiting: which port?', 'Parked: later', 'WAITING:x']) {
+    const result = run('done', '1', evidence);
+    assert.equal(result.code, 2, evidence);
+    assert.match(result.message, /cannot start with parked: or waiting:/);
+  }
+  assert.equal(run('done', '1', 'abc1234', '+', 'web.s2.api', 'parked: x').code, 2, 'a batch is all or none');
+  assert.equal(await read(), before);
+});
+
+test('a hold written by hand in another case is still a hold: start and done clear it', async () => {
+  const { run, read } = await project(TABLE.replace('| 1 | own task | S | 2026-11-23T09:00Z | - | - |', '| 1 | own task | S | 2026-11-23T09:00Z | - | Parked: by hand; notes |'));
+  assert.equal(run('start', '1').code, 0, 'a started row with a hold is resumed, not refused');
+  assert.equal(rowOf(await read(), '1').evidence, 'notes');
+});
+
+test('park of a road ignores the case of the road name', async () => {
+  const { run, read } = await project();
+  assert.equal(run('park', 'WEB', 'later').code, 0);
+  assert.equal(rowOf(await read(), 'web.s1.check').evidence, 'parked: later');
 });
 
 // F4: a missing or finished target exits 2 and leaves the file byte for byte.

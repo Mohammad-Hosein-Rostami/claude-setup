@@ -50,7 +50,7 @@ import { readStatusFile, replaceStatusFile } from './status-file.mjs';
 import { appendLog } from './status-log.mjs';
 import { recordPredictors, splitPredictorFlags } from './status-predictors.mjs';
 import { showStatus } from './status-show.mjs';
-import { DEFECT_TABLE, holdText, insertRow, isEmpty, oneLine, rowIndex, rowsToHold, rowToChange, stamp, tableToEdit, withHold, withoutHold, writeRow } from './status-table.mjs';
+import { DEFECT_TABLE, holdText, insertRow, isEmpty, oneLine, rowIndex, rowsToHold, rowToChange, stamp, startsWithHold, tableToEdit, withHold, withoutHold, writeRow } from './status-table.mjs';
 import { BULLET_EDITS } from './status-bullets.mjs';
 
 const SIZES = ['S', 'M', 'L'];
@@ -110,6 +110,8 @@ function finishRow(lines, words, now) {
   if (error) return { usage: error };
   const evidence = oneLine(evidenceWords.join(' '));
   if (!id || !evidence) return { usage: 'done needs <id> <evidence>' };
+  // A done row never starts its evidence with a hold (F1): refused, not stripped, so the evidence given is never rewritten.
+  if (startsWithHold(evidence)) return { usage: 'done evidence cannot start with parked: or waiting: (those mark open rows); give the commit, path or check' };
   const row = rowToChange(lines, id);
   if (row.error) return row;
   const neverStarted = isEmpty(row.cells[3]);
