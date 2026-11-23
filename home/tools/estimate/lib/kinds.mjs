@@ -1,6 +1,6 @@
 // What a table row is to the estimate (model s1, estimate-spec R1, R2, R3, R4, R14): its kind, its state, and the pools of
 // working minutes per kind that finished rows took.
-// Exports: AGENT_KINDS, LEAD_KINDS, MIN_RUN_MIN, MAX_RUN_MIN, kindOf(item), rowState(item), kindPools(rows).
+// Exports: AGENT_KINDS, LEAD_KINDS, MIN_RUN_MIN, MAX_RUN_MIN, kindOf(item), holdsOf(evidence), rowState(item), kindPools(rows).
 // Why kind and not size: on the held-out Desap day a per-size pool missed the step by 39 min and the job by 578, a per-kind pool
 // by 21 and 254 (spec section 3). Lead kinds (gate, land, deliver) are the lead's own bookkeeping: they take no agent slot and
 // draw no build minutes (the 11 old-form `-land` M rows of the PC job drew about 3 h under the size model, spec section 14).
@@ -23,15 +23,19 @@ const MIN_KIND_RUNS = 10;
 const FALLBACK_AGENT_POOL = [22, 46];
 
 const PREFIX = /^\s*([a-z-]+):/i;
-const CHECK_REST = /^check/i;
+// Road row names (home/tools/road/README.md "Rows"): road.mjs writes the step's check row as exactly `<road>.s<N>.check`; a lane
+// may be named `check-age`, `review-times` or `fix-cv-find-job-skill`, so only these exact names make a gate or a review. An audit
+// fix row is `<road>.s<N>.fix-<name>` with item `rework: <name>`, and a lane may also be named `fix-...`, so the fix is told by its
+// item prefix (FIX_PREFIXES), never by the name alone.
+const CHECK_REST = /^check$/i;
 const LAND_REST = /-land$/i;
-const REVIEW_REST = /^review/i;
-const FIX_REST = /^fix/i;
+const REVIEW_REST = /^review$/i;
 const FOLLOWUP_ID = /^(?:F\d+|[A-Za-z0-9][\w-]*\.f\d+\..+|fu\..+)$/i;
 const PLAN_ID = /^P\d+$/i;
 const FIX_PREFIXES = ['fix', 'close', 'rework'];
-const PARKED = /^\s*parked:/i;
-const WAITING = /^\s*waiting:/i;
+// A hold (status.mjs park/wait, home/tools/status/status-table.mjs HOLD_AT_HEAD, the writer): `parked: <why>` or
+// `waiting: <question>`, any case, at the head of an open row's evidence, each ended by `;`; several may follow one another.
+const HOLD_AT_HEAD = /^\s*(parked|waiting):([^;]*)(?:;|$)/i;
 
 /** The lowercase `word:` prefix of the item cell, else of the id cell (the parser reads `close:5` the same way), or ''. */
 function prefixOf(item) {
@@ -45,7 +49,7 @@ function roadRowKind(rest, prefix) {
   if (CHECK_REST.test(rest)) return 'gate';
   if (LAND_REST.test(rest)) return 'land';
   if (REVIEW_REST.test(rest) || prefix === 'review') return 'review';
-  if (FIX_REST.test(rest) || FIX_PREFIXES.includes(prefix)) return 'fix';
+  if (FIX_PREFIXES.includes(prefix)) return 'fix';
   return 'lane';
 }
 
@@ -53,8 +57,8 @@ function roadRowKind(rest, prefix) {
 const roadRest = (id) => (roadStepOf(id) === null ? null : ROAD_ROW.exec(id)[3]);
 
 /**
- * The row's kind by estimate-spec R1, first match: a `deliver:` row; a road row (`<road>.s<N>.check*` gate, `.<x>-land` land,
- * `.review*` or item `review:` review, `.fix*` or prefix `fix:`/`close:`/`rework:` fix, any other lane); a follow-up (`F<n>`,
+ * The row's kind by estimate-spec R1, first match: a `deliver:` row; a road row (exactly `<road>.s<N>.check` gate, `.<x>-land`
+ * land, exactly `.review` or item `review:` review, prefix `fix:`/`close:`/`rework:` fix, any other lane); a follow-up (`F<n>`,
  * `<road>.f<n>.*`, `fu.*` or prefix `follow-up:`); a plan (`P<n>` or prefix `plan:`); else a task. Outside a road, a `review:` item
  * is a review and a `fix:`/`close:`/`rework:` item a fix.
  * @param {{ id: string, item: string, kind: string }} item a parser item (items.mjs; kind 'deliver' marks a hand-over row)
@@ -74,16 +78,32 @@ export function kindOf(item) {
 }
 
 /**
- * The row's state for the clock (R3, R4): a done row is done; an open row whose evidence starts `parked:` is parked (out of every
- * number) and one starting `waiting:` waits for the owner (out of the work clock); any other open row is open.
+ * The holds at the head of an evidence cell, in order (the newest first, as status.mjs writes them).
+ * @param {string} evidence the evidence cell
+ * @returns {{ kind: 'parked'|'waiting', text: string }[]} text trimmed, without its `parked:`/`waiting:` mark
+ */
+export function holdsOf(evidence) {
+  const holds = [];
+  let rest = String(evidence ?? '');
+  for (let match = HOLD_AT_HEAD.exec(rest); match !== null && match[0] !== ''; match = HOLD_AT_HEAD.exec(rest)) {
+    holds.push({ kind: match[1].toLowerCase(), text: match[2].trim() });
+    rest = rest.slice(match[0].length);
+  }
+  return holds;
+}
+
+/**
+ * The row's state for the clock (R3, R4): a done row is done; an open row with a `parked:` hold at the head of its evidence is
+ * parked (out of every number, whatever other hold it has), one with only `waiting:` holds waits for the owner (out of the work
+ * clock); any other open row is open.
  * @param {{ done: number | null, evidence: string }} item a parser item
  * @returns {'done'|'open'|'parked'|'waiting'}
  */
 export function rowState(item) {
   if (item.done !== null && item.done !== undefined) return 'done';
-  const evidence = String(item.evidence ?? '');
-  if (PARKED.test(evidence)) return 'parked';
-  if (WAITING.test(evidence)) return 'waiting';
+  const kinds = holdsOf(item.evidence).map((hold) => hold.kind);
+  if (kinds.includes('parked')) return 'parked';
+  if (kinds.includes('waiting')) return 'waiting';
   return 'open';
 }
 

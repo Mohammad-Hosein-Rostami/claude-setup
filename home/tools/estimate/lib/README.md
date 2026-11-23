@@ -34,7 +34,7 @@ The parts of the `estimate` tool. `../estimate.mjs` (the CLI) and `../statusline
   (only appended bytes, in 1 MiB pieces; an ask never answered closes at the transcript's end).
 - `kinds.mjs` (pure, model s1): a row's kind (`kindOf`: lane, review, fix, followup, plan, task, or the lead's gate, land, deliver),
   its state (`rowState`: done, open, `parked:`, `waiting:`) and the per-kind pools of 1-240 working minutes (`kindPools`).
-- `slots.mjs` (pure, model s1): `measuredSlots` (agents running at once over the last 2 h, at most 5) and `forecastRuns`, the
+- `slots.mjs` (pure, model s1): `measuredSlots` (agents running at once over the last 2 h, at most 5; a stalled row is no slot) and `forecastRuns`, the
   seeded runs on slots: each open agent row is one run of its kind; a road step ends with its slowest lane plus a review, a fix
   and its gate, never before the step before it; the job is never shorter than all work over the slots.
 - `throughput.mjs` (pure): `throughputForecast` (agent rows done per 10 min over the last 3 h), `stepRange` (the current step:

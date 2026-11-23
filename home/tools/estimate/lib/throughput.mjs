@@ -10,7 +10,7 @@
 // Invariants: pure (no I/O, no clock); minutes from now; the same items, count, now and seedText give the same numbers; the margin
 // is never negative and the 80% time never before the likely one.
 import { nearestRank } from './forecast.mjs';
-import { AGENT_KINDS, kindOf } from './kinds.mjs';
+import { AGENT_KINDS, MIN_RUN_MIN, kindOf } from './kinds.mjs';
 import { RUNS, seededRandom } from './slots.mjs';
 
 /** The conformal margin before MIN_SCORED_STEPS steps are scored: fitted on the frozen round4 training steps (spec 5b). */
@@ -26,11 +26,17 @@ const MEDIAN = 0.5;
 const P80 = 0.8;
 const MS_PER_MIN = 60_000;
 
+/** A done agent row that was a run: the pools' lower bound (R14), so a row started and done in one minute (stamped after the
+ *  fact, bookkeeping) is no throughput. The pools' 240 min upper bound is in working minutes, which an item does not carry; a
+ *  row that took long still finished, so it counts. */
+const isFinishedRun = (item) => item.done !== null && item.done !== undefined && item.started !== null && item.started !== undefined
+  && (item.done - item.started) / MS_PER_MIN >= MIN_RUN_MIN && AGENT_KINDS.includes(kindOf(item));
+
 /** Agent rows done per bin, bin 0 being the 10 min up to now: (now - 10 min, now]. */
 function doneBins(items, nowMs) {
   const bins = new Array(BINS).fill(0);
   for (const item of items) {
-    if (item.done === null || item.done === undefined || !AGENT_KINDS.includes(kindOf(item))) continue;
+    if (!isFinishedRun(item)) continue;
     const agoMin = (nowMs - item.done) / MS_PER_MIN;
     if (agoMin < 0 || agoMin >= WINDOW_MIN) continue;
     bins[Math.max(0, Math.ceil(agoMin / BIN_MIN) - 1)] += 1;

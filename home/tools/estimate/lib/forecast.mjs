@@ -1,6 +1,6 @@
 // The work-left forecast: a reference pool of finished rows and jobs, seeded runs over the open rows, and why no time can be given.
 // Exports: nearestRank(sortedValues, share), referencePool(tables, seed), costedRows(items, costs), paceOf(doneRows, pool),
-// forecastWork(openRows, pool, seedText, stepOf, pace), refusalOf(openRows, pool, work, pace). With a road (road-steps.mjs) the same
+// forecastWork(openRows, pool, seedText, stepOf, pace), refusalOf(openRows, pool, work, pace), mulberry32(seed), seedOf(seedText). With a road (road-steps.mjs) the same
 // runs also sum each step's draws: the Total stays the median of the road-wide sums, and `stepMeans` gives the steps' shares of it.
 // Model (estimator design 3.5-3.7): the class of a row is its size alone; one run draws, for each open row, a finished cost of its
 // size longer than the row's elapsed share (minus that share), or any cost of its size when the row has run longer than all of them
@@ -118,8 +118,13 @@ export function paceOf(doneRows, pool) {
   return Math.min(PACE_HIGH, Math.max(PACE_LOW, actual / expected));
 }
 
-/** mulberry32: a small seeded generator of numbers in [0, 1); no seeded generator exists in this repo. */
-function mulberry32(seed) {
+/**
+ * mulberry32: a small seeded generator of numbers in [0, 1), the one seeded generator of the estimate (slots.mjs and
+ * throughput.mjs draw from it too).
+ * @param {number} seed a 32-bit seed (seedOf)
+ * @returns {() => number}
+ */
+export function mulberry32(seed) {
   let state = seed;
   return () => {
     state = (state + 0x6d2b79f5) | 0;
@@ -129,7 +134,8 @@ function mulberry32(seed) {
   };
 }
 
-const seedOf = (seedText) => createHash('sha256').update(seedText).digest().readUInt32BE(0);
+/** @returns {number} the 32-bit seed of a text: the first 4 bytes of its sha256, so one table state always draws the same runs */
+export const seedOf = (seedText) => createHash('sha256').update(seedText).digest().readUInt32BE(0);
 const pick = (values, random) => values[Math.floor(random() * values.length)];
 const hasClass = (openRows, pool) => openRows.every((row) => (pool.costs[row.size]?.length ?? 0) >= MIN_CLASS_ROWS);
 

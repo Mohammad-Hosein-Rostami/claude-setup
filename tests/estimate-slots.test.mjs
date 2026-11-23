@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseWorkItems } from '../home/tools/estimate/lib/items.mjs';
-import { kindOf, kindPools, rowState } from '../home/tools/estimate/lib/kinds.mjs';
+import { holdsOf, kindOf, kindPools, rowState } from '../home/tools/estimate/lib/kinds.mjs';
 import { DEFAULT_SLOTS, STEP_GATE_MIN, forecastRuns, measuredSlots } from '../home/tools/estimate/lib/slots.mjs';
 import { DEFAULT_MARGIN_MIN, conformalMargin, stepRange, throughputForecast } from '../home/tools/estimate/lib/throughput.mjs';
 import { BASE_MS, MIN_MS, row, statusDoc } from './estimate-tables.mjs';
@@ -33,11 +33,14 @@ const item = (id, text = `item ${id}`, kind = 'build') => ({ id, item: text, kin
 test('kindOf follows R1 in order, first match wins', () => {
   const cases = [
     [item('deliver:1', 'deliver: job'), 'deliver'], [item('x', 'hand over', 'deliver'), 'deliver'],
-    [item('polish.s3.check', 'close: gate'), 'gate'], [item('polish.s3.check-2'), 'gate'],
+    [item('polish.s3.check', 'close: gate'), 'gate'], [item('polish.s3.check', 'build: x'), 'gate'],
     [item('polish.s3.kinds-land', 'close: land kinds'), 'land'], [item('close:polish.s2.web-land'), 'land'],
     [item('polish.s3.review'), 'review'], [item('polish.s3.r1', 'review: lane r1'), 'review'],
-    [item('polish.s3.fix-a'), 'fix'], [item('polish.s3.x', 'close: findings'), 'fix'], [item('polish.s3.y', 'rework: owner'), 'fix'],
+    [item('polish.s3.fix-a', 'rework: a'), 'fix'], [item('polish.s3.x', 'close: findings'), 'fix'], [item('polish.s3.y', 'rework: owner'), 'fix'],
     [item('polish.s3.kinds-slots', 'build: lib files'), 'lane'], [item('s1.s2.lane'), 'lane'],
+    // lanes whose names start like a gate, review or fix row (road.mjs writes only the exact `.check`; a fix is told by `rework:`)
+    [item('polish.s3.check-age', 'build: x'), 'lane'], [item('polish.s3.check-2'), 'lane'], [item('polish.s3.review-times', 'build: x'), 'lane'],
+    [item('polish.s3.fix-cv-find-job-skill', 'build: x'), 'lane'], [item('polish.s3.fix'), 'lane'],
     [item('F3'), 'followup'], [item('polish.f2.doc'), 'followup'], [item('fu.sync'), 'followup'], [item('z', 'follow-up: tidy'), 'followup'],
     [item('P17'), 'plan'], [item('q', 'plan: road'), 'plan'],
     [item('r', 'review: diff'), 'review'], [item('u', 'fix: typo'), 'fix'], [item('close:5'), 'fix'],
@@ -52,6 +55,12 @@ test('rowState: done wins over a parked: or waiting: text; open rows read their 
   assert.equal(rowState({ done: null, evidence: '  waiting: which name?' }), 'waiting');
   assert.equal(rowState({ done: null, evidence: 'see parked: later' }), 'open');
   assert.equal(rowState({ done: null, evidence: '' }), 'open');
+  // the hold format of status.mjs: any case, several holds at the head, each ended by `;`
+  assert.equal(rowState({ done: null, evidence: 'PARKED: later' }), 'parked');
+  assert.equal(rowState({ done: null, evidence: 'Waiting: name?; abc1234' }), 'waiting');
+  assert.equal(rowState({ done: null, evidence: 'waiting: q2; parked: later; abc1234' }), 'parked');
+  assert.equal(rowState({ done: null, evidence: 'abc1234; parked: later' }), 'open');
+  assert.deepEqual(holdsOf('waiting: q2; Waiting: q1 ; abc'), [{ kind: 'waiting', text: 'q2' }, { kind: 'waiting', text: 'q1' }]);
 });
 
 test('kindPools keeps runs of 1..240 per agent kind, pools kinds under 10 runs, and falls back with no run at all (F1)', () => {
@@ -65,20 +74,35 @@ test('kindPools keeps runs of 1..240 per agent kind, pools kinds under 10 runs, 
   assert.throws(() => kindPools(null), TypeError);
 });
 
-test('measuredSlots: null before any agent row ran (F1); the mean of the running samples, lead and parked rows left out, at most 5', () => {
-  assert.equal(measuredSlots([], NOW_MS), null);
+/** Every listed row has a live agent (active a minute ago), so the stall rule never ends its run. */
+const liveAgents = (ids) => context({ rowAgents: new Map(ids.map((id) => [id, { agentId: `a-${id}`, activeMin: 5, lastActiveMs: NOW_MS - MIN_MS }])) });
+
+test('measuredSlots: null before any agent row ran (F1); the mean of the running samples, lead and held rows left out, at most 5', () => {
+  assert.equal(measuredSlots([], NOW_MS, context()), null);
   const landOnly = itemsOf([{ id: 'r.s1.a-land', started: NOW_MIN - 60 }, { id: 'r.s1.check', started: NOW_MIN - 60 }]);
-  assert.equal(measuredSlots(landOnly, NOW_MS), null);
+  assert.equal(measuredSlots(landOnly, NOW_MS, liveAgents(['r.s1.a-land', 'r.s1.check'])), null);
   const two = itemsOf([
     { id: 'r.s1.a', started: NOW_MIN - 200 }, { id: 'r.s1.b', started: NOW_MIN - 60 },
-    { id: 'r.s1.c', started: NOW_MIN - 60, evidence: 'parked: later' },
+    { id: 'r.s1.c', started: NOW_MIN - 60, evidence: 'parked: later' }, { id: 'r.s1.d', started: NOW_MIN - 60, evidence: 'waiting: name?' },
   ]);
   // a runs all 25 samples, b the last 13: (25 + 13) / 25
-  assert.equal(measuredSlots(two, NOW_MS), 38 / 25);
+  assert.equal(measuredSlots(two, NOW_MS, liveAgents(['r.s1.a', 'r.s1.b', 'r.s1.c', 'r.s1.d'])), 38 / 25);
   // samples with nothing running (a pause) are left out: one row for the last 60 min is one slot, not 13 / 25
-  assert.equal(measuredSlots(itemsOf([{ id: 'T1', started: NOW_MIN - 60 }]), NOW_MS), 1);
-  const many = itemsOf(Array.from({ length: 7 }, (_, k) => ({ id: `t${k}`, started: NOW_MIN - 130 })));
-  assert.equal(measuredSlots(many, NOW_MS), 5);
+  assert.equal(measuredSlots(itemsOf([{ id: 'T1', started: NOW_MIN - 60 }]), NOW_MS, context()), 1);
+  const ids = Array.from({ length: 7 }, (_, k) => `t${k}`);
+  assert.equal(measuredSlots(itemsOf(ids.map((id) => ({ id, started: NOW_MIN - 130 }))), NOW_MS, liveAgents(ids)), 5);
+  assert.throws(() => measuredSlots([], NOW_MS, { pools: {} }), TypeError);
+});
+
+test('R4: a stalled row is not a slot: 5 rows open for 10 h with no agent, or with agents gone quiet, run nowhere', () => {
+  const ids = ['T1', 'T2', 'T3', 'T4', 'T5'];
+  const stale = itemsOf(ids.map((id) => ({ id, started: NOW_MIN - 600 })));
+  assert.equal(measuredSlots(stale, NOW_MS, context()), null);
+  const quiet = new Map(ids.map((id) => [id, { agentId: id, activeMin: 40, lastActiveMs: NOW_MS - 60 * MIN_MS }]));
+  // each agent ran until 60 min ago and counts until 15 quiet working minutes have passed: samples -120..-50, 15 of 25
+  assert.equal(measuredSlots(stale, NOW_MS, context({ rowAgents: quiet })), 5);
+  const oneQuiet = new Map([...quiet].map(([id, agent], k) => [id, k === 0 ? agent : { ...agent, lastActiveMs: NOW_MS }]));
+  assert.equal(measuredSlots(stale, NOW_MS, context({ rowAgents: oneQuiet })), (15 * 5 + 10 * 4) / 25);
 });
 
 test('F1 empty: no open row and pools from no run give a zero job, no throw', () => {
@@ -115,7 +139,7 @@ test('F4: a step never ends before the step before it; parked and waiting rows a
   assert.deepEqual(withExtra.roads, base.roads);
   assert.deepEqual(withExtra.job, base.job);
   assert.deepEqual(withExtra.parked, ['r.s2.c', 'T9']);
-  assert.deepEqual(withExtra.waiting, [{ id: 'r.s1.d', sinceMs: BASE_MS + (NOW_MIN - 30) * MIN_MS, question: 'which name?' }]);
+  assert.deepEqual(withExtra.waiting, [{ id: 'r.s1.d', sinceMs: null, question: 'which name?' }]);
 });
 
 test('F4: a step whose own rows are all done still ends after the step before it', () => {
@@ -189,7 +213,7 @@ test('PC case: 11 old-form -land M rows, .check rows and close: items are land/g
   const without = forecastRuns(itemsOf([...work, ...checks]), context());
   const withTwins = forecastRuns(itemsOf([...work, ...checks, ...twins]), context());
   assert.deepEqual(withTwins, without);
-  assert.equal(measuredSlots(itemsOf(twins), NOW_MS), null);
+  assert.equal(measuredSlots(itemsOf(twins), NOW_MS, liveAgents(twins.map((twin) => twin.id))), null);
   // only the step's expected review and fix plus its gate are left: 20 + 20 + 3
   assert.deepEqual(without.roads.pc.steps[1], { p50: 43, p80: 43 });
 });
@@ -239,4 +263,38 @@ test('F8: conformalMargin is 27 below 20 scored steps, the 80th percentile of th
   assert.equal(conformalMargin(scored(Array(20).fill(-30))), 0);
   assert.equal(conformalMargin([...scored(Array(19).fill(5)), { truthMin: 'x', p80Min: 1 }]), 27);
   assert.throws(() => conformalMargin(null), TypeError);
+});
+
+test('R2: a parked or waiting review or fix row leaves the step as if it were absent (the expected one still counts)', () => {
+  const lane = [{ id: 'r.s1.a' }, { id: 'r.s1.check' }];
+  const held = [{ id: 'r.s1.review', evidence: 'parked: later' }, { id: 'r.s1.fix', item: 'rework: x', evidence: 'Waiting: which?' }];
+  const absent = forecastRuns(itemsOf(lane), context());
+  const withHeld = forecastRuns(itemsOf([...lane, ...held]), context());
+  assert.deepEqual({ roads: withHeld.roads, job: withHeld.job }, { roads: absent.roads, job: absent.job });
+  assert.equal(absent.roads.r.currentRows, 3);
+});
+
+test('forecastRuns keeps the slots in 1..5', () => {
+  const rows = itemsOf([{ id: 'r.s1.a' }, { id: 'r.s1.check' }, { id: 'F1' }, { id: 'F2' }]);
+  assert.deepEqual(forecastRuns(rows, context({ slots: 0.25 })).job, forecastRuns(rows, context({ slots: 1 })).job);
+  assert.deepEqual(forecastRuns(rows, context({ slots: 1 })).job, { p50: 100, p80: 100 });
+  const wide = itemsOf(Array.from({ length: 12 }, (_, k) => ({ id: `T${k}` })));
+  assert.deepEqual(forecastRuns(wide, context({ slots: 50 })).job, { p50: 12 * 20 / 5, p80: 12 * 20 / 5 });
+});
+
+test('R3: a table of 130,000 open rows draws with no stack overflow', () => {
+  const rows = Array.from({ length: 130_000 }, (_, k) => ({ id: `T${k}`, item: 'x', kind: 'build', started: null, done: null, evidence: '' }));
+  assert.equal(forecastRuns(rows, context()).job.p50, 130_000 * 20 / DEFAULT_SLOTS);
+});
+
+test('throughputForecast: the 180 min window ends exactly 180 min back; a row started and done in one minute is no run (R8)', () => {
+  const doneAgo = (ago, run = 5) => itemsOf([{ id: 'T1', started: NOW_MIN - ago - run, done: NOW_MIN - ago }]);
+  assert.equal(throughputForecast(doneAgo(180), 1, NOW_MS, 's'), null);
+  assert.notEqual(throughputForecast(doneAgo(179), 1, NOW_MS, 's'), null);
+  assert.equal(throughputForecast(doneAgo(20, 0), 1, NOW_MS, 's'), null);
+  // a bin is (end - 10 min, end]: rows done exactly 10, 20 ... 170 min ago and one 175 min ago put one row in each of the 18 bins,
+  // so 18 rows take exactly 18 bins in every run (a row on an edge in the next bin would leave bin 0 empty)
+  const edges = [...Array.from({ length: 17 }, (_, k) => 10 * (k + 1)), 175];
+  const onEdges = itemsOf(edges.map((ago, k) => ({ id: `T${k}`, started: NOW_MIN - ago - 5, done: NOW_MIN - ago })));
+  assert.deepEqual(throughputForecast(onEdges, 18, NOW_MS, 's'), { p50: 180, p80: 180 });
 });

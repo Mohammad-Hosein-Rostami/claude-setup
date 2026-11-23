@@ -1,7 +1,7 @@
 // Model s1, "runs on slots" (estimate-spec section 4, R5-R8): every open agent row is one agent run drawn from its kind's pool of
 // working minutes; a road step ends when its slowest lane ends plus one review and one fix run, never before the step before it;
 // and no work ends sooner than all of it spread over the measured agent slots.
-// Exports: DEFAULT_SLOTS, MAX_SLOTS, RUNS, STEP_GATE_MIN, seededRandom(seedText), measuredSlots(items, nowMs),
+// Exports: DEFAULT_SLOTS, MAX_SLOTS, RUNS, STEP_GATE_MIN, seededRandom(seedText), measuredSlots(items, nowMs, context),
 // forecastRuns(items, context).
 // Model, per seeded run: a not-started row draws any run of its pool; a started row draws a run longer than its elapsed working
 // minutes, minus them; a stalled row (R5) counts its kind's median once, never a draw that grows with its age. Per road, from its
@@ -13,11 +13,11 @@
 // against c3's 1,579, road 23 against 2,004.
 // Invariants: pure (no I/O, no clock); minutes from now, not rounded (R10 rounds once, in the numbers); the same items, context and
 // seedText give the same numbers (CLI and status line agree, F6); parked rows are out of every number, waiting rows out of the
-// work clock (both listed); kindOf and rowState are applied here, so fields a caller put on an item are never trusted.
-import { createHash } from 'node:crypto';
+// work clock (both listed): a held row leaves every number as if it were not in the table, and a held review or fix row does not
+// stand in for the step's expected one; kindOf and rowState are applied here, so fields a caller put on an item are never trusted.
 import { MAX_LANES_PER_STEP } from '../../road/lib/road-file.mjs';
-import { nearestRank } from './forecast.mjs';
-import { AGENT_KINDS, kindOf, rowState } from './kinds.mjs';
+import { mulberry32, nearestRank, seedOf } from './forecast.mjs';
+import { AGENT_KINDS, holdsOf, kindOf, rowState } from './kinds.mjs';
 import { roadStepOf } from './road-steps.mjs';
 import { workedMinutes } from './worked.mjs';
 
@@ -41,24 +41,12 @@ const TAIL_KINDS = ['review', 'fix'];
 const MEDIAN = 0.5;
 const P80 = 0.8;
 const MS_PER_MIN = 60_000;
-const UINT32_RANGE = 2 ** 32;
 
-/**
- * A seeded generator of numbers in [0, 1) (mulberry32, the generator of forecast.mjs, which does not export it).
- * @param {string} seedText the table state the numbers stand for
- * @returns {() => number}
- */
-export function seededRandom(seedText) {
-  let state = createHash('sha256').update(String(seedText)).digest().readUInt32BE(0);
-  return () => {
-    state = (state + 0x6d2b79f5) | 0;
-    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
-    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
-    return ((mixed ^ (mixed >>> 14)) >>> 0) / UINT32_RANGE;
-  };
-}
+/** @returns {() => number} forecast.mjs's seeded generator for a text: one table state always draws the same runs */
+export const seededRandom = (seedText) => mulberry32(seedOf(String(seedText)));
 
 const isAgentKind = (kind) => AGENT_KINDS.includes(kind);
+const toMin = (ms) => Math.floor(ms / MS_PER_MIN);
 
 /** Work rows (no deliver row) with their kind, state and road step, from parser items. */
 function classified(items) {
@@ -68,19 +56,50 @@ function classified(items) {
     .filter((row) => row.k !== 'deliver');
 }
 
+/** The kind's pool, else the pooled `agent` one (kindPools fills both; a caller's empty pool must not draw undefined). */
+function poolOf(pools, kind) {
+  const pool = pools[kind]?.length > 0 ? pools[kind] : pools.agent;
+  if (!(pool?.length > 0)) throw new TypeError(`no pool for kind ${kind} and no agent pool; build pools with kindPools`);
+  return pool;
+}
+
+/** R5 at `atMs` for a started open row: its agent (R13) quiet for QUIET_MIN working minutes by then, or, with no agent known, the
+ *  row open longer than max(its kind's 95th percentile, STALL_FLOOR_MIN) working minutes by then. */
+function isStalledAt(row, context, atMs) {
+  const agent = context.rowAgents?.get(row.id);
+  if (agent) return workedMinutes(context.intervals, toMin(agent.lastActiveMs), toMin(atMs)) >= QUIET_MIN;
+  const limit = Math.max(nearestRank(poolOf(context.pools, row.k), STALL_SHARE), STALL_FLOOR_MIN);
+  return workedMinutes(context.intervals, toMin(row.started), toMin(atMs)) > limit;
+}
+
+/** The context parts the stall rule reads, checked: pools, working intervals and the optional row agents. */
+function checkedRunContext(context) {
+  const { pools, intervals, rowAgents } = context ?? {};
+  if (pools === null || typeof pools !== 'object') throw new TypeError('context.pools must be kindPools output');
+  if (!Array.isArray(intervals)) throw new TypeError('context.intervals must be working intervals [startMin, endMin)');
+  if (rowAgents !== undefined && !(rowAgents instanceof Map)) throw new TypeError('context.rowAgents must be a Map (rowAgents)');
+  return context;
+}
+
 /**
- * R7: the mean number of started, unfinished agent rows over the last 120 min, sampled every 5 min; samples with no row running
- * (a night, a restart) are left out, so a pause does not read as one slot. Parked and waiting rows are not running.
+ * R7: the mean number of agent rows running over the last 120 min, sampled every 5 min; samples with no row running (a night, a
+ * restart) are left out, so a pause does not read as one slot. A row runs from its start to its done; an open row only until it
+ * stalls (R5: an agent gone quiet, or open far past its kind's runs), since a row with no running agent is not a slot. Parked
+ * and waiting rows are not running.
  * @param {object[]} items parser items
  * @param {number} nowMs epoch ms of now
+ * @param {{ pools: Record<string, number[]>, intervals: [number, number][], rowAgents?: Map<string, object> }} context as for
+ *   forecastRuns (the stall rule's inputs)
  * @returns {number | null} at most MAX_SLOTS; null when no agent row ran in the window (use DEFAULT_SLOTS)
+ * @throws {TypeError} on a malformed items list or context
  */
-export function measuredSlots(items, nowMs) {
+export function measuredSlots(items, nowMs, context) {
+  const checked = checkedRunContext(context);
   const running = classified(items).filter((row) => isAgentKind(row.k) && (row.state === 'open' || row.state === 'done') && row.started !== null);
   let sum = 0;
   let samples = 0;
   for (let t = nowMs - SLOT_WINDOW_MIN * MS_PER_MIN; t <= nowMs; t += SLOT_SAMPLE_MIN * MS_PER_MIN) {
-    const count = running.filter((row) => row.started <= t && (row.done === null || row.done > t)).length;
+    const count = running.filter((row) => row.started <= t && (row.done === null ? !isStalledAt(row, checked, t) : row.done > t)).length;
     if (count > 0) {
       sum += count;
       samples += 1;
@@ -89,23 +108,13 @@ export function measuredSlots(items, nowMs) {
   return samples === 0 ? null : Math.min(MAX_SLOTS, sum / samples);
 }
 
-/** The kind's pool, else the pooled `agent` one (kindPools fills both; a caller's empty pool must not draw undefined). */
-function poolOf(pools, kind) {
-  const pool = pools[kind]?.length > 0 ? pools[kind] : pools.agent;
-  if (!(pool?.length > 0)) throw new TypeError(`no pool for kind ${kind} and no agent pool; build pools with kindPools`);
-  return pool;
-}
-
 /** One open row's draw: { values, offset } (a value minus offset per run) or a fixed value; stalled rows are named. */
 function drawOf(row, context, stalled) {
   const pool = poolOf(context.pools, row.k);
   if (row.started === null) return { values: pool, offset: 0 };
-  const nowMin = Math.floor(context.nowMs / MS_PER_MIN);
   const agent = context.rowAgents?.get(row.id);
-  const elapsed = agent ? agent.activeMin : workedMinutes(context.intervals, Math.floor(row.started / MS_PER_MIN), nowMin);
-  const quiet = agent
-    ? workedMinutes(context.intervals, Math.floor(agent.lastActiveMs / MS_PER_MIN), nowMin) >= QUIET_MIN
-    : elapsed > Math.max(nearestRank(pool, STALL_SHARE), STALL_FLOOR_MIN);
+  const elapsed = agent ? agent.activeMin : workedMinutes(context.intervals, toMin(row.started), toMin(context.nowMs));
+  const quiet = isStalledAt(row, context, context.nowMs);
   const longer = pool.filter((value) => value > elapsed);
   if (quiet || longer.length === 0) {
     stalled.push(row.id);
@@ -156,7 +165,9 @@ function roadPlans(rows, indexOf) {
     };
     const current = numbers.find((step) => !closed(step));
     if (current === undefined) continue;
-    const steps = numbers.filter((step) => step >= current).map((step) => stepPlan(step, roadRows.filter((row) => row.at.step === step), indexOf));
+    // A held (parked or waiting) row is left out of the plan: a held review or fix does not stand in for the expected one.
+    const unheld = counted.filter((row) => row.state === 'open' || row.state === 'done');
+    const steps = numbers.filter((step) => step >= current).map((step) => stepPlan(step, unheld.filter((row) => row.at.step === step), indexOf));
     plans.push({ road, current, steps });
   }
   return plans;
@@ -165,11 +176,16 @@ function roadPlans(rows, indexOf) {
 const maxOf = (left, indices) => indices.reduce((max, index) => Math.max(max, left[index]), 0);
 const sumOf = (left, indices) => indices.reduce((sum, index) => sum + left[index], 0);
 
-/** One seeded run: fills each road step's end (minutes from now) at `run` and returns the job's end. */
-function runOnce(run, { draws, plans, ends, tailPools, slots, random }) {
-  const left = draws.map((draw) => draw.fixed ?? draw.values[Math.floor(random() * draw.values.length)] - draw.offset);
-  let totalWork = left.reduce((sum, value) => sum + value, 0);
-  let latest = Math.max(0, ...left);
+/** One seeded run: fills each road step's end (minutes from now) at `run` and returns the job's end. `left` is one buffer reused
+ *  by every run; loops, not a spread, so a table of any size fits (a spread of 130,000 values overflows the call stack). */
+function runOnce(run, { draws, left, plans, ends, tailPools, slots, random }) {
+  let totalWork = 0;
+  let latest = 0;
+  draws.forEach((draw, index) => {
+    left[index] = draw.fixed ?? draw.values[Math.floor(random() * draw.values.length)] - draw.offset;
+    totalWork += left[index];
+    latest = Math.max(latest, left[index]);
+  });
   plans.forEach((plan, roadIndex) => {
     let chain = 0;
     let work = 0;
@@ -200,15 +216,15 @@ const percentiles = (values) => {
 };
 
 function checkedContext(context) {
-  const { pools, nowMs, intervals, slots, seedText } = context ?? {};
-  if (pools === null || typeof pools !== 'object') throw new TypeError('context.pools must be kindPools output');
+  const { nowMs, slots, seedText } = checkedRunContext(context);
   if (!Number.isFinite(nowMs)) throw new TypeError('context.nowMs must be epoch ms');
-  if (!Array.isArray(intervals)) throw new TypeError('context.intervals must be working intervals [startMin, endMin)');
   if (!Number.isFinite(slots)) throw new TypeError('context.slots must be a number (measuredSlots ?? DEFAULT_SLOTS)');
   if (typeof seedText !== 'string') throw new TypeError('context.seedText must be a string');
-  if (context.rowAgents !== undefined && !(context.rowAgents instanceof Map)) throw new TypeError('context.rowAgents must be a Map (rowAgents)');
   return { ...context, slots: Math.min(MAX_SLOTS, Math.max(1, slots)) };
 }
+
+/** The owner's open questions of a waiting row: its `waiting:` holds, newest first, joined as the cell joins them. */
+const questionsOf = (row) => holdsOf(row.evidence).filter((hold) => hold.kind === 'waiting').map((hold) => hold.text).join('; ');
 
 /**
  * The s1 forecast of the open rows (see the header).
@@ -221,7 +237,9 @@ function checkedContext(context) {
  *   steps: Record<number, { p50: number, p80: number }> }>, stalled: string[], parked: string[],
  *   waiting: { id: string, sinceMs: number | null, question: string }[], followups: { rows: number } }} minutes from now;
  *   currentRows = the agent rows left in the current step, the expected review and fix included (throughputForecast's count);
- *   waiting.sinceMs is the row's started stamp (the cell holds no time), null when it never started
+ *   waiting.sinceMs is null: the `waiting:` hold holds no time and a parser item no record of when its cell changed (its started
+ *   stamp is when work began, not the wait), so the caller sets it from a record that has the time (the store's first sight of the
+ *   hold) or shows the wait without one; waiting.question holds every open question of the row
  * @throws {TypeError} on a malformed items list or context
  */
 export function forecastRuns(items, context) {
@@ -233,7 +251,7 @@ export function forecastRuns(items, context) {
   const plans = roadPlans(rows, new Map(open.map((row, index) => [row.id, index])));
   const ends = plans.map((plan) => plan.steps.map(() => new Float64Array(RUNS)));
   const tailPools = Object.fromEntries(TAIL_KINDS.map((kind) => [kind, poolOf(checked.pools, kind)]));
-  const state = { draws, plans, ends, tailPools, slots: checked.slots, random: seededRandom(checked.seedText) };
+  const state = { draws, left: new Float64Array(draws.length), plans, ends, tailPools, slots: checked.slots, random: seededRandom(checked.seedText) };
   const job = new Float64Array(RUNS).map((_, run) => runOnce(run, state));
   const roads = Object.fromEntries(plans.map((plan, roadIndex) => {
     const first = plan.steps[0];
@@ -242,7 +260,7 @@ export function forecastRuns(items, context) {
     return [plan.road, { current: plan.current, currentRows: first.open.length + expected, steps }];
   }));
   const waiting = rows.filter((row) => row.state === 'waiting')
-    .map((row) => ({ id: row.id, sinceMs: row.started, question: row.evidence.replace(/^\s*waiting:\s*/i, '') }));
+    .map((row) => ({ id: row.id, sinceMs: null, question: questionsOf(row) }));
   return {
     job: percentiles(job),
     roads,
