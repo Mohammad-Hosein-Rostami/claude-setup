@@ -18,10 +18,9 @@
 // has none: tests/agent-files.test.mjs). NOTE_MAX_CHARS is the one cap
 // of the writer (cappedNote) and of this reader; a note that is longer because the owner's own set of agents outgrew the cap
 // (project-agents-text.mjs) is replaced by the fixed text too, so the SessionStart output keeps its size.
-// Time: the hook's timeout is 5,000 ms (settings/base.json) and session-notes.mjs keeps one deadline below it
+// Time: the hook's timeout is 5,000 ms (settings/base.json) and project-merge.mjs keeps one deadline below it
 // (HOOK_BUDGET_MS). The child is killed (SIGKILL) after min(NOTE_TIMEOUT_MS = 2,000 ms, what is left of that budget); with
-// less than MIN_CHILD_MS left it is not started and the note is NOT_CHECKED_NOTE. The rest of session-notes.mjs at SessionStart measured
-// about 35 ms. Not covered: a child that cannot be killed because it hangs inside the kernel (a dead network mount).
+// less than MIN_CHILD_MS left it is not started and the note is NOT_CHECKED_NOTE. Not covered: a child that cannot be killed because it hangs inside the kernel (a dead network mount).
 import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { dirname } from 'node:path';

@@ -9,9 +9,9 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, utimesSync, w
 import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { HOOK_BUDGET_MS, isSubagentStart } from '../home/hooks/session-notes.mjs';
-import { NOT_CHECKED_NOTE, NOTE_START } from '../home/hooks/lib/project-agents-text.mjs';
+import { NOTE_START } from '../home/hooks/lib/project-agents-text.mjs';
 import { contextTokens, findStatusPath } from '../home/hooks/lib/transcript.mjs';
 import { sandbox } from './project-agents-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -184,7 +184,7 @@ test('agent_id counts only as a non-empty string: any other value takes the lead
   }
 });
 
-test('a subagent SessionStart runs no project-agents child, saves no state and prunes nothing', async () => {
+test('a subagent SessionStart saves no state but its own count and prunes nothing; neither start prints an agents note', async () => {
   const made = await sandbox({ project: { builder: 'maxTurns: 60\n' } });
   const state = stateDirOf(withRealLeadRules(made.home));
   staleStateFile(state);
@@ -194,8 +194,9 @@ test('a subagent SessionStart runs no project-agents child, saves no state and p
   assert.doesNotMatch(subagent.stdout, /Project agent files/);
   for (const source of ['startup', 'resume', 'clear', undefined, 'unknown']) assert.equal(start(source, { agent_id: 'a1' }).stdout, '', `source ${source}: nothing`);
   assert.deepEqual(readdirSync(state).sort(), ['old-session', 'sub3-a1.compacts'], 'only the subagent\'s own compaction count is written');
-  const lead = start('compact', {}); // control: the lead path runs the child, counts and prunes
-  assert.match(lead.stdout, /Project agent files .*builder\.md \(maxTurns 60\)/);
+  const lead = start('compact', {}); // control: the lead path prints its compact notes, counts and prunes
+  assert.ok(lead.stdout.includes(COMPACT_NOTE_START), lead.stdout.slice(-300));
+  assert.doesNotMatch(lead.stdout, /Project agent files/, 'project-merge prints that note, not this hook');
   assert.deepEqual(readdirSync(state).sort(), ['sub3-a1.compacts', 'sub3.compacts']);
 });
 
@@ -231,29 +232,27 @@ test('a subagent compaction with the P1-8 keys prints only the subagent note, th
 
 // Review 1, R3 (the clock replaced by a constant passed every test). Every other budget test injects its clock; here a preload moves
 // the hook process's own clock.
-test('the deadline runs on the hook\'s own clock: started at the end of the budget it runs no child and no prune', async () => {
+test('the deadline runs on the hook\'s own clock: started at the end of the budget it runs no prune', async () => {
   const made = await sandbox({ project: { builder: 'maxTurns: 60\n' } });
   const state = stateDirOf(withRealLeadRules(made.home));
   staleStateFile(state);
   const start = (session_id, nodeArgs) => runHook(made.home, 'high', { hook_event_name: 'SessionStart', session_id, source: 'startup', cwd: made.projectDir }, { nodeArgs }).stdout;
   const late = start('late1', ['--import', `data:text/javascript,performance.now=()=>${HOOK_BUDGET_MS}`]);
   assert.ok(late.startsWith(LEAD_RULES_FIRST_LINE), late.slice(0, 60));
-  assert.ok(late.endsWith(`\n\n${NOT_CHECKED_NOTE}\n`), 'no time left for the child');
+  assert.equal(late.includes(NOTE_START), false, 'no project-agents note: project-merge prints it');
   assert.deepEqual(readdirSync(state).sort(), ['old-session'], 'nothing pruned');
-  assert.match(start('late2', []), /Project agent files .*builder\.md \(maxTurns 60\)/, 'control: the same start on the untouched clock');
+  assert.ok(start('late2', []).startsWith(LEAD_RULES_FIRST_LINE), 'control: the same start on the untouched clock');
   assert.deepEqual(readdirSync(state).sort(), [], 'control: the stale file is pruned');
 });
 
-// Security review 1, S8: the child got its share of the budget before the transcript scan of the compact notes had run.
-test('the compact notes are computed before the project-agents child starts, so the child is the last thing the budget cuts', async () => {
-  const made = await sandbox();
-  const script = join(makeTempDir('mode-child-'), 'child.mjs');
-  const counted = join(stateDirOf(made.home), 'ord1.compacts');
-  writeFileSync(script, `import { existsSync } from 'node:fs';
-    process.stdout.write(JSON.stringify({ note: ${JSON.stringify(NOTE_START)} + (existsSync(${JSON.stringify(counted)}) ? 'the compaction was counted first' : 'the child ran first') }));`);
-  const input = { hook_event_name: 'SessionStart', session_id: 'ord1', source: 'compact', cwd: made.projectDir };
-  const driver = `const { hookText } = await import(${JSON.stringify(pathToFileURL(HOOK).href)});
-    process.stdout.write(await hookText(${JSON.stringify(input)}, { agentNoteOptions: { script: ${JSON.stringify(script)} } }));`;
-  const run = spawnSync(process.execPath, ['--input-type=module', '-e', driver], { encoding: 'utf8', env: { ...process.env, HOME: made.home, USERPROFILE: made.home, CLAUDE_MODE: 'high' } });
-  assert.ok(run.stdout.includes(`${NOTE_START}the compaction was counted first\n\n${COMPACT_NOTE_START}`), run.stdout.slice(-500) + run.stderr);
+// Security review 1, S8 pinned that the compact notes ran before the project-agents child. The child now runs only in
+// project-merge.mjs (lane agents-note), so a compaction start here prints the lead rules and then the compact notes, nothing between.
+test('a compaction start of a project with a capped agent prints the lead rules, then the compact notes, and no agents note', async () => {
+  const made = await sandbox({ project: { builder: 'maxTurns: 60\n' } });
+  withRealLeadRules(made.home);
+  const out = runHook(made.home, 'high', { hook_event_name: 'SessionStart', session_id: 'ord1', source: 'compact', cwd: made.projectDir }).stdout;
+  assert.ok(out.startsWith(LEAD_RULES_FIRST_LINE), out.slice(0, 60));
+  assert.ok(out.includes(`\n\n${COMPACT_NOTE_START}`), out.slice(-500));
+  assert.equal(out.includes(NOTE_START), false, 'no project-agents note');
+  assert.equal(existsSync(join(stateDirOf(made.home), 'ord1.compacts')), true, 'the compaction is counted');
 });

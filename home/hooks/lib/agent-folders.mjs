@@ -18,7 +18,7 @@
 //   one), so on a disk that ignores case `.GIT` ends its walk too (probe: yes). int() is the worktree rule, unchanged. New and
 //   not read to the end: a filter Jat() over the folders found.
 // The personal agents folder is told by what it is on disk (device and inode), not by how its path is spelled: a session folder
-// spelled in another case, or through a link, must never turn the owner's own agents into "project" files with delete advice.
+// spelled in another case, or through a link, must never turn the owner's own agents into "project" files with maxTurns advice.
 // Not established, so the safe side is taken: c1n() refuses some link targets (its checks Ki and dg were not read), so a `.git`
 // that is a link to a network path, or is neither folder, file nor link, makes the walk "unsure"; the filters PK (automount roots)
 // and vot were not read, so a folder they drop is still looked at. Not covered: the `.claude/agents` of --add-dir folders.

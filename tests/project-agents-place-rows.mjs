@@ -84,7 +84,7 @@ export const PLACE_ROWS = [
       return { cwd: join(box.projectDir, 'vendor', 'lib') };
     },
     note: '' },
-  { id: 'P', classes: ['check by hand'], what: 'no git repository: a folder two levels up is read, and its maxTurns gets no delete advice',
+  { id: 'P', classes: ['check by hand'], what: 'no git repository: a folder two levels up is read, and its maxTurns gets no maxTurns advice',
     build: async (box) => {
       await write(join(box.home, 'work', '.claude', 'agents'), { 'up.md': agent('up', 'maxTurns: 3\n') });
       await mkdir(join(box.home, 'work', 'a', 'b'), { recursive: true });

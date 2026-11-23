@@ -3,14 +3,16 @@
 // or run past the hook's timeout, and Claude Code then drops the whole SessionStart output. These tests pin the other side: whatever
 // the child does, the hook gets either a note in the note's own form or the fixed "not checked" text, and prints everything else.
 // No test measures time: a child that never ends is cut by an injected timeout of a few milliseconds, and the hook's budget is
-// tested on a fake clock. The hook is home/hooks/session-notes.mjs (the former mode hook). Round 9 (lane r9-mode-fix): the pins of the child call that review 4 found
+// tested on a fake clock. The hook is home/hooks/project-merge.mjs (lane agents-note; it was session-notes.mjs). Round 9 (lane r9-mode-fix): the pins of the child call that review 4 found
 // missing (its mutants C19-C21, C24-C26, C35), the child's working folder, and the one deadline of the hook (spec check K1, K2, K9).
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { HOOK_BUDGET_MS, MAX_TURNS_RULE, hookText } from '../home/hooks/session-notes.mjs';
+import { HOOK_BUDGET_MS, hookText } from '../home/hooks/session-notes.mjs';
+import { HOOK_BUDGET_MS as MERGE_BUDGET_MS, hookOutput } from '../home/hooks/project-merge.mjs';
 import { projectAgentNote } from '../home/hooks/lib/project-agents.mjs';
 import { NOTE_MAX_CHARS, NOT_CHECKED_NOTE } from '../home/hooks/lib/project-agents-text.mjs';
 import { CHILD_ENV_NAMES, MIN_CHILD_MS, NOTE_TIMEOUT_MS, childTimeoutMs, timedProjectAgentNote } from '../home/hooks/lib/project-agents-timed.mjs';
@@ -19,7 +21,11 @@ import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const REAL_LEAD_RULES = fileURLToPath(new URL('../home/lead-rules.md', import.meta.url));
 const BASE_SETTINGS = fileURLToPath(new URL('../settings/base.json', import.meta.url));
-const NOTES_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit']; // each has one `hooks/session-notes.mjs` entry
+// The hook files with the events of their entries in settings/base.json and the budget each keeps below those timeouts.
+const HOOKS = [
+  { file: 'hooks/session-notes.mjs', events: ['SessionStart', 'UserPromptSubmit'], budgetMs: HOOK_BUDGET_MS },
+  { file: 'hooks/project-merge.mjs', events: ['SessionStart', 'SubagentStart'], budgetMs: MERGE_BUDGET_MS }, // runs the child
+];
 const MS_PER_S = 1000;
 const CHILD_SHARE_OF_THE_TIMEOUT = 0.5; // the child alone stays under half of the hook's timeout
 const TINY_TIMEOUT_MS = MIN_CHILD_MS; // for a child that never ends: the shortest time a child is started with; the result does not depend on how long the kill takes
@@ -67,11 +73,11 @@ const FAILING_CHILDREN = [
   ...[0x09, 0x0d, 0x85, 0xa0, 0xe9, 0x2028, 0x2029, 0x202e, 0xfeff].map((code) => [`prints a note with U+${code.toString(16)}`, printing({ note: noteWith(`a${String.fromCharCode(code)}b`) })]),
 ];
 
-/** The timeouts, in ms, of the session-notes.mjs entries in settings/base.json, as [event, ms]. */
-function notesHookTimeouts() {
+/** The timeouts, in ms, of the entries of one hook file in settings/base.json, as [event, ms]. */
+function hookTimeouts(file) {
   const { hooks } = JSON.parse(readFileSync(BASE_SETTINGS, 'utf8'));
   return Object.entries(hooks).flatMap(([event, groups]) => groups.flatMap((group) => group.hooks)
-    .filter((hook) => hook.command.includes('hooks/session-notes.mjs')).map((hook) => [event, hook.timeout * MS_PER_S]));
+    .filter((hook) => hook.command.includes(file)).map((hook) => [event, hook.timeout * MS_PER_S]));
 }
 
 /** A temp HOME holding the real lead rules (a bare HOME prints none, so a test of them could not fail); returns it and their first line. */
@@ -102,14 +108,16 @@ test('the fixed text names what to do, gives no delete advice and fits the cap',
   assert.doesNotMatch(NOT_CHECKED_NOTE, /delete|no need to ask/);
 });
 
-test('the hook\'s budget and the child\'s limit lie below the timeout of every session-notes.mjs entry in settings/base.json', () => {
-  const timeouts = notesHookTimeouts();
-  assert.deepEqual(timeouts.map(([event]) => event).sort(), NOTES_HOOK_EVENTS, 'one session-notes.mjs entry per event');
-  for (const [event, timeoutMs] of timeouts) {
-    assert.ok(HOOK_BUDGET_MS < timeoutMs, `${event}: the budget ${HOOK_BUDGET_MS} is below the timeout ${timeoutMs}`);
-    assert.ok(NOTE_TIMEOUT_MS < timeoutMs * CHILD_SHARE_OF_THE_TIMEOUT, `${event}: the child ends well inside the hook's own timeout`);
+test('each hook\'s budget and the child\'s limit lie below the timeout of every entry of session-notes and project-merge in settings/base.json', () => {
+  for (const { file, events, budgetMs } of HOOKS) {
+    const timeouts = hookTimeouts(file);
+    assert.deepEqual(timeouts.map(([event]) => event).sort(), events, `one ${file} entry per event`);
+    for (const [event, timeoutMs] of timeouts) {
+      assert.ok(budgetMs < timeoutMs, `${file} ${event}: the budget ${budgetMs} is below the timeout ${timeoutMs}`);
+      assert.ok(NOTE_TIMEOUT_MS < timeoutMs * CHILD_SHARE_OF_THE_TIMEOUT, `${file} ${event}: the child ends well inside the hook's own timeout`);
+    }
   }
-  assert.ok(NOTE_TIMEOUT_MS <= HOOK_BUDGET_MS && MIN_CHILD_MS < NOTE_TIMEOUT_MS);
+  assert.ok(NOTE_TIMEOUT_MS <= MERGE_BUDGET_MS && MIN_CHILD_MS < NOTE_TIMEOUT_MS);
 });
 
 test('the child gets min(its own limit, the budget left), and is not started with less than MIN_CHILD_MS', async () => {
@@ -221,32 +229,50 @@ test('the real child gives the note projectAgentNote gives; no session folder me
   for (const sessionDir of [undefined, '', 5]) assert.equal(timedProjectAgentNote(sessionDir, clean.personalDir, { script: childScript(NEVER_ENDS) }), '');
 });
 
-test('a child that never ends costs the SessionStart output only the note: the lead rules stay', async () => {
-  const { home, firstLine } = homeWithLeadRules();
-  const { projectDir } = await sandbox();
-  await withHome(home, async () => {
-    const start = (session_id, agentNoteOptions) => hookText({ hook_event_name: 'SessionStart', session_id, source: 'startup', cwd: projectDir }, { now: () => 0, agentNoteOptions });
-    const usual = await start('timed-1');
-    const stalled = await start('timed-2', { script: childScript(NEVER_ENDS), timeoutMs: TINY_TIMEOUT_MS });
-    assert.ok(usual.startsWith(firstLine), usual.slice(0, 80));
-    assert.doesNotMatch(usual, /^Mode: /m);
-    assert.equal(stalled, `${usual}\n\n${MAX_TURNS_RULE}\n\n${NOT_CHECKED_NOTE}`, 'everything else is printed as usual, and the note (after the maxTurns rule) says it was not checked');
-  });
+// The child runs in project-merge.mjs now (lane agents-note): its lead note is the hook output whose other lines must survive.
+/** A sandbox whose project is a git repository with an AGENTS.md, so the project-merge lead note has lines besides the agents note. */
+async function mergeSandbox() {
+  const made = await sandbox();
+  assert.equal(spawnSync('git', ['init', '-q'], { cwd: made.projectDir }).status, 0);
+  writeFileSync(join(made.projectDir, 'AGENTS.md'), '# Team rules\n');
+  return made;
+}
+
+/** The project-merge lead note for a SessionStart in the sandbox's project, on a clock that reads `nowMs`. */
+async function mergeStart({ home, projectDir }, nowMs, agentNoteOptions) {
+  const input = { hook_event_name: 'SessionStart', session_id: 'timed-1', source: 'startup', cwd: projectDir };
+  return (await hookOutput(input, { home, now: () => nowMs, agentNoteOptions }))?.hookSpecificOutput.additionalContext ?? '';
+}
+
+test('a child that never ends costs the project-merge lead note only the agents line: the other lines stay', async () => {
+  const made = await mergeSandbox();
+  const usual = await mergeStart(made, 0);
+  const stalled = await mergeStart(made, 0, { script: childScript(NEVER_ENDS), timeoutMs: TINY_TIMEOUT_MS });
+  assert.match(usual, /AGENTS\.md/);
+  assert.equal(usual.includes(NOTE_START), false, 'a clean project has no agents line');
+  assert.equal(stalled, `${usual}\n${NOT_CHECKED_NOTE}`, 'everything else is printed as usual, and the agents line says it was not checked');
 });
 
-test('a start that leaves 50 ms starts no child: the note is the fixed text and the lead rules are still printed', async () => {
+test('a start that leaves 50 ms starts no child: the agents line is the fixed text and the other lines are still printed', async () => {
   const LEFT_MS = 50;
-  const { home, firstLine } = homeWithLeadRules();
-  const { projectDir } = await sandbox();
+  const made = await mergeSandbox();
   const started = join(SCRIPTS_DIR, 'started-late');
   const agentNoteOptions = { script: childScript(`import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(started)}, ''); ${printing({ note: '' })}`) };
+  const text = await mergeStart(made, MERGE_BUDGET_MS - LEFT_MS, agentNoteOptions);
+  assert.ok(text.includes('AGENTS.md') && text.endsWith(`\n${NOT_CHECKED_NOTE}`), text);
+  assert.equal(existsSync(started), false, 'the child was not started');
+  const control = await mergeStart(made, 0, agentNoteOptions);
+  assert.equal(control.includes(NOT_CHECKED_NOTE), false);
+  assert.equal(existsSync(started), true, 'control: with the whole budget left the child runs');
+});
+
+// session-notes.mjs prints no agents note (lane agents-note): a capped project changes nothing in its SessionStart output.
+test('session-notes runs no child: its SessionStart output has no agents line, for a capped project too', async () => {
+  const { home } = homeWithLeadRules();
+  const capped = await sandbox({ project: { builder: 'maxTurns: 60\n' } });
   await withHome(home, async () => {
-    const text = await hookText({ hook_event_name: 'SessionStart', session_id: 'late-1', source: 'startup', cwd: projectDir }, { now: () => HOOK_BUDGET_MS - LEFT_MS, agentNoteOptions });
-    assert.ok(text.startsWith(firstLine) && text.endsWith(`\n\n${NOT_CHECKED_NOTE}`), text.slice(0, 80));
-    assert.equal(existsSync(started), false, 'the child was not started');
-    const control = await hookText({ hook_event_name: 'SessionStart', session_id: 'late-2', source: 'startup', cwd: projectDir }, { now: () => 0, agentNoteOptions });
-    assert.equal(control.includes(NOT_CHECKED_NOTE), false);
-    assert.equal(existsSync(started), true, 'control: with the whole budget left the child runs');
+    const text = await hookText({ hook_event_name: 'SessionStart', session_id: 'timed-3', source: 'startup', cwd: capped.projectDir }, { now: () => 0 });
+    assert.ok(text.length > 0 && !text.includes(NOTE_START) && !text.includes(NOT_CHECKED_NOTE), text.slice(-200));
   });
 });
 

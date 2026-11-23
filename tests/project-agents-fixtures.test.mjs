@@ -3,7 +3,7 @@
 // The classes (design of fix round 2): the note is exact where it can be ("exact shadow", "exact maxTurns"), says "check by hand"
 // or "not read" for everything else Claude Code could load ("not plain", "check by hand", "link not read", "not checked"), and is
 // "silent" only for a file Claude Code itself does not load. A row passes when the whole note is the expected text and the note
-// keeps what its classes promise: no delete advice without an exact maxTurns, no "Shadowed" sentence without an exact name.
+// keeps what its classes promise: no maxTurns advice without an exact maxTurns, no "Shadowed" sentence without an exact name.
 // The rows are in tests/project-agents-frontmatter-rows.mjs (the form of a frontmatter) and tests/project-agents-place-rows.mjs
 // (where a file stands and what it is). The noise check at the end is the other side: ordinary agent files give no note at all.
 import test from 'node:test';
@@ -19,14 +19,14 @@ import { PLACE_ROWS } from './project-agents-place-rows.mjs';
 
 const REAL_PERSONAL_AGENTS_DIR = fileURLToPath(new URL('../home/agents', import.meta.url));
 const PERSONAL = { 'security-auditor': '', reviewer: '' };
-const DELETE_ADVICE = /no need to ask/;
+const MAXTURNS_ADVICE = /a maxTurns file is never edited: a cs- agent does long work/;
 const SHADOWED_SENTENCE = /Shadowed (?:personal|built-in) agents: /;
 const BY_HAND_COUNT = /\d+ agent files to check by hand: tell the owner/;
 const EXACT_CLASSES = ['exact shadow', 'exact maxTurns'];
 // What a note of each class must hold. A class that is not exact must also hold neither exact claim (checked for every row below).
 const CLASS_MARKS = {
   'exact shadow': [SHADOWED_SENTENCE, /\(.*shadows the (?:personal|built-in) agent\)/],
-  'exact maxTurns': [DELETE_ADVICE, /\(maxTurns (?:\d{1,6}|set)[,)]/],
+  'exact maxTurns': [MAXTURNS_ADVICE, /\(maxTurns (?:\d{1,6}|set)[,)]/],
   'not plain': [BY_HAND_COUNT, /\(frontmatter not plain: check by hand\)/],
   'check by hand': [BY_HAND_COUNT, /: check by hand\)/],
   'link not read': [/tell the owner about each link/, /\((?:a link|a hard link|a linked folder|a link to outside): not read/],
@@ -54,7 +54,7 @@ test('every fixture of the review rounds lands in its class, with the exact note
       const note = await noteForRow(row);
       assert.equal(note, row.note === '' ? '' : noteOf(row.note), 'the whole note');
       for (const name of row.classes) for (const mark of CLASS_MARKS[name]) assert.match(note, mark, `class ${name}`);
-      if (!row.classes.includes('exact maxTurns')) assert.doesNotMatch(note, DELETE_ADVICE, 'no delete advice without an exact maxTurns key line');
+      if (!row.classes.includes('exact maxTurns')) assert.doesNotMatch(note, MAXTURNS_ADVICE, 'no maxTurns advice without an exact maxTurns key line');
       if (!row.classes.includes('exact shadow')) assert.doesNotMatch(note, SHADOWED_SENTENCE, 'no shadow stated without an exact name');
       if (!row.classes.some((name) => EXACT_CLASSES.includes(name))) assert.doesNotMatch(note, /\(maxTurns \d+\)|shadows the/, 'no exact item');
     });

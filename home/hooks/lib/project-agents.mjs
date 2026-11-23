@@ -1,7 +1,7 @@
 // Project agent files that cap or shadow the owner's agents. Exports: projectAgentNote(sessionDir, personalDir), MAX_AGENT_FILES,
 // NOTE_MAX_CHARS.
 // A project agent wins over a personal or built-in agent of the same name, and a `maxTurns:` line in its frontmatter stops the agent
-// mid-task (the owner's rule is no maxTurns). Used by the SessionStart session-notes hook and by scripts/doctor.sh (run this file as
+// mid-task (the owner's rule is no maxTurns). Used by the SessionStart project-merge hook and by scripts/doctor.sh (run this file as
 // `node project-agents.mjs <sessionDir> <personalAgentsDir>`: it prints the note, or nothing).
 // The parts: agent-folders.mjs (which folders Claude Code loads), agent-file-walk.mjs (their entries, under limits, never through a
 // link), agent-frontmatter.mjs (what a frontmatter says, when it is plain), project-agents-text.mjs (the wording and the cap),
@@ -17,8 +17,8 @@
 // Principle: the note is exact where it can be, says "check by hand" for everything else Claude Code could load, and is silent only
 // for a file Claude Code itself does not load (no frontmatter, no closing ---, no `name`). It never states a guess as a fact:
 // - "Shadowed personal agents" and "shadows the ... agent" come only from the exact `name` of a plain frontmatter.
-// - The delete advice comes only from a `maxTurns` key line of a plain frontmatter, in a regular file with one hard link, inside the
-//   session's git repository and reached through no link.
+// - The maxTurns advice (the file is never edited) comes only from a `maxTurns` key line of a plain frontmatter, in a regular file
+//   with one hard link, inside the session's git repository and reached through no link.
 // - A frontmatter that is not plain, or longer than the head that is read, is one item "check by hand" with no other claim. So is a
 //   name that only looks like one of the owner's (other case, spaces), and a maxTurns outside a git repository.
 // - A file that is not read (a link, a hard link, past a limit) is checked by its base name only and called "named like".
@@ -118,7 +118,7 @@ function addAgent(found, entry, { name, turns }, { agents, inRepository }) {
   if (reasons.length === 0) return;
   if (set) found.shadowed[set].add(name);
   if (byHand) found.byHand += 1;
-  found.hasCap ||= turns !== '' && !byHand; // "check by hand" means edit nothing, so such a file never brings the delete advice
+  found.hasCap ||= turns !== '' && !byHand; // "check by hand" means edit nothing, so such a file never brings the maxTurns advice
   const group = (set && 'shadowing') || (like && 'suspect') || (byHand && 'byHand') || 'capping';
   found.groups[group].push(`${shownPath(entry.folder, entry.name)} (${reasons.join(', ')})`);
 }

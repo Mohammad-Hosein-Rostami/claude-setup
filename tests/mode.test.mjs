@@ -7,7 +7,7 @@ import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isStale } from '../home/hooks/lib/state-files.mjs';
-import { LEAD_RULES_MAX_BYTES, MAX_TURNS_RULE } from '../home/hooks/session-notes.mjs';
+import { LEAD_RULES_MAX_BYTES } from '../home/hooks/session-notes.mjs';
 import { NOTE_START } from '../home/hooks/lib/project-agents-text.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -156,7 +156,7 @@ test('SessionStart prints lead-rules.md for resume, clear and compact too (it re
   }
 });
 
-/** A temp project folder with a `.git` folder (a git root, so the delete advice applies) and the given agent files. */
+/** A temp project folder with a `.git` folder (a git root, so a maxTurns line is exact) and the given agent files. */
 async function projectWithAgents(files) {
   const project = makeTempDir('mode-proj-');
   await mkdir(join(project, '.git'));
@@ -165,13 +165,13 @@ async function projectWithAgents(files) {
   return project;
 }
 
-test('the maxTurns rule (moved out of lead.md) is printed right before a project-agents line, and only with one', async () => {
+// Owner decision R22-Q3: a project's agent files are team files. The old maxTurns rule told the lead to delete their maxTurns lines
+// without asking; now this hook prints no rule and no project-agents line (project-merge.mjs prints the line, lane agents-note).
+test('no maxTurns order and no project-agents line at SessionStart, with or without a capped project agent', async () => {
   const home = makeTempDir('mode-home-');
   const start = (cwd) => runHook(home, {}, { hook_event_name: 'SessionStart', session_id: 'mt1', source: 'startup', cwd }).stdout;
   const capped = start(await projectWithAgents({ 'builder.md': '---\nname: builder\ndescription: x\nmaxTurns: 60\n---\nBody\n' }));
-  assert.ok(capped.includes(`${MAX_TURNS_RULE}\n\n${NOTE_START}`), capped);
-  assert.match(capped, /builder\.md \(maxTurns 60\)/);
-  assert.match(MAX_TURNS_RULE, /delete that `maxTurns:` frontmatter line in its own commit .*without asking/);
-  assert.match(MAX_TURNS_RULE, /"not read", "not checked" or "check by hand".* edit nothing and tell the owner\.$/);
-  assert.equal(start(await projectWithAgents({})).includes(MAX_TURNS_RULE), false, 'no project-agents line: no rule');
+  assert.equal(capped.includes(NOTE_START), false, capped);
+  assert.doesNotMatch(capped, /maxTurns|without asking/);
+  assert.equal(start(await projectWithAgents({})), capped, 'the capped agent changes nothing here');
 });

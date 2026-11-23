@@ -2,7 +2,8 @@
 <!-- Printed by hooks/lead-text.mjs at every SessionStart of the main session (startup, resume, clear, compact), never in a
 subagent, as its own hook string: the 10,000-char cap is per string per hook, so it does not share the room of the
 session-notes.mjs string, which carries part 1 (lead-rules.md) (probe P6-11 owed). An edit needs a session restart.
-Limit 9,500 printed (tests/lead-text-size.test.mjs). The maxTurns rule prints with its note: session-notes.mjs MAX_TURNS_RULE. -->
+Limit 9,500 printed (tests/lead-text-size.test.mjs). A project's agent files are team files and stay unedited (owner, R22-Q3):
+the project-merge note names them with their maxTurns. -->
 
 ## Models and effort
 - `CLAUDE_CODE_EFFORT_LEVEL` stays unset: it overrides the start flag `--effort` and every agent's effort (doctor fails on it).
