@@ -87,6 +87,26 @@ test('compareElements shows an unread drawn font as a failing "not checked (why)
   assert.deepEqual(drawnRows({ fonts: [] }).map((r) => r.is), ['not checked (no glyph drawn)']);
 });
 
+test('compareElements has no drawn-font row for an element with no text (an empty field, an image)', () => {
+  assert.deepEqual(drawnRows({ fonts: [], noText: true }), []);
+});
+
+// A static file other than Regular or Bold names its family with the face (name ID 1, which CDP reports): "Inter SemiBold".
+test('compareElements passes a face of the Figma family at any weight or style, with any spacing', () => {
+  const faces = ['Inter SemiBold', 'Inter Semi Bold', 'Inter-ExtraBold', 'Inter ExtraLight Italic', 'inter black oblique', 'Inter Variable', 'Inter VF', 'Inter Thin', 'Inter Medium', 'Inter DemiBold', 'Inter Heavy', 'Inter Regular', 'Inter UltraLight', 'Inter Normal', 'Inter Ultra Bold', 'Inter BoldItalic', 'Inter Light'];
+  for (const family of faces) assert.deepEqual(drawnRows({ fonts: [{ family, glyphs: 5 }] }), [], family);
+  assert.deepEqual(drawnRows({ fonts: [{ family: 'Inter SemiBold', glyphs: 3 }, { family: 'Inter Bold Italic', glyphs: 3 }, { family: 'Georgia', glyphs: 5 }] }), []); // faces sum: 6 > 5
+});
+
+test('compareElements still fails another family that starts with the Figma name or ends with a face word', () => {
+  for (const family of ['Inter Tight', 'Inter Tight SemiBold', 'Inter Display Bold', 'Inter 2', 'Interstate Bold', 'Helvetica Bold', 'Bold']) {
+    const rows = drawnRows({ fonts: [{ family, glyphs: 5 }] });
+    assert.deepEqual(rows.map((r) => r.delta), [`requested Inter, drawn ${family}`], family);
+  }
+  const rows = drawnRows({ fonts: [{ family: 'Inter SemiBold', glyphs: 2 }, { family: 'Georgia', glyphs: 5 }] });
+  assert.deepEqual([rows[0].is, rows[0].delta], ['Georgia (5 glyphs), Inter SemiBold (2 glyphs)', 'requested Inter, drawn Georgia']);
+});
+
 test('alignColumns flags a shifted column', () => {
   const rows = [[{ x: 0, w: 100 }, { x: 100, w: 200 }], [{ x: 0, w: 100 }, { x: 104, w: 200 }]];
   assert.deepEqual(alignColumns(rows).map((c) => c.pass), [true, false]);

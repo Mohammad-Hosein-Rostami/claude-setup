@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadChromium, launch, openPage } from '../lib/browser.mjs';
 import { readDrawnFonts } from '../lib/drawn-fonts.mjs';
+import { compareElements } from '../lib/elements.mjs';
 import { flattenSpec } from '../lib/spec.mjs';
 
 const run = promisify(execFile);
@@ -88,4 +89,44 @@ test('compare fails a page whose requested font is not drawn (a fallback), even 
   assert.equal(row.should, ABSENT_FAMILY);
   assert.match(row.delta, new RegExp(`^requested ${ABSENT_FAMILY}, drawn (?!${ABSENT_FAMILY}\\b)\\S`));
   assert.doesNotMatch(row.is, new RegExp(ABSENT_FAMILY));
+});
+
+const fontFixture = (name) => pathToFileURL(path.join(here, 'fixtures', 'fonts', name)).href;
+const TITLE_ID = '1:2'; // frame.json's title: Figma Inter
+
+/** Drawn-font rows compareElements gives when each `selectors` element is the frame's Inter title, with its readDrawnFonts entry. */
+function drawnFontRows(drawn, selectors) {
+  const spec = flattenSpec(JSON.parse(fs.readFileSync(path.join(here, 'fixtures', 'frame.json'), 'utf8')));
+  const css = { fontSize: 20, fontWeight: 600, lineHeight: 24, letterSpacing: -0.2, color: 'rgb(0, 0, 0)', fontFamily: 'Inter' };
+  const box = { x: 16, y: 16, w: 100, h: 24 };
+  const measured = selectors.map((selector) => ({ id: TITLE_ID, found: true, box, css, drawnFont: drawn[selector] }));
+  return compareElements(spec.nodes, { [TITLE_ID]: 'mapped' }, measured).filter((r) => r.prop === 'font-family (drawn)');
+}
+
+async function readFixtureFonts(name, selectors) {
+  const browser = await launch(loadChromium(project));
+  try {
+    const page = await openPage(browser, { url: fontFixture(name), width: 600, height: 400 });
+    return await readDrawnFonts(page, '#root', selectors.map((selector) => ({ id: selector, selector })));
+  } finally {
+    await browser.close();
+  }
+}
+
+// Repro `static`: a static non-Regular face reports its name ID 1 ("Inter SemiBold") over CDP; it is Figma's Inter and must pass.
+test('a static SemiBold face of the design family passes the drawn-font row', { skip: !project }, async () => {
+  const drawn = await readFixtureFonts('static-face.html', ['#t']);
+  assert.deepEqual(drawn['#t'], { fonts: [{ family: 'Inter SemiBold', glyphs: 5 }] });
+  assert.deepEqual(drawnFontRows(drawn, ['#t']), []);
+});
+
+// Repro `depth`: CSS.getPlatformFontsForNode looks two layout levels down, so text deeper than that (and a textarea's value) read as
+// "no glyph drawn". Every glyph is counted now, and an element with no text has no row.
+test('drawn fonts count every glyph of the element, however deep, and skip an element with no text', { skip: !project }, async () => {
+  const glyphs = { '#link': 5, '#button': 4, '#label': 7, '#notes': 5, '#search': 6, '#host': 14, '#icon': 6 }; // Name+Ada; 'Shadow '+Slotted; 'Go '+Now (a drawn space is a glyph)
+  const empty = ['#empty', '#image'];
+  const drawn = await readFixtureFonts('deep-text.html', [...Object.keys(glyphs), ...empty]);
+  for (const [selector, count] of Object.entries(glyphs)) assert.deepEqual(drawn[selector], { fonts: [{ family: 'Inter', glyphs: count }] }, selector);
+  for (const selector of empty) assert.deepEqual(drawn[selector], { fonts: [], noText: true }, selector);
+  assert.deepEqual(drawnFontRows(drawn, Object.keys(drawn)), []);
 });

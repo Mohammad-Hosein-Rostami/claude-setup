@@ -1,8 +1,8 @@
 // Purpose: compare measured DOM boxes/styles to the flattened Figma spec (the element gate).
 // Exports: compareElements, applySkips, SKIP_PROPS, parseColor, brokenImageRows. Invariants: pure; only props present in the spec are checked (font-family,
 // stroke width and colour by stroke align, image fills: r9-ui-rules G3, G4, M1); the font Chromium drew (lib/drawn-fonts.mjs, passed in
-// as each measured element's `drawnFont`) must be Figma's family, and a drawn font that was not read is a failing "not checked" row;
-// a missing element is one failing row; a colour in an unknown format is skipped, not failed.
+// as each measured element's `drawnFont`) must be Figma's family at any weight or style, and a drawn font that was not read is a failing
+// "not checked" row; a missing element is one failing row; a colour in an unknown format is skipped, not failed.
 import { TOLERANCE } from './tolerances.mjs';
 
 const fmt = (v) => (typeof v === 'number' ? String(Math.round(v * 100) / 100) : String(v));
@@ -121,21 +121,40 @@ function fontFamilyRow(label, style, css) {
   return is.toLowerCase() === style.fontFamily.toLowerCase() ? null : { element: label, prop: 'font-family', is: is || css.fontFamily, should: style.fontFamily, delta: 'family' };
 }
 
-/** Glyphs drawn per family (lower case), summed over the faces of one family. */
-function glyphsByFamily(fonts) {
+// A static font file other than Regular or Bold names its family with the face in it (name ID 1: "Poppins SemiBold"; the typographic
+// family, name ID 16, is "Poppins"), and CDP reports that name ID 1. CDP gives no name ID 16 (PlatformFontUsage has familyName,
+// postScriptName, isCustomFont, glyphCount only), and reading it from the font file would mean fetching and decoding every web font and
+// finding installed fonts on disk per OS, so the face words are taken off the end instead: the OpenType weight names (with their
+// synonyms Ultra-light, Normal, Ultra-bold), the style names and the variable-font tags, in any combination, case, spacing or hyphens.
+// A word that names another design (Condensed, Display, Tight, a number) is not a face word, so such a family still fails.
+const FACE_WORDS = /^(?:thin|extralight|ultralight|light|regular|normal|medium|semibold|demibold|bold|extrabold|ultrabold|black|heavy|italic|oblique|variable|vf)*$/;
+const squash = (name) => name.toLowerCase().replace(/[\s_-]+/g, '');
+
+/** True when `drawn` (a CDP family name) is a face of `family`: the same name, or the name followed by face words only. */
+function isFaceOf(drawn, family) {
+  const face = squash(drawn);
+  const own = squash(family);
+  return face.startsWith(own) && FACE_WORDS.test(face.slice(own.length));
+}
+
+/** Glyphs drawn per family, summed over the faces of one family; every face of Figma's family counts under `family` (lower case). */
+function glyphsByFamily(fonts, family) {
+  const key = (drawn) => (isFaceOf(drawn, family) ? family.toLowerCase() : drawn.toLowerCase());
   const totals = new Map();
-  for (const { family, glyphs } of fonts) totals.set(family.toLowerCase(), (totals.get(family.toLowerCase()) ?? 0) + glyphs);
-  return totals;
+  for (const { family: drawn, glyphs } of fonts) totals.set(key(drawn), (totals.get(key(drawn)) ?? 0) + glyphs);
+  return { totals, key };
 }
 
 /**
- * G3 drawn: the family that drew the most glyphs of the element must be Figma's (case aside; a tie with Figma's passes), so a page that
- * asks for a font it never loaded fails here even though its computed font-family is right. A fallback for fewer glyphs than Figma's
- * family drew (a script or emoji the font lacks) passes. Unread, or no glyph drawn, is a failing "not checked (why)" row: never a pass.
+ * G3 drawn: the family that drew the most glyphs of the element must be Figma's, at any weight or style (case, spacing and a face
+ * suffix such as "SemiBold Italic" aside; a tie with Figma's passes), so a page that asks for a font it never loaded fails here even
+ * though its computed font-family is right. A fallback for fewer glyphs than Figma's family drew (a script or emoji the font lacks)
+ * passes. Unread, or text with no glyph drawn, is a failing "not checked (why)" row: never a pass. An element with no text (an empty
+ * field, an image) has no row.
  * @param {string} label row label
  * @param {{fontFamily?: string}} style Figma text style
  * @param {{fontFamily: string}} css computed style (the requested list, for the message)
- * @param {{fonts: {family: string, glyphs: number}[]} | {unknown: string} | undefined} drawn readDrawnFonts entry of this element
+ * @param {{fonts: {family: string, glyphs: number}[], noText?: true} | {unknown: string} | undefined} drawn readDrawnFonts entry
  * @returns {object|null} a failing row, or null
  */
 function drawnFontRow(label, style, css, drawn) {
@@ -143,11 +162,12 @@ function drawnFontRow(label, style, css, drawn) {
   const row = (is, delta) => ({ element: label, prop: 'font-family (drawn)', is, should: style.fontFamily, delta });
   if (drawn === undefined) return row('not checked (the drawn font was not read)', 'not checked');
   if ('unknown' in drawn) return row(`not checked (${drawn.unknown})`, 'not checked');
+  if (drawn.noText) return null;
   if (drawn.fonts.length === 0) return row('not checked (no glyph drawn)', 'not checked');
-  const glyphs = glyphsByFamily(drawn.fonts);
+  const { totals: glyphs, key } = glyphsByFamily(drawn.fonts, style.fontFamily);
   const own = glyphs.get(style.fontFamily.toLowerCase()) ?? 0;
   if (own > 0 && own >= Math.max(...glyphs.values())) return null;
-  const familyGlyphs = (font) => glyphs.get(font.family.toLowerCase());
+  const familyGlyphs = (font) => glyphs.get(key(font.family));
   const sorted = [...drawn.fonts].sort((a, b) => familyGlyphs(b) - familyGlyphs(a) || b.glyphs - a.glyphs);
   const is = sorted.map((font) => `${font.family} (${font.glyphs} glyphs)`).join(', ');
   return row(is, `requested ${firstFamily(css.fontFamily) || css.fontFamily}, drawn ${sorted[0].family}`);

@@ -171,19 +171,32 @@ Output in `--out` (default under the OS temp dir): `results.json`, `summary.md` 
 
 The `font-family` row compares the first family of the computed `font-family` with Figma's. That alone passes a page that asks
 for Inter but never loads it: the browser then draws a fallback (Helvetica on macOS). So for every mapped Figma TEXT node with a
-font family, `compare` also reads the fonts Chromium actually drew for the element's text (its own and its children's), with the
-CDP call `CSS.getPlatformFontsForNode` (`lib/drawn-fonts.mjs`), and the element gate (`lib/elements.mjs`, pure) judges them:
+font family, `compare` also reads the fonts Chromium actually drew for every glyph of the element, with the CDP call
+`CSS.getPlatformFontsForNode` (`lib/drawn-fonts.mjs`), and the element gate (`lib/elements.mjs`, pure) judges them. That call looks
+only two layout levels below the node it is given, so each text node below the element is read on its own and the counts are summed:
+text at any depth (`h1 > a > span`, `button > span > span`), in open shadow roots, in a field (its value or placeholder) and in
+generated content (`::before`, `::after`, list markers). Frames are not entered. Reading 300 elements takes about 160 ms (MacBook,
+Chromium 151).
 
-- the family that drew the most glyphs must be Figma's (case aside; a tie with Figma's family passes); otherwise a failing
-  `font-family (drawn)` row, e.g. `is: Helvetica (5 glyphs)`, `should: Inter`, `delta: requested Inter, drawn Helvetica`;
+- the family that drew the most glyphs must be Figma's, at any weight or style (case aside; a tie with Figma's family passes);
+  otherwise a failing `font-family (drawn)` row, e.g. `is: Helvetica (5 glyphs)`, `should: Inter`, `delta: requested Inter, drawn
+  Helvetica`;
 - a fallback for fewer glyphs than Figma's family drew (a script or emoji the font lacks) passes;
-- a drawn font that could not be read (no CDP session, an element not found, a CDP error) or an element with no glyph drawn is a
-  failing row `not checked (<why>)`, never a pass.
+- a drawn font that could not be read (no CDP session, an element not found, a CDP error), or text of which no glyph was drawn
+  (all of it hidden), is a failing row `not checked (<why>)`, never a pass; an element with no text at all (an empty field, an
+  image without alt text) has no row.
+
+CDP reports a web font's family as its file names it (name ID 1). A static file other than Regular or Bold puts the face in that
+name (`Poppins SemiBold`; the typographic family, name ID 16, is `Poppins`), and a variable file may say `Inter Variable`. CDP gives
+no name ID 16, so the face words are taken off the end of the drawn name before it is compared: Thin, ExtraLight, UltraLight,
+Light, Regular, Normal, Medium, SemiBold, DemiBold, Bold, ExtraBold, UltraBold, Black, Heavy, Italic, Oblique, Variable and VF, in
+any combination, case, spacing or hyphens (`Inter Semi Bold Italic`, `Inter-ExtraBold`). Any other word after Figma's name names
+another family and still fails (`Inter Tight`, `Inter Display`, `Roboto Condensed`, `Exo 2`); a family whose own name ends in a
+face word, drawn where Figma asks for the name without it (`Archivo Black` for `Archivo`), passes.
 
 The Font Loading API is not used as a fallback: probed with Playwright 1.62.1 (Chromium 151, macOS), `document.fonts.check()`
 answered `true` for "Roboto", which was neither installed nor loaded while CDP reported Helvetica, so it cannot tell a fallback
-from the real font. ui-check launches Chromium only; an engine without a CDP session would get `not checked` on every drawn-font row. A web font whose file names its
-family differently from the CSS name (for example `Inter Variable`) shows the file's name as drawn and fails until the names agree.
+from the real font. ui-check launches Chromium only; an engine without a CDP session would get `not checked` on every drawn-font row.
 The check judges the machine it runs on: when a page's web font fails to load but the same family is installed locally,
 Chromium draws the installed one (probed: a failing `@font-face` named Helvetica still drew Helvetica), so the row passes there.
 
@@ -208,7 +221,7 @@ Tolerances live in `lib/tolerances.mjs` and are documented in `standards/figma.m
 ## Tests
 
 `pnpm test` runs the unit tests. Set `UI_CHECK_PROJECT=/path/to/project-with-playwright` to also run the
-browser smoke test (fixture compare pass/fail, the card title drawn in its Inter web font and, with `?font=absent` (a family no machine has), a fallback that fails the drawn-font row, and a 500px box at 320), the Chromium checks in `determinism.test.mjs`, and
+browser smoke test (fixture compare pass/fail, the card title drawn in its Inter web font and, with `?font=absent` (a family no machine has), a fallback that fails the drawn-font row, a static SemiBold face that passes it, text deep below the mapped element counted glyph for glyph, and a 500px box at 320), the Chromium checks in `determinism.test.mjs`, and
 `rendered-browser.test.mjs` (the four hints on local and reviewer fixtures, focus and click step errors), `ltr-values-browser.test.mjs` (empty and filled fields, `bidi-placeholder`, the probe, the text hints, `same-as-default?` in `batch`), `batch-parallel.test.mjs` (`--jobs 4` equals `--jobs 1`, `--resume`) and
 `locale-browser.test.mjs` (bidi-field, `--expect-dir`, storage, locale, cookie, `batch`; it briefly writes a fixture Figma cache under `~/.cache/figma/ui-check-batch-test-<pid>` and removes it).
 
