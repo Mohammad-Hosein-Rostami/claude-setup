@@ -19,8 +19,9 @@ test('a project agent with maxTurns is named in the note', async () => {
   const { projectDir, personalDir } = await sandbox({ project: { builder: 'maxTurns: 60\n' } });
   const note = projectAgentNote(projectDir, personalDir);
   assert.match(note, /builder\.md \(maxTurns 60\)/);
-  assert.match(note, /a maxTurns file is never edited: a cs- agent does long work, the file in its brief/);
+  assert.match(note, /a maxTurns file is never edited: brief our agent of that role with the file's path/);
   assert.doesNotMatch(note, /delete|no need to ask|without asking/i, 'owner decision R22-Q3: the note orders no edit of a team file');
+  assert.doesNotMatch(note, /\bcs-/, 'review R2: the advice names no cs- agent, true before and after the rename (R22-L1)');
   assert.doesNotMatch(note, /tell the owner/);
   assert.equal(note.includes('\n'), false);
 });
@@ -47,7 +48,7 @@ test('a shadow-only project agent gets only the tell-the-owner advice, even when
 test('a capped agent plus a shadowing agent gets both pieces of advice', async () => {
   const { projectDir, personalDir } = await sandbox({ project: { builder: 'maxTurns: 60\n', runner: '' } });
   const note = projectAgentNote(projectDir, personalDir);
-  assert.match(note, /a maxTurns file is never edited: a cs- agent does long work, the file in its brief/);
+  assert.match(note, /a maxTurns file is never edited: brief our agent of that role with the file's path/);
   assert.match(note, /tell the owner \(project repos keep only project config\)/);
 });
 
@@ -55,7 +56,7 @@ test('a capped agent whose file name says shadows gets only the maxTurns advice'
   const { projectDir, personalDir } = await sandbox({ project: { shadows: 'maxTurns: 60\n' } });
   const note = projectAgentNote(projectDir, personalDir);
   assert.match(note, /shadows\.md \(maxTurns 60\)/);
-  assert.match(note, /a maxTurns file is never edited: a cs- agent does long work, the file in its brief/);
+  assert.match(note, /a maxTurns file is never edited: brief our agent of that role with the file's path/);
   assert.doesNotMatch(note, /tell the owner/);
 });
 

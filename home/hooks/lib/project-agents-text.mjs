@@ -32,8 +32,9 @@ const SHADOWED_PERSONAL_START = 'Shadowed personal agents: ';
 const SHADOWED_BUILT_IN_START = 'Shadowed built-in agents: ';
 const LIST_START = 'Files: ';
 // A project's agent file is a team file (R22-Q3): its maxTurns stays, and our own agent takes the long work, with that file as
-// project instructions in its brief (layering spec section 3). Agents named `cs-*` are ours (owner decision R22-L1).
-const CAP_ADVICE = 'a maxTurns file is never edited: a cs- agent does long work, the file in its brief';
+// project instructions in its brief (layering spec section 3). The advice names no `cs-` prefix: it must hold before and after
+// our agents get it (owner decision R22-L1, a later lane), so it says "our agent of that role".
+const CAP_ADVICE = 'a maxTurns file is never edited: brief our agent of that role with the file\'s path';
 const SHADOW_ADVICE = 'tell the owner (project repos keep only project config)';
 const LINK_ADVICE = 'tell the owner about each link (a link is not read, and nothing is edited through it)';
 

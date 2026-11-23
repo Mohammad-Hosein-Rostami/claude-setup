@@ -19,7 +19,7 @@ import { PLACE_ROWS } from './project-agents-place-rows.mjs';
 
 const REAL_PERSONAL_AGENTS_DIR = fileURLToPath(new URL('../home/agents', import.meta.url));
 const PERSONAL = { 'security-auditor': '', reviewer: '' };
-const MAXTURNS_ADVICE = /a maxTurns file is never edited: a cs- agent does long work/;
+const MAXTURNS_ADVICE = /a maxTurns file is never edited: brief our agent of that role with the file's path/;
 const SHADOWED_SENTENCE = /Shadowed (?:personal|built-in) agents: /;
 const BY_HAND_COUNT = /\d+ agent files to check by hand: tell the owner/;
 const EXACT_CLASSES = ['exact shadow', 'exact maxTurns'];
