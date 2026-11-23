@@ -213,7 +213,12 @@ export async function baseTree(top, base, { deadlineMs = BASE_DEADLINE_MS, stabl
 /** The repo's stable Go base folder (lib/base-go-folder.mjs), refilled with the base under its lock; cleanup releases the lock. */
 async function stableTree(tree, base, deadlineAt, env) {
   if (!stateIsPlain(env)) return { unavailable: 'the done-check state folder is not a plain folder of this user' };
-  const claimed = claimStableFolder(stateFolder(env), tree.commonDir);
+  let claimed;
+  try {
+    claimed = claimStableFolder(stateFolder(env), tree.commonDir);
+  } catch (error) {
+    return { unavailable: `the stable base folder could not be used: ${error.message}` }; // nothing is held then
+  }
   if (claimed.unavailable !== undefined) return claimed;
   try {
     const made = await fillTree(tree.top, base, claimed.folder, deadlineAt);

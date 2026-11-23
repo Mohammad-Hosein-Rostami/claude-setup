@@ -8,7 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { claimStableFolder, LOCK_HEARTBEAT_MS, LOCK_STALE_MS, STABLE_IDLE_MS, stableFolderOf } from '../home/tools/done-check/lib/base-go-folder.mjs';
@@ -152,4 +152,16 @@ test('busy base: old drift off the changed lines is unknown and does not block; 
   const onChange = runCli(repo);
   assert.equal(onChange.code, 1, onChange.verdict.line);
   assert.match(onChange.verdict.reason, /may be older than your change/);
+});
+
+test('a stable folder that cannot be made or is a link answers unavailable, never throws', { skip: process.platform === 'win32' && 'POSIX modes and links' }, async (t) => {
+  const repo = makeDoneCheckRepo({ files: { 'go.mod': GO_MOD } });
+  t.after(() => { chmodSync(stateOf(repo), 0o700); repo.cleanup(); });
+  mkdirSync(stateOf(repo), { recursive: true, mode: 0o700 });
+  chmodSync(stateOf(repo), 0o500); // base-go cannot be made inside it
+  const unwritable = await baseTree(repo.dir, repo.baseSha, { stableFor: 'go', env: repo.env });
+  assert.match(unwritable.unavailable ?? '', /stable base folder could not be used/);
+  chmodSync(stateOf(repo), 0o700);
+  symlinkSync(makeTempDir('base-go-elsewhere-'), join(stateOf(repo), 'base-go'));
+  assert.deepEqual(await baseTree(repo.dir, repo.baseSha, { stableFor: 'go', env: repo.env }), { unavailable: 'the stable base folder is not a plain folder of this user' });
 });
