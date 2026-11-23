@@ -1,6 +1,7 @@
 // Bash brace expansion for one word: `{a,b}`, nested `x{a,{b,c}}y`, numeric and letter ranges `{1..3}` `{a..c}`.
 // Exports: expandBraces(word) -> string[] | null for an unquoted word (rm targets); expandRawBraces(raw) -> string[] | null for a word as
-// written, whose quoted parts are text (`"{a,b}"` stays one word); hasUnquotedReference(raw) (a `$NAME` outside quotes, which bash splits).
+// written, whose quoted parts are text (`"{a,b}"` stays one word); hasUnquotedReference(raw) (a `$NAME` outside quotes, which bash splits);
+// quotedChars(text) -> Uint8Array, 1 where a character is quoted or escaped (read by raw-risk.mjs, with the same quote reading).
 // A word without a real brace expression (`{}`, `{a}`, unbalanced braces, `${VAR}`) comes back unchanged. null means the word has one
 // the guard cannot list: more than MAX_EXPANSIONS results, braces nested deeper than MAX_BRACE_NESTING, a range that is not plain
 // numbers or letters, and for a raw word an alternative with `$` or a backtick (what it becomes is only known when it runs) or a brace
@@ -24,6 +25,23 @@ function afterQuoted(word, i) {
     else if (word[j] === closer) return j + 1;
   }
   return word.length;
+}
+
+/**
+ * Which characters of a text are quoted or escaped, read as afterQuoted reads them (a quote that never closes runs to the end).
+ * Linear: each quoted part is skipped whole.
+ * @param {string} text a command line or part of one, quotes intact
+ * @returns {Uint8Array} 1 at each quoted or escaped character (the quote marks and the backslash included), else 0
+ */
+export function quotedChars(text) {
+  const quoted = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i++) {
+    const end = afterQuoted(text, i);
+    if (end === i) continue;
+    quoted.fill(1, i, end);
+    i = end - 1;
+  }
+  return quoted;
 }
 
 /** The index after what starts at `i` that is never brace syntax: quoted text in raw mode, an escape always; `i` when nothing is skipped. */

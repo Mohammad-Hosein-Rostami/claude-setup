@@ -119,6 +119,35 @@ test('F2/X10: docker rm and a redirect target are no rm; rm itself and a raw dev
   assert.ok(decide('docker run --rm img sh -c "rm -rf /tmp/x"; echo "$(date)"', ctx).reasons.includes(`DESTRUCTIVE: ${RISKY_REASON}`), 'an rm after another word still counts');
 });
 
+const RM = ['r', 'm -rf'].join('');
+const PUSH = ['pu', 'sh'].join('');
+const allowedOf = (commands) => commands.filter((command) => decide(command, { cwd: '/w/p', project: '/w/p' }).allow === true);
+
+test('review R1: a quoted or escaped > or < is no redirect, so the rm path after it still asks (inside watch too)', () => {
+  assert.deepEqual(allowedOf([`watch -n1 '${RM} ">" ~/x'`, `watch -n1 '${RM} \\> ~/x'`, `watch -n1 '${RM} "<" ~/x'`, `watch -n1 '${RM} \\< ~/x'`,
+    `watch -n1 '${RM} '"'"'>'"'"' ~/x'`, `x=$(date); ${RM} ">" ~/x`, `x=$(date); ${RM} \\> ~/x`, `x=$(date); ${RM} \\< ~/x`,
+    `x=$(date); find ">" ~/x -delete`, `x=$(date); ${RM} $'>' ~/x`, `x=$(date); ${RM} $'\\x3e' ~/x`]), []);
+  assert.equal(decide(`x=$(date); ${RM} build >/dev/null 2>&1`, ctx).allow, true, 'an unquoted redirect target is still no rm path');
+});
+
+test('review R2: rm is a tool sub-command only when the tool is the command word, never an option value or assignment value', () => {
+  assert.deepEqual(allowedOf([`watch -n1 'sudo -g docker ${RM} ~/x'`, `watch -n1 'sudo -u git ${RM} ~/x'`, `watch -n1 'env -u go ${RM} ~/x'`,
+    `watch -n1 'doas -u git ${RM} ~/x'`, `watch -n1 'runuser -u git ${RM} ~/x'`, `watch -n1 'A="x git" ${RM} ~/x'`, `watch -n1 'exec -a go ${RM} ~/x'`,
+    `x=$(date); sudo -g docker ${RM} ~/x`, `x=$(date); A="x git" ${RM} ~/x`, `x=$(date); exec -a go ${RM} ~/x`, `x=$(date); env -u go ${RM} ~/x`,
+    `x=$(date); exec -a $(true) go ${RM} ~/x`, `x=$(date); exec -a {go ${RM} ~/x`, `x=$(date); exec -a $'x\\ngo' ${RM} ~/x`]), []);
+  for (const command of ['x=$(date); docker rm -f x ~/y', 'x=$(date); A=1 git rm -r ~/y', 'x=$(date) && { docker container rm -f ~/y; }']) {
+    assert.equal(decide(command, ctx).reasons, undefined, command);
+  }
+});
+
+test('review R3: a for value zsh would change (=word, ~, globs, extended-glob ^ and #) is not a known value', () => {
+  assert.deepEqual(allowedOf([`for c in =git; do $c ${PUSH}; done`]), []);
+  for (const word of ['=git', '~/bin/git', 'g?t', 'g*', 'g[i]t', 'g^t', 'g#t', 'g~t', '{git}', 'g<1-2>']) {
+    assert.equal(plainLoopValues(`for c in ${word}; do $c ${PUSH}; done`).has('c'), false, word);
+  }
+  assert.deepEqual([...plainLoopValues(`for c in a=b x:y %1 +x @a; do echo $c; done`)], [['c', ['a=b', 'x:y', '%1', '+x', '@a']]]);
+});
+
 test('F7: docker rm without -v gets the advice once, then runs; with -v/--volumes, or docker run --rm, it runs at once', () => {
   const s = hookSession();
   const first = s.run('docker rm -f cs-test-db');

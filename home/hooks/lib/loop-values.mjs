@@ -3,7 +3,7 @@
 // Exports: PLAIN_LOOP_WORD, MAX_LOOP_READINGS, plainLoopValues(line) -> Map<name, string[]>, newLoopWalk(line), stepLoopWalk(walk, seg),
 // segmentViews(seg, scope, walk, readings) -> {seg, readings}[].
 // The values are known only when all of these hold on the raw text (an allowlist, P4): the header `for NAME in` appears once for that
-// name; every item matches PLAIN_LOOP_WORD (no `$`, glob, quote, backslash, brace or ANSI-C word); the list ends at `;` or a newline;
+// name; every item matches PLAIN_LOOP_WORD (no `$`, glob, quote, backslash, brace, `~`, leading `=` or ANSI-C word); the list ends at `;` or a newline;
 // every other mention of NAME is a plain reference (`$NAME`, `${NAME}`) followed by a blank, a quote, a separator or `/ . , - < >`, or a
 // flag or file-name part (`-d`, `./d`, `d.txt`) that never names the variable. Anything else (`NAME=`, `read NAME`, `${NAME:-x}`, `$NAME[1]`,
 // `$NAME:u`, a second header) leaves the name unknown, which asks as before. A line whose plain lists would give more than
@@ -14,7 +14,9 @@
 import { substituteKnownWords } from './rm-paths.mjs';
 import { commandReadings } from './shell-hazards.mjs';
 
-export const PLAIN_LOOP_WORD = /^[A-Za-z0-9._/:@%+=,-]+$/;
+// No character that bash or zsh (default options, also EXTENDED_GLOB) expands: no `$`, quote, backslash, glob (`* ? [ ]`, zsh `^ # ~`),
+// brace, `~` or `<>`; `=` only after the first character, since zsh's EQUALS option (on by default) turns a leading `=git` into /usr/bin/git.
+export const PLAIN_LOOP_WORD = /^[A-Za-z0-9._/:@%+,-][A-Za-z0-9._/:@%+=,-]*$/;
 export const MAX_LOOP_READINGS = 64; // combinations of loop values one line may fill in; more is judged as written (asks)
 const LOOP_HEADER = /(?<![\w$])for[ \t]+([A-Za-z_]\w*)[ \t]+in[ \t]([^;&|\n]*)/g;
 const LIST_END = /^[;\n]/;

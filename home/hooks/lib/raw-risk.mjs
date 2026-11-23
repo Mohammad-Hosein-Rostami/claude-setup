@@ -16,13 +16,14 @@
 // Dangerous words (looked up as words of the quote-stripped, ANSI-C-decoded text): git push (by position) / git alias, rm with a recursive or forced flag and (also find -delete / -exec rm with)
 // an absolute, `~`, `$` or `..` path (once the line has a `cd`, `pushd` or `popd`, any path of a recursive rm or a deleting find: the
 // hidden text may run in another folder, X3), npm-style publish, gh mutations (judged by position: `gh <group> <verb>`), disk tools and raw device paths,
-// psql/mysql/ssh near a production name. `rm` right after docker|podman|nerdctl (or their container|image|volume|network), kubectl, git, npm,
-// pnpm, yarn, brew, cargo, go, pip or gh is that tool's sub-command, not rm, and a redirect target (`>/dev/null`) is no rm or find path. Message text of `git commit` and `gh pr|issue create|edit|comment` is data (message-text.mjs), so
+// psql/mysql/ssh near a production name. An unquoted `rm` right after docker|podman|nerdctl (or their container|image|volume|network), kubectl, git,
+// npm, pnpm, yarn, brew, cargo, go, pip or gh as the statement's command word is its sub-command, and an unquoted redirect's target is no rm path. Message text of `git commit` and `gh pr|issue create|edit|comment` is data (message-text.mjs), so
 // `git commit -m "$(cat <<'EOF' ... git push ... EOF)"` is silent; a message with another `$(` or a backtick is still scanned.
 // A single-quoted argument of a program that never runs its arguments (echo, printf, grep, rg, jq, sed, git log) is data too (lib/inert-arguments.mjs).
 // A false positive costs a dialog. Commands with no hidden construct never reach this rule and keep the precise per-command checks.
 // Pure, no I/O; linear in the text length.
 import { ANSI_C_WORD, decodeAnsiC } from './ansi-c.mjs';
+import { quotedChars } from './braces.mjs';
 import { asGitSubcommand, commandName } from './command-of.mjs';
 import { withoutInertArguments } from './inert-arguments.mjs';
 import { withoutMessageText } from './message-text.mjs';
@@ -60,8 +61,10 @@ const RM_FLAG = /^(?:-[a-zA-Z]*[rRf]|--r|--f|--n)/; // GNU rm takes a prefix of 
 const RISKY_RM_PATH = /^(?:\/|~|\.\.(?:\/|$)|\$\{?HOME\b)/;
 const HEREDOC_OPEN = /<<(-?)[ \t]*(?:'([A-Za-z_]\w*)'|"([A-Za-z_]\w*)"|\\([A-Za-z_]\w*)|([A-Za-z_]\w*))(?![\w'"\\])/;
 const EXPANSION_IN_BODY = /\$\(|`/;
-// X10: `rm` right after a tool that has an rm sub-command (only blanks between: `docker $(rm ...)` keeps its rm) is that sub-command
-const RM_SUBCOMMAND = new RegExp(String.raw`(?<=(?:^|[\s;&|(])(?:(?:docker|podman|nerdctl)(?:[ \t]+(?:container|image|volume|network))?|`
+// X10 (spec F2): `rm` is a tool's sub-command only as the word right after the tool, when the tool is the statement's command word (after
+// only keywords and plain assignments; not after `)` or `}`, as `exec -a $(true) go rm` runs rm): `sudo -g docker rm`, `A="x git" rm` keep rm.
+const RM_SUBCOMMAND = new RegExp(String.raw`((?:^|[;&|(\n\r]|\{[ \t])[ \t]*(?:(?:if|then|elif|else|do|while|until|!)[ \t]+)*`
+  + String.raw`(?:[A-Za-z_]\w*=[^\s'"\\$\x60;&|()<>]*[ \t]+)*(?:(?:docker|podman|nerdctl)(?:[ \t]+(?:container|image|volume|network))?|`
   + String.raw`kubectl|git|npm|pnpm|yarn|brew|cargo|go|pip|gh)[ \t]+)rm(?=[\s;&|)]|$)`, 'g');
 const SUBCOMMAND_RM = 'rm:sub-command'; // a word no rule reads as the rm program
 // X10: the target of a redirect (`>x`, `>>x`, `2>x`, `&>x`, `<x`; not `<<`, `<<<`, `<(`, `>(`) is a file the shell opens, never an rm path.
@@ -71,7 +74,22 @@ const REDIRECT = /(?<![<>&\d])(?:\d+|&)?(?:>>?|<)(?![(<>])[ \t]*(&\d+|&-|[^\s;&|
 const REDIRECT_MARK = '\u0000';
 const NUL = /\u0000/g;
 const unmarked = (word) => (word.startsWith(REDIRECT_MARK) ? word.slice(REDIRECT_MARK.length) : word);
-const markedRedirects = (text) => text.replace(NUL, '').replace(REDIRECT, (whole, target) => (target.startsWith('&') ? ' ' : ` ${REDIRECT_MARK}${target}`));
+
+/**
+ * The X10 marks (SUBCOMMAND_RM, REDIRECT_MARK), only where the whole match is unquoted and unescaped: `rm ">" ~/x`, `rm \> ~/x`, text in
+ * `watch '...'` and every line with a `$'...'` word (decoded without its quotes, so `readsQuotes` is false) keep their rm paths.
+ */
+function marked(text, readsQuotes) {
+  if (!readsQuotes) return text;
+  const free = (quoted, at, length) => !quoted.subarray(at, at + length).includes(1);
+  let quoted = quotedChars(text);
+  const withSubcommands = text.replace(RM_SUBCOMMAND, (whole, start, at) => (free(quoted, at, whole.length) ? `${start}${SUBCOMMAND_RM}` : whole));
+  quoted = quotedChars(withSubcommands);
+  return withSubcommands.replace(REDIRECT, (whole, target, at) => {
+    if (!free(quoted, at, whole.length - target.length)) return whole;
+    return target.startsWith('&') ? ' ' : ` ${REDIRECT_MARK}${target}`;
+  });
+}
 
 /** `git-<sub>` (any directory) -> `git`, `<sub>`: git's own program is the git command it runs; other words stay as they are. */
 function gitProgramWords(word) {
@@ -222,16 +240,18 @@ function runsText(words) {
 export function riskyWordInExpansion(command, prodHosts = []) {
   // `$(git rev-parse --show-toplevel)` is a known, harmless substitution (the per-command rm check judges where it points)
   const text = joinContinuations(decodeAnsiCWords(command)).replace(GIT_TOPLEVEL, GIT_TOPLEVEL_WORD).replace(PLAIN_MKTEMP, MKTEMP_WORD);
-  // a `$'...'` word decodes to text that can hold a quote the shell does not read as one (`$'\x27'`): no data argument is exempted then
-  const withoutData = command.includes("$'") ? (kept) => kept : withoutInertArguments;
+  // a `$'...'` word decodes to text that can hold a quote the shell does not read as one (`$'\x27'`): no data argument is exempted then,
+  // and no X10 mark is put on (its quotes are gone: `rm -rf $'>' ~/x`)
+  const readsQuotes = !command.includes("$'");
+  const withoutData = readsQuotes ? withoutInertArguments : (kept) => kept;
   const visible = withoutData(withoutPlainHeredocs(withoutMessageText(text)));
-  const statements = statementsOf(visible, RUN_VALUE_ASSIGNMENT);
+  const statements = statementsOf(visible, RUN_VALUE_ASSIGNMENT, readsQuotes);
   const otherHidden = HIDDEN_CONSTRUCT.test(visible) || statements.some(runsText);
   const gitHidden = GIT_FILE_CONFIG.test(visible) || hidesGitRun(visible);
   if (!otherHidden && !gitHidden) return undefined;
   const prodText = visible.toLowerCase();
   const prodNames = prodHosts.map((host) => host.replace(/[*?]/g, '')).filter(Boolean);
-  const scanned = gitHidden ? statementsOf(visible, ANY_ASSIGNMENT) : statements;
+  const scanned = gitHidden ? statementsOf(visible, ANY_ASSIGNMENT, readsQuotes) : statements;
   const destructive = scanned.map((words) => dangerIn(words, prodText, prodNames));
   if (otherHidden && deletesInMovedText(visible, scanned)) destructive.push('destructive');
   const found = destructive.find((category) => category !== undefined);
@@ -259,17 +279,17 @@ export function unreadableNameReasons(cmd, command, prodHosts = []) {
   const visible = withoutPlainHeredocs(withoutMessageText(text));
   const prodText = visible.toLowerCase();
   const prodNames = prodHosts.map((host) => host.replace(/[*?]/g, '')).filter(Boolean);
-  const dangerous = statementsOf(visible, ANY_ASSIGNMENT).some((words) => dangerIn(words, prodText, prodNames) !== undefined);
+  const dangerous = statementsOf(visible, ANY_ASSIGNMENT, !command.includes("$'")).some((words) => dangerIn(words, prodText, prodNames) !== undefined);
   return dangerous ? [UNREADABLE_NAME_REASON] : [];
 }
 
 /**
- * The quote-stripped words of each statement; the value of each `NAME=` word that `assignments` matches is split off as words. A tool's
- * rm sub-command becomes SUBCOMMAND_RM and a redirect target carries REDIRECT_MARK (X10).
+ * The quote-stripped words of each statement; the value of each `NAME=` word that `assignments` matches is split off as words. The X10
+ * marks are put on first, while the quotes are still there (`marked`); `readsQuotes` is false for a line with a `$'...'` word.
  */
-function statementsOf(visible, assignments) {
-  const plain = visible.replace(assignments, (assignment) => `${assignment} `).replace(/[\\'"]/g, '');
-  return markedRedirects(plain.replace(RM_SUBCOMMAND, SUBCOMMAND_RM)).split(STATEMENT_BREAK).map(wordsOf);
+function statementsOf(visible, assignments, readsQuotes) {
+  const plain = marked(visible.replace(NUL, ''), readsQuotes).replace(assignments, (assignment) => `${assignment} `).replace(/[\\'"]/g, '');
+  return plain.split(STATEMENT_BREAK).map(wordsOf);
 }
 
 /** True when the line runs git and sets a variable or config key whose value git runs in a way the guard does not read to a literal. */

@@ -25,7 +25,7 @@ Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
   `a[$(cmd)]` inside `$(( ))`), and so is a word filled in from `read`, an array or `"$@"` in a command a rule reads; it also tells
   `shell-hazards.mjs` which `((` bash reads as arithmetic.
 - `loop-values.mjs`: the values of a plain `for` list (`for d in a b c`), so the loop body is judged once per value instead of as a
-  word known only at run time. A list counts only when every item is a plain literal word, the name has one `for` header and is read
+  word known only at run time. A list counts only when every item is a plain literal word that neither bash nor zsh changes (no glob, `~` or leading `=`), the name has one `for` header and is read
   only as `$NAME` or `${NAME}`, and the line has at most 64 combinations (`MAX_LOOP_READINGS`); the values fill in only between the
   header and its `done`. Anything else keeps the run-time bounce.
 - `docker-advice.mjs`: advice, never an ask: `docker rm` (also `podman`, `nerdctl`, `container rm`) without `-v` leaves the
