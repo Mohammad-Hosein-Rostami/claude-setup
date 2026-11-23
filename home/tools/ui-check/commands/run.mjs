@@ -1,10 +1,13 @@
 // Purpose: `run` - the one call of a UI round: `ui-coverage scaffold` (states file from the matrix) + `batch` + `ui-coverage check`,
 // then the numbers: per-state counts, failing rows with crop paths (native scale, at most 2,576 px on the long edge, lib/crops.mjs),
-// the round table against `--prev`, the "0 worse" table against `--no-worse <reference run>`, and the `--self-test` determinism check.
-// Exports: options, run. Exit 0 every record passes, the matrix check passes, nothing is worse and the self-test is clean / 1 otherwise /
+// the round table against `--prev`, the "0 worse" table against `--no-worse <reference run>`, the `--self-test` determinism check, and the
+// `same:` table against `--same <base run>` (lib/same-run.mjs: per responsive capture identical / equal / changed / new / missing).
+// Exports: options, runRoot, run. Exit 0 every record passes, the matrix check passes, nothing is worse and the self-test is clean / 1 otherwise /
 // 2 usage or setup error (an open states entry without a url, a bad flag, an unreadable ledger).
 // Invariants: images are printed only for failures, as crops; PASS and FAIL are the numbers, never a look at an image. `--step
 // <road>.s<N>` and the commit sha of HEAD are stored in ledger.json, so a baseline run on the base tip is that step's start record.
+// The ledger also stores `root`, the git top-level of the folder the run started in, and with `--same` its `same` section; `--same` never
+// changes the exit code.
 // The matrix's `rule` and the project's recorded viewing conditions (`ui-coverage conditions`) are stored in every record and the ledger.
 // Under the strict rule (P3f) a compare failing only on its pixel finding is attributed (lib/attribution-records.mjs): it passes only when
 // every leftover pixel is accepted (matrix entry with owner decision and reason) or text anti-aliasing; results.json is rewritten first.
@@ -17,7 +20,8 @@ import { parse, need } from '../lib/args.mjs';
 import { attributeStrict } from '../lib/attribution-records.mjs';
 import { writeCrops } from '../lib/crops.mjs';
 import { UsageError } from '../lib/errors.mjs';
-import { compareReference, formatReference, formatRounds, readLedger } from '../lib/ledger.mjs';
+import { compareReference, formatReference, formatRounds, readLedger, readLedgerFile, writeLedger } from '../lib/ledger.mjs';
+import { compareSame, formatSame } from '../lib/same-run.mjs';
 import { describeConditions, readConditions } from '../../ui-coverage/lib/conditions.mjs';
 import { executeBatch } from './batch.mjs';
 
@@ -34,6 +38,7 @@ export const options = {
   jobs: { type: 'string' },
   prev: { type: 'string' },
   'no-worse': { type: 'string' },
+  same: { type: 'string' }, // a base run folder or its ledger.json: per responsive capture, is this run's render the same (lib/same-run.mjs)
   'self-test': { type: 'boolean', default: false },
   strict: { type: 'boolean', default: false }, // the strict pass rule (P3f); a matrix with rule: strict makes the run strict without it
   step: { type: 'string' },
@@ -65,6 +70,24 @@ function prepareStates(matrix, statesFile, baseUrl) {
 function headSha() {
   const git = spawnSync('git', ['rev-parse', '--verify', 'HEAD^{commit}'], { encoding: 'utf8', timeout: CHILD_TIMEOUT_MS });
   return git.status === 0 ? git.stdout.trim() : null;
+}
+
+/**
+ * The absolute git top-level of a folder (a worktree's own folder in a worktree), so a record names the tree that was rendered.
+ * @param {string} [cwd] the folder the run started in
+ * @returns {string|null} native absolute path, or null outside a git repo
+ */
+export function runRoot(cwd = process.cwd()) {
+  const git = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', timeout: CHILD_TIMEOUT_MS });
+  return git.status === 0 && git.stdout.trim() !== '' ? path.resolve(git.stdout.trim()) : null;
+}
+
+/** The `same` section: compare with the base run, store it in this run's ledger.json, and return its lines. */
+async function sameLines(base, batch) {
+  if (!batch.ledger) return ['same: 0 rows (no ledger: nothing ran)'];
+  const same = await compareSame(batch.ledger, base, batch.outDir);
+  writeLedger(batch.outDir, { ...batch.ledger, same: { ref: same.ref, mismatch: same.mismatch, rows: same.rows } });
+  return formatSame(same);
 }
 
 /** Lines for the failing records: the first findings and the crop paths of the pixel region. */
@@ -124,16 +147,20 @@ export async function run(argv) {
   const matrix = path.resolve(values.matrix);
   const statesFile = path.resolve(values.states ?? path.join(path.dirname(matrix), 'states.json'));
   const reference = values['no-worse'] === undefined ? null : readLedger(path.resolve(values['no-worse']), 'no-worse');
+  const sameBase = values.same === undefined ? null : readLedgerFile(path.resolve(values.same), 'same'); // read once, before anything runs
   const facts = matrixFacts(matrix, values.strict);
   prepareStates(matrix, statesFile, values['base-url']);
   const outDir = path.resolve(values.out ?? path.join(os.tmpdir(), 'ui-check', 'run', new Date().toISOString().replace(/[:.]/g, '-')));
+  // This run overwrites its --out folder, so a base run in that folder would be compared with this run's own captures.
+  if (sameBase && path.resolve(path.dirname(sameBase.file)) === outDir) throw new UsageError(`--same ${values.same}: names this run's own --out folder; give the base run's folder`);
   const batchValues = { states: statesFile, only: values.only, out: outDir, jobs: values.jobs, project: values.project, prev: values.prev };
-  const measured = await executeBatch(batchValues, { step: values.step ?? null, head: headSha(), ...facts });
+  const measured = await executeBatch(batchValues, { step: values.step ?? null, head: headSha(), root: runRoot(), runDir: outDir, ...facts });
   const batch = facts.rule === 'strict' ? { ...measured, ...attributeStrict(measured, matrix) } : measured; // P3f class rule
   const lines = [`rule: ${facts.rule}`, describeConditions(facts.conditions), countsLine(batch.records), ...(batch.lines ?? []), ...failingLines(batch.records)];
   if (batch.rounds) lines.push('rounds (against --prev):', ...formatRounds(batch.rounds));
   const noWorse = reference && batch.ledger ? compareReference(batch.ledger, reference) : null;
   if (noWorse) lines.push(...formatReference(noWorse));
+  if (sameBase) lines.push(...await sameLines(sameBase, batch));
   const determinism = values['self-test'] ? await selfTest(batchValues, batch) : null;
   if (determinism) lines.push(...determinism.lines);
   const check = coverage(['check', matrix, '--results', path.join(outDir, 'results.json')]);

@@ -1,5 +1,6 @@
 // Purpose: `responsive` - layout invariants at several widths; screenshots go to disk, never to the caller.
-// Exports: options, focusChecks, auditWidth, auditAll, run. Invariants: exit 0 pass / 1 fail; one fresh page per width.
+// Exports: options, focusChecks, auditWidth, watchPageErrors, auditAll, run. Invariants: exit 0 pass / 1 fail; one fresh page per width;
+// every width's uncaught page errors (Playwright `pageerror`) are kept with its capture `w<width>.png` and never change the verdict.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -79,27 +80,56 @@ export async function auditWidth(browser, target, width, outDir) {
   return [...findings, ...focus.findings, ...[...hints, ...focus.hints].map((h) => ({ ...h, hint: true }))].map((f) => ({ width, ...f }));
 }
 
+const PAGE_ERROR_TEXT_MAX = 300; // characters kept of one page error message: page text is untrusted and can be huge
+
+/**
+ * Collect the uncaught errors of every page opened through the returned browser view. Playwright's `page.on('pageerror')` fires for an
+ * uncaught exception in the page (installed types.d.ts: "Emitted when an uncaught exception happens within the page"; probed: sync throws,
+ * throws in timers and unhandled rejections, not console.error); the listener is added on the context's `page` event, before goto runs.
+ * @param {{newContext: Function}} browser Playwright browser, or batch's scoped view of it (openPage only calls newContext)
+ * @param {number} max messages kept (the per-check findings cap)
+ * @returns {{browser: {newContext: Function}, errors: string[]}} errors fills while pages run
+ */
+export function watchPageErrors(browser, max) {
+  const errors = [];
+  const keep = (error) => { if (errors.length < max) errors.push(String(error?.message ?? error).slice(0, PAGE_ERROR_TEXT_MAX)); };
+  const newContext = async (options) => {
+    const context = await browser.newContext(options);
+    // Every Playwright BrowserContext is an event emitter; the browser-free test stubs of openPage are not, and their pages never throw.
+    if (typeof context.on === 'function') context.on('page', (page) => page.on('pageerror', keep));
+    return context;
+  };
+  return { browser: { newContext }, errors };
+}
+
 /**
  * Audit every width on an already launched browser and write report.md/json.
  * @param {object} browser Playwright browser
  * @param {{widths: number[], target: object, outDir: string}} job target as accepted by auditWidth
- * @returns {Promise<{pass: boolean, md: string, findings: object[], hints: object[]}>} hints = the heuristic findings, listed in their own section and never failing
+ * @returns {Promise<{pass: boolean, md: string, findings: object[], hints: object[], captures: {width: number, file: string, pageErrors: string[]}[]}>}
+ *   hints = the heuristic findings, listed in their own section and never failing; captures = per width the screenshot path and its uncaught page errors
  */
 export async function auditAll(browser, { widths, target, outDir }) {
   fs.mkdirSync(outDir, { recursive: true });
   const all = [];
-  for (const width of widths) all.push(...await auditWidth(browser, target, width, outDir));
+  const captures = [];
+  for (const width of widths) {
+    const watched = watchPageErrors(browser, RESPONSIVE.maxFindingsPerCheck);
+    all.push(...await auditWidth(watched.browser, target, width, outDir));
+    captures.push({ width, file: path.join(outDir, `w${width}.png`), pageErrors: watched.errors });
+  }
   const hints = all.filter((f) => f.hint).map(({ hint, ...rest }) => rest);
   const findings = all.filter((f) => !f.hint);
   const pass = findings.every(isHint); // `bidi-field?` is reported among the findings but never fails the run, and the hints are a section of their own
+  const pageErrors = captures.flatMap((c) => c.pageErrors.map((message) => ({ width: c.width, message })));
   const head = ['width', 'check', 'element', 'detail'];
   const row = (f) => [f.width, f.check, f.element, f.detail];
   const md = writeReport(outDir, {
     title: 'ui-check responsive', verdict: pass ? 'PASS' : 'FAIL',
-    summary: [`widths: ${widths.join(', ')}`, `findings: ${findings.length}${findings.some(isHint) ? ` (${findings.filter(isHint).length} hints, not failures)` : ''}`, `hints: ${hints.length}`, `screenshots: ${outDir}/w<width>.png`],
-    head, rows: findings.map(row), hints: { head, rows: hints.map(row) }, data: { findings, hints },
+    summary: [`widths: ${widths.join(', ')}`, `findings: ${findings.length}${findings.some(isHint) ? ` (${findings.filter(isHint).length} hints, not failures)` : ''}`, `hints: ${hints.length}`, `screenshots: ${outDir}/w<width>.png`, ...(pageErrors.length > 0 ? [`page errors: ${pageErrors.length} uncaught (listed in report.json; they never change the verdict)`] : [])],
+    head, rows: findings.map(row), hints: { head, rows: hints.map(row) }, data: { findings, hints, ...(pageErrors.length > 0 ? { pageErrors } : {}) },
   });
-  return { pass, md, findings, hints };
+  return { pass, md, findings, hints, captures };
 }
 
 /** Run responsive. @param {string[]} argv @returns {Promise<number>} exit code */

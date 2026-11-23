@@ -4,7 +4,8 @@
 // (`ui-coverage check --results`) reads these exact field names, so never rename them. evidence is the path of that state's report.
 // part is "compare" or "responsive", added by `withPart` once the part is known (an error record carries the part that threw); a record without it counts as not-compare. A pixel finding carries `percent` (the diff share, a number) unless the image sizes differ. hints is the number of heuristic hints (report.json `hints` at `evidence`): reported, never part of status. width is the viewport width the part ran at (an integer; a compare record carries the Figma frame width). It is null only on an
 // error record whose Figma cache could not be read, so the frame size is unknown. url is the state's URL (the review page links it); a compare
-// record also carries images {baseline, actual, diff}, scale, diffPixels (odiff), driftPixels (colour metric) and comparator (read by lib/ledger.mjs and ui-proof).
+// record also carries images {baseline, actual, diff}, scale, diffPixels (odiff), driftPixels (colour metric) and comparator (read by lib/ledger.mjs and ui-proof);
+// a responsive record with a screenshot carries capture (its w<width>.png path) and pageErrors (uncaught page errors), read by lib/ledger.mjs.
 import fs from 'node:fs';
 import path from 'node:path';
 import { stateKey } from './batch-schedule.mjs';
@@ -45,15 +46,18 @@ export function compareRecords(state, { md, pixels, elementRows, images }, { roo
 }
 
 /**
- * One record per audited width; a width without findings passes.
+ * One record per audited width; a width without findings passes. A width that has a capture (auditAll `captures`) also carries
+ * `capture` (the w<width>.png path, read by lib/ledger.mjs) and `pageErrors` (its uncaught page errors, never part of status).
  * @param {object} state normalised state
  * @param {number[]} widths audited widths
- * @param {{md: string, findings: {width: number, check: string, element: string, detail: string}[], hints?: {width: number}[]}} result auditAll result
+ * @param {{md: string, findings: {width: number, check: string, element: string, detail: string}[], hints?: {width: number}[], captures?: {width: number, file: string, pageErrors: string[]}[]}} result auditAll result
  */
-export function responsiveRecords(state, widths, { md, findings, hints = [] }) {
+export function responsiveRecords(state, widths, { md, findings, hints = [], captures = [] }) {
   return widths.map((width) => {
     const own = findings.filter((f) => f.width === width).map(({ check, element, detail }) => ({ check, element, detail }));
-    return record(state, width, own, md, hints.filter((h) => h.width === width).length);
+    const shot = captures.find((c) => c.width === width);
+    const capture = shot ? { capture: shot.file, pageErrors: shot.pageErrors } : {};
+    return { ...record(state, width, own, md, hints.filter((h) => h.width === width).length), ...capture };
   });
 }
 

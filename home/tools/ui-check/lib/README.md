@@ -2,7 +2,7 @@
 
 - `args.mjs` - strict CLI flag parsing that reports mistakes as UsageError.
 - `audit.mjs` - in-page responsive audit (serialised into the browser by Playwright).
-- `batch-records.mjs` - `batch` result records ({surface, state, locale, width, status, evidence, findings, part}; a pixel finding has `percent`), results.json, summary.md and checkpoint writers, prior-record reader for `--resume`.
+- `batch-records.mjs` - `batch` result records ({surface, state, locale, width, status, evidence, findings, part}; a pixel finding has `percent`; a responsive record with a screenshot has `capture` and `pageErrors`), results.json, summary.md and checkpoint writers, prior-record reader for `--resume`.
 - `batch-schedule.mjs` - `batch` scheduling: `--jobs`, parallel/serial split, worker pool, progress line, `--resume` decision.
 - `bidi.mjs` - the pure `bidi-field` (filled state), `bidi-placeholder` and `bidi-placeholder?` decisions for fields in an rtl context (the containing element, not only `<html>`).
 - `browser.mjs` - open deterministic pages (CPU raster and explicit autofocus by default; opt-in `bypassCSP`, `steps`, locale, colour scheme, storage, cookies, expected direction).
@@ -20,6 +20,8 @@
 - `rendered-checks.mjs` - pure decisions for `raw-i18n-key`, `focus-indicator`, `focus-ring-width` (report-only), `rtl-physical-align`, `tap-target`.
 - `report.mjs` - write report.json and a report.md capped at 40 lines.
 - `spec.mjs` - flatten a Figma REST node tree into a list of boxes relative to the frame root.
+- `ledger.mjs` - the round ledger (`ledger.json`): compare rows (`states`) with `--prev` and `--no-worse`, plus `root` and the responsive `captures` (sha256, finding ids, page errors) that `--same` reads.
+- `same-run.mjs` - `run --same <base run>`: per responsive capture identical / equal / changed / new / missing / other-renderer, with new finding ids and new page errors.
 - `same-as-default.mjs` - the `same-as-default?` pass of `batch`: saves each page's comparable texts beside its report, compares later locales with the first, updates their report and record.
 - `states.mjs` - `batch --states` file schema validation (errors name `states[i].field`) and `--only` selection.
 - `steps.mjs` - opt-in `--steps` interaction steps: schema validation (fixed action table, step-numbered UsageErrors) and the runner; format in ../README.md.

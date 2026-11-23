@@ -1,16 +1,20 @@
 // Purpose: the round ledger of `ui-check batch` and `run`: per compare state the sha256 of the capture, the leftover pixel count and
 // the failing element rows, and two comparisons: with the previous round (`--prev`: change, `no-gain`, `PLATEAU` after 2 no-gain
 // rounds) and with the lane's reference run (`--no-worse`: identical / equal / better / worse / new / missing; any worse or missing
-// state fails). Exports: LEDGER_FILE, COMPARATOR, buildLedger, writeLedger, readLedger, compareRounds, compareReference,
-// formatRounds, formatReference.
+// state fails). Beside the compare rows (`states`) it keeps `root` (the git top-level the run started in) and `captures`: per
+// responsive record (state x width) the capture file, its sha256, its finding ids and its page errors, which `run --same`
+// (lib/same-run.mjs) compares with a base run. Exports: LEDGER_FILE, COMPARATOR, keyOf, sha256Of, buildLedger, writeLedger,
+// readLedgerFile, readLedger, mismatchLine, compareRounds, compareReference, formatRounds, formatReference.
 // Invariants: a reference made with another comparator (name, version, options) or another renderer (platform, Chromium version,
 // pixel ratio) is never compared: the result fails closed with the different-comparator or different-renderer line, and a new
-// reference is taken on the base tip, never on the lane tip. Diagnostic records never enter a ledger. Pure apart from the file I/O
-// of writeLedger / readLedger / the sha256 of each capture.
+// reference is taken on the base tip, never on the lane tip. Diagnostic records never enter a ledger. A capture that cannot be
+// read has sha256 null (never a hash of nothing). `captures` never feeds compareRounds or compareReference. Pure apart from the
+// file I/O of writeLedger / readLedger / the sha256 of each capture.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isHint } from './bidi.mjs';
 import { UsageError } from './errors.mjs';
 import { PIXEL } from './tolerances.mjs';
 
@@ -30,8 +34,36 @@ function odiffVersion() {
 /** The comparator id every record and ledger carries: odiff, its version and the exact options lib/pixels.mjs passes. */
 export const COMPARATOR = Object.freeze({ name: 'odiff', version: odiffVersion(), options: Object.freeze({ threshold: PIXEL.threshold, antialiasing: true }) });
 
-const keyOf = (r) => `${r.surface} / ${r.state} / ${r.locale ?? 'default'} @${r.width}`;
-const sha256Of = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+/** The row key of a record: `surface / state / locale @width` (locale `default` when unset). */
+export const keyOf = (r) => `${r.surface} / ${r.state} / ${r.locale ?? 'default'} @${r.width}`;
+/** sha256 (hex) of a file's bytes. @throws the fs error when the file cannot be read */
+export const sha256Of = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+
+/** sha256 of a capture, or null when it is missing or unreadable (a file-system error); any other error is thrown. */
+function captureSha(file) {
+  if (typeof file !== 'string') return null;
+  try {
+    return sha256Of(file);
+  } catch (error) {
+    if (typeof error.code === 'string') return null; // ENOENT, EACCES, EISDIR ...: no capture to prove anything with
+    throw error;
+  }
+}
+
+/** A finding's id for "no new finding": its check and element (the detail carries measured numbers that move between runs). */
+const findingId = (f) => `${f.check} ${f.element}`;
+
+/**
+ * One capture row for a responsive record (a state at one width); null for any other record.
+ * @param {object} r batch record; a responsive record from `responsiveRecords` carries `capture` (file path) and `pageErrors`
+ * @param {string|null} runDir the run folder: the file is stored relative to it, so the folder can move; null keeps it absolute
+ */
+function captureRow(r, runDir) {
+  if (r.part !== 'responsive' || r.diagnostic) return null;
+  const file = typeof r.capture === 'string' ? (runDir ? path.relative(runDir, r.capture) : r.capture) : null;
+  const findings = [...new Set(r.findings.filter((f) => !isHint(f)).map(findingId))];
+  return { key: keyOf(r), file, sha256: captureSha(r.capture), findings, pageErrors: Array.isArray(r.pageErrors) ? r.pageErrors : [] };
+}
 
 /** One ledger row for a compare record that has a capture; null for any other record. */
 function stateRow(r) {
@@ -43,12 +75,14 @@ function stateRow(r) {
 /**
  * Build the ledger of one round from its batch records.
  * @param {object[]} records batch records (compare records carry images.actual, diffPixels and scale)
- * @param {{renderer: object, step?: string|null, rule?: string, conditions?: object|null, head?: string|null}} meta run facts stored beside the rows
- * @returns {object} { comparator, renderer, step, rule, conditions, head, createdAt, states: [...] }
+ * @param {{renderer: object, step?: string|null, rule?: string, conditions?: object|null, head?: string|null, root?: string|null, runDir?: string|null}} meta
+ *   run facts stored beside the rows; root = the git top-level the run started in (null outside git); runDir = the run folder capture paths are relative to
+ * @returns {object} { comparator, renderer, step, rule, conditions, head, root, createdAt, states: [...], captures: [{key, file, sha256, findings, pageErrors}] }
  */
-export function buildLedger(records, { renderer, step = null, rule = 'default', conditions = null, head = null }) {
+export function buildLedger(records, { renderer, step = null, rule = 'default', conditions = null, head = null, root = null, runDir = null }) {
   const states = records.map(stateRow).filter(Boolean);
-  return { comparator: COMPARATOR, renderer, step, rule, conditions, head, createdAt: new Date().toISOString(), states };
+  const captures = records.map((r) => captureRow(r, runDir)).filter(Boolean);
+  return { comparator: COMPARATOR, renderer, step, rule, conditions, head, root, createdAt: new Date().toISOString(), states, captures };
 }
 
 /** Write <outDir>/ledger.json. @returns {string} its path */
@@ -59,22 +93,33 @@ export function writeLedger(outDir, ledger) {
 }
 
 /**
- * Read the ledger of an earlier run.
+ * Read the ledger of an earlier run once, with the sha256 of the exact bytes parsed (so a ledger rewritten meanwhile cannot mix two versions).
  * @param {string} where a run folder (holding ledger.json) or the ledger file itself
  * @param {string} flag the flag it came from, for the error message
+ * @returns {{file: string, sha256: string, ledger: object}} file = the ledger file read
  * @throws {UsageError} when it is missing, unreadable or has no states list
  */
-export function readLedger(where, flag) {
+export function readLedgerFile(where, flag) {
   const file = fs.existsSync(where) && fs.statSync(where).isDirectory() ? path.join(where, LEDGER_FILE) : where;
+  let bytes;
   let ledger;
   try {
-    ledger = JSON.parse(fs.readFileSync(file, 'utf8'));
+    bytes = fs.readFileSync(file);
+    ledger = JSON.parse(bytes.toString('utf8'));
   } catch (error) {
     throw new UsageError(`--${flag} ${where}: cannot read ${file}: ${error.message}`);
   }
   if (!Array.isArray(ledger?.states)) throw new UsageError(`--${flag} ${where}: ${file} is not a ui-check ledger (no states list)`);
-  return ledger;
+  return { file, sha256: crypto.createHash('sha256').update(bytes).digest('hex'), ledger };
 }
+
+/**
+ * Read the ledger of an earlier run (a ledger from before `root` and `captures` reads the same).
+ * @param {string} where a run folder (holding ledger.json) or the ledger file itself
+ * @param {string} flag the flag it came from, for the error message
+ * @throws {UsageError} when it is missing, unreadable or has no states list
+ */
+export const readLedger = (where, flag) => readLedgerFile(where, flag).ledger;
 
 /** Was the round better than the one before: fewer odiff pixels, colour-metric pixels or rows, and none went up. */
 const COUNTS = ['pixels', 'drift', 'rows'];
@@ -99,8 +144,8 @@ export function compareRounds(current, prev) {
   });
 }
 
-/** The line that says why two ledgers cannot be compared, or null when they can. */
-function mismatchLine(current, reference) {
+/** The line that says why two ledgers cannot be compared (another comparator or renderer), or null when they can. */
+export function mismatchLine(current, reference) {
   if (JSON.stringify(current.comparator) !== JSON.stringify(reference.comparator)) {
     return `different comparator: reference ${JSON.stringify(reference.comparator ?? null)}, this run ${JSON.stringify(current.comparator)}; take a new reference on the base tip (never on the lane tip)`;
   }

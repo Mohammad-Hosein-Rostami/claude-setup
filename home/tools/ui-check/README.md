@@ -33,7 +33,7 @@ The browser binary is found by Playwright itself in its cache (`~/Library/Caches
 | `compare` | `--url U --root SEL --cache DIR [--map map.json] [--steps steps.json] [--bypass-csp] [--no-autofocus] [--max-diff 0.5] [--strict] [context flags] [--out DIR]` | Viewport = frame size, DSF = scale. Element gate (box +-1px, font size and family, line-height, letter-spacing, colour, background, radius, padding, gap, stroke width and colour by `strokeAlign` (INSIDE = border, OUTSIDE = outline or box-shadow ring, CENTER = outline with offset -weight/2; standards/figma.md), image fills loaded and of the right aspect, and every broken eager image in the root even without a map) then pixel gate (odiff, threshold 0.1, anti-aliasing ignored; size mismatch is reported first and both images are padded) plus the colour metric (any channel > 2 levels, anti-aliasing counted; Figma TEXT boxes left out in a default run), which fails above the same limit: odiff's threshold hides a uniform drift of up to about 26 levels. `--strict` = the strict rule: `--max-diff 0` and the colour metric over every pixel (fail closed until `attribute` classes text anti-aliasing). |
 | `responsive` | `--url U [--widths 320,...,1920] [--height 900] [--steps steps.json] [--bypass-csp] [--no-autofocus] [--same-in-all-locales "ICE,Google"] [context flags] [--out DIR]` | Per width, the findings in the table below. Screenshots `w<width>.png` stay on disk. |
 | `batch` | `--states file.json [--only surface[,surface]] [--jobs 4] [--resume] [--prev RUN] [--out DIR]` | Many states in one run (below). `compare` for a state with `figma`, `responsive` for a state with widths. Writes `ledger.json` beside `results.json`; `--prev RUN` prints the round table (see `run`). |
-| `run` | `--matrix M [--strict] [--base-url U] [--states S] [--out DIR] [--jobs N] [--only surface,...] [--prev RUN] [--no-worse RUN] [--self-test] [--step <road>.s<N>]` | The one call of a UI round (section `run` below): `ui-coverage scaffold` + `batch` + `ui-coverage check`. |
+| `run` | `--matrix M [--strict] [--base-url U] [--states S] [--out DIR] [--jobs N] [--only surface,...] [--prev RUN] [--no-worse RUN] [--same RUN] [--self-test] [--step <road>.s<N>]` | The one call of a UI round (section `run` below): `ui-coverage scaffold` + `batch` + `ui-coverage check`. |
 | `columns` | `--url U --table SEL [--width 1440] [--no-autofocus]` | Body cells vs header cells: left delta <= 1px, width delta <= 2px. |
 | `first-paint` | `--states S [--only surface[,surface]] [--out DIR] [--project DIR]` | Per state, cold-loads the URL with every script held, then every font held, and checks the frames in order: blank and/or one neutral loader, then the final screen, nothing in between, no layout shift after the first visible frame (section `first-paint` below). |
 | `figma-diff` | `--states S [--only surface[,surface]] [--decisions D] [--out DIR] [--project DIR]` | Per state with a `figma` part: built parts and texts with no Figma node, Figma texts and drawings with no built part, wording differences; each row classed `fix`, `keep` or `ask the owner` (section `figma-diff` below). |
@@ -214,6 +214,13 @@ Round ledger (`lib/ledger.mjs`, also written by `batch`): `<out>/ledger.json` ho
 odiff, threshold 0.1, anti-aliasing ignored), the renderer (platform, Chromium version), the `--step` label, the commit sha of HEAD,
 and per compare state (diagnostic states excluded) the sha256 of the capture, the leftover pixels, the failing element rows and the
 pixel ratio. Every compare record in `results.json` carries `url`, `images` {baseline, actual, diff}, `scale`, `diffPixels` and `comparator`.
+The ledger also holds `root` (the absolute git top-level of the folder `run` started in, so `cd <worktree> && ui-check run ...` names
+that worktree; null outside git) and `captures`: per responsive record (state x width, diagnostic states excluded) its key
+`surface / state / locale @width`, `file` (the `w<width>.png` screenshot, relative to the run folder), `sha256` (null when the file is
+missing or unreadable), `findings` (finding ids `check element`, hints left out) and `pageErrors` (the page's uncaught errors,
+Playwright `pageerror`: throws and unhandled rejections, not `console.error`; at most 50, 300 characters each). Every responsive record
+in `results.json` with a screenshot carries `capture` and `pageErrors`; page errors never change a verdict. Older ledgers without
+these fields read as before.
 - `--prev RUN` (the previous round's `--out` folder or its `ledger.json`): per state `identical`, `gain`, `no-gain` (a failing state
   whose pixels and rows did not go down) or `new`, with the change in pixels and rows; `PLATEAU` after 2 no-gain rounds in a row:
   change approach (figma-pixel-perfect step 5), never lower the bar.
@@ -223,6 +230,16 @@ pixel ratio. Every compare record in `results.json` carries `url`, `images` {bas
   still fails. A reference made with another comparator (name, version or options) or renderer prints the `different comparator` /
   `different renderer` line and exits 1: take a new reference on the base tip, never on the lane tip (diff counts do not carry
   between comparators).
+- `--same RUN` (a base run's `--out` folder or its `ledger.json`, read once before anything runs; unreadable exits 2 naming `--same`):
+  is each responsive capture the same render as the base run's (a run of the same matrix and states on the base tip)? Per capture
+  (`lib/same-run.mjs`): `identical` (same sha256), `equal` (other bytes, but odiff with the ledger's comparator options and the colour
+  metric both count 0 px), `changed` (a pixel differs or the size does; the diff image is under `<out>/same/`), `new` (no base row),
+  `missing` (a base row this run lacks, or a capture absent or unreadable on either side: never identical) or `other-renderer` (the
+  base was made with another comparator or renderer: every row, never compared). Each row also lists `newFindings` (finding ids
+  the base row lacks) and `newPageErrors` (page errors beyond the base row's, counted per message). Printed as
+  `same: <i> identical, <e> equal, <c> changed, <n> new, <m> missing` (`same: 0 rows` when there is no capture), then each row that is
+  not identical or equal or has something new; stored in the ledger as `same: {ref: {file, sha256, head, createdAt}, mismatch, rows}`.
+  It never changes the exit code: the check plan reads it. Writes only under this run's `--out`.
 - `--self-test`: captures every compare state a second time (into `<out>/self-test`); a state whose two captures differ in sha256
   is a failing `nondeterministic` finding.
 - Pass rule: `--strict`, or `rule: strict` in the matrix (`ui-coverage init --rule strict`), makes every compare strict (the stricter
