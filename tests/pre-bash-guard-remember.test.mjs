@@ -5,7 +5,7 @@
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { warmExec } from './warm-exec.mjs';
 import { delimiter, join, resolve } from 'node:path';
 import { test } from 'node:test';
@@ -99,6 +99,55 @@ test('G1: a secret next to git push: the push still asks the owner on every send
   assert.ok(noAllowMemory(s));
 });
 
+test('G1: the same secret-only command sent again and again never opens a dialog, and each send logs its own "secret" line', () => {
+  const s = session();
+  for (let send = 0; send < 3; send += 1) assert.deepEqual([s.sendOnce(SECRET_COMMAND, 'deny').stdout, s.dialogs()], ['', 0], `send ${send}`);
+  assert.deepEqual(s.log().map(({ outcome, command }) => [outcome, command]), Array(3).fill(['secret', '']));
+  assert.ok(noAllowMemory(s));
+});
+
+test('G1: a new command holding a value sent before is judged on its own: it runs as a secret line, never as "remembered"', () => {
+  const s = session();
+  s.sendOnce(SECRET_COMMAND, 'deny');
+  const fresh = s.sendOnce(`KEY='${VALUE}' ./never-sent-before.sh`, 'deny');
+  assert.deepEqual([fresh.stdout, s.dialogs(), s.log().at(-1).outcome], ['', 0, 'secret']);
+  assert.ok(s.log().every(({ outcome }) => outcome !== 'remembered'));
+  s.run(`KEY='${VALUE}' git push origin main`, 'allow');
+  assert.equal(s.dialogs(), 1, 'an earlier secret-only send does not silence a push next to the same value');
+});
+
+test('G1: no file the guard writes (its log, its bounce store) holds the raw value, and no allow memory is made', () => {
+  const s = session();
+  s.sendOnce(SECRET_COMMAND, 'deny');
+  s.run(`KEY='${VALUE}' git push origin main`, 'allow');
+  s.run(`KEY='${VALUE}'; perl -e 'system("git push -f")'`, 'allow'); // bounced first: writes the bounce store
+  const files = readdirSync(s.home.HOME, { recursive: true }).map((name) => join(s.home.HOME, String(name))).filter((path) => statSync(path).isFile());
+  assert.ok(files.length > 0, 'the bounce store was written under HOME');
+  for (const path of files) assert.equal(readFileSync(path, 'utf8').includes(VALUE), false, path);
+  assert.equal(JSON.stringify(s.log()).includes(VALUE), false);
+  assert.ok(noAllowMemory(s));
+});
+
+test('G1: a push next to a secret that times out goes ahead as a timeout, and the next send asks again (nothing is remembered)', () => {
+  const s = session();
+  const both = `KEY='${VALUE}' git push origin main`;
+  const waitedOut = { CLAUDE_ASK_TIMEOUT_S: '1', FAKE_DIALOG_DELAY_MS: '1200' };
+  assert.equal(s.run(both, 'timeout', 'sess-1', waitedOut).stdout, '');
+  assert.deepEqual([s.dialogs(), s.log().map(({ outcome }) => outcome)], [1, ['secret', 'timeout']]);
+  const denied = s.run(both, 'deny');
+  assert.equal(JSON.parse(denied.stdout).hookSpecificOutput.permissionDecision, 'deny');
+  assert.equal(s.dialogs(), 2, 'the timeout was not remembered');
+  assert.ok(noAllowMemory(s));
+});
+
+test('G1: a short secret value runs silently on every send, and its log lines hold no command', () => {
+  const s = session();
+  for (let send = 0; send < 2; send += 1) assert.equal(s.sendOnce('PGPASSWORD=short psql -h db', 'deny').stdout, '', `send ${send}`);
+  assert.equal(s.dialogs(), 0);
+  assert.deepEqual(s.log().map(({ outcome, command }) => [outcome, command]), Array(2).fill(['secret', '']));
+  assert.ok(noAllowMemory(s));
+});
+
 test('G1: with no GUI a secret-only command still runs, and a secret next to a push still gets the CLI ask', () => {
   const s = session();
   const noGui = hookEnv({ HOME: s.home.HOME, CLAUDE_PROJECT_DIR: PROJECT });
@@ -124,6 +173,29 @@ test('G1: a secret never hides another risk: the first send bounces and the iden
     s.sendOnce(command, 'allow');
     assert.equal(s.dialogs(), 1, `dialog for: ${command}`);
   }
+});
+
+test('G1: a secret next to a hidden push is judged by the hidden push alone: bounced once, then the dialog with the normal timeout, the value masked', () => {
+  const s = session();
+  const command = `KEY='${VALUE}'; python3 -c "import os;os.system('git push -f origin main')"`;
+  const small = { CLAUDE_ASK_SECRET_TIMEOUT_S: '7', CLAUDE_ASK_TIMEOUT_S: '40' };
+  assert.equal(isBounce(s.sendOnce(command, 'allow', 'sess-1', small)), true);
+  s.sendOnce(command, 'allow', 'sess-1', small);
+  assert.equal(s.dialogs(), 1);
+  assert.match(s.shownText(), /With no answer in 40 s/);
+  assert.equal(s.shownText().includes(VALUE), false);
+  assert.ok(noAllowMemory(s));
+});
+
+test('G1: a secret value that itself holds dangerous words runs as data, and does not hide a later hidden push', () => {
+  const s = session();
+  assert.equal(s.sendOnce("KEY='git push -f' ./run", 'deny').stdout, '');
+  assert.equal(s.dialogs(), 0);
+  const hidden = "KEY='git push -f'; python3 -c \"import os;os.system('git push -f origin main')\"";
+  assert.equal(isBounce(s.sendOnce(hidden, 'allow')), true);
+  s.sendOnce(hidden, 'allow');
+  assert.equal(s.dialogs(), 1);
+  assert.deepEqual(s.log().map(({ outcome }) => outcome), ['secret', 'secret', 'bounce', 'secret', 'allow']);
 });
 
 test('the secret-only timeout knob no longer shortens anything: a push ask (with or without a secret) waits the normal timeout', () => {
