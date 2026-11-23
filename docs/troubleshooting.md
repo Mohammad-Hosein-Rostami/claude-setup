@@ -10,7 +10,7 @@
 | skill-router names skills for a non-UI prompt | A keyword is too broad. Narrow it in `PROMPT_ROUTES` and check with `skillsForPrompt()`. |
 | Sessions ended when the editor window closed or reloaded | They ran in the editor's built-in terminal, which stops with the window. Run long or unattended sessions in a plain terminal app or tmux; resume with `claude --model <m> --effort <e> -c`. |
 | Windows: items copied, edits do not follow | Symlinks need Developer Mode. Enable it and re-run `install.ps1`. |
-| Plugin install skipped | `claude plugin` subcommands missing. Use `/plugin` and the list in `plugins/plugins.json`. |
+| Plugin install skipped | `claude plugin` subcommands missing. Use `/plugin` and install the plugins the install output names (the ones `enabledPlugins` turns on). |
 | Commit rejected, gitleaks | A staged change looks like a secret. Remove it; do not bypass the hook. |
 | Commit blocked: gitleaks not installed | `brew bundle --file tools/Brewfile` (or the Windows script). |
 | `ui-check` exit 2: `Playwright not found from ...` | Pass `--project <dir with @playwright/test>`. |

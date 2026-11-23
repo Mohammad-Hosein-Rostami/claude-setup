@@ -58,9 +58,14 @@ Create a personal access token in Figma (Settings > Security) with read access t
   Never print it; `ui-check` never logs it. Without a token use the MCP fallback in `docs/figma-pixel-perfect.md`.
 
 ## Plugins
-`plugins/plugins.json` lists marketplaces and enabled/disabled plugins; the installer runs `claude plugin marketplace
-add` and `claude plugin install`. If the CLI lacks those subcommands, use `/plugin` in Claude Code and add what the
-file lists. `gitkraken` is installed by the GitKraken app.
+`plugins/plugins.json` lists marketplaces and enabled/disabled plugins. The installer installs only the plugins that
+`enabledPlugins` of the merged settings (`settings/base.json` < `<os>.json` < `local.json`) turns on: it runs
+`claude plugin marketplace add` for the marketplaces those come from and `claude plugin install <id>` for each. A plugin
+that is off is not installed; one installed earlier stays installed and off (nothing is uninstalled). To use an off
+plugin in one project, turn it on in that project's settings and run `claude plugin install <id>` once. An unreadable
+`plugins.json` or settings file stops the install with the reason; a plugin id that is not `name@marketplace` (letters,
+digits, `.`, `_`, `-`) is refused. If the CLI lacks the plugin subcommands, use `/plugin` in Claude Code and install the
+plugins the install output names. `gitkraken` is installed by the GitKraken app.
 
 ## Updating
 `git pull`. Linked content (skills, agents, rules, standards, hooks, tools, lead rules) is live on disk. Re-run `scripts/install.sh`
