@@ -221,12 +221,26 @@ test('reportBody finds the three sections as #, ** or plain headings, in any ord
   assert.equal(reportBody(undefined), '');
 });
 
-test('reportBody counts the whole report when a heading of another name follows the sections (body moved under Caveats)', () => {
+test('reportBody counts the whole report when a heading of another name at the sections\' level or above follows them (body moved there)', () => {
   for (const report of [
     'ok\n## Caveats\nv\n## Details\nthe real body',
+    'ok\n## Caveats\nv\n# Details\nthe real body',
     'ok\n**Constraints**\nc\n**Findings**\nthe real body',
-    'ok\nCaveats: v\nDetails:\nthe real body',
+    'ok\n**Caveats**\nv\n## Findings\nthe real body',
+    'ok\nCaveats: v\n**Findings**\nthe real body',
   ]) assert.equal(reportBody(report), report, report);
+});
+
+// Review R1 of 4f9d4b91: a label inside a section was taken for a heading of another name, so a fair report was counted whole.
+test('reportBody: labels inside the sections never end them, and decisions needed may follow them', () => {
+  for (const report of [
+    'done\n## Constraints\nk\n## Not run\nn\n## Caveats\n**Unproven:** x',
+    'done\n## Constraints\nk\n## Not run\nTests:\n- s\n## Caveats\nv',
+    'done\n## Constraints\nk\n## Not run\nn\n## Caveats\nv\ndecisions needed:\n- q',
+    'done\n## Constraints\nk\n## Caveats\n### Unproven\n- x\n**Open**\n- y\n## Decisions needed\n- q', // deeper heading, bold line below ##
+    'done\n**Not run**\nn\n**Unproven:** x\n**Decisions needed:** none',
+    'done\nCaveats: v\nDetails:\n- a plain label is a line of its section', // a plain label can not be told from "Tests:"
+  ]) assert.equal(reportBody(report), 'done', report);
 });
 
 test('SubagentStop counts the body only: long sections pass, a long body is sent back naming the exemption', async () => {
@@ -236,6 +250,8 @@ test('SubagentStop counts the body only: long sections pass, a long body is sent
   const base = { hook_event_name: 'SubagentStop', session_id: uid('s'), agent_id: uid('a'), agent_type: 'implementer', agent_transcript_path: transcript };
   const sections = `\n## Constraints\n${words(40)}\n## Not run\n${words(40)}\n## Caveats\n${words(40)}`;
   assert.equal(run(BUDGET, dir, { ...base, last_assistant_message: `${words(50)}${sections}` }).status, 0, 'body within cap + long sections');
+  const labelled = `${words(50)}\n## Constraints\n${words(40)}\n## Not run\nTests:\n- ${words(40)}\n## Caveats\n**Unproven:** ${words(40)}\ndecisions needed: none`;
+  assert.equal(run(BUDGET, dir, { ...base, last_assistant_message: labelled }).status, 0, 'labels inside the sections (review R1)');
   const over = run(BUDGET, dir, { ...base, last_assistant_message: `${words(51)}${sections}` });
   assert.equal(over.status, 2, 'body over the cap');
   assert.match(over.stderr, /report body is 51 words; the cap is 50 words\. The Constraints, Not run and Caveats sections are not counted/);

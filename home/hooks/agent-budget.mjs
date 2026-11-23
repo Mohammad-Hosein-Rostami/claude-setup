@@ -247,7 +247,7 @@ export function subagentStopReason(input) {
   const { over, size } = overCap(reportBody(input.last_assistant_message), cap);
   return over
     ? `Your report body is ${size} ${cap.unit}; the cap is ${cap.limit} ${cap.unit}. The Constraints, Not run and Caveats sections are not counted `
-      + 'when they come last, each under its own heading (## Name, **Name** or Name:) and no heading of another name after them. '
+      + 'when they come last, each under its own heading (## Name, **Name** or Name:) and no heading of another name at their level or above after them. '
       + 'Rewrite the body within the cap: verdict first, put detail in a file and give its path; keep the three sections whole.'
     : null;
 }

@@ -1,7 +1,8 @@
 // Reply-size caps named in a prompt ("report <= 250 words", "reply in 20 lines", "حداکثر ۳۰۰ کلمه") and the size of a reply.
 // Exports: parseCap(prompt), measure(text, unit), overCap(text, cap), reportBody(text).
 // Invariants: pure, no I/O. An agent report's cap counts its body only (reportBody): the Constraints, Not run and Caveats
-// sections CLAUDE.md says are never trimmed are left out, but only when they come last and no heading of another name follows. A number is a cap only when it is tied to the reply itself: a reply noun (reply, report,
+// sections CLAUDE.md says are never trimmed are left out, but only when they come last and no heading of another name at
+// their level or above follows (labels inside them never count). A number is a cap only when it is tied to the reply itself: a reply noun (reply, report,
 // answer, summary, response, status, digest, return) followed by at most a few filler words and then the amount, or an
 // amount that qualifies such a noun ("25-line reply"). Rule quotes ("C4 files <=300 lines") and per-file or per-function
 // limits never match. Persian: "حداکثر N کلمه|خط" counts unless the sentence is about a file, function or code; Persian
@@ -76,33 +77,53 @@ export function overCap(text, cap) {
 
 // The three sections every agent report carries (home/CLAUDE.md "Agents (workers)", Report): never trimmed, so never counted.
 const REQUIRED_NAME = /^(?:constraints|not run|caveats)\b/i;
-const ATX_HEADING = /^\s{0,3}#{1,6}\s+(.*)$/; // "## Caveats"
-const BOLD_HEADING = /^\s*\*\*([^*\n]+)\*\*/; // "**Not run**", "**Caveats:** none"
+// "decisions needed" is a report part the briefs ask for too: a heading of that name never ends the sections, nor starts them.
+const ALLOWED_NAME = /^decisions needed\b/i;
+const ATX_HEADING = /^\s{0,3}(#{1,6})\s+(.*)$/; // "## Caveats"; the level is the number of #
+const BOLD_HEADING = /^\s*\*\*([^*\n]+)\*\*\s*:?\s*(.*)$/; // "**Not run**", "**Caveats:** none"; group 2 is the text after it
 const PLAIN_NAME_ALONE = /^\s*(?:constraints|not run|caveats)\s*$/i; // "Caveats" on its own line
-// "Constraints: none", "Not run (why):", "Details:"; the label is at most 3 words, so a sentence ending in ':' is no heading.
-const PLAIN_LABEL = /^\s*([A-Za-z][A-Za-z-]*(?: [A-Za-z-]+){0,2})\s*(?:\([^)\n]*\))?\s*:(.*)$/;
+// "Constraints: none", "Not run (why):"; the label is at most 3 words, so a sentence ending in ':' is no heading.
+const PLAIN_LABEL = /^\s*([A-Za-z][A-Za-z-]*(?: [A-Za-z-]+){0,2})\s*(?:\([^)\n]*\))?\s*:/;
 const FENCE = /^\s{0,3}(?:```|~~~)/; // a "# comment" inside a code block is no heading
+// Heading levels below every ATX level (1-6): a bold line, then a plain label. A smaller number is a higher heading.
+const BOLD_LEVEL = 7;
+const PLAIN_LEVEL = 8;
 const REQUIRED = 'required';
+const ALLOWED = 'allowed';
 const OTHER = 'other';
 
-/** A line's heading kind: REQUIRED (one of the three names), OTHER (any other heading) or null (no heading). */
-function headingKind(line) {
-  const title = ATX_HEADING.exec(line)?.[1] ?? BOLD_HEADING.exec(line)?.[1];
-  if (title !== undefined) return REQUIRED_NAME.test(title.replace(/[*_]/g, '').trim()) ? REQUIRED : OTHER;
-  if (PLAIN_NAME_ALONE.test(line)) return REQUIRED;
-  const label = PLAIN_LABEL.exec(line);
-  if (!label) return null;
-  if (REQUIRED_NAME.test(label[1])) return REQUIRED;
-  return label[2].trim() === '' ? OTHER : null; // "Commits: abc" is a body line, "Details:" alone opens a section
+const kindOfTitle = (title) => {
+  const name = title.replace(/[*_]/g, '').trim();
+  if (REQUIRED_NAME.test(name)) return REQUIRED;
+  return ALLOWED_NAME.test(name) ? ALLOWED : OTHER;
+};
+
+/**
+ * A line as a heading: its kind (REQUIRED: one of the three names, ALLOWED: decisions needed, OTHER: any other name) and its
+ * level, or null. A plain label of another name ("Tests:", "decisions needed:") and a bold label with text after it
+ * ("**Unproven:** x") are lines of the section they sit in, never a heading.
+ */
+function headingOf(line) {
+  const atx = ATX_HEADING.exec(line);
+  if (atx) return { kind: kindOfTitle(atx[2]), level: atx[1].length };
+  const bold = BOLD_HEADING.exec(line);
+  if (bold) {
+    const kind = kindOfTitle(bold[1]);
+    return kind !== OTHER || bold[2] === '' ? { kind, level: BOLD_LEVEL } : null;
+  }
+  const label = PLAIN_LABEL.exec(line)?.[1] ?? '';
+  return PLAIN_NAME_ALONE.test(line) || REQUIRED_NAME.test(label) ? { kind: REQUIRED, level: PLAIN_LEVEL } : null;
 }
 
 /**
  * The part of an agent report that its size cap counts. The three required sections are exempt so that agents never trim them
- * to fit the cap; the exemption holds only when every heading from the first section on is one of the three names (any order,
- * as `## Name`, `**Name**` or `Name:`), so a body moved under "Caveats" with a heading of its own is still counted.
+ * to fit the cap. They start at the first heading named Constraints, Not run or Caveats (any order, as `## Name`, `**Name**`
+ * or `Name:`); inside them any formatting is free, but a heading of another name at the level of that first heading or above
+ * (a `##` beside `## Caveats`, any `#` heading or bold line of its own beside `**Caveats**`) ends the exemption, so a body moved
+ * after the sections under a heading of its own is still counted.
  * @param {unknown} text the final report
- * @returns {string} the text before the first required section; the whole text when it has none or a later heading has
- *   another name; '' for a non-string
+ * @returns {string} the text before the first required section; the whole text when it has none or such a heading follows;
+ *   '' for a non-string
  */
 export function reportBody(text) {
   if (typeof text !== 'string') return '';
@@ -111,10 +132,11 @@ export function reportBody(text) {
   let inFence = false;
   lines.forEach((line, index) => {
     if (FENCE.test(line)) inFence = !inFence;
-    const kind = inFence ? null : headingKind(line);
-    if (kind !== null) headings.push({ index, kind });
+    const heading = inFence ? null : headingOf(line);
+    if (heading !== null) headings.push({ index, ...heading });
   });
-  const first = headings.findIndex((heading) => heading.kind === REQUIRED);
-  if (first === -1 || headings.slice(first).some((heading) => heading.kind !== REQUIRED)) return text;
-  return lines.slice(0, headings[first].index).join('\n');
+  const first = headings.find((heading) => heading.kind === REQUIRED);
+  if (!first) return text;
+  const ended = headings.some((heading) => heading.index > first.index && heading.kind === OTHER && heading.level <= first.level);
+  return ended ? text : lines.slice(0, first.index).join('\n');
 }
