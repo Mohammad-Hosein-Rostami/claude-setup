@@ -4,7 +4,8 @@
 //   start <id>               started = now, when work on the row begins; a set started or done cell is never changed; on a
 //                            parked or waiting row it clears the hold (and keeps a set started)
 //   done <id> <evidence>     done = now (started too when it is empty: such a row costs 0); a set done cell is never changed;
-//                            a hold at the head of the evidence is cleared, so a done row never reads as parked or waiting
+//                            the holds at the head of the evidence are cleared and evidence starting with one is refused
+//                            (exit 2), so a done row never reads as parked or waiting
 //   park <id|road> "<why>"   `parked: <why>` at the head of the evidence of the open row, or of every open row of the road
 //                            (`<road>.s<N>.*`), so the estimate can leave it out until `start` (estimate-spec R3); all rows or none
 //   wait <id> "<question>"   `waiting: <question>` the same way on one open row: it waits for the owner (R4); park and wait
