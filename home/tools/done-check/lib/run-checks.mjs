@@ -1,5 +1,6 @@
 // The done-check's engine (design: sections 3.2, 3.3, 5, 6): runs the planned commands without a shell, in a pool of POOL_SIZE, under one
-// total deadline, and turns each tool's own output (stdout, or its result file) into a CheckResult through parse.mjs.
+// total deadline, and turns each tool's own output (stdout, its result file, or stdout and stderr for go vet) into a CheckResult through
+// parse.mjs, or go-parse.mjs for a command that names its Go reader (`cmd.parse`).
 // Exports: runPlan.
 // Invariants: every child runs in its own process group (POSIX) and the whole group is killed at the deadline, at its exit (strays) and when
 //   this process exits; on Windows `taskkill /T /F` ends the tree. A result that cannot be read is not-run (error), never ok; a run
@@ -9,6 +10,7 @@ import { spawn } from 'node:child_process';
 import { lstatSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { basename, join, relative, sep } from 'node:path';
 import { POOL_SIZE } from './contract.mjs';
+import { parseGofmtList, parseGoTestJson, parseGoVet } from './go-parse.mjs';
 import { parseEslintJson, parseJestJson, parseTap, parseTsc, parseVitestJson } from './parse.mjs';
 
 const BYTES_PER_MIB = 1024 * 1024;
@@ -16,6 +18,9 @@ const MAX_OUTPUT_BYTES = 8 * BYTES_PER_MIB; // what is kept of one tool's stdout
 const MAX_RESULT_FILE_BYTES = 64 * BYTES_PER_MIB; // a tool's json result file bigger than this is not read
 const EVERY_LINE = [[1, Number.MAX_SAFE_INTEGER]];
 const TEST_PARSERS = { vitest: parseVitestJson, jest: parseJestJson };
+// The Go commands name their reader (`cmd.parse`, lib/go-plan.mjs); go test needs the module path to turn import paths into folders.
+const GO_PARSERS = { 'go-vet': (text) => parseGoVet(text), gofmt: (text) => parseGofmtList(text), 'go-test': (text, cmd) => parseGoTestJson(text, cmd.goModule ?? '') };
+const STDERR_PARSERS = new Set(['go-vet']);
 
 const slashed = (path) => path.replaceAll('\\', '/');
 const notRun = (cmd, why, ms) => ({ kind: cmd.kind, label: cmd.label, result: 'not-run', ms, failures: [], why });
@@ -58,14 +63,18 @@ function startCommand(cmd) {
     if (finished) return;
     finished = true;
     child?.stdout?.destroy();
+    child?.stderr?.destroy();
     settle({ code: null, signal: null, truncated, spawnFailed: false, timedOut: false, ...extra, stdout: Buffer.concat(chunks).toString('utf8') });
   };
-  child = spawn(cmd.argv[0], cmd.argv.slice(1), { cwd: cmd.cwd, shell: cmd.shell, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
-  child.stdout.on('data', (chunk) => {
+  const readsStderr = STDERR_PARSERS.has(cmd.parse);
+  child = spawn(cmd.argv[0], cmd.argv.slice(1), { cwd: cmd.cwd, shell: cmd.shell, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', readsStderr ? 'pipe' : 'ignore'], windowsHide: true });
+  const keep = (chunk) => {
     if (kept + chunk.length > MAX_OUTPUT_BYTES) { truncated = true; return; }
     kept += chunk.length;
     chunks.push(chunk);
-  });
+  };
+  child.stdout.on('data', keep);
+  if (readsStderr) child.stderr.on('data', keep); // go vet prints its diagnostics on stderr; both streams share the one cap
   child.once('error', () => finish({ spawnFailed: true }));
   child.once('exit', () => killTree(child)); // a stray the tool left behind would hold the pipe open
   child.once('close', (code, signal) => finish({ code, signal }));
@@ -103,6 +112,7 @@ async function checkOne(cmd, running, lookupFor) {
 
 async function parseFor(cmd, text, lookupFor) {
   if (text === null) return null;
+  if (cmd.parse) return Object.hasOwn(GO_PARSERS, cmd.parse) ? GO_PARSERS[cmd.parse](text, cmd) : null;
   if (cmd.kind === 'types') return parseTsc(text);
   if (cmd.kind === 'lint') return parseEslintJson(text, await lookupFor());
   const tool = testToolOf(cmd);
@@ -116,6 +126,7 @@ function judge(cmd, parsed, code) {
   if (!parsed) return { result: 'not-run', why: 'error' };
   if (parsed.failures.length > 0) return { result: 'fail' };
   if (cmd.kind === 'tests' && code !== 0) return { result: 'not-run', why: 'error' }; // red exit but no failing test named: unknown cause
+  if (cmd.parse === 'gofmt' && code !== 0) return { result: 'not-run', why: 'error' }; // gofmt could not read a file (a syntax error): not clean
   return { result: cmd.kind === 'tests' && parsed.total === 0 ? 'none' : 'ok' };
 }
 

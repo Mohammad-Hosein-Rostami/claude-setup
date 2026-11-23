@@ -1,5 +1,7 @@
 // Decides which commands the done-check runs for one change (design 3.2): per package (the nearest package.json of each changed file) a
-// typecheck, a lint of the changed files and the related tests, as fixed argv commands. It runs nothing and reads no tool output.
+// typecheck, a lint of the changed files and the related tests, as fixed argv commands; per Go module (the nearest go.mod of each changed
+// .go file, go.mod/go.sum/go.work or Go data file) go vet, gofmt -l and go test through lib/go-plan.mjs. It runs nothing and reads no
+// tool output. Go's files never reach the JS planner, so a Go-only change names no JS check; a JS-only change plans exactly as before.
 // Exports: planChecks(scope, env) -> Plan.
 // Invariants: scripts come from the BASE commit's package.json (`git ls-tree` + `cat-file`), the worktree copy only when there is no git
 //   base or the package is new in this change (the package entry then has `fromChange: true`, an addition to the Plan type for the line).
@@ -11,8 +13,9 @@ import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { MAX_NODE_RELATED } from './contract.mjs';
+import { planGoChecks } from './go-plan.mjs';
 import { nodeRelatedTests, testFilesOfGlobs } from './related.mjs';
 import { forwardedFlags, nodeTestGlobs, plainWords, splitScript, tscCommands } from './script-words.mjs';
 
@@ -247,9 +250,10 @@ function groupByPackage(context, scope) {
   return [...groups.values()].sort((left, right) => (left.root < right.root ? -1 : 1)).map((group) => ({ ...group, wide: widened(group.root) }));
 }
 
-/** The command lines of a plan with the parts that differ per machine or per run (node path, state folder, project path) replaced. */
+/** The command lines of a plan with the parts that differ per machine or per run (node path, go path, state folder, project path) replaced. */
 function fingerprintOf(context, packages) {
-  const stable = (arg) => (arg === process.execPath ? '<node>' : arg.startsWith(context.stateDir) ? '<state>' : arg.split(context.top).join('<top>'));
+  const goTools = new Set(packages.flatMap((entry) => entry.cmds.filter((cmd) => cmd.parse).map((cmd) => cmd.argv[0])));
+  const stable = (arg) => (arg === process.execPath ? '<node>' : goTools.has(arg) ? `<${basename(arg)}>` : arg.startsWith(context.stateDir) ? '<state>' : arg.split(context.top).join('<top>'));
   const lines = packages.flatMap((entry) => entry.cmds.map((cmd) => JSON.stringify([cmd.kind, cmd.shell, withSlashes(relative(context.top, cmd.cwd)), cmd.argv.map(stable)])));
   return hashOf(lines.join('\n'));
 }
@@ -257,7 +261,8 @@ function fingerprintOf(context, packages) {
 /**
  * What to run for one change: per package a typecheck, a lint and the related tests, as argv commands (nothing is run here).
  * @param {import('./contract.mjs').Scope} scope the change: files, wide files, git top and base
- * @param {NodeJS.ProcessEnv} env the environment: HOME (state folder) and DONE_CHECK_SKIP (`all` or a list of types,lint,tests)
+ * @param {NodeJS.ProcessEnv} env the environment: HOME (state folder), PATH (where go and gofmt are found) and DONE_CHECK_SKIP (`all`
+ *   or a list of types,lint,tests)
  * @returns {import('./contract.mjs').Plan} commands per package, checks that cannot run with their reason, and a fingerprint of the commands
  * @throws {Error} when the state folder for result files cannot be made
  */
@@ -268,8 +273,9 @@ export function planChecks(scope, env) {
   const skippedByEnv = PLANNED_KINDS.filter((kind) => asked.has('all') || asked.has(kind));
   const skipped = skippedByEnv.map((kind) => ({ kind, why: 'skipped-env', label: `${kind}: DONE_CHECK_SKIP=${asked.has('all') ? 'all' : kind}` }));
   if (!scope.top || asked.has('all')) return { packages: [], skipped: scope.top ? skipped : PLANNED_KINDS.map((kind) => ({ kind, why: 'no-command', label: `${kind}: no project folder` })), fingerprint: fingerprintOf(context, []) };
+  const go = planGoChecks({ top: scope.top, env, inGroups: (root, spec) => commandsFor(context, { root }, spec) }, scope);
   const packages = [];
-  for (const group of groupByPackage(context, scope)) {
+  for (const group of groupByPackage(context, go.rest)) {
     const json = readPackageJson(context, group.root);
     const where = group.root === scope.top ? '' : `${withSlashes(relative(scope.top, group.root))}: `;
     if (json.error) { skipped.push(...PLANNED_KINDS.filter((kind) => !skippedByEnv.includes(kind)).map((kind) => ({ kind, why: 'error', label: `${where}${kind}: ${json.error}` }))); continue; }
@@ -283,6 +289,9 @@ export function planChecks(scope, env) {
     }
     packages.push({ root: group.root, pm: pkg.pm, cmds, ...(json.fromChange ? { fromChange: true } : {}) });
   }
+  const wanted = (entry) => !skippedByEnv.includes(entry.kind);
+  packages.push(...go.packages.map((entry) => ({ ...entry, cmds: entry.cmds.filter(wanted) })));
+  skipped.push(...go.skipped.filter(wanted));
   const seen = new Set();
   const unique = skipped.filter((entry) => { const key = `${entry.kind}|${entry.why}|${entry.label}`; return seen.has(key) ? false : seen.add(key); });
   return { packages, skipped: unique, fingerprint: fingerprintOf(context, packages) };

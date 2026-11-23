@@ -19,9 +19,11 @@
 //   and owns there only those files: the lead is never given an agent's lane worktree it did not edit in, where half-finished work would
 //   block it for failures that are not its own. One Scope per worktree, not per repository: two lane worktrees of one repo hold two
 //   changes, and a worktree nested in another (`.claude/worktrees/<lane>`) is its own.
-// - Code files: ts tsx js jsx mjs cjs mts cts vue, and the scripts in a `.githooks/` folder (no extension). `named`: any other changed file
+// - Code files: ts tsx js jsx mjs cjs mts cts vue go, and the scripts in a `.githooks/` folder (no extension). `named`: any other changed file
 //   (markdown, json, ...) that a test-looking file names (lib/related.mjs `pathsNamedByTests`), so a test that reads a text file is run when
-//   the text changes; a change with no code and nothing named stays no change. `wide`: package.json, lockfiles, tsconfig*.json, vitest, jest and eslint config; a wide file
+//   the text changes, and a Go data file (lib/go-plan.mjs `goDataFiles`: below a folder of .go files in a Go module, not Markdown); a
+//   change with no code and nothing named stays no change. `wide`: package.json, lockfiles, tsconfig*.json, vitest, jest and eslint
+//   config, go.mod, go.sum, go.work and go.work.sum; a wide file
 //   is never also in `files`. A change with neither gives no Scope (ownChange) and an empty Scope (rangeChange). A deleted file is listed
 //   (a deletion can break its importers), so a consumer checks that a file exists before it hands it to a tool.
 // - Paths are repo-relative with `/`. Scope.key = sha256 of the base and the sorted paths with their worktree content hashes; the caller that
@@ -37,6 +39,7 @@ import { baselineOf, changedSinceBaseline } from '../../../hooks/lib/dirty-basel
 import { gatedFolder, gitOut, namesFilterProgram, worktreeOf } from '../../../hooks/lib/gated-folder.mjs';
 import { LEAD, pathsRecordedBy, realPathOf, recordedPaths, statusEntries } from '../../../hooks/lib/own-edits.mjs';
 import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
+import { GO_FILE, goDataFiles, isGoWide } from './go-plan.mjs';
 import { pathsNamedByTests } from './related.mjs';
 
 const GIT_TIMEOUT_MS = 20_000; // one git call; a hung repo must not eat the stop deadline
@@ -52,9 +55,16 @@ const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm;
 const DIFF_FLAGS = ['--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--ignore-submodules=all'];
 
 const git = (top, args) => gitOut(top, ['--literal-pathspecs', ...args], GIT_TIMEOUT_MS);
-const isWide = (path) => WIDE_FILE.test(basename(path));
-const isCode = (path) => (CODE_FILE.test(path) || GIT_HOOK_SCRIPT.test(path)) && !path.split('/').includes('node_modules');
+const isWide = (path) => WIDE_FILE.test(basename(path)) || isGoWide(path);
+const isCode = (path) => (CODE_FILE.test(path) || GO_FILE.test(path) || GIT_HOOK_SCRIPT.test(path)) && !path.split('/').includes('node_modules');
 const isOther = (path) => !isWide(path) && !isCode(path) && !path.split('/').includes('node_modules');
+
+/** The changed non-code files that count: those a test file names, and Go data files (testdata, embedded files of a Go package). */
+function namedOf(top, others) {
+  const named = pathsNamedByTests(top, others);
+  const goData = goDataFiles(top, others).filter((path) => !named.includes(path));
+  return [...named, ...goData];
+}
 
 function assertCommit(base) {
   if (typeof base !== 'string' || !COMMIT_ID.test(base)) throw new TypeError('done-check scope: base must be a full commit id (40 or 64 hex)');
@@ -132,7 +142,7 @@ function gitScope(ctx, tree) {
     else changed = [...committed, ...dirty.filter(({ field }) => field.startsWith('??')).map(({ rel }) => rel)];
   }
   base ??= COMMIT_ID.test(head) ? head : null; // no recorded base: HEAD, so a test the uncommitted change breaks is still new
-  const named = pathsNamedByTests(top, changed.filter(isOther));
+  const named = namedOf(top, changed.filter(isOther));
   const relevant = [...changed.filter((rel) => isCode(rel) || isWide(rel)), ...named];
   if (relevant.length === 0) return null;
   return scopeFrom(top, true, base, ownedPaths(ctx, top, relevant, dirty), { named });
@@ -206,7 +216,7 @@ export async function rangeChange(top, base) {
   const untracked = dirty.filter(({ field }) => field.startsWith('??')).map(({ rel }) => rel);
   const realTop = realPathOf(tree.top);
   const paths = [...committed, ...untracked];
-  return scopeFrom(realTop, true, base, paths, { named: pathsNamedByTests(realTop, paths.filter(isOther)), keepEmpty: true });
+  return scopeFrom(realTop, true, base, paths, { named: namedOf(realTop, paths.filter(isOther)), keepEmpty: true });
 }
 
 /** The line count of an untracked file as one range, [] for an empty one. */

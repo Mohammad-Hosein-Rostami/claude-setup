@@ -2,7 +2,9 @@
 // failures does the base commit have too (old, not the agent's) and which does it not (new).
 // Exports: compareWithBase({ scope, plan, results, repoId, budgetMs, env }) -> Promise<Map<number, BaseAnswer>>,
 //   findFlaky({ scope, plan, results, answers, budgetMs }) -> Promise<Map<number, Set<string>>>.
-// Rules: only `types` and `tests` commands that failed are compared (lint looks at changed lines only). A typecheck runs again at the
+// Rules: only `types` and `tests` commands that failed are compared (lint looks at changed lines only), and `gofmt -l` (it lists whole
+//   files: one the base has unformatted too is old). Go commands run again at the base with the same paths (go test: the failing package
+//   folders), minus those the base lacks. A typecheck runs again at the
 //   base as it is; tests run again at the base for the failing test files only (the command is rebuilt from the head command: a vitest or
 //   jest or node --test file list; a test file the base does not have cannot be an old failure). Answers are cached per (repo, base, package,
 //   kind, command and test files) through base-run.mjs. All base work (tree and runs) shares one budget. A run that cannot be read, a base
@@ -15,11 +17,17 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { baseTree, cachedBase, saveBase } from './base-run.mjs';
+import { goArgsOf, goPackageArg, withGoArgs } from './go-plan.mjs';
 import { runPlan } from './run-checks.mjs';
 
 const COMPARED_KINDS = new Set(['types', 'tests']);
 const BUILD_INFO_FLAG = '--tsBuildInfoFile';
 const NO_BASE = 'no git base';
+const ARGS_HASH_CHARS = 16;
+
+/** True for a command whose failures are compared with the base: types and tests, and gofmt (it lists whole files, not changed lines). */
+const isCompared = (cmd) => COMPARED_KINDS.has(cmd.kind) || cmd.parse === 'gofmt';
+const hashOf = (parts) => createHash('sha256').update(parts.join('\0')).digest('hex').slice(0, ARGS_HASH_CHARS);
 
 /**
  * @typedef {{ oldIds: Set<string> } | { unavailable: string }} BaseAnswer the ids that also fail at the base, or why they are unknown
@@ -57,8 +65,10 @@ function wantedFor(scope, cmds, results) {
   const changedArgs = (cmd) => new Set(scope.files.map((file) => fileArg(cmd, scope.top, file)));
   return results.flatMap((result, index) => {
     const cmd = cmds[index];
-    if (result.result !== 'fail' || !COMPARED_KINDS.has(cmd.kind)) return [];
+    if (result.result !== 'fail' || !isCompared(cmd)) return [];
     const where = withSlashes(relative(scope.top, cmd.cwd));
+    // a Go vet or gofmt command differs per change by its paths, so they are part of its cache label
+    if (cmd.parse === 'go-vet' || cmd.parse === 'gofmt') return [{ index, cmd, label: `${cmd.kind}|${where}|${cmd.label}|${hashOf(goArgsOf(cmd))}`, files: [] }];
     if (cmd.kind === 'types') return [{ index, cmd, label: `types|${where}|${cmd.label}`, files: [] }];
     const files = [...new Set(result.failures.map((failure) => failure.file))].sort();
     const hash = createHash('sha256').update(files.join('\0')).digest('hex').slice(0, 16);
@@ -66,8 +76,25 @@ function wantedFor(scope, cmds, results) {
   });
 }
 
+/** Go test arguments (`./<dir>` or `.`) for the failing package folders `files` (repo-relative, ending in `/`) of `cmd`. */
+const goTestArgs = (cmd, top, files) => files.map((file) => goPackageArg(relative(cmd.cwd, join(top, file))));
+
+/**
+ * The base command of a Go command: the same paths, minus those the base does not have (their failures are new). A module the base
+ * does not have, or no path left, answers "no old failure" without a run.
+ */
+function goBaseCommandOf(wanted, scope, tree) {
+  const { cmd } = wanted;
+  const moduleAtBase = join(tree.dir, relative(scope.top, cmd.cwd));
+  if (!existsSync(join(moduleAtBase, 'go.mod'))) return { answer: { oldIds: new Set() } };
+  const wantedArgs = cmd.parse === 'go-test' ? goTestArgs(cmd, scope.top, wanted.files) : goArgsOf(cmd);
+  const present = wantedArgs.filter((arg) => arg === './...' || existsSync(join(moduleAtBase, arg)));
+  return present.length === 0 ? { answer: { oldIds: new Set() } } : { run: withGoArgs(cmd, present) };
+}
+
 /** The base command of one wanted entry inside `tree`, an answer when none is needed, or `unavailable`. */
 function baseCommandOf(wanted, scope, tree) {
+  if (wanted.cmd.parse) return goBaseCommandOf(wanted, scope, tree);
   if (wanted.cmd.kind === 'types') return { run: typesCommandFor(wanted.cmd, dirname(tree.dir)) };
   const present = wanted.files.filter((file) => existsSync(join(tree.dir, file)));
   if (present.length === 0) return { answer: { oldIds: new Set() } }; // a test file the base lacks is new
@@ -140,7 +167,8 @@ export async function findFlaky({ scope, plan, results, answers, budgetMs }) {
     const fresh = result.failures.filter((failure) => !answers.get(index)?.oldIds?.has(failure.id));
     const files = [...new Set(fresh.map((failure) => failure.file))].sort();
     const changedArgs = new Set(scope.files.map((file) => fileArg(cmd, scope.top, file)));
-    const run = files.length > 0 ? testCommandFor(cmd, files.map((file) => fileArg(cmd, scope.top, file)), changedArgs) : null;
+    const rerunOf = () => (cmd.parse === 'go-test' ? withGoArgs(cmd, goTestArgs(cmd, scope.top, files)) : testCommandFor(cmd, files.map((file) => fileArg(cmd, scope.top, file)), changedArgs));
+    const run = files.length > 0 ? rerunOf() : null;
     if (run) reruns.push({ index, run, fresh });
   });
   const flaky = new Map();

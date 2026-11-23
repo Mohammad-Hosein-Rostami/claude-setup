@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
-import { basename } from 'node:path';
+import { basename, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEslintJson, parseJestJson, parseTap, parseTsc, parseVitestJson } from '../home/tools/done-check/lib/parse.mjs';
 import { readDenyList } from '../scripts/share-check.mjs';
@@ -21,6 +21,9 @@ import { findHits, wordPattern } from '../scripts/share-check/match.mjs';
 
 const SAMPLES = fileURLToPath(new URL('./fixtures/done-check/', import.meta.url));
 const sample = (name) => readFileSync(SAMPLES + name, 'utf8');
+/** The sample files (repo-relative to SAMPLES): the top folder only, or with `deep` every subfolder too (`go/` has its own README). */
+const sampleFiles = (deep = false) => readdirSync(SAMPLES, { recursive: deep, withFileTypes: true }).filter((entry) => entry.isFile())
+  .map((entry) => slash(join(relative(SAMPLES, entry.parentPath), entry.name)));
 const slash = (text) => text.replaceAll('\\', '/');
 // The part of a path from its first `src/` or `test/` folder: the same for `/work/proj/src/a.ts`, `C:\work\proj\src\a.ts` and `src/a.ts`.
 const tail = (file) => slash(file).replace(/^.*?\b((?:src|test)\/)/, '$1');
@@ -32,7 +35,7 @@ const noCarriageReturn = (result) =>
 
 test('every sample file is described in the README, and each Windows variant really has CRLF and backslash paths', () => {
   const readme = sample('README.md');
-  const files = readdirSync(SAMPLES).filter((name) => name !== 'README.md' && name !== '.gitattributes');
+  const files = sampleFiles().filter((name) => name !== 'README.md' && name !== '.gitattributes');
   assert.ok(files.length >= 10, `only ${files.length} samples found`);
   for (const name of files) assert.ok(readme.includes(name), `${name} is not named in the README`);
   for (const name of files.filter((n) => n.includes('-windows'))) {
@@ -66,7 +69,7 @@ test('no sample holds a user name, a home folder or a scratch path', () => {
   // the person's private words (personal/share-deny.txt of the main checkout, scripts/share-check.mjs), when a list exists
   const { words } = readDenyList(SAMPLES);
   const denied = (words ?? []).map((word) => ({ word, pattern: wordPattern(word) }));
-  for (const name of readdirSync(SAMPLES)) {
+  for (const name of sampleFiles(true)) {
     const text = sample(name);
     assert.doesNotMatch(text, /\/Users\/|\/home\/\w|scratchpad|\/private\/tmp|\/var\/folders/i, name);
     assert.deepEqual(holdsPart(text, identity), [], `${name}: a part of the user's own name`);
