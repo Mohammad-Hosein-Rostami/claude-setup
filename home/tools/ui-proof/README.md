@@ -8,9 +8,12 @@ This folder holds the UI proof record tool: `node ~/.claude/tools/ui-proof/ui-pr
 `~/.claude/state/ui-proof/<repo>-<hash>.json` (`UI_PROOF_STATE_DIR` overrides the folder; worktrees of one clone share the file;
 the newest 200 records are kept): the hash of the UI files of the working tree, HEAD, the verdict, the rule, the viewing conditions,
 the matrix hash, the `--step` label, the widths and frames, and the batch reference from the run's `ledger.json` (per state the
-capture sha256, pixels, colour-metric pixels, rows and pixel ratio; the comparator and renderer). The agent type is taken from the
+capture sha256, pixels, colour-metric pixels, rows and pixel ratio; the comparator and renderer). It also keeps the sha256 of the
+ledger (`ledgerSha256`, how a later `--same` run names this run as its base), the ledger's `same` section and its captures (key,
+sha256, finding ids, page errors). The working tree is the one of the ledger's `root` (the folder `ui-check run` started in) when
+that is a worktree of the same repository as the hook's folder, else the hook's folder. The agent type is taken from the
 hook input (`agent_type`), never from the command line; a record without one is nobody's. Only a PASS made by visual-qa on the tree
-that lands is the final gate.
+that lands is the final gate of a visual or pixel plan; a same or render plan is proved by runner or visual-qa runs (below).
 
 UI files (`lib/ui-files.mjs`, the one definition): the skill router's `isUiFile` plus `.ts`/`.js` style scripts under a
 styles/theme/sx folder or named `*.styles.ts`, `*.theme.ts`, `*.sx.ts`, minus folders named `test`, `tests`, `__tests__` or
@@ -22,6 +25,8 @@ styles/theme/sx folder or named `*.styles.ts`, `*.theme.ts`, `*.sx.ts`, minus fo
 | `check --tip <sha> [--against <sha> \| --against-step <road>.s<N>] [--repo DIR]` | 0: a visual-qa PASS for the tip's UI tree and, with `--against`, no state worse than the record taken at that sha (with `--against-step`: than the record labelled `<road>.s<N>`); a state with no reference row prints `new` (INFO). 1: no such PASS, a state worse, another comparator or renderer (fail closed), or no record with that sha or label. 2: usage. `git-tidy land` calls it with `--against`, the road gate with `--against-step` (phase 3). |
 | `has --step <road>.s<N> [--repo DIR]` | 0 a record with that label exists, 1 none, 2 usage (`road.mjs next` uses it, not `check`). |
 | `changed --from <sha> --to <sha> [--repo DIR]` | Lists the UI files that differ: 0 none, 1 some, 2 usage. |
+| `plan --base <sha> --tip <sha> \| --files <path>... [--request <file>]... [--matrix <path>] [--json] [--write-run <dir>] [--repo DIR]` | The check plan (`lib/ui-plan.mjs`, rules in `home/standards/ui-checks.md`): `plan: <depth>`, a `tests:` line when logic changed, `surface <id>: <need> (<why>)`, `exempt <file> (<why>)` and one line per safe path taken. `--files` judges the expected files of a brief by path at HEAD. `--request` files are the brief and STATUS.md (only its `## Standing rules` and `## Owner decisions`). `--write-run <dir>` writes `matrix.json` and `states.json` of the same and render surfaces under `~/.claude/state/ui-plan-runs/` (`UI_PLAN_STATE_DIR` overrides; a folder inside the repository is refused), at the lane matrix's widths and locales, else 360, 768, 1280 and `en`. Exit 0, 2 usage. |
+| `check --tip <sha> --plan --base <sha> [--request <file>]... [--matrix <path>] [--repo DIR]` | The plan of base..tip and its proof. none: PASS. visual, pixel: exactly `check --tip <sha>`. same, render: the newest runner or visual-qa run at the tip (head and UI tree) with `--same`, whose base ledger (by `ledgerSha256`) is a runner or visual-qa run at the base (head and UI tree); same needs identical or equal states, render no new finding, no more page errors and no missing state; a state with no base render needs a visual-qa PASS; a visual-qa PASS on the tip also proves render, never same. 0 PASS with `follow-up:` lines for findings on both sides, 1 FAIL (zero rows, a missing record, any other agent's run, `unexpected visual change: <states>`, an unreadable store), 2 usage. |
 
 The stop gate (`hooks/ui-proof-gate.mjs`, Stop and SubagentStop): when the working tree's UI files differ from the merge base with
 the default branch and no PASS matches the tree, it blocks once per state (the lead needs visual-qa's PASS; a ui-implementer or

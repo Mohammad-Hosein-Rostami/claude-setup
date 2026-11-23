@@ -8,21 +8,35 @@
 //   ui-proof has --step <road>.s<N> [--repo DIR]      0 a record with that label exists, 1 none, 2 usage (road.mjs next uses it)
 //   ui-proof changed --from <sha> --to <sha> [--repo DIR]   lists the UI files that differ: 0 none, 1 some, 2 usage
 //   ui-proof review-page --results <dir> --out <dir> [--matrix <file>]   the owner review page (review-page.mjs)
-// Exports: none. Invariants: reads records only (never writes them); any read or git failure is exit 2 with the reason, never a PASS.
+//   ui-proof plan --base <sha> --tip <sha> | --files <path>... [--request <file>]... [--matrix <path>] [--json] [--write-run <dir>] [--repo DIR]
+//     the check plan (lib/ui-plan.mjs): `plan: <depth>`, the tests line, one line per surface, exempt file and reason. --write-run
+//     writes matrix.json and states.json of the surfaces to render under the setup's state (ui-plan-runs), never in the repo. 0, 2 usage.
+//   ui-proof check --tip <sha> --plan --base <sha> [--request <file>]... [--matrix <path>] [--repo DIR]
+//     the plan of base..tip and its proof: 0 PASS (with `follow-up:` lines for old findings), 1 FAIL, 2 usage. A visual or pixel plan
+//     prints exactly what `check --tip` prints. An unreadable record store is FAIL.
+// Exports: none. Invariants: reads records only (never writes them); any read or git failure is exit 2 with the reason (`check --plan`:
+// FAIL), never a PASS; a request file named STATUS.md is read for its `## Standing rules` and `## Owner decisions` sections only.
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { compareReference, formatReference } from '../ui-check/lib/ledger.mjs';
 import { PROOF_AGENT, findAtCommit, findLabelled, findPass, readRecords, storeFile } from './lib/records.mjs';
 import { changedUiFiles, git, uiTreeAt } from './lib/ui-files.mjs';
+import { planChecks, planProofProblem } from './lib/ui-plan.mjs';
 
-const USAGE = 'usage: ui-proof <check --tip <sha> [--against <sha> | --against-step <road>.s<N>] | has --step <label> | changed --from <sha> --to <sha> | review-page --results <dir> --out <dir> [--matrix <file>]> [--repo DIR]';
+const USAGE = 'usage: ui-proof <check --tip <sha> [--against <sha> | --against-step <road>.s<N> | --plan --base <sha> [--request <file>]... [--matrix <path>]] | plan (--base <sha> --tip <sha> | --files <path>...) [--request <file>]... [--matrix <path>] [--json] [--write-run <dir>] | has --step <label> | changed --from <sha> --to <sha> | review-page --results <dir> --out <dir> [--matrix <file>]> [--repo DIR]';
 const STEP_LABEL = /^[A-Za-z0-9_-]+\.s\d+$/;
 const EXIT_USAGE = 2;
+const REQUEST_MAX_BYTES = 4 << 20; // a request file read for evidence; requestEvidence reads its first 1 MB
+const STATUS_SECTIONS = /^## (?:Standing rules|Owner decisions)\b/;
+const DEFAULT_RUN = Object.freeze({ widths: [360, 768, 1280], locales: [{ tag: 'en', dir: 'ltr' }] }); // without a lane matrix
+const RUN_REASON = 'rendered whole by the ui plan (ui-proof plan --write-run): no control states';
 
 class UsageError extends Error {}
 
-function flags(argv, names) {
-  const options = Object.fromEntries([...names, 'repo'].map((name) => [name, { type: 'string' }]));
+function flags(argv, names, extra = {}) {
+  const options = { ...Object.fromEntries([...names, 'repo'].map((name) => [name, { type: 'string' }])), ...extra };
   try {
     return parseArgs({ args: argv, options, strict: true, allowPositionals: false }).values;
   } catch (error) {
@@ -45,8 +59,15 @@ function referenceOf(records, repo, values) {
 }
 
 function check(argv) {
-  const values = flags(argv, ['tip', 'against', 'against-step']);
+  const values = flags(argv, ['tip', 'against', 'against-step', 'base', 'matrix'], { plan: { type: 'boolean' }, request: { type: 'string', multiple: true } });
+  if (values.plan) return checkPlan(values);
+  if (values.base !== undefined || values.matrix !== undefined || values.request !== undefined) throw new UsageError('--base, --matrix and --request go with --plan');
   if (values.tip === undefined || (values.against !== undefined && values['against-step'] !== undefined)) throw new UsageError(USAGE);
+  return checkPass(values);
+}
+
+/** Today's check: a visual-qa PASS for the tip's UI tree and, with --against / --against-step, no state worse. */
+function checkPass(values) {
   const repo = path.resolve(values.repo ?? '.');
   const tip = commitOf(repo, values.tip);
   const records = readRecords(storeFile(repo));
@@ -65,6 +86,126 @@ function check(argv) {
   const result = compareReference(pass.reference, ref.reference);
   console.log(formatReference(result).join('\n'));
   return result.ok ? 0 : 1;
+}
+
+/** The owner sections of a STATUS.md (`## Standing rules`, `## Owner decisions`), up to the next `## ` heading. */
+const statusSections = (text) => {
+  let keep = false;
+  return text.split('\n').filter((line) => {
+    if (line.startsWith('## ')) keep = STATUS_SECTIONS.test(line);
+    return keep;
+  }).join('\n');
+};
+
+/** The request text: every --request file (a STATUS.md: its owner sections only). @throws {UsageError} when one cannot be read */
+function requestText(files = []) {
+  return files.map((file) => {
+    let text;
+    try {
+      const stats = fs.statSync(file);
+      if (!stats.isFile()) throw new Error('not a regular file');
+      text = stats.size > REQUEST_MAX_BYTES ? fs.readFileSync(file, 'utf8').slice(0, REQUEST_MAX_BYTES + 1) : fs.readFileSync(file, 'utf8');
+    } catch (error) {
+      throw new UsageError(`--request ${file}: ${error.message}`);
+    }
+    return path.basename(file) === 'STATUS.md' ? statusSections(text) : text;
+  }).join('\n');
+}
+
+/** The plan for the flags: base..tip, or --files at HEAD. */
+function planFor(values, repo) {
+  const byFiles = values.files !== undefined;
+  if (byFiles === (values.base !== undefined || values.tip !== undefined) || (!byFiles && (values.base === undefined || values.tip === undefined))) throw new UsageError(USAGE);
+  const matrixPath = values.matrix === undefined ? null : path.resolve(values.matrix);
+  const common = { repoDir: repo, requestText: requestText(values.request), matrixPath };
+  if (byFiles) return planChecks({ ...common, files: values.files });
+  return planChecks({ ...common, base: commitOf(repo, values.base), tip: commitOf(repo, values.tip) });
+}
+
+/** The plan as text lines. */
+function planLines(plan) {
+  return [
+    `plan: ${plan.depth}`,
+    ...(plan.tests ? ['tests: done-check tests must be ok (logic changed)'] : []),
+    ...plan.surfaces.map((s) => `surface ${s.id}: ${s.need} (${s.why})`),
+    ...plan.exempt.map((e) => `exempt ${e.file} (${e.why})`),
+    ...plan.reasons,
+  ];
+}
+
+/** The ui-coverage matrix and ui-check states of the surfaces a runner renders (same, render), at the lane matrix's widths and locales. */
+function runFiles(plan, laneMatrix, dir) {
+  const surfaces = plan.surfaces.filter((s) => ['same', 'render'].includes(s.need) && typeof s.url === 'string');
+  const widths = Array.isArray(laneMatrix?.widths) && laneMatrix.widths.length > 0 ? laneMatrix.widths : DEFAULT_RUN.widths;
+  const locales = Array.isArray(laneMatrix?.locales) && laneMatrix.locales.length > 0 ? laneMatrix.locales : DEFAULT_RUN.locales;
+  const matrix = {
+    locales, widths,
+    searched: { backend: [RUN_REASON], siblings: [RUN_REASON], reference: [RUN_REASON] },
+    deliverable: { reviewUrl: dir, mockExcluded: `not a deliverable: ${RUN_REASON}` },
+    surfaces: surfaces.map((s) => ({ id: s.id, kind: 'screen', source: s.url, controls: `none: ${RUN_REASON}` })),
+    cells: surfaces.flatMap((s) => locales.flatMap((l) => widths.map((width) => ({ surface: s.id, state: 'rest', locale: l.tag, width, status: 'todo', evidence: '', reason: '' })))),
+  };
+  const states = { defaults: { widths }, states: surfaces.flatMap((s) => locales.map((l) => ({ surface: s.id, state: 'rest', locale: l.tag, url: s.url }))) };
+  return { matrix, states, count: surfaces.length };
+}
+
+const isInside = (dir, file) => {
+  const rel = path.relative(dir, file);
+  return rel === '' || (!rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel));
+};
+
+/** The real path of a folder that may not exist yet: its nearest existing parent resolved, the rest appended. */
+function realTarget(dir) {
+  const missing = [];
+  let at = dir;
+  while (!fs.existsSync(at)) { missing.unshift(path.basename(at)); at = path.dirname(at); }
+  return path.join(fs.realpathSync.native(at), ...missing);
+}
+
+/** Write the run files under the setup's state (UI_PLAN_STATE_DIR overrides it), never inside the repository. */
+function writeRun(plan, values, repo) {
+  const root = process.env.UI_PLAN_STATE_DIR ?? path.join(process.env.HOME || process.env.USERPROFILE || os.homedir(), '.claude', 'state', 'ui-plan-runs');
+  const dir = path.resolve(root, values['write-run']);
+  if (!isInside(path.resolve(root), dir) || dir === path.resolve(root)) throw new UsageError(`--write-run must name a folder under ${root}`);
+  const top = fs.realpathSync.native(git(repo, ['rev-parse', '--show-toplevel']).trim());
+  if (isInside(top, realTarget(dir))) throw new UsageError(`--write-run ${dir} lies inside the repository ${top}: the project is never written`);
+  const laneMatrix = values.matrix === undefined ? null : JSON.parse(fs.readFileSync(path.resolve(values.matrix), 'utf8'));
+  const run = runFiles(plan, laneMatrix, dir);
+  if (run.count === 0) return ['run: nothing for a runner to render (no same or render surface with a url)'];
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(dir, 'matrix.json'), `${JSON.stringify(run.matrix, null, 2)}\n`);
+  fs.writeFileSync(path.join(dir, 'states.json'), `${JSON.stringify(run.states, null, 2)}\n`);
+  const defaults = laneMatrix ? '' : ` (default widths ${DEFAULT_RUN.widths.join(',')} and locale en: no --matrix)`;
+  return [`run: ${path.join(dir, 'matrix.json')} and ${path.join(dir, 'states.json')}, ${run.count} surface(s)${defaults}`];
+}
+
+function plan(argv) {
+  const values = flags(argv, ['base', 'tip', 'matrix', 'write-run'], { files: { type: 'string', multiple: true }, request: { type: 'string', multiple: true }, json: { type: 'boolean' } });
+  const repo = path.resolve(values.repo ?? '.');
+  const result = planFor(values, repo);
+  const run = values['write-run'] === undefined ? [] : writeRun(result, values, repo);
+  console.log(values.json ? JSON.stringify(result, null, 1) : [...planLines(result), ...run].join('\n'));
+  return 0;
+}
+
+/** check --plan: the plan of base..tip and its proof on the records; a visual or pixel plan prints today's check, byte for byte. */
+function checkPlan(values) {
+  if (values.tip === undefined || values.base === undefined || values.against !== undefined || values['against-step'] !== undefined) throw new UsageError(USAGE);
+  const repo = path.resolve(values.repo ?? '.');
+  const tip = commitOf(repo, values.tip);
+  const base = commitOf(repo, values.base);
+  const result = planFor({ ...values, tip, base }, repo);
+  if (['visual', 'pixel'].includes(result.depth) && !result.surfaces.some((s) => s.need === 'same')) return checkPass({ tip, repo });
+  let records;
+  try {
+    records = readRecords(storeFile(repo));
+  } catch (error) {
+    console.log(`plan: ${result.depth}\nui-proof: FAIL - the proof records cannot be read (${error.message.split('\n')[0]})`);
+    return 1;
+  }
+  const { problem, followUps } = planProofProblem(result, { records, repoDir: repo, base, tip });
+  console.log([`plan: ${result.depth}`, ...followUps, problem ? `ui-proof: FAIL - ${problem}` : `ui-proof: PASS - plan ${result.depth} proved`].join('\n'));
+  return problem ? 1 : 0;
 }
 
 function has(argv) {
@@ -89,7 +230,7 @@ async function reviewPage(argv) {
   return page.run(argv);
 }
 
-const COMMANDS = { check, has, changed, 'review-page': reviewPage };
+const COMMANDS = { check, plan, has, changed, 'review-page': reviewPage };
 
 const [name, ...rest] = process.argv.slice(2);
 try {
