@@ -126,16 +126,10 @@ Sessions start with `claude --model <m> --effort <e>` (the owner picks the lead)
 
 ## Project notes (`home/project-notes/`)
 
-Personal per-project layer, linked to `~/.claude/project-notes`. A project's git-ignored `CLAUDE.local.md` imports
-`@~/.claude/project-notes/<project>.md`; the project's committed config never references it. Policy: "Project AI
-config" in `home/lead-rules.md`.
-
-| Note | Project |
-| ---- | ------- |
-| `ice-web-app.md` | ice-web-app (Mac) |
-| `bill-and-ben-platform.md` | bill-and-ben-platform (Mac) |
-| `pejvak-frontend-nx-workspace.md` | pejvak-frontend-nx-workspace (PC) |
-| `pejvak-frontend.md` | Pejvak_Frontend, SVN (PC) |
+Notes per project, one `<key>.md` each (the key is the remote repository name, else the folder name). Shared notes live
+here in the core repo; personal ones live in `personal/project-notes/` (git-ignored, its own repo), which
+`~/.claude/project-notes` links to. The install moves any note here that git does not track into the personal folder. The
+project's committed config never references a note. Policy: "Project AI config" in `home/lead-rules.md`.
 
 ## Status line
 

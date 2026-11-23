@@ -13,7 +13,8 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 | `home/standards/` | The longer reference behind the rules, with examples (for human readability: `readability.md`). |
 | `home/skills/` | Step-by-step workflows (`<name>/SKILL.md`) that Claude loads when the task matches. |
 | `home/agents/` | Helper roles (implementer, architect, runner, ...), one file each, with their model and limits. |
-| `home/project-notes/` | One note file per project, read through that project's uncommitted `CLAUDE.local.md`. |
+| `home/project-notes/` | Shared notes, one file per project; personal notes live in `personal/project-notes/`, which `~/.claude/project-notes` links to. |
+| `personal/` | Your own layer, git-ignored and its own git repo, made by the installer from `personal.example/`: `CLAUDE.md` (your rules), `project-notes/`, `share-deny.txt`. |
 | `home/hooks/` | Node scripts Claude Code runs on events (before a Bash command, when a session stops, ...). |
 | `home/lead-rules.md`, `home/lead.md` | The lead's rules (model routing, delegation, job form), printed to the main session at start. |
 | `home/tools/` | Command-line tools with their own README (`ui-check`, `ui-coverage`, `recall`, ...). |
