@@ -39,6 +39,10 @@ anything runs. `DONE_CHECK_SKIP=all` skips every check (one ledger row); a comma
 - `review: needed (classes)`: the change is in a risky class (`risk-rules.json`); the lead runs the reviewer. Security words match a whole word of a folder or file name in any case style (`src/auth/`, `useSession.ts`, `session-store.ts`, `JWTService.ts`), never part of a word (`tokenizer.ts`, `author.ts`). A test by its own name (`*.test.ts`, `*.spec.js`) and plain docs (`.md`, `.txt`) put a change in no class and do not count for `large`; a test folder does not hide code, `.mdx` is code, and the texts that steer every run (agent files, `SKILL.md`, `home/CLAUDE.md`, `home/lead*.md`, `home/rules/`, `settings/*.json`) are `gate`. A file whose changed lines are only comments or blank lines is left out; any doubt (no base, a deleted file, a Vue file) keeps the class.
 - `reused (same change) ok`: the same change key was already checked green; no command ran. A run a label let through is never reused.
 - `n labelled`: new failures that an owner's `false-alarm` label already names. Shown, never blocking (next section).
+- `not run (no python support: 3 files)`: the change holds only code of a language done-check has no checks for (`py rs java kt swift
+  rb php cs c h cc cpp hpp scala dart`, `UNSUPPORTED_CODE` in `lib/scope.mjs`). Never `no code change`, never blocking; one ledger row
+  with every kind `not-run` (`no-support`; `done-check last` prints `not run (no support: 3 files)`, the row holds no language
+  names). Beside a checked change each such language is a part of its own: `types ok · tests ok · python not run`.
 
 ## False-alarm labels
 
@@ -55,7 +59,8 @@ read never passes a change: the checks run without labels or reuse, and the line
 A test file deleted together with its code is not a weakening at all: every module it imported from the repository's code (a
 relative import at the base of a file that is not itself a test file or a fixture in a test folder) is deleted in the same change,
 not renamed or moved (git's rename detection, and a new file with the same text, both count as a move). A test deleted alone, with
-only a fixture, or while one of its modules still exists still blocks.
+only a fixture, or while one of its modules still exists still blocks. A test file that itself moved (the same two rules) is no
+deletion: it is scanned like an edit, between its base text and its new path, so a rename that also drops a case still blocks.
 
 ## What counts as a change
 
@@ -66,7 +71,13 @@ worktree it did not edit in. The base is the HEAD the stopper had at its first t
 lead in `~`, an agent started in a folder that is not git, a base commit that is gone) it is the worktree's HEAD, so a test the
 uncommitted edit breaks that passes at HEAD is new and blocks.
 
-Code files (`ts tsx js jsx mjs cjs mts cts vue`) and the scripts in a `.githooks/` folder, plus the wide files (`package.json`, lockfiles, tsconfig, test and lint config). A changed text file (markdown, json, ...) counts too when a test file names it (the file name appears in a test-looking file's text): the related-test search then picks the tests that write its path, and no typecheck or lint runs for it. A text file no test names stays `checks: no code change`. In a `node --test` script part only the e2e or live globs are dropped (and named `e2e-or-live`); the other globs still pick related tests. `tests-weakened` also fails when always-true matchers (`toBeDefined`, `toBeTruthy`, `toBeFalsy`) are added while value-checking matchers go down.
+An agent's uncommitted file it did not record (a Bash command made it) is its own only when `ownBashEntries`
+(`hooks/lib/change-owner.mjs`, the rule commit-gate uses) keeps it: a file that another, older session's closed call window claims,
+and no call of this agent can have made, is left out, so two sessions in one folder never check (or blame) each other's files. An
+unreadable call-window log, its deadline or any error there keeps the file the agent's (it is still checked). A deleted code file is
+listed but never handed to a tool; the `node --test` pick still runs the tests that import it, and never a test path that is gone.
+
+Code files (`ts tsx js jsx mjs cjs mts cts vue`) and the scripts in a `.githooks/` folder, plus the wide files (`package.json`, lockfiles, tsconfig, test and lint config). A changed text file (markdown, json, ...) counts too when a test file names it (the file name appears in a test-looking file's text): the related-test search then picks the tests that write its path, and no typecheck or lint runs for it. A text file no test names stays `checks: no code change`; code of a language with no checks never does (`not run (no python support: n files)`, above). In a `node --test` script part only the e2e or live globs are dropped (and named `e2e-or-live`); the other globs still pick related tests. `tests-weakened` also fails when always-true matchers (`toBeDefined`, `toBeTruthy`, `toBeFalsy`) are added while value-checking matchers go down.
 
 ## Go
 
@@ -79,6 +90,11 @@ nearest `go.mod`) the checks are:
 | types | `go vet ./<dir> ...` of the package folders of the changed `.go` files | `<file>\|vet: <message>` |
 | lint | `gofmt -d ./<file> ...` of the changed `.go` files, one failure per drift hunk | `<file>\|gofmt <hash of the lines the hunk changes>` |
 | tests | `go test -json ./<dir> ...` of those folders, and of the nearest folder of `.go` files above a changed Go data file | `<dir>/\|<Test/sub>`, `<dir>/\|build failed`, `<dir>/\|package failed` |
+
+`tests-weakened` reads `_test.go` files too: fewer `Test`/`Benchmark`/`Fuzz`/`Example` functions or `t.Run` subtests, fewer
+`t.Error`/`t.Fatal`/`t.Fail` or testify `assert.`/`require.` calls, or more `t.Skip`, `testing.Short()` guards or build constraint
+lines (`//go:build`, which takes the file out of `go test`) than at the base. A `_test.go` deleted alone blocks; one deleted with its
+`<name>.go`, or with the last non-test `.go` file of its package folder, is removed with its code; a renamed one passes.
 
 A `go.mod`, `go.sum` or `go.work` change vets and tests the whole module (`./...`); a deleted package (its folder holds no `.go` file
 any more) vets the whole module, since an importer may break anywhere. `vendor/` is never run (a vendor-only change says `tests not

@@ -17,9 +17,10 @@ export const RESULTS = Object.freeze(['ok', 'fail', 'none', 'not-run']);
 
 /**
  * Why a check did not run. A not-run check never blocks and is never shown as ok. `go-not-installed` and `gofmt-not-installed`: the
- * change holds Go and that program is not on PATH (the line says `go: not installed`, lib/verdict-text.mjs).
+ * change holds Go and that program is not on PATH (the line says `go: not installed`, lib/verdict-text.mjs). `no-support`: the change
+ * holds only files of languages done-check has no checks for (lib/scope.mjs UNSUPPORTED_CODE); the line names the languages.
  */
-export const NOT_RUN_WHY = Object.freeze(['time', 'error', 'no-command', 'no-config', 'no-related', 'skipped-env', 'not-supported', 'e2e-or-live', 'go-not-installed', 'gofmt-not-installed']);
+export const NOT_RUN_WHY = Object.freeze(['time', 'error', 'no-command', 'no-config', 'no-related', 'skipped-env', 'not-supported', 'e2e-or-live', 'go-not-installed', 'gofmt-not-installed', 'no-support']);
 
 /** Wall-clock cap of all checks together at one stop (ms). */
 export const STOP_DEADLINE_MS = 90_000;
@@ -67,7 +68,7 @@ export const MAX_ALARM_IDS_PER_CHECK = 100;
 
 /** @typedef {'types'|'lint'|'tests'|'tests-weakened'} CheckKind one of CHECK_KINDS */
 /** @typedef {'ok'|'fail'|'none'|'not-run'} Result one of RESULTS */
-/** @typedef {'time'|'error'|'no-command'|'no-config'|'no-related'|'skipped-env'|'not-supported'|'e2e-or-live'|'go-not-installed'|'gofmt-not-installed'} NotRunWhy one of NOT_RUN_WHY */
+/** @typedef {'time'|'error'|'no-command'|'no-config'|'no-related'|'skipped-env'|'not-supported'|'e2e-or-live'|'go-not-installed'|'gofmt-not-installed'|'no-support'} NotRunWhy one of NOT_RUN_WHY */
 
 /**
  * The files one agent (or one manual run) changed in one worktree, and the base they are compared with.
@@ -78,6 +79,8 @@ export const MAX_ALARM_IDS_PER_CHECK = 100;
  * @property {string[]} files changed code files, repo-relative with `/` separators
  * @property {string[]} named changed non-code files (markdown, json, ...) that a test file names; they only feed the related-test search
  * @property {string[]} wide changed files that widen the check (package.json, lockfiles, tsconfig, test and eslint config), repo-relative
+ * @property {string[]} [unsupported] changed files of a language done-check has no checks for (`.py`, `.rs`, ...: lib/scope.mjs
+ *   UNSUPPORTED_CODE), repo-relative; never checked, only named in the line (`python not run`); absent = none (a Scope a caller builds)
  * @property {string} key the change key: sha256 of the base, the sorted paths with their blob hashes, and the plan fingerprint
  */
 

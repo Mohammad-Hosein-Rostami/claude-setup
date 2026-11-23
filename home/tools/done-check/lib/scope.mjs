@@ -1,7 +1,8 @@
 // Which files a done-check looks at: the code files one agent, the lead or a land changed in a worktree, the base they are compared with,
 // and a key that is the same for the same change before and after its commit (design section 3.1 and 6).
 // Exports: ownChange(input, env) -> Scope[] (one per worktree; [] = nothing to check), rangeChange(top, base) -> Scope (base..worktree, for
-//   land and manual runs), changedLines(top, base, file) -> [start, end][] (1-based, both ends inclusive, sorted, pure deletions left out).
+//   land and manual runs), changedLines(top, base, file) -> [start, end][] (1-based, both ends inclusive, sorted, pure deletions left out),
+//   UNSUPPORTED_CODE (file extension -> language name), unsupportedLanguages(paths) -> [{ language, files }].
 // Rules (the tests in tests/done-check-scope.test.mjs fix the ones the design leaves open):
 // - Base = the HEAD the agent or lead had at its first tool call (lib/dirty-baseline.mjs `baselineOf`), only when that baseline was taken in
 //   the same worktree and the commit still exists. No baseline, an old one without head, an unreadable store, a base git cannot find or a
@@ -12,7 +13,10 @@
 // - A folder that is not git gives no Scope of its own (no base, nothing a check could judge; the lead's home folder was 42% of all runs,
 //   each one `review: needed` that nobody could act on). Only git worktrees are checked.
 // - A subagent owns every file changed between base and its worktree (committed or not), plus untracked ones. Of the uncommitted files it
-//   owns those it recorded (lib/own-edits.mjs) or that changed since its baseline (a Bash command made them). In its own worktree the lead
+//   owns those it recorded (lib/own-edits.mjs) or that changed since its baseline (a Bash command made them) and that
+//   hooks/lib/change-owner.mjs `ownBashEntries` keeps as its own: the one ownership rule commit-gate uses, so a file only another, older
+//   session's closed call window claims (two sessions in one folder) is left out. An unreadable call-window log, the verdict deadline or
+//   an error there keeps the file own (the agent is still checked, never let off). In its own worktree the lead
 //   owns the files recorded for its session (that set also holds the files its agents recorded there, as commit-gate sees it): land-lane
 //   moves HEAD, so a landed lane is not the lead's.
 // - Beside its own worktree a stopper gets one Scope per worktree holding a file it recorded itself (`ownWorktrees` over `pathsRecordedBy`),
@@ -24,7 +28,11 @@
 //   the text changes, and a Go data file (lib/go-plan.mjs `goDataFiles`: below a folder of .go files in a Go module, not Markdown); a
 //   change with no code and nothing named stays no change. `wide`: package.json, lockfiles, tsconfig*.json, vitest, jest and eslint
 //   config, go.mod, go.sum, go.work and go.work.sum; a wide file
-//   is never also in `files`. A change with neither gives no Scope (ownChange) and an empty Scope (rangeChange). A deleted file is listed
+//   is never also in `files`. `unsupported`: a changed file of a language done-check has no checks for (UNSUPPORTED_CODE: `.py`, `.rs`,
+//   ...), never checked but never counted as no change either: a change of only such files still gives a Scope, so the line says
+//   `not run (no python support: 3 files)` instead of `no code change`. They are left out of the key (nothing checks them, so an edit
+//   to them alone must not re-run the checks of the rest). A change with none of these gives no Scope (ownChange) and an empty Scope
+//   (rangeChange). A deleted file is listed
 //   (a deletion can break its importers), so a consumer checks that a file exists before it hands it to a tool.
 // - Paths are repo-relative with `/`. Scope.key = sha256 of the base and the sorted paths with their worktree content hashes; the caller that
 //   has a plan mixes the plan fingerprint in. Content, not commit state, so a commit does not change it; a moved base does.
@@ -35,6 +43,8 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { basename, dirname, join, sep } from 'node:path';
+import { moveContext } from '../../../hooks/lib/base-moves.mjs';
+import { ownBashEntries } from '../../../hooks/lib/change-owner.mjs';
 import { baselineOf, changedSinceBaseline } from '../../../hooks/lib/dirty-baseline.mjs';
 import { gatedFolder, gitOut, namesFilterProgram, worktreeOf } from '../../../hooks/lib/gated-folder.mjs';
 import { LEAD, pathsRecordedBy, realPathOf, recordedPaths, statusEntries } from '../../../hooks/lib/own-edits.mjs';
@@ -54,10 +64,36 @@ const WIDE_FILE = /^(?:package\.json|package-lock\.json|npm-shrinkwrap\.json|pnp
 const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm;
 const DIFF_FLAGS = ['--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--ignore-submodules=all'];
 
+/** Code of languages done-check has no checks for: file extension (lower case) -> the language name the line shows. */
+export const UNSUPPORTED_CODE = Object.freeze({ py: 'python', rs: 'rust', java: 'java', kt: 'kotlin', swift: 'swift', rb: 'ruby', php: 'php', cs: 'c#', c: 'c', h: 'c', cc: 'c++', cpp: 'c++', hpp: 'c++', scala: 'scala', dart: 'dart' });
+
 const git = (top, args) => gitOut(top, ['--literal-pathspecs', ...args], GIT_TIMEOUT_MS);
 const isWide = (path) => WIDE_FILE.test(basename(path)) || isGoWide(path);
 const isCode = (path) => (CODE_FILE.test(path) || GO_FILE.test(path) || GIT_HOOK_SCRIPT.test(path)) && !path.split('/').includes('node_modules');
 const isOther = (path) => !isWide(path) && !isCode(path) && !path.split('/').includes('node_modules');
+
+/** The language of an unsupported code file (UNSUPPORTED_CODE), or null for any other path (and anything under node_modules). */
+function languageOf(path) {
+  const name = basename(path);
+  const dot = name.lastIndexOf('.');
+  const extension = dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+  return Object.hasOwn(UNSUPPORTED_CODE, extension) && !path.split('/').includes('node_modules') ? UNSUPPORTED_CODE[extension] : null;
+}
+const isUnsupported = (path) => isOther(path) && languageOf(path) !== null;
+
+/**
+ * The unsupported code files of `paths` per language, for the line (`no python support: 3 files`, `python not run`).
+ * @param {string[]} paths repo-relative paths (a Scope's `unsupported`)
+ * @returns {{ language: string, files: number }[]} one entry per language that has a file, sorted by language name
+ */
+export function unsupportedLanguages(paths) {
+  const counts = new Map();
+  for (const path of paths) {
+    const language = languageOf(path);
+    if (language !== null) counts.set(language, (counts.get(language) ?? 0) + 1);
+  }
+  return [...counts].sort(([left], [right]) => (left < right ? -1 : 1)).map(([language, files]) => ({ language, files }));
+}
 
 /** The changed non-code files that count: those a test file names, and Go data files (testdata, embedded files of a Go package). */
 function namedOf(top, others) {
@@ -86,14 +122,15 @@ function changeKey(base, top, paths) {
   return hash.digest('hex');
 }
 
-/** The Scope of `paths` (repo-relative); null when it holds no code, no wide file and nothing `named` and `keepEmpty` is false. */
+/** The Scope of `paths` (repo-relative); null when it holds no code, no wide file, nothing `named` or unsupported and `keepEmpty` is false. */
 function scopeFrom(top, isGit, base, paths, { named = [], keepEmpty = false } = {}) {
   const unique = [...new Set(paths)].filter((path) => !path.split('/').includes('node_modules'));
   const wide = unique.filter(isWide).sort();
   const files = unique.filter((path) => !isWide(path) && isCode(path)).sort();
   const namedFiles = unique.filter((path) => isOther(path) && named.includes(path)).sort();
-  if (!keepEmpty && files.length === 0 && wide.length === 0 && namedFiles.length === 0) return null;
-  return { top, git: isGit, base, files, wide, named: namedFiles, key: changeKey(base, top, [...files, ...wide, ...namedFiles]) };
+  const unsupported = unique.filter(isUnsupported).sort();
+  if (!keepEmpty && files.length === 0 && wide.length === 0 && namedFiles.length === 0 && unsupported.length === 0) return null;
+  return { top, git: isGit, base, files, wide, named: namedFiles, unsupported, key: changeKey(base, top, [...files, ...wide, ...namedFiles]) };
 }
 
 /** Files changed between `base` and the worktree (tracked, staged or not); null when git cannot say (a commit it does not have). */
@@ -114,15 +151,30 @@ function baseOf(baseline, top) {
 }
 
 /**
+ * Of the entries an agent's Bash command may have made, the ones that stay its own (hooks/lib/change-owner.mjs `ownBashEntries`, as
+ * commit-gate.mjs uses it). The call-window log is read once per stop, on the first worktree that has such an entry; any error keeps
+ * every entry own, so a doubt never takes a file out of the check.
+ */
+function ownBashMade(ctx, top, entries) {
+  if (entries.length === 0) return entries;
+  try {
+    ctx.shared.calls ??= moveContext(ctx.input, ctx.env, top, ctx.agent);
+    return ownBashEntries({ ...ctx.shared.calls, top, takenMs: ctx.baseline?.takenMs ?? null }, entries);
+  } catch {
+    return entries; // fail closed: the agent is still checked on every file it may have made
+  }
+}
+
+/**
  * Of the changed paths, the ones this session or agent owns. Committed-only paths of an agent count; a dirty path counts when it was
- * recorded or (agent only) changed since the baseline; the lead keeps recorded paths only.
+ * recorded or (agent only) changed since the baseline and is not only another session's (ownBashMade); the lead keeps recorded paths only.
  */
 function ownedPaths(ctx, top, changed, dirty) {
   const isRecorded = (rel) => ctx.recorded.has(join(top, rel));
   if (ctx.agent === LEAD) return changed.filter(isRecorded);
   const dirtyRel = new Set(dirty.map(({ rel }) => rel));
   const unrecorded = dirty.filter(({ rel }) => !isRecorded(rel));
-  const byBash = new Set(changedSinceBaseline(ctx.env, ctx.session, ctx.agent, top, unrecorded).map(({ path }) => path));
+  const byBash = new Set(ownBashMade(ctx, top, changedSinceBaseline(ctx.env, ctx.session, ctx.agent, top, unrecorded)).map(({ path }) => path));
   const dirtyOwn = new Set(dirty.filter(({ rel, path }) => isRecorded(rel) || byBash.has(path)).map(({ rel }) => rel));
   return changed.filter((rel) => !dirtyRel.has(rel) || dirtyOwn.has(rel));
 }
@@ -143,7 +195,7 @@ function gitScope(ctx, tree) {
   }
   base ??= COMMIT_ID.test(head) ? head : null; // no recorded base: HEAD, so a test the uncommitted change breaks is still new
   const named = namedOf(top, changed.filter(isOther));
-  const relevant = [...changed.filter((rel) => isCode(rel) || isWide(rel)), ...named];
+  const relevant = [...changed.filter((rel) => isCode(rel) || isWide(rel) || isUnsupported(rel)), ...named];
   if (relevant.length === 0) return null;
   return scopeFrom(top, true, base, ownedPaths(ctx, top, relevant, dirty), { named });
 }
@@ -185,7 +237,7 @@ export async function ownChange(input, env) {
   try {
     const session = input?.session_id;
     const agent = typeof input?.agent_id === 'string' && input.agent_id !== '' ? input.agent_id : LEAD;
-    const ctx = { env, session, agent, recorded: recordedPaths(env, session, agent), baseline: baselineOf(env, session, agent) };
+    const ctx = { input, env, session, agent, shared: { calls: null }, recorded: recordedPaths(env, session, agent), baseline: baselineOf(env, session, agent) };
     const folder = gatedFolder(input ?? {}, env);
     const primary = folder === null ? null : worktreeOf(folder);
     // Beside its own worktree a stopper is judged only on the files it edited itself: never an agent's lane for the lead.

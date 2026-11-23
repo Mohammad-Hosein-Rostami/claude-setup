@@ -1,6 +1,7 @@
 // Picks the node:test files that a change can break: the test files named by the globs of a `node --test` script part that are
 // changed themselves, import a changed file (static import, export-from, require or dynamic import with a literal path, up to 3 hops), or
-// write a changed file's path in their text (a test that spawns a script).
+// write a changed file's path in their text (a test that spawns a script). A changed file that is deleted still pulls in the tests that
+// import it; a test path that no longer exists is never picked.
 // Exports: nodeRelatedTests(root, globs, files, max) -> absolute paths; testFilesOfGlobs(root, globs) -> absolute paths;
 //   pathsNamedByTests(root, paths) -> the repo-relative paths whose file name some test-looking file writes (the scope's first, cheap guess).
 // Invariants: reads only regular files under `root` (a link, FIFO or device is skipped, a file over 1 MiB is not read); never follows
@@ -139,23 +140,26 @@ export function testFilesOfGlobs(root, globs) {
   return [...matches].sort().map((path) => resolve(root, path));
 }
 
-/** The existing file a relative import specifier means, or null (a bare package name, or nothing on disk). */
-function resolveImport(fromFile, specifier) {
+/**
+ * The existing file a relative import specifier means, else a deleted changed file it means (`goneKeys`: its importers can break), or
+ * null (a bare package name, or nothing on disk the change deleted).
+ */
+function resolveImport(fromFile, specifier, goneKeys) {
   if (!specifier.startsWith('.')) return null;
   const base = resolve(dirname(fromFile), specifier.replace(/[?#].*$/, ''));
   const swapped = SCRIPT_EXTENSION.test(base) ? ['.ts', '.tsx', '.mts', '.cts'].map((extension) => base.replace(SCRIPT_EXTENSION, extension)) : [];
   const candidates = [base, ...CODE_EXTENSIONS.map((extension) => base + extension), ...swapped, ...CODE_EXTENSIONS.map((extension) => join(base, `index${extension}`))];
-  return candidates.find(isRegularFile) ?? null;
+  return candidates.find(isRegularFile) ?? candidates.find((candidate) => goneKeys.has(pathKey(candidate))) ?? null;
 }
 
-/** Remembers, per file, the files it imports, so a shared helper is read once. */
-function importGraph() {
+/** Remembers, per file, the files it imports (deleted changed files in `goneKeys` included), so a shared helper is read once. */
+function importGraph(goneKeys) {
   const importsByFile = new Map();
   return (file) => {
     if (!importsByFile.has(file)) {
       const text = readText(file);
       const specifiers = IMPORT_FORMS.flatMap((form) => [...text.matchAll(form)].map((match) => match[1]));
-      importsByFile.set(file, [...new Set(specifiers.map((specifier) => resolveImport(file, specifier)).filter(Boolean))]);
+      importsByFile.set(file, [...new Set(specifiers.map((specifier) => resolveImport(file, specifier, goneKeys)).filter(Boolean))]);
     }
     return importsByFile.get(file);
   };
@@ -191,21 +195,25 @@ function distanceOf(testFile, changedKeys, changedPaths, importsOf) {
  * The test files of a `node --test` script part that a change can break, nearest first, at most `max`.
  * @param {string} root absolute package root; the globs and `files` are relative to it
  * @param {string[]} globs the globs of the script part, for example `tests/*.test.mjs`
- * @param {string[]} files changed code files, relative to `root` with `/` separators
+ * @param {string[]} files changed files, relative to `root` with `/` separators; a deleted one is never returned, but the tests that
+ *   import it are (a deletion breaks its importers)
  * @param {number} max most files to return (MAX_NODE_RELATED)
- * @returns {string[]} absolute paths: changed tests first, then by import distance, ties by path; the same input gives the same list
+ * @returns {string[]} absolute paths of test files that exist: changed tests first, then by import distance, ties by path; the same
+ *   input gives the same list
  */
 export function nodeRelatedTests(root, globs, files, max) {
   const changedKeys = new Set(files.map((file) => pathKey(resolve(root, file))));
   const changedPaths = files.map((file) => withSlashes(relative(root, resolve(root, file))));
-  const importsOf = importGraph();
+  const goneKeys = new Set(files.map((file) => resolve(root, file)).filter((path) => statOrNull(path) === null).map(pathKey));
+  const importsOf = importGraph(goneKeys);
   const ranked = [];
   for (const testFile of testFilesOfGlobs(root, globs)) {
     const distance = distanceOf(testFile, changedKeys, changedPaths, importsOf);
     if (distance !== null) ranked.push({ testFile, distance });
   }
   ranked.sort((left, right) => left.distance - right.distance || (left.testFile < right.testFile ? -1 : 1));
-  return ranked.slice(0, max).map((entry) => entry.testFile);
+  // a test file that vanished since the walk (another agent's probe made and deleted it) is never handed to the runner
+  return ranked.filter((entry) => isRegularFile(entry.testFile)).slice(0, max).map((entry) => entry.testFile);
 }
 
 /**

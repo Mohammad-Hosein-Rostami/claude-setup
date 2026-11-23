@@ -242,6 +242,8 @@ function groupByPackage(context, scope) {
   for (const file of scope.files) {
     const placed = place(file);
     if (placed && CODE_FILE.test(file) && existsSync(placed.abs) && lstatSync(placed.abs).isFile()) groups.get(placed.root).codeFiles.push(placed.abs);
+    // a deleted code file is never handed to a tool, but the node:test pick still runs the tests that import it (lib/related.mjs)
+    else if (placed && CODE_FILE.test(file) && !existsSync(placed.abs)) groups.get(placed.root).namedFiles.push(placed.abs);
   }
   for (const file of scope.named ?? []) {
     const placed = place(file);
