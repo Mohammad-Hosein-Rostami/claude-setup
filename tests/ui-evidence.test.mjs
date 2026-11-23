@@ -88,6 +88,18 @@ test('classifyFile: path rules of the named cases (one class each)', () => {
   for (const [file, lines, expected] of PATH_CASES) assert.deepEqual(classifyFile(file, lines && [], lines), [expected], file);
 });
 
+test('classifyFile: dev config is a whole basename; app files named like a tool are app source (R3)', () => {
+  for (const file of ['.eslintrc', '.eslintrc.json', '.eslintignore', 'prettier.config.mjs', '.prettierrc.yaml', '.stylelintrc.cjs', '.lintstagedrc',
+    '.markdownlint.jsonc', '.mocharc.yml', '.nycrc', 'jest.setup.ts', 'playwright.config.ts', 'tsconfig.node.json', 'jsconfig.json',
+    'renovate.json', '.editorconfig', '.gitlab-ci.yml', 'Jenkinsfile', 'CODEOWNERS', 'LICENSE', 'license.txt']) {
+    assert.deepEqual(classifyFile(file, [], ['x']), ['devConfig'], file);
+  }
+  const heading = ['<h1 className="t">License</h1>'];
+  for (const file of ['src/pages/license.tsx', 'src/license-banner.tsx', 'src/renovate-card.vue', 'src/tsconfig-viewer.tsx', 'src/prettier.tsx', 'src/eslint-report.tsx']) {
+    assert.ok(classifyFile(file, [], heading).includes('look'), file);
+  }
+});
+
 test('classifyFile: Windows backslash paths follow the same docs, test, style and config rules', () => {
   for (const [file, lines, expected] of PATH_CASES) {
     const windows = file.replace(/\//g, '\\');

@@ -38,7 +38,11 @@ const DEPS_NAMES = new Set(['package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lo
   'deno.lock', '.npmrc', '.yarnrc', '.yarnrc.yml', '.nvmrc', '.node-version', 'go.mod', 'go.sum', 'cargo.lock', 'gemfile.lock', 'poetry.lock', 'composer.lock']);
 const DEV_FOLDERS = new Set(['.github', '.gitlab', '.circleci', '.buildkite', '.husky', '.vscode', '.idea', '.devcontainer', '.changeset', '.claude']);
 // Lint, format, type-check, test-runner and CI config. Not browserslist or bundler config: those change the built css or js.
-const DEV_NAME = /^(?:\.?(?:eslint|prettier|stylelint|commitlint|lint-?staged|markdownlint)(?:rc|ignore)?|\.?(?:editorconfig|mocharc|nycrc|c8rc)|tsconfig|jsconfig|(?:vitest|jest|playwright|cypress|karma)\.(?:config|workspace|setup)|\.gitignore|\.gitattributes|\.gitlab-ci|\.travis|azure-pipelines|bitbucket-pipelines|jenkinsfile|codeowners|license|renovate)\b/;
+// Whole basenames only (`.eslintrc.cjs`, `eslint.config.js`, `tsconfig.app.json`): an app file that starts with a tool's name
+// (`license-banner.tsx`, `renovate-card.vue`) is app source, never config.
+const DEV_TOOL = 'eslint|prettier|stylelint|commitlint|lint-?staged|markdownlint(?:-cli2)?|mocha|nyc|c8';
+const CONFIG_EXT = '(?:\\.(?:[cm]?[jt]s|jsonc?|json5|ya?ml|toml))?';
+const DEV_NAME = new RegExp(`^(?:(?:\\.?(?:${DEV_TOOL})rc|\\.(?:${DEV_TOOL})(?:ignore)?|(?:${DEV_TOOL})\\.config|(?:vitest|jest|playwright|cypress|karma)\\.(?:config|workspace|setup))${CONFIG_EXT}|[tj]sconfig(?:\\.[\\w-]+)*\\.json|\\.?renovate(?:rc)?(?:\\.json5?)?|\\.editorconfig|\\.gitignore|\\.gitattributes|(?:\\.gitlab-ci|\\.travis|azure-pipelines|bitbucket-pipelines)\\.ya?ml|jenkinsfile|codeowners|licen[cs]e(?:\\.(?:md|txt))?)$`);
 const MARKDOWN = /\.(?:md|markdown)$/; // devConfig, except under an app folder (content the app may render): text
 const GLOBAL_FOLDERS = new Set(['theme', 'themes', 'tokens', 'design-tokens', 'fonts']);
 const GLOBAL_NAME = /^(?:index\.html?|(?:index|globals?|app|main|reset|normalize|base|root|styles?|tailwind|theme|variables|vars|tokens|fonts?)\.(?:css|scss|sass|less|styl|pcss)|(?:tailwind|postcss|uno|windi|panda)\.config\.\w+|(?:palette|tokens|theme)\.[\w.]+)$/;
