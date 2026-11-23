@@ -1,6 +1,6 @@
 // Purpose: the design and no-change evidence in a request text (the brief, STATUS rules and decisions, a prompt), in English and
 // Persian. Split out of ui-evidence.mjs, which re-exports everything here, so callers import from either file.
-// Exports: requestEvidence, uiClauses, FIGMA_LINK, DESIGN_WORDS, UI_WORDS.
+// Exports: requestEvidence, uiClauses, ownClauseMatches, FIGMA_LINK, DESIGN_WORDS, UI_WORDS.
 // Invariants: pure (imports nothing, no I/O, so the router imports it without a cycle). Request text is untrusted: capped at 1 MB
 // (text past the cap is reported as `partial`, which the caller plans as full checks), only tested with regexes that run in linear
 // time, never evaluated, and only short matched phrases are returned. A Figma link is design evidence in any clause, and nothing
@@ -116,4 +116,22 @@ export function uiClauses(text) {
   if (request.partial) return { design: true, ui: true };
   const design = evidenceOf(request).design.length > 0;
   return { design, ui: design || evidenceClauses(request.text, CLAUSE_BREAK).some((clause) => unnegatedMatches(clause, UI_ALL).length > 0) };
+}
+
+/**
+ * For the skill router: which of its own word patterns (a skill's route, a follow-up word) match in a clause of the request that is
+ * neither talk about the checks nor negated, with the same clauses, talk and negation rules as uiClauses.
+ * @param {string|null|undefined} text untrusted prompt text (only the first 1 MB is read)
+ * @param {RegExp[]} patterns the router's patterns; each must run in linear time (it is run once per clause)
+ * @returns {boolean[]} one per pattern; a prompt over 1 MB counts every pattern as matched (the full route)
+ * @throws {TypeError} when text is neither a string nor null/undefined
+ */
+export function ownClauseMatches(text, patterns) {
+  const request = requestText(text);
+  if (request.partial) return patterns.map(() => true);
+  const clauses = evidenceClauses(request.text, CLAUSE_BREAK);
+  return patterns.map((pattern) => {
+    const all = globalOf(pattern);
+    return clauses.some((clause) => unnegatedMatches(clause, all).length > 0);
+  });
 }

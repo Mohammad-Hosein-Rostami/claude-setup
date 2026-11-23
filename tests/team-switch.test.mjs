@@ -144,3 +144,27 @@ test('post-edit: CLAUDE_POST_EDIT_SKIP=all from a team file still formats and wa
     assert.equal(second.stdout, '', `${one.name}: the warning shows once per session`);
   }
 });
+
+// ---- skill-router ----
+test('skill-router: CLAUDE_SKILL_ROUTER=off from a team file still routes and warns once per session; local and env-only are quiet', () => {
+  const tmp = makeTempDir('team-switch-router-');
+  for (const [index, one] of namedCases('CLAUDE_SKILL_ROUTER', 'off').entries()) {
+    const dir = project(one.files);
+    const env = { ...process.env, HOME: tmp, USERPROFILE: tmp, TMPDIR: tmp, TEMP: tmp, TMP: tmp, CLAUDE_PROJECT_DIR: dir, CLAUDE_SKILL_ROUTER: 'off' };
+    const ask = () => {
+      const r = spawnSync(process.execPath, [hookPath('skill-router.mjs')], { input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: 'make it pixel perfect', session_id: `router-${index}`, cwd: dir }), encoding: 'utf8', env });
+      assert.equal(r.status, 0, r.stderr);
+      return r.stdout === '' ? null : JSON.parse(r.stdout);
+    };
+    const first = ask();
+    const second = ask();
+    if (one.honoured) {
+      assert.equal(first, null, one.name);
+      continue;
+    }
+    assert.match(first.hookSpecificOutput.additionalContext, /figma-pixel-perfect/, `${one.name}: the router ran`);
+    assert.match(first.systemMessage, one.why, one.name);
+    assert.match(second.hookSpecificOutput.additionalContext, /figma-pixel-perfect/, one.name);
+    assert.equal(second.systemMessage, undefined, `${one.name}: the warning shows once per session`);
+  }
+});

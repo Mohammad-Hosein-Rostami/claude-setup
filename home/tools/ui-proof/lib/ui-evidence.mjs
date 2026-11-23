@@ -1,13 +1,13 @@
 // Purpose: the one vocabulary of UI check evidence (spec ui-kinds-spec.md section 4): the plan depths, the classes of a changed file
 // and of its changed lines, and the design and no-change evidence in a request text. The check plan and the skill router both import
 // it, so they read one definition. Exports: DEPTHS, stricterDepth, planEvidence, FILE_CLASSES, classifyFile, and, re-exported from
-// ui-request.mjs (the request-text part), requestEvidence, uiClauses, FIGMA_LINK, DESIGN_WORDS, UI_WORDS.
+// ui-request.mjs (the request-text part), requestEvidence, uiClauses, ownClauseMatches, FIGMA_LINK, DESIGN_WORDS, UI_WORDS.
 // Invariants: pure (no I/O; its only import is the pure ui-request.mjs, so the router imports it without a cycle). A change is
 // "no change" only when its lines are re-spaced in place (same trimmed lines, each pair in one hunk); a moved line is a change. An
 // app line that fits no class counts as look, never as nothing; a file type we do not know counts as look. Every line regex runs in
 // linear time.
 
-export { requestEvidence, uiClauses, FIGMA_LINK, DESIGN_WORDS, UI_WORDS } from './ui-request.mjs';
+export { requestEvidence, uiClauses, ownClauseMatches, FIGMA_LINK, DESIGN_WORDS, UI_WORDS } from './ui-request.mjs';
 
 export const DEPTHS = Object.freeze(['none', 'same', 'render', 'visual', 'pixel']);
 export const FILE_CLASSES = Object.freeze(['test', 'docs', 'devConfig', 'deps', 'globalLook', 'look', 'text', 'logic']);

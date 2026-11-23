@@ -127,62 +127,64 @@ const SHORT = /^Skill router: UI request - invoke .+ \(skip any already loaded\)
 
 test('first routed prompt gets the full text, a repeat gets the short form', async () => {
   const { prompt } = await routerSession();
-  assert.match(prompt('make it responsive'), FULL);
-  const again = prompt('make it responsive on mobile');
+  assert.match(prompt('make it pixel perfect'), FULL);
+  const again = prompt('make it pixel perfect on mobile');
   assert.match(again, SHORT);
   assert.match(again, /responsive-ui/);
   assert.equal(prompt('add a REST endpoint for orders'), '');
 });
 
-// The UI checks are kept (owner, 2026-11-22): every UI text names ui-quality-pass and the proof step, with no switch to turn them off.
-test('the full, short and follow-up UI texts always name ui-quality-pass and the proof step', async () => {
+// The UI checks are kept (owner, 2026-11-22) and sized by evidence (R24/R28): the pixel texts name ui-quality-pass and the proof step;
+// a UI request with no design evidence names ui-quality-pass and leaves the depth to the check plan.
+test('the full, short and follow-up pixel texts always name ui-quality-pass and the proof step', async () => {
   const { prompt } = await routerSession();
-  const full = prompt('make it responsive');
+  const full = prompt('make it pixel perfect');
   assert.match(full, /ui-quality-pass/);
   assert.match(full, /`ui-check run`[\s\S]*`visual-qa`/);
-  assert.match(prompt('make it responsive on mobile'), /ui-quality-pass before done; proof: ui-check run PASS, then the visual-qa final gate\.$/);
+  assert.match(prompt('make it pixel perfect on mobile'), /ui-quality-pass before done; proof: ui-check run PASS, then the visual-qa final gate\.$/);
   assert.match(prompt('now style the settings page header'), /ui-quality-pass before done; proof: /);
 });
 
 test('a newly routed skill gets the full text again, then the short form', async () => {
   const { prompt } = await routerSession();
-  assert.match(prompt('make it responsive'), FULL);
-  const added = prompt('fix the form validation');
+  assert.match(prompt('make it pixel perfect'), FULL);
+  const added = prompt('match the figma frame and fix the form validation');
   assert.match(added, FULL);
   assert.match(added, /forms-validation/);
-  assert.match(prompt('fix the form validation again'), SHORT);
-  assert.match(prompt('make it responsive'), SHORT);
+  assert.match(prompt('match the figma frame, then fix the form validation again'), SHORT);
+  assert.match(prompt('make it pixel perfect'), SHORT);
 });
 
 test('sessions are independent', async () => {
   const { prompt } = await routerSession();
-  assert.match(prompt('make it responsive', 'a'), FULL);
-  assert.match(prompt('make it responsive', 'b'), FULL);
-  assert.match(prompt('make it responsive', 'a'), SHORT);
+  assert.match(prompt('make it pixel perfect', 'a'), FULL);
+  assert.match(prompt('make it pixel perfect', 'b'), FULL);
+  assert.match(prompt('make it pixel perfect', 'a'), SHORT);
 });
 
 test('SessionStart(compact) resets only that session; other sources and sessions are untouched', async () => {
   const { prompt, compact, fire } = await routerSession();
-  prompt('make it responsive', 'a');
-  prompt('make it responsive', 'b');
+  prompt('make it pixel perfect', 'a');
+  prompt('make it pixel perfect', 'b');
   assert.equal(compact('a'), '');
   assert.equal(fire({ hook_event_name: 'SessionStart', source: 'startup', session_id: 'b' }), '');
-  assert.match(prompt('make it responsive', 'a'), FULL);
-  assert.match(prompt('make it responsive', 'b'), SHORT);
+  assert.match(prompt('make it pixel perfect', 'a'), FULL);
+  assert.match(prompt('make it pixel perfect', 'b'), SHORT);
   assert.equal(compact('no-such-session'), '');
 });
 
 test('bad or missing session id: full text every time, no throw, no state', async () => {
   const { prompt, compact, fire } = await routerSession();
   for (const sessionId of ['../evil', 'a b', '', 'x'.repeat(200), null, 42]) {
-    assert.match(prompt('make it responsive', sessionId), FULL);
-    assert.match(prompt('make it responsive', sessionId), FULL);
+    assert.match(prompt('make it pixel perfect', sessionId), FULL);
+    assert.match(prompt('make it pixel perfect', sessionId), FULL);
     assert.equal(compact(sessionId), '');
   }
-  assert.match(fire({ hook_event_name: 'UserPromptSubmit', prompt: 'make it responsive' }), FULL);
+  assert.match(fire({ hook_event_name: 'UserPromptSubmit', prompt: 'make it pixel perfect' }), FULL);
 });
 
 const FOLLOW_UP = /^Skill router: UI follow-up - invoke accessibility-build, responsive-ui/;
+const PLAN_FOLLOW_UP = /^Skill router: UI follow-up - invoke accessibility-build, responsive-ui \(skip any already loaded\); ui-quality-pass before done; the check plan decides the depth/;
 
 test('weakUiPrompt: UI follow-up words yes, HTTP header and DB table no', () => {
   assert.ok(weakUiPrompt('now style the settings page header'));
@@ -194,7 +196,7 @@ test('weakUiPrompt: UI follow-up words yes, HTTP header and DB table no', () => 
 test('sticky UI: weak prompt follows up only in a UI session', async () => {
   const { prompt, fire } = await routerSession();
   assert.equal(prompt('now style the settings page header', 'cold'), '');
-  prompt('make it responsive');
+  prompt('make it pixel perfect');
   assert.match(prompt('now style the settings page header'), FOLLOW_UP);
   assert.equal(prompt('add a header to the HTTP request'), '');
   assert.equal(prompt('fix the DB table index'), '');
@@ -206,11 +208,12 @@ test('UI file edit sets the marker even after the reminder was sent; ui-implemen
   const { prompt, fire } = await routerSession();
   const edit = (extra, sessionId) =>
     fire({ hook_event_name: 'PostToolUse', session_id: sessionId, tool_input: { file_path: 'a.tsx' }, ...extra });
-  assert.match(edit({}, 'e1'), /editing UI code/);
+  // No old or new text: the path decides (a .tsx is look and logic), so both reminders show, once.
+  assert.match(edit({}, 'e1'), /editing UI look[\s\S]*editing UI logic/);
   assert.equal(edit({}, 'e1'), '');
-  assert.match(prompt('tweak the padding', 'e1'), FULL);
+  assert.match(prompt('tweak the padding', 'e1'), PLAN_FOLLOW_UP);
   assert.equal(edit({ agent_type: 'ui-implementer', agent_id: 'x1' }, 'e2'), '');
-  assert.match(prompt('tweak the padding', 'e2'), FULL);
+  assert.match(prompt('tweak the padding', 'e2'), PLAN_FOLLOW_UP);
 });
 
 test('skillsForPrompt and gateLinesForPrompt ignore every harness event form', () => {
@@ -269,7 +272,8 @@ test('hook: each gate line shows once per session, again after a compact, and pe
 
 test('hook: CLAUDE_SKILL_ROUTER=off silences the gate lines too', async () => {
   const tmp = makeTempDir('router-off-');
-  const env = { ...process.env, TMPDIR: tmp, TEMP: tmp, TMP: tmp, CLAUDE_SKILL_ROUTER: 'off' };
+  // No project folder (CLAUDE_PROJECT_DIR empty, no cwd): the shell switch is honoured (team files: team-switch.test.mjs).
+  const env = { ...process.env, TMPDIR: tmp, TEMP: tmp, TMP: tmp, CLAUDE_SKILL_ROUTER: 'off', CLAUDE_PROJECT_DIR: '' };
   const input = JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: 'fix the crash, then ship it', session_id: 'off1' });
   const r = spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env });
   assert.equal(r.status, 0);

@@ -100,10 +100,11 @@ console.log(watchTerminalRejection(${JSON.stringify(fifo)})());`;
 });
 
 test('skill-router treats a FIFO at the session marker as unreadable and gives the full text at once', { skip: SKIP }, () => {
+  // A design prompt: only the pixel texts read the session marker (other UI prompts get the one check-plan line).
   const tmp = makeTempDir('skill-router-tmp-');
   makeFifo(join(tmp, 'claude-skill-router', 'prompt', 's1'));
   const result = spawnSync(process.execPath, [hookPath('skill-router.mjs')], {
-    input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: 'build the signup form', session_id: 's1' }),
+    input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: 'build the signup form to match the figma frame', session_id: 's1' }),
     encoding: 'utf8', env: { ...process.env, TMPDIR: tmp, TEMP: tmp, TMP: tmp, CLAUDE_SKILL_ROUTER: '' },
     timeout: ANSWER_WITHIN_MS, killSignal: 'SIGKILL',
   });

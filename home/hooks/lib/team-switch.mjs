@@ -7,14 +7,16 @@
 // Invariants: the project files are read through teamSetEnv only (bounded reads, no link followed, never waits). A team or local
 //   file that cannot be read fails closed: the switch is ignored and the check runs. No project folder (none known, or only the home
 //   folder, whose `.claude/settings.json` is the user's own) -> the switch is honoured as before. Nothing is written to a project;
-//   noticeOnce leaves one empty marker per session and switch in the temp folder (a rollback ignores it).
+//   noticeOnce leaves one empty marker per session and switch under the checked per-user hook temp root (lib/edit-log.mjs: a folder
+//   another user could plant is refused; disk-clean's hook-state rule removes idle markers; a rollback ignores them).
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
+import { checkedTempRoot } from './edit-log.mjs';
 import { teamSetEnv } from './project-setup-scan.mjs';
 import { escaped } from './shown-name.mjs';
 
-const NOTICE_DIR = join(tmpdir(), 'claude-team-switch'); // one empty file per session and switch: the warning was shown
+const NOTICE_KIND = 'team-switch'; // under the hook temp root: one empty file per session and switch, the warning was shown
 const SAFE_ID = /^[\w-]{1,128}$/;
 const TEAM_FILE = '.claude/settings.json';
 const LOCAL_FILE = '.claude/settings.local.json';
@@ -79,16 +81,18 @@ export const switchNames = (env, key, dirs) =>
 
 /**
  * True the first time a session shows the warning for `key` (an atomic create, so two hooks at once show it once). An unsafe session
- * id or an unwritable temp folder -> true: the warning is shown again rather than hidden.
+ * id, a refused temp root or an unwritable temp folder -> true: the warning is shown again rather than hidden.
  * @param {unknown} sessionId the hook input's session_id
  * @param {string} key the switch
  * @returns {boolean}
  */
 export function noticeOnce(sessionId, key) {
   if (typeof sessionId !== 'string' || !SAFE_ID.test(sessionId) || !SAFE_ID.test(key)) return true;
+  const root = checkedTempRoot();
+  if (root === null) return true; // refused or unusable temp root: warn every time
   try {
-    mkdirSync(NOTICE_DIR, { recursive: true });
-    writeFileSync(join(NOTICE_DIR, `${sessionId}--${key}`), '', { flag: 'wx' });
+    mkdirSync(join(root, NOTICE_KIND), { recursive: true, mode: 0o700 });
+    writeFileSync(join(root, NOTICE_KIND, `${sessionId}--${key}`), '', { flag: 'wx' });
     return true;
   } catch (error) {
     return error.code !== 'EEXIST';
