@@ -268,7 +268,7 @@ export function planGoChecks(context, scope, { full = false } = {}) {
  */
 export function planGo(context, module, { full = false } = {}) {
   const where = module.root === context.top ? '' : `${withSlashes(relative(context.top, module.root))}: `;
-  if (!context.go) return { skipped: KINDS.map((kind) => skip(kind, 'no-command', `${where}${kind}: go: not installed`)), cmds: [] };
+  if (!context.go) return { skipped: KINDS.map((kind) => skip(kind, 'go-not-installed', `${where}${kind}: go: not installed`)), cmds: [] };
   const found = classify(context.top, module);
   const whole = full || module.wide;
   const vetArgs = whole || found.vetAll ? ['./...'] : [...found.vetDirs].sort().map(goPackageArg);
@@ -281,7 +281,7 @@ export function planGo(context, module, { full = false } = {}) {
   if (found.gofmt.length > 0) {
     const gofmt = gofmtBinary(context.env, context.go);
     if (gofmt) cmds.push(...goCmds('gofmt', 'lint', 'gofmt -l', gofmt, found.gofmt.map((file) => `./${file}`)));
-    else skipped.push(skip('lint', 'no-command', `${where}lint: gofmt: not installed`));
+    else skipped.push(skip('lint', 'gofmt-not-installed', `${where}lint: gofmt: not installed`));
   }
   if (testArgs.length > 0) cmds.push(...goCmds('go-test', 'tests', 'go test', context.go, testArgs, { goModule: modulePathOf(module.root) }));
   return { skipped: [...skipped, ...notesOf(found, cmds, where)], cmds };

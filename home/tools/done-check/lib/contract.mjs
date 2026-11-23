@@ -15,8 +15,11 @@ export const CHECK_KINDS = Object.freeze(['types', 'lint', 'tests', 'tests-weake
 /** What one check ends with: `none` = no related test existed (never `ok`), `not-run` = it could not run (see NOT_RUN_WHY). */
 export const RESULTS = Object.freeze(['ok', 'fail', 'none', 'not-run']);
 
-/** Why a check did not run. A not-run check never blocks and is never shown as ok. */
-export const NOT_RUN_WHY = Object.freeze(['time', 'error', 'no-command', 'no-config', 'no-related', 'skipped-env', 'not-supported', 'e2e-or-live']);
+/**
+ * Why a check did not run. A not-run check never blocks and is never shown as ok. `go-not-installed` and `gofmt-not-installed`: the
+ * change holds Go and that program is not on PATH (the line says `go: not installed`, lib/verdict-text.mjs).
+ */
+export const NOT_RUN_WHY = Object.freeze(['time', 'error', 'no-command', 'no-config', 'no-related', 'skipped-env', 'not-supported', 'e2e-or-live', 'go-not-installed', 'gofmt-not-installed']);
 
 /** Wall-clock cap of all checks together at one stop (ms). */
 export const STOP_DEADLINE_MS = 90_000;
@@ -64,7 +67,7 @@ export const MAX_ALARM_IDS_PER_CHECK = 100;
 
 /** @typedef {'types'|'lint'|'tests'|'tests-weakened'} CheckKind one of CHECK_KINDS */
 /** @typedef {'ok'|'fail'|'none'|'not-run'} Result one of RESULTS */
-/** @typedef {'time'|'error'|'no-command'|'no-config'|'no-related'|'skipped-env'|'not-supported'|'e2e-or-live'} NotRunWhy one of NOT_RUN_WHY */
+/** @typedef {'time'|'error'|'no-command'|'no-config'|'no-related'|'skipped-env'|'not-supported'|'e2e-or-live'|'go-not-installed'|'gofmt-not-installed'} NotRunWhy one of NOT_RUN_WHY */
 
 /**
  * The files one agent (or one manual run) changed in one worktree, and the base they are compared with.

@@ -84,7 +84,7 @@ any more) vets the whole module, since an importer may break anywhere. `vendor/`
 run (no-related)`), `testdata`, `_x` and `.x` folders are data, and a path with a control character is named, not passed. All three
 compare with the base like the JS checks: the base reruns the same paths (go test: the failing package folders), so a file the base has
 unformatted too, a vet finding it has too or a test that fails there too is old and never blocks. No go on PATH gives `types`, `lint`
-and `tests` `not run (no-command)` with the label `go: not installed`; a `.go` file in no module is `not-supported`. go and gofmt come
+and `tests` `not run (go: not installed)` (gofmt missing alone: `lint not run (gofmt: not installed)`); a `.go` file in no module is `not-supported`. go and gofmt come
 from PATH (gofmt beside the real go first); `GOFLAGS`, `GOTOOLCHAIN` and Go's own build and test caches are the caller's. Known limits:
 go test output over 8 MiB is not read (`not run (error)`), and the base tree is a new temp folder per run, so a base build of a big
 module may not finish within the 30 s base budget (the failures are then called "may be older").

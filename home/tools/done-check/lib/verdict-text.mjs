@@ -11,6 +11,9 @@ import { CHECK_KINDS, MAX_REASON_LINES_PER_CHECK } from './contract.mjs';
 const MS_PER_SECOND = 1000;
 const WHOLE_SECONDS_FROM_MS = 10 * MS_PER_SECOND; // under this a time shows one decimal (`0.4 s`), from it whole seconds
 const WEAKENED = 'tests-weakened';
+// A reason the owner reads better in words than as its code; any other reason is shown as its code (`time`, `error`, ...).
+const WHY_WORDS = Object.freeze({ 'go-not-installed': 'go: not installed', 'gofmt-not-installed': 'gofmt: not installed' });
+const whyWords = (why) => (Object.hasOwn(WHY_WORDS, why) ? WHY_WORDS[why] : why);
 
 /**
  * What one check kind found, merged over its packages.
@@ -38,7 +41,7 @@ function partOf(kind, check, files) {
   if (kind === WEAKENED) return weakenedPart(check);
   if (check.result === 'fail') return `${kind} FAIL ${check.new} new${oldNote(check)}`;
   if (check.result === 'none') return `${kind} none related (${files} files)`;
-  if (check.result === 'not-run') return `${kind} not run (${check.why ?? 'error'})`;
+  if (check.result === 'not-run') return `${kind} not run (${whyWords(check.why ?? 'error')})`;
   return `${kind} ok${oldNote(check)}`;
 }
 

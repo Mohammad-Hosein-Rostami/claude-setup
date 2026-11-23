@@ -99,10 +99,18 @@ test('plan: vet and test of the changed package folders, gofmt of the changed fi
   assert.equal(goCmds(plan).find((cmd) => cmd.parse === 'go-test').goModule, 'example.com/m');
 });
 
-test('plan: no go on PATH names types, lint and tests not run (go: not installed) and runs nothing', (t) => {
+test('plan: no go on PATH names types, lint and tests not run (go-not-installed) and runs nothing', (t) => {
   const { plan } = planOf({ 'go.mod': GO_MOD, 'a/a.go': A_ONE }, ['a/a.go'], { env: { PATH: '' } });
   assert.deepEqual(goCmds(plan), []);
-  assert.deepEqual(plan.skipped, ['types', 'lint', 'tests'].map((kind) => ({ kind, why: 'no-command', label: `${kind}: go: not installed` })));
+  assert.deepEqual(plan.skipped, ['types', 'lint', 'tests'].map((kind) => ({ kind, why: 'go-not-installed', label: `${kind}: go: not installed` })));
+});
+
+test('plan: go without a gofmt beside it or on PATH names lint not run (gofmt-not-installed)', { skip: process.platform === 'win32' && 'a POSIX script stands in for go' }, (t) => {
+  const bin = makeTempDir('go-only-bin-');
+  writeFileSync(join(bin, 'go'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const { plan } = planOf({ 'go.mod': GO_MOD, 'a/a.go': A_ONE }, ['a/a.go'], { env: { PATH: bin } });
+  assert.deepEqual(plan.skipped, [{ kind: 'lint', why: 'gofmt-not-installed', label: 'lint: gofmt: not installed' }]);
+  assert.deepEqual(goCmds(plan).map((cmd) => cmd.parse), ['go-vet', 'go-test']);
 });
 
 test('plan: a vendor-only change runs no Go command and says so', needsGo, (t) => {
@@ -213,6 +221,6 @@ test('run: no go on PATH shows types, lint and tests not run, never ok, and does
   // only the plan reads this env (git still runs from this process's PATH): an empty PATH folder is a machine without go
   const verdict = await checkChange(rangeChange(repo.dir, repo.baseSha), { where: 'manual', env: { ...repo.env, PATH: makeTempDir('go-path-') } });
   assert.equal(verdict.verdict, 'ok');
-  for (const kind of ['types', 'lint', 'tests']) assert.deepEqual([verdict.row.checks[kind].result, verdict.row.checks[kind].why], ['not-run', 'no-command'], kind);
-  assert.match(verdict.line, /types not run \(no-command\) · lint not run \(no-command\) · tests not run \(no-command\)/);
+  for (const kind of ['types', 'lint', 'tests']) assert.deepEqual([verdict.row.checks[kind].result, verdict.row.checks[kind].why], ['not-run', 'go-not-installed'], kind);
+  assert.match(verdict.line, /types not run \(go: not installed\) · lint not run \(go: not installed\) · tests not run \(go: not installed\)/);
 });
