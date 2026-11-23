@@ -102,6 +102,8 @@ test('a non-literal import, an undeclared bare import and a file no screen impor
   assert.match(dynamic.why, /^reach unresolved: src\/pages\/Panel\.tsx imports a non-literal module \("name"\) \(at [0-9a-f]{12}\): rendering every inferred route$/);
   const undeclared = repoWith({ ...APP, 'src/shared/x.ts': "import lib from 'components/lib';\nexport const x = 1;\n" });
   assert.match(reach(undeclared.dir, [undeclared.sha], ['src/ui/button.tsx']).why, /"components\/lib" in src\/shared\/x\.ts is no file, alias or declared package/);
+  const remote = repoWith({ ...APP, 'src/pages/Panel.tsx': "const sdk = (origin) => import(`${origin}/sdk.mjs`);\nexport default function Panel() { return null; }\n" });
+  assert.equal(reach(remote.dir, [remote.sha], ['src/ui/button.tsx']).all, false, 'a url built at run time is no repo module');
   const clean = repoWith({ ...APP, 'src/unused.ts': 'export const unused = 1;\n' });
   assert.equal(reach(clean.dir, [clean.sha], ['src/pages/PageA.test.tsx']).all, false);
   assert.equal(reach(clean.dir, [clean.sha], ['src\\deep\\level5.ts']).reached[0].id, 'react-router:/a', 'a Windows path is read as a repo path');

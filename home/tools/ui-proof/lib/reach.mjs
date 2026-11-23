@@ -17,7 +17,7 @@ import { GIT_SAFETY } from '../../board/lib/git-state.mjs';
 const GIT_TIMEOUT_MS = 5000;
 const GIT_MAX_BUFFER = 256 << 20;
 const BLOBS_PER_CALL = 400;
-const MAX_READ_BYTES = 1 << 20; // a source file bigger than this is not read (its imports are unknown: all)
+const MAX_READ_BYTES = 8 << 20; // a source file bigger than this is not read (its imports are unknown: all); generated API types pass
 const MAX_WALK_FILES = 60_000;
 const WALK_BUDGET_MS = 45_000; // under git-tidy's 60 s UI check (spec section 7)
 const MAX_GLOB_MATCHES = 2000;
@@ -256,6 +256,7 @@ export function importSpecs(file, text) {
     const literal = LITERAL.exec(arg.trim());
     if (literal && !literal[2].includes('${')) specs.push(literal[2]);
     else if (literal && /^\.\.?\//.test(literal[2])) globs.push(literal[2].replace(/\$\{[^}]*\}/g, '**'));
+    else if (literal?.[1] === '`' && literal[2].startsWith('${')) continue; // `${origin}/x.mjs`: a url at run time, no bundler resolves it to a repo file
     else dynamic.push(arg.trim().slice(0, 80));
   }
   for (const arg of take(PATTERNS.angular, 1)) specs.push(...[...arg.matchAll(STRINGS)].map((m) => (m[2].startsWith('.') ? m[2] : `./${m[2]}`)));

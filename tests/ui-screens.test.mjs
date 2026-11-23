@@ -288,10 +288,11 @@ test('U8 probe on a real repo (UI_SCREENS_PROBE): counts and timings only, read-
   console.log(`U8 screens ${screens.length} (${sources}); literal routes ${count((s) => s.route !== null && s.source !== 'e2e')}; with urls ${count((s) => s.urls.length > 0)}`);
   console.log(`U8 unresolved ${unresolved.length} (${kinds || 'none'}); complete ${isComplete(unresolved)}`);
   console.log(`U8 first run ${first.ms} ms (cached ${first.value.cached}); second run ${second.ms} ms (cached ${second.value.cached})`);
-  const sample = screens.find((s) => s.source !== 'e2e' && s.source !== 'story');
-  if (sample) {
-    const reach = time(() => reachedScreens({ repoDir, revs: ['HEAD'], files: [sample.component], screens }));
-    console.log(`U8 reach of one screen file: ${reach.value.reached.length} screens reached, all ${reach.value.all}, ${reach.ms} ms`);
+  const samples = [...new Set(screens.filter((s) => s.source !== 'e2e' && s.source !== 'story').map((s) => s.component))].slice(0, 10);
+  const reaches = samples.map((file) => time(() => reachedScreens({ repoDir, revs: ['HEAD'], files: [file], screens })));
+  if (reaches.length > 0) {
+    const reached = reaches.map((r) => r.value.reached.length).sort((a, b) => a - b);
+    console.log(`U8 reach of ${reaches.length} one-file changes: all ${reaches.filter((r) => r.value.all).length}; screens reached median ${reached[Math.floor(reached.length / 2)]}, max ${reached.at(-1)}; slowest ${Math.max(...reaches.map((r) => r.ms))} ms`);
   }
   assert.equal(second.value.cached, true);
 });

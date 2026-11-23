@@ -39,7 +39,6 @@ const ROOT_MARKER = /\b(?:BrowserRouter|HashRouter|MemoryRouter|StaticRouter|cre
 const ROUTER_CALLS = new Set(['createBrowserRouter', 'createHashRouter', 'createMemoryRouter', 'useRoutes', 'forRoot', 'forChild', 'provideRouter']);
 const REF_KEYS = ['element', 'component', 'Component', 'lazy', 'loadComponent'];
 const ROUTE_KEYS = new Set([...REF_KEYS, 'children', 'loadChildren', 'redirectTo', 'redirect', 'index']);
-const E2E_FILE = /(?:^|\/)(?:e2e|cypress|playwright|tests?|__tests__)\/|\.(?:spec|test|cy)\.[cm]?[jt]sx?$/;
 const E2E_CONFIG = /(?:^|\/)(?:playwright|cypress)\.config\.[cm]?[jt]s$/;
 const STORY = /\.stories\.(?:[cm]?[jt]sx?|mdx)$/;
 const MATRIX = /(?:^|\/)[^/]*matrix[^/]*\.json$/i;
