@@ -133,13 +133,13 @@ for (const [name, argv] of [
   ['a done row', ['park', 'web.s1.ui', 'why']],
   ['a done row (wait)', ['wait', 'web.s1.ui', 'why']],
   ['a road whose rows are all done', ['park', 'old', 'why']],
-  ['a hand-over row', ['park', 'deliver:1', 'why']],
+  ['a hand-over row with no done stamp', ['park', 'deliver:2', 'why']],
   ['no why', ['park', '1']],
   ['a blank why', ['park', '1', '  \u0007 ']],
   ['no target', ['wait']],
 ]) {
   test(`park and wait refuse ${name} with exit 2 and change nothing`, async () => {
-    const { run, read } = await project(TABLE.replace('| deliver:1', '| old.s1.a | done road | S | 2026-11-23T08:00Z | 2026-11-23T08:30Z | aaa1111 |\n| deliver:1'));
+    const { run, read } = await project(TABLE.replace('| deliver:1', '| old.s1.a | done road | S | 2026-11-23T08:00Z | 2026-11-23T08:30Z | aaa1111 |\n| deliver:2 | deliver: second part | S | - | - | - |\n| deliver:1'));
     const before = await read();
     assert.equal(run(...argv).code, 2);
     assert.equal(await read(), before);

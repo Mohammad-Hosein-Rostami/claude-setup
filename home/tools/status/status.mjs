@@ -25,7 +25,7 @@
 // After a changed add|start|done|park|wait the estimate refresh and the board refresh start at once (segment-cache.mjs refreshNow,
 // board/lib/refresh.mjs startBoardRefresh).
 // Exports: runStatus(argv, { cwd, now, sessionId, stateDir }) -> { code, message }; the CLI prints message (stdout for 0) and exits code.
-// Invariants: touches only the one line it adds or changes (a superseding rule also marks the rule it replaces); rows are only those of the one table under `## Work items` (header
+// Invariants: touches only the one line it adds or changes (a superseding rule also marks the rule it replaces, a batch or a road park changes each of its rows); rows are only those of the one table under `## Work items` (header
 // `id | item | size | started | done | evidence`, the contiguous rows below its separator, with or without outer pipes, found and
 // read with the estimator's own findSection/rowCells/isTableRow in status-table.mjs, so code fences are skipped the same way), so a work row anywhere
 // else is never edited; a missing section is never made below a code fence left open (it would be hidden: refused); ids and items starting `deliver:` are reserved for hand-overs; times are UTC to the minute, the format the

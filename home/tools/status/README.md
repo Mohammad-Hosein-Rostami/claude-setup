@@ -9,8 +9,10 @@ Run: `node ~/.claude/tools/status/status.mjs [--file STATUS.md] <command>`
 | Command | What it does |
 | ------- | ------------ |
 | `add <id> <item> <size>` | New row at the end of the `## Work items` table (made when there is none); size `S`, `M` or `L`; `started` stays empty: list the job's rows first. An id that exists (any case) is refused, and so are an id and an item starting `deliver:` (reserved for hand-overs: such an item would make the row one). |
-| `start <id>` | `started` = now, when work on the row begins. A row already started or done is refused. |
-| `done <id> <evidence>` | `done` = now, evidence set (added after an existing one with `; `). A row never started gets `started` = now too, costs 0 minutes, and the message says to use `start`. A row whose `done` is set is refused: never clear or change a done cell, add a new row for a correction. |
+| `start <id>` | `started` = now, when work on the row begins. A row already started or done is refused. On a parked or waiting row it clears the hold instead (a `started` already set stays as it was) and the message says so. |
+| `done <id> <evidence>` | `done` = now, evidence set (added after an existing one with `; `). A row never started gets `started` = now too, costs 0 minutes, and the message says to use `start`. A row whose `done` is set is refused: never clear or change a done cell, add a new row for a correction. A `parked:` or `waiting:` hold is dropped from the evidence first, so a done row never reads as held. |
+| `park <id\|road> "<why>"` | `parked: <why>` at the head of the evidence of the open row `<id>`, or of every open row of the road `<road>` (ids `<road>.s<N>.<rest>`, a `close:` style prefix too) in one all-or-none edit: rows of a paused or later phase, or of another session's plan, so the estimate can leave them out (estimate-spec R3). Done rows are never touched; other evidence stays after `; `; a newer hold replaces an older one. Exit 2, nothing written: an unknown id or road, a done row, a road whose rows are all done, a hand-over row, or a name that is both a row id and a road. |
+| `wait <id> "<question>"` | `waiting: <question>` the same way on one open row (never a road): the row waits for the owner's answer (R4). The same refusals as `park`. |
 | `deliver "<what>"` | A hand-over row: `deliver:N \| deliver: <what> \| S \| - \| <now> \| -`, N one above the highest `deliver:` number in the table. Use it to hand over a part while rows stay open. |
 | `defect <id> "<conditions>"` | The owner reported row `<id>` broken (a done row too): `[defect <n>]` at the end of its item, n one above the last mark. The first report says to reproduce, fix the root cause and add a regression test; the second adds a `rootcause:<id>` row (once): reproduce under the owner's conditions, then `deep-debugger` before any fix (`defect.mjs`). |
 | `deliver --auto` | The same row (item `deliver: turn ended with no open row`), written only when the table reads with no problem, no work row is open (listed or running) and at least one was done after the last `deliver:` row; otherwise nothing changes, exit 0, and the message says why. The Stop hook `hooks/status-deliver.mjs` runs it on the session's linked STATUS.md, so a hand-over is recorded by itself when a turn ends with nothing open. |
@@ -27,7 +29,11 @@ a2 "evidence"`. All or nothing: the first refused group stops the call before an
 `--writers` (`status-predictors.mjs`). Each done row then gets one line in `~/.claude/state/estimate/predictors/<table id>.jsonl`
 with the flags and the files and lines git changed since the row started; a failure there never fails the edit.
 
-After a changed `add`, `start` or `done` the estimate refresh starts at once (`refreshNow` in
+A hold has no column of its own: it is text in the evidence cell of an open row, so an older `status.mjs` or estimator reads the
+row as an open row with evidence. Its text is one line: control characters become spaces and `;` (which ends the hold) becomes `,`;
+a `|` is escaped like any cell. Until the estimate reads holds (lib `rowState`), a held row still counts in its numbers.
+
+After a changed `add`, `start`, `done`, `park` or `wait` the estimate refresh starts at once (`refreshNow` in
 `home/tools/estimate/lib/segment-cache.mjs`), so the status line does not lag the edit; a refresh already running is not doubled.
 
 Only the one table under `## Work items` is read and edited: its header `id | item | size | started | done | evidence` and the
