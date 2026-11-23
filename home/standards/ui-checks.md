@@ -18,7 +18,7 @@ vocabulary (file and line classes, request words) is `lib/ui-evidence.mjs`.
 
 | need | when | proof | who runs it |
 | ---- | ---- | ----- | ----------- |
-| none | only test, docs page or dev config files changed, or nothing in the repository renders (no UI file, no `.astro`, `.svelte`, `.vue` or `.mdx` file, no UI framework dependency in a package.json, no JSX or react, react-native or expo import in a changed `.js`) | none; exempt files listed | - |
+| none | only test, docs page or dev config files changed, or nothing in the repository renders (no UI file, no `.astro`, `.svelte`, `.vue` or `.mdx` file, no UI framework dependency in a package.json, no JSX or react, react-native or expo import in a `.js`; the UI-file definition of `lib/ui-files.mjs`) | none; exempt files listed | - |
 | same | dependencies only (every surface), or a no-change request (added beside render) | the tip run's renders identical or equal (0 px) to the base run's, every state | runner |
 | render | logic, text or look reaching a surface with no design; global look reaches every surface | no new finding, no more page errors, no missing state; old findings are `follow-up:` lines; logic: done-check tests ok | runner |
 | visual | a reached screen with no base render (new), or with no url to open | today's chain: ui-implementer loop, visual-qa PASS | ui-implementer, visual-qa |

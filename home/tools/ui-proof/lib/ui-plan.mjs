@@ -5,8 +5,8 @@
 // Invariants (P3, P14): unknown or failed evidence plans the full checks (pixel), never less; a surface's needs are a set, and request
 // text (design words, a no-change request) and the `UI-PLAN:` floor only add to it: `same` (the identical-render proof) stays beside
 // any raised need; a renamed file counts as a delete and an add (`--no-renames`), so it is always a change; a change users see never
-// plans none: a repository renders when it has a UI file, an .astro, .svelte, .vue or .mdx file, a UI framework dependency or a changed
-// .js file with JSX or a react, react-native or expo import; a missing screen map never blocks: reach unresolved renders every inferred
+// plans none: a repository renders when it has a UI file (ui-files.mjs: markup, .astro, .svelte, .vue, .mdx, styles, or a .js with JSX
+// or a react, react-native or expo import) or a UI framework dependency; a missing screen map never blocks: reach unresolved renders every inferred
 // route, a screen with no url or no base render takes the visual plan, no inferable route at all takes the visual plan. The plan's
 // render map (widths, locales, states, the run matrix's sha256) is what a same or render proof must cover. Read-only: git plumbing at
 // the given commits, nothing run or written in the project (the screens cache lives under the setup's state).
@@ -17,7 +17,7 @@ import { TEST_FILE, reachedScreens } from './reach.mjs';
 import { matrixScreens } from './screen-sources.mjs';
 import { NO_VALUE, inferScreens, isComplete } from './screens.mjs';
 import { DEPTHS, classifyFile, requestEvidence, stricterDepth } from './ui-evidence.mjs';
-import { isCoreUiPath, isUiPath } from './ui-files.mjs';
+import { isCoreUiPath, isUiPath, isUiRepoAt } from './ui-files.mjs';
 import { renderMap } from './ui-plan-proof.mjs';
 
 export { planProofProblem, runFiles } from './ui-plan-proof.mjs';
@@ -28,12 +28,6 @@ const LOOK_CLASSES = new Set(['look', 'text', 'globalLook']);
 const FLOOR_LINE = /^[ \t]*(?:[-*][ \t]+)?UI-PLAN:[ \t]*([^\s]*)/gim;
 const MAX_FLOOR_CHARS = 40;
 const SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
-const RENDER_FILE = /\.(?:astro|svelte|vue|mdx)$/i; // framework files ui-files.mjs does not name, read as UI here
-const PLAIN_JS = /\.js$/i; // JSX may sit in a .js file (React, React Native, Expo): read its text
-const MAX_SCRIPT_BYTES = 1 << 20; // a larger changed .js is not read: it counts as one that renders
-// A JSX tag where an expression starts (`return <p>`, `(<View`, `= <>`), or an import or require of react, react-native or expo.
-// Linear: each `\s*` starts after one fixed character or a line start.
-const JSX_OR_UI_IMPORT = /(?:^|[(=?:,&|{}]|\breturn)\s*<(?:\/?[A-Za-z][\w.:-]*(?:\s|\/?>)|>)|\b(?:from|import|require\s*\()\s*['"](?:react|react-native|expo)['"/]/m;
 // A dependency key of a UI framework in a package.json (a text match: a broken file still counts).
 const UI_FRAMEWORK_DEP = /"(?:react|react-dom|react-native|expo|astro|vue|nuxt|svelte|@sveltejs\/kit|next|preact|solid-js|@angular\/core|lit|gatsby|@remix-run\/react|@builder\.io\/qwik|ember-source)"\s*:/;
 
@@ -134,21 +128,18 @@ function screensOf({ repoDir, baseRev, tipRev, laneMatrix }) {
   return { screens, unresolved: tip.unresolved, baseIds, laneFramesLoose: lane.framed && lane.screens.length === 0 };
 }
 
-/** A file that renders by its path: a core UI file (ui-files.mjs) or an .astro, .svelte, .vue or .mdx file outside test folders. */
-const isRenderPath = (file) => isCoreUiPath(file) || (RENDER_FILE.test(file) && !TEST_FILE.test(file));
-
-/** True when one rev's tree renders: a render path, a UI framework dependency, or a judged .js file with JSX or a UI import. */
-function treeRenders(repoDir, tree, judged) {
-  if ([...tree.keys()].some(isRenderPath)) return true;
+/** True when a package.json at the rev (outside test folders) declares a UI framework. */
+function declaresUiFramework(repoDir, rev) {
+  const tree = readTree(repoDir, rev);
   const packages = [...tree.keys()].filter((file) => /(?:^|\/)package\.json$/.test(file) && !TEST_FILE.test(file));
-  if ([...readBlobs(repoDir, packages.map((file) => tree.get(file).blob)).values()].some((text) => UI_FRAMEWORK_DEP.test(text))) return true;
-  const scripts = judged.filter((f) => PLAIN_JS.test(f.file) && tree.has(f.file)).map((f) => tree.get(f.file));
-  if (scripts.some((entry) => entry.size > MAX_SCRIPT_BYTES)) return true;
-  return [...readBlobs(repoDir, scripts.map((entry) => entry.blob)).values()].some((text) => JSX_OR_UI_IMPORT.test(text));
+  return [...readBlobs(repoDir, packages.map((file) => tree.get(file).blob)).values()].some((text) => UI_FRAMEWORK_DEP.test(text));
 }
 
-/** True when something in the repository renders, at any of the revs or among the expected files: a change users may see. */
-const hasUi = (input, judged) => input.changes.some((c) => isRenderPath(c.file)) || input.revs.some((rev) => treeRenders(input.repoDir, readTree(input.repoDir, rev), judged));
+/**
+ * True when something in the repository renders, at any of the revs or among the expected files: a change users may see. A UI file
+ * is ui-files.mjs's (by path, or a .js whose text has JSX or a react, react-native or expo import), or a UI framework dependency.
+ */
+const hasUi = (input) => input.changes.some((c) => isCoreUiPath(c.file)) || input.revs.some((rev) => isUiRepoAt(input.repoDir, rev) || declaresUiFramework(input.repoDir, rev));
 
 /** The screens a group of files reaches: id -> the file that reaches it; `all` when reach is unresolved (every screen). */
 function reachOf(input, files) {
@@ -234,9 +225,9 @@ function withFloor(result, floor, screensAt) {
 /** The plan once the files are sorted: the request, the repo's UI, the screens and the reach decide each surface's need. */
 function planFiles(input, { judged, exempt, evidence, reasons }) {
   const touchesUi = judged.length > 0 || exempt.some((e) => isUiPath(e.file, true) && e.why !== EXEMPT_WHY.test);
-  if (!hasUi(input, judged)) {
+  if (!hasUi(input)) {
     const notServed = judged.map((f) => ({ file: f.file, why: 'nothing in the repository renders' }));
-    return plan('none', { exempt: [...exempt, ...notServed], reasons: [...reasons, 'nothing in the repository renders at the planned commits (no UI file, no .astro, .svelte, .vue or .mdx file, no UI framework dependency, no JSX or UI import in a changed .js): plan none'] });
+    return plan('none', { exempt: [...exempt, ...notServed], reasons: [...reasons, 'nothing in the repository renders at the planned commits (no UI file, no .astro, .svelte, .vue or .mdx file, no UI framework dependency, no .js with JSX or a UI import): plan none'] });
   }
   if (evidence.design && touchesUi && judged.length === 0) return plan('pixel', { exempt, reasons: [...reasons, `design words in the request (${evidence.phrases}): pixel`] });
   if (judged.length === 0) return plan('none', { exempt, reasons });

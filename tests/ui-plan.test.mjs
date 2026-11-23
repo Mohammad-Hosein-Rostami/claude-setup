@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { recordRun } from '../home/hooks/ui-proof-gate.mjs';
 import { readRecords, storeFile } from '../home/tools/ui-proof/lib/records.mjs';
-import { uiTreeAt, workingUiTree } from '../home/tools/ui-proof/lib/ui-files.mjs';
+import { NO_UI_TREE, changedUiFiles, uiTreeAt, workingUiTree } from '../home/tools/ui-proof/lib/ui-files.mjs';
 import { briefFloor, planChecks, planProofProblem } from '../home/tools/ui-proof/lib/ui-plan.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -350,4 +350,22 @@ test('R4: STATUS standing rules and owner decisions are never request evidence; 
   assert.equal(brief.out.split('\n')[0], 'plan: render', brief.out);
   fs.writeFileSync(path.join(folder, 'brief.md'), 'Fix the total; keep it pixel perfect.\n');
   assert.equal(cli(['plan', '--base', base, '--tip', tip, '--repo', dir, '--request', path.join(folder, 'brief.md')]).out.split('\n')[0], 'plan: pixel');
+});
+
+test('R2 in ui-files: .astro, .svelte, .vue, .mdx and a .js with JSX or a UI import are UI files; a plain .js is not', () => {
+  const uiRepos = {
+    astro: { 'src/pages/index.astro': '<h1>Hi</h1>\n' }, svelte: { 'src/App.svelte': '<p>Hi</p>\n' }, vue: { 'src/App.vue': '<template><p/></template>\n' },
+    mdx: { 'content/intro.mdx': '# Hi\n' }, jsxInJs: { 'src/App.js': 'export default function App() { return <p>Hi</p>; }\n' },
+    expoImport: { 'src/total.js': "import { Text } from 'react-native';\nexport const total = (a) => a;\n" },
+  };
+  for (const [name, files] of Object.entries(uiRepos)) {
+    const file = Object.keys(files)[0];
+    const { dir, base, tip } = lane({ [file]: `${files[file]}// more\n` }, [], files);
+    assert.notEqual(uiTreeAt(dir, tip), NO_UI_TREE, name);
+    assert.deepEqual(changedUiFiles(dir, base, tip), [file], name);
+    assert.equal(workingUiTree(dir), uiTreeAt(dir, tip), `${name}: a clean working tree hashes as its commit`);
+  }
+  const plain = lane({ 'lib/tool.js': 'export const less = (a, b) => a < b && b > 0;\n' }, [], { 'lib/tool.js': 'export const less = (a, b) => a < b;\n' });
+  assert.equal(uiTreeAt(plain.dir, plain.tip), NO_UI_TREE);
+  assert.deepEqual(changedUiFiles(plain.dir, plain.base, plain.tip), []);
 });

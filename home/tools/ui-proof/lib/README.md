@@ -3,7 +3,9 @@
 The parts of the `ui-proof` tool, which records whether the UI of a tree was checked and shows the proof to the owner.
 `../ui-proof.mjs` is the command and `../README.md` has the options.
 
-- `ui-files.mjs`: the one definition of "UI files" (used by the stop hook, `git-tidy land` and the road gate) and the hash of a tree's UI files.
+- `ui-files.mjs`: the one definition of "UI files" (used by the stop hook, `git-tidy land`, the road gate and the check plan) and the
+  hash of a tree's UI files: markup, `.astro`, `.svelte`, `.vue`, `.mdx` and style files by path, and a `.js` file by its text (a JSX
+  tag or a react, react-native or expo import; one it does not read counts as UI).
 - `ui-evidence.mjs`: the one vocabulary of UI check evidence, shared by the check plan and the skill router (pure, imports nothing): the
   plan depths `none < same < render < visual < pixel` and the stricter-wins rule, the class of each changed file and line (test, docs
   page, dev config, deps, global look, look, text, logic; a line or file type it does not know counts as look); it re-exports the
