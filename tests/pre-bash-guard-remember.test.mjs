@@ -1,7 +1,7 @@
-// End-to-end tests for the guard's per-session memory of an allowed literal secret (pre-bash-guard.mjs, lib/allowed-literals.mjs).
-// The dialog is faked: a script named like the platform's dialog tool sits first on PATH, counts how often it is shown and answers.
-// A literal secret is bounced on its first send (lib/bounce-once.mjs); run() then sends the identical command again, as the bounce tells
-// an agent to, and these tests start from that retry, which takes the dialog path. sendOnce() is a single send.
+// End-to-end tests for literal secrets in the Bash guard under owner rule G1 (pre-bash-guard.mjs, lib/remembered-ask.mjs): a secret typed
+// into a command never opens a dialog, is never bounced and is never remembered (the old lib/allowed-literals.mjs store stays unwritten);
+// the log names its kind only. The dialog is faked: a script named like the platform's dialog tool sits first on PATH, counts how often
+// it is shown and answers. run() sends a command and, when the guard bounces it, the identical retry; sendOnce() is a single send.
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -65,146 +65,72 @@ function session() {
   };
 }
 
-/** True when the guard bounced the command (a deny whose text holds the retry line; a secret's ends with the report line), not the owner. */
+/** True when the guard bounced the command (a deny whose text holds the retry line), not the owner. */
 const isBounce = ({ stdout }) => stdout !== '' && JSON.parse(stdout).hookSpecificOutput.permissionDecisionReason.split('\n').includes(RETRY_LINE);
+const noAllowMemory = (s) => existsSync(allowedLiteralsDir(s.home)) === false; // the old per-session secret memory is never written
 
-test('allowed once: the same value again shows no dialog, prints nothing and logs outcome "remembered"', () => {
+test('G1: a secret-only command runs on its first send: no bounce, no dialog, no memory, one "secret" log line with the kind only', () => {
   const s = session();
-  assert.equal(s.run(SECRET_COMMAND, 'allow').stdout, '');
-  assert.equal(s.dialogs(), 1);
-  const again = s.run(`KEY='${VALUE}' ./other-script.sh`, 'deny'); // a Deny answer would show if the dialog opened
-  assert.equal(again.status, 0);
-  assert.equal(again.stdout, '');
-  assert.equal(s.dialogs(), 1, 'no second dialog');
-  const last = s.log().at(-1);
-  assert.deepEqual([last.decision, last.outcome], ['allow', 'remembered']);
+  const first = s.sendOnce(SECRET_COMMAND, 'deny'); // a Deny answer would show if the dialog opened
+  assert.deepEqual([first.status, first.stdout, s.dialogs()], [0, '', 0]);
+  const lines = s.log();
+  assert.deepEqual(lines.map(({ outcome, reason, command }) => [outcome, reason, command]), [['secret', 'a key, token, secret or password assigned in the command', '']]);
+  assert.ok(!JSON.stringify(lines).includes(VALUE));
+  assert.ok(noAllowMemory(s));
 });
 
-test('the memory is per session and per value', () => {
+test('G1: another session, another value, a short value or a value with a tail glued on runs silently too', () => {
   const s = session();
-  s.run(SECRET_COMMAND, 'allow');
-  s.run(SECRET_COMMAND, 'allow', 'sess-2');
-  assert.equal(s.dialogs(), 2, 'another session asks again');
-  s.run("KEY='another-unseen-value-99' ./fetch-figma.sh", 'allow');
-  assert.equal(s.dialogs(), 3, 'another value asks again');
-  s.run(`KEY='${VALUE}' PGPASSWORD=never-seen-before psql`, 'allow');
-  assert.equal(s.dialogs(), 4, 'one unseen value among known ones asks again');
+  for (const [command, id] of [[SECRET_COMMAND, 'sess-2'], ["KEY='another-unseen-value-99' ./fetch-figma.sh", 'sess-1'], ['PGPASSWORD=short psql -h db', 'sess-1'],
+    [`KEY='${VALUE}'${NEW_PART} ./fetch-figma.sh`, 'sess-1'], [`KEY='${VALUE}'; bash -c "PGPASSWORD=\\"${NEW_PART}\\" psql"`, 'sess-1']]) {
+    assert.equal(s.sendOnce(command, 'deny', id).stdout, '', command);
+  }
+  assert.equal(s.dialogs(), 0);
+  assert.ok(noAllowMemory(s));
 });
 
-test('denied: nothing is remembered, the next run asks again', () => {
-  const s = session();
-  const denied = s.run(SECRET_COMMAND, 'deny');
-  assert.equal(JSON.parse(denied.stdout).hookSpecificOutput.permissionDecision, 'deny');
-  assert.equal(existsSync(allowedLiteralsDir(s.home)), false);
-  s.run(SECRET_COMMAND, 'deny');
-  assert.equal(s.dialogs(), 2);
-});
-
-test('a dialog that fails (no GUI) falls back to ask and remembers nothing', () => {
-  const s = session();
-  const noGui = hookEnv({ HOME: s.home.HOME, CLAUDE_PROJECT_DIR: PROJECT });
-  const input = { cwd: PROJECT, session_id: 'sess-1', tool_input: { command: SECRET_COMMAND } };
-  const send = () => spawnSync(process.execPath, [GUARD], { input: JSON.stringify(input), encoding: 'utf8', env: noGui });
-  assert.equal(isBounce(send()), true, 'the first send is bounced');
-  const r = send();
-  assert.equal(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision, 'ask');
-  assert.equal(existsSync(allowedLiteralsDir(s.home)), false);
-});
-
-test('a value the owner already allowed is never bounced: a new command holding only that value runs silently on its first send', () => {
-  const s = session();
-  s.run(SECRET_COMMAND, 'allow');
-  const fresh = s.sendOnce(`KEY='${VALUE}' ./never-sent-before.sh`, 'deny');
-  assert.equal(fresh.stdout, '');
-  assert.deepEqual([s.log().at(-1).outcome, s.dialogs()], ['remembered', 1]);
-});
-
-test('a secret together with git push always shows the dialog and is never remembered', () => {
+test('G1: a secret next to git push: the push still asks the owner on every send, and the reason never names the secret', () => {
   const s = session();
   const both = `KEY='${VALUE}' git push origin main`;
   s.run(both, 'allow');
-  s.run(both, 'allow');
+  s.run(both, 'deny');
   assert.equal(s.dialogs(), 2);
-  assert.equal(existsSync(allowedLiteralsDir(s.home)), false);
-  s.run(SECRET_COMMAND, 'allow');
-  s.run(both, 'allow');
-  assert.equal(s.dialogs(), 4, 'a value remembered for a secret-only ask does not silence a mixed ask');
+  assert.ok(!s.shownText().includes('literal password/token') && !s.shownText().includes(VALUE));
+  assert.ok(noAllowMemory(s));
 });
 
-test('the remembered store holds no raw value', () => {
+test('G1: with no GUI a secret-only command still runs, and a secret next to a push still gets the CLI ask', () => {
   const s = session();
-  s.run(SECRET_COMMAND, 'allow');
-  const file = join(allowedLiteralsDir(s.home), 'sess-1.json');
-  assert.ok(!readFileSync(file, 'utf8').includes(VALUE));
+  const noGui = hookEnv({ HOME: s.home.HOME, CLAUDE_PROJECT_DIR: PROJECT });
+  const send = (command) => spawnSync(process.execPath, [GUARD], { input: JSON.stringify({ cwd: PROJECT, session_id: 'sess-1', tool_input: { command } }), encoding: 'utf8', env: noGui });
+  assert.equal(send(SECRET_COMMAND).stdout, '');
+  const push = send(`KEY='${VALUE}' git push origin main`);
+  assert.equal(JSON.parse(push.stdout).hookSpecificOutput.permissionDecision, 'ask');
 });
 
-test('a real timeout (auto-allow) is remembered; an allow-then-remembered value is silent next time', () => {
-  const s = session();
-  const waitedOut = { CLAUDE_ASK_TIMEOUT_S: '1', FAKE_DIALOG_DELAY_MS: '1200' };
-  assert.equal(s.run(SECRET_COMMAND, 'timeout', 'sess-1', waitedOut).stdout, '');
-  assert.equal(s.dialogs(), 1);
-  s.run(SECRET_COMMAND, 'deny');
-  assert.equal(s.dialogs(), 1, 'the timeout was remembered');
-});
-
-// Each of these hides a second command from the rules once a secret reason exists, so a remembered value must not silence them.
+// Each of these hides a second command from the rules; with the secret no longer a reason, the fail-to-ask backstop judges them all.
 const HIDDEN_RISK = [
   `KEY='${VALUE}'; python3 -c "import os;os.system('git push -f')"`,
   `KEY='${VALUE}'; node -e "require('child_process').execSync('rm -rf /x')"`,
   `KEY='${VALUE}'; perl -e 'system("git push -f")'`,
   `KEY='${VALUE}'; osascript -e 'do shell script "git push -f"'`,
-  `KEY='${VALUE}'; bash -c "PGPASS""WORD=${NEW_PART} psql"`,
-  `KEY='${VALUE}'${NEW_PART} ./fetch-figma.sh`,
-  `KEY='${VALUE}'; bash -c "PGPASSWORD=\\"${NEW_PART}\\" psql"`,
+  "KEY='git push -f'; python3 -c \"import os;os.system('git push -f origin main')\"",
 ];
 
-test('a remembered value never silences a command that hides another risk, a new secret or a partial value', () => {
+test('G1: a secret never hides another risk: the first send bounces and the identical retry asks the owner', () => {
   for (const command of HIDDEN_RISK) {
     const s = session();
-    s.run(SECRET_COMMAND, 'allow');
-    assert.equal(s.dialogs(), 1);
-    s.run(command, 'allow');
-    assert.equal(s.dialogs(), 2, `dialog for: ${command}`);
+    assert.equal(isBounce(s.sendOnce(command, 'allow')), true, `bounced: ${command}`);
+    s.sendOnce(command, 'allow');
+    assert.equal(s.dialogs(), 1, `dialog for: ${command}`);
   }
 });
 
-test('a short value is never remembered', () => {
-  const s = session();
-  s.run('PGPASSWORD=short psql -h db', 'allow');
-  s.run('PGPASSWORD=short psql -h db', 'allow');
-  assert.equal(s.dialogs(), 2);
-  assert.equal(existsSync(allowedLiteralsDir(s.home)), false);
-});
-
-test('a secret-only ask waits the short secret timeout, a push ask the normal one, and the lower setting wins', () => {
+test('the secret-only timeout knob no longer shortens anything: a push ask (with or without a secret) waits the normal timeout', () => {
   const small = { CLAUDE_ASK_SECRET_TIMEOUT_S: '7', CLAUDE_ASK_TIMEOUT_S: '40' };
-  const secret = session();
-  secret.run(SECRET_COMMAND, 'allow', 'sess-1', small);
-  assert.match(secret.shownText(), /With no answer in 7 s/);
-  const push = session();
-  push.run('git push origin main', 'allow', 'sess-1', small);
-  assert.match(push.shownText(), /With no answer in 40 s/);
-  const lower = session();
-  lower.run(SECRET_COMMAND, 'allow', 'sess-1', { CLAUDE_ASK_SECRET_TIMEOUT_S: '7', CLAUDE_ASK_TIMEOUT_S: '5' });
-  assert.match(lower.shownText(), /With no answer in 5 s/);
-  const byDefault = session();
-  byDefault.run(SECRET_COMMAND, 'allow');
-  assert.match(byDefault.shownText(), /With no answer in 2 min/);
-});
-
-const HIDDEN_PUSH = `import os;os.system('git push -f origin main')`;
-
-test('a secret next to a hidden push is not a secret-only ask: it gets the normal timeout, not the short one', () => {
-  const s = session();
-  s.run(`KEY='${VALUE}'; python3 -c "${HIDDEN_PUSH}"`, 'allow', 'sess-1', { CLAUDE_ASK_SECRET_TIMEOUT_S: '7', CLAUDE_ASK_TIMEOUT_S: '40' });
-  assert.match(s.shownText(), /With no answer in 40 s/);
-  assert.equal(existsSync(allowedLiteralsDir(s.home)), false, 'a mixed ask remembers nothing');
-});
-
-test('a remembered value that itself contains the dangerous words does not hide a later hidden push', () => {
-  const s = session();
-  s.run("KEY='git push -f' ./run", 'allow');
-  assert.equal(s.dialogs(), 1);
-  s.run("KEY='git push -f'; python3 -c \"import os;os.system('git push -f origin main')\"", 'allow');
-  assert.equal(s.dialogs(), 2);
+  for (const command of ['git push origin main', `KEY='${VALUE}' git push origin main`]) {
+    const s = session();
+    s.run(command, 'allow', 'sess-1', small);
+    assert.match(s.shownText(), /With no answer in 40 s/, command);
+  }
 });
