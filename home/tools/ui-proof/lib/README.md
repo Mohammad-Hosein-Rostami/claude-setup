@@ -13,9 +13,11 @@ The parts of the `ui-proof` tool, which records whether the UI of a tree was che
 - `ui-request.mjs`: the design and no-change phrases in a request in English and Persian (pure, imports nothing; talk about the
   checks and negated clauses give none; a Figma link always counts), and the router's UI words. `requestEvidence` returns
   `partial: true` for a request over 1 MB (the rest is not read): plan the full checks for it.
-- `ui-plan.mjs`: `planChecks`, the check plan of a change (none, same, render, visual, pixel per reached surface) from the request,
-  the diff and the reached screens, and `briefFloor` (the `UI-PLAN:` line, which only raises); `ui-plan-proof.mjs`:
-  `planProofProblem`, whether the records prove a plan. Rules: `home/standards/ui-checks.md`.
+- `ui-plan.mjs`: `planChecks`, the check plan of a change (a set of needs of none, same, render, visual and pixel per reached surface;
+  `same` stays beside any raised need) from the request, the diff and the reached screens, and `briefFloor` (the `UI-PLAN:` line,
+  which only adds); `ui-plan-proof.mjs`: `renderMap` (the widths, locales and states a same or render proof covers, and the sha256 of
+  the run matrix), `runFiles` (that run matrix and its states) and `planProofProblem`, whether the records prove a plan. Rules:
+  `home/standards/ui-checks.md`.
 - `records.mjs`: the proof records, one JSON file per repository, one record per `ui-check run`, and the finders that look a record up by tree or commit.
 - `owner-waiver.mjs`: the one rule of the owner's ui-proof waiver for a road (the `## Owner decisions` line, the landing row's evidence text), used by `git-tidy land`, `land-lane` and the road gate.
 - `review-html.mjs`: builds the HTML of the owner's review page from the review model (pure; every text is HTML-escaped).

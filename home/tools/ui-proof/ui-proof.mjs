@@ -9,13 +9,15 @@
 //   ui-proof changed --from <sha> --to <sha> [--repo DIR]   lists the UI files that differ: 0 none, 1 some, 2 usage
 //   ui-proof review-page --results <dir> --out <dir> [--matrix <file>]   the owner review page (review-page.mjs)
 //   ui-proof plan --base <sha> --tip <sha> | --files <path>... [--request <file>]... [--matrix <path>] [--json] [--write-run <dir>] [--repo DIR]
-//     the check plan (lib/ui-plan.mjs): `plan: <depth>`, the tests line, one line per surface, exempt file and reason. --write-run
-//     writes matrix.json and states.json of the surfaces to render under the setup's state (ui-plan-runs), never in the repo. 0, 2 usage.
+//     the check plan (lib/ui-plan.mjs): `plan: <depth>`, the tests line, one line per surface with its needs, the render map line,
+//     exempt file and reason. --write-run writes matrix.json (the map's run matrix, byte for byte) and states.json of the surfaces to
+//     render under the setup's state (ui-plan-runs), never in the repo. 0, 2 usage.
 //   ui-proof check --tip <sha> --plan --base <sha> [--request <file>]... [--matrix <path>] [--repo DIR]
 //     the plan of base..tip and its proof: 0 PASS (with `follow-up:` lines for old findings), 1 FAIL, 2 usage. A visual or pixel plan
-//     prints exactly what `check --tip` prints. An unreadable record store is FAIL.
+//     with no `same` need prints exactly what `check --tip` prints. An unreadable record store is FAIL.
 // Exports: none. Invariants: reads records only (never writes them); any read or git failure is exit 2 with the reason (`check --plan`:
-// FAIL), never a PASS; a request file named STATUS.md is read for its `## Standing rules` and `## Owner decisions` sections only.
+// FAIL), never a PASS; a request file is the request itself: a STATUS.md is not read, and the `## Standing rules` and `## Owner
+// decisions` sections of any other request file are cut (each with a plan reason line).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,15 +25,13 @@ import { parseArgs } from 'node:util';
 import { compareReference, formatReference } from '../ui-check/lib/ledger.mjs';
 import { PROOF_AGENT, findAtCommit, findLabelled, findPass, readRecords, storeFile } from './lib/records.mjs';
 import { changedUiFiles, git, uiTreeAt } from './lib/ui-files.mjs';
-import { planChecks, planProofProblem } from './lib/ui-plan.mjs';
+import { planChecks, planProofProblem, runFiles } from './lib/ui-plan.mjs';
 
 const USAGE = 'usage: ui-proof <check --tip <sha> [--against <sha> | --against-step <road>.s<N> | --plan --base <sha> [--request <file>]... [--matrix <path>]] | plan (--base <sha> --tip <sha> | --files <path>...) [--request <file>]... [--matrix <path>] [--json] [--write-run <dir>] | has --step <label> | changed --from <sha> --to <sha> | review-page --results <dir> --out <dir> [--matrix <file>]> [--repo DIR]';
 const STEP_LABEL = /^[A-Za-z0-9_-]+\.s\d+$/;
 const EXIT_USAGE = 2;
 const REQUEST_MAX_BYTES = 4 << 20; // a request file read for evidence; requestEvidence reads its first 1 MB
-const STATUS_SECTIONS = /^## (?:Standing rules|Owner decisions)\b/;
-const DEFAULT_RUN = Object.freeze({ widths: [360, 768, 1280], locales: [{ tag: 'en', dir: 'ltr' }] }); // without a lane matrix
-const RUN_REASON = 'rendered whole by the ui plan (ui-proof plan --write-run): no control states';
+const OWNER_SECTIONS = /^## (?:Standing rules|Owner decisions)\b/; // rules about the work, never request evidence (R4)
 
 class UsageError extends Error {}
 
@@ -88,18 +88,24 @@ function checkPass(values) {
   return result.ok ? 0 : 1;
 }
 
-/** The owner sections of a STATUS.md (`## Standing rules`, `## Owner decisions`), up to the next `## ` heading. */
-const statusSections = (text) => {
-  let keep = false;
+/** A request file's text without its `## Standing rules` and `## Owner decisions` sections (each up to the next `## ` heading). */
+const withoutOwnerSections = (text) => {
+  let keep = true;
   return text.split('\n').filter((line) => {
-    if (line.startsWith('## ')) keep = STATUS_SECTIONS.test(line);
+    if (line.startsWith('## ')) keep = !OWNER_SECTIONS.test(line);
     return keep;
   }).join('\n');
 };
 
-/** The request text: every --request file (a STATUS.md: its owner sections only). @throws {UsageError} when one cannot be read */
+/**
+ * The request text: every --request file, the request itself (R4). Standing rules and owner decisions are rules about the work, not
+ * the request, so they are never read: a STATUS.md is left out whole, and those sections of any other file are cut.
+ * @returns {{text: string, skipped: string[]}} skipped: one plan reason line per file or section left out
+ * @throws {UsageError} when a file cannot be read
+ */
 function requestText(files = []) {
-  return files.map((file) => {
+  const skipped = [];
+  const texts = files.map((file) => {
     let text;
     try {
       const stats = fs.statSync(file);
@@ -108,8 +114,15 @@ function requestText(files = []) {
     } catch (error) {
       throw new UsageError(`--request ${file}: ${error.message}`);
     }
-    return path.basename(file) === 'STATUS.md' ? statusSections(text) : text;
-  }).join('\n');
+    if (path.basename(file).toLowerCase() === 'status.md') {
+      skipped.push(`request ${path.basename(file)} not read: STATUS rules and decisions are not the request (pass the brief)`);
+      return '';
+    }
+    const kept = withoutOwnerSections(text);
+    if (kept !== text) skipped.push(`request ${path.basename(file)}: its standing rules and owner decisions sections not read`);
+    return kept;
+  });
+  return { text: texts.join('\n'), skipped };
 }
 
 /** The plan for the flags: base..tip, or --files at HEAD. */
@@ -117,36 +130,23 @@ function planFor(values, repo) {
   const byFiles = values.files !== undefined;
   if (byFiles === (values.base !== undefined || values.tip !== undefined) || (!byFiles && (values.base === undefined || values.tip === undefined))) throw new UsageError(USAGE);
   const matrixPath = values.matrix === undefined ? null : path.resolve(values.matrix);
-  const common = { repoDir: repo, requestText: requestText(values.request), matrixPath };
-  if (byFiles) return planChecks({ ...common, files: values.files });
-  return planChecks({ ...common, base: commitOf(repo, values.base), tip: commitOf(repo, values.tip) });
+  const request = requestText(values.request);
+  const common = { repoDir: repo, requestText: request.text, matrixPath };
+  const result = byFiles ? planChecks({ ...common, files: values.files }) : planChecks({ ...common, base: commitOf(repo, values.base), tip: commitOf(repo, values.tip) });
+  return { ...result, reasons: [...result.reasons, ...request.skipped] };
 }
 
 /** The plan as text lines. */
 function planLines(plan) {
+  const map = plan.map?.hash ? [`map: widths ${plan.map.widths.join(',')}; locales ${plan.map.locales.map((l) => l.tag).join(',')}; states ${plan.map.states.join(',')} (${plan.map.source}); run matrix sha256 ${plan.map.hash}`] : [];
   return [
     `plan: ${plan.depth}`,
     ...(plan.tests ? ['tests: done-check tests must be ok (logic changed)'] : []),
-    ...plan.surfaces.map((s) => `surface ${s.id}: ${s.need} (${s.why})`),
+    ...plan.surfaces.map((s) => `surface ${s.id}: ${s.needs.join(' + ')} (${s.why})`),
+    ...map,
     ...plan.exempt.map((e) => `exempt ${e.file} (${e.why})`),
     ...plan.reasons,
   ];
-}
-
-/** The ui-coverage matrix and ui-check states of the surfaces a runner renders (same, render), at the lane matrix's widths and locales. */
-function runFiles(plan, laneMatrix, dir) {
-  const surfaces = plan.surfaces.filter((s) => ['same', 'render'].includes(s.need) && typeof s.url === 'string');
-  const widths = Array.isArray(laneMatrix?.widths) && laneMatrix.widths.length > 0 ? laneMatrix.widths : DEFAULT_RUN.widths;
-  const locales = Array.isArray(laneMatrix?.locales) && laneMatrix.locales.length > 0 ? laneMatrix.locales : DEFAULT_RUN.locales;
-  const matrix = {
-    locales, widths,
-    searched: { backend: [RUN_REASON], siblings: [RUN_REASON], reference: [RUN_REASON] },
-    deliverable: { reviewUrl: dir, mockExcluded: `not a deliverable: ${RUN_REASON}` },
-    surfaces: surfaces.map((s) => ({ id: s.id, kind: 'screen', source: s.url, controls: `none: ${RUN_REASON}` })),
-    cells: surfaces.flatMap((s) => locales.flatMap((l) => widths.map((width) => ({ surface: s.id, state: 'rest', locale: l.tag, width, status: 'todo', evidence: '', reason: '' })))),
-  };
-  const states = { defaults: { widths }, states: surfaces.flatMap((s) => locales.map((l) => ({ surface: s.id, state: 'rest', locale: l.tag, url: s.url }))) };
-  return { matrix, states, count: surfaces.length };
 }
 
 const isInside = (dir, file) => {
@@ -169,14 +169,12 @@ function writeRun(plan, values, repo) {
   if (!isInside(path.resolve(root), dir) || dir === path.resolve(root)) throw new UsageError(`--write-run must name a folder under ${root}`);
   const top = fs.realpathSync.native(git(repo, ['rev-parse', '--show-toplevel']).trim());
   if (isInside(top, realTarget(dir))) throw new UsageError(`--write-run ${dir} lies inside the repository ${top}: the project is never written`);
-  const laneMatrix = values.matrix === undefined ? null : JSON.parse(fs.readFileSync(path.resolve(values.matrix), 'utf8'));
-  const run = runFiles(plan, laneMatrix, dir);
+  const run = plan.map ? runFiles(plan.surfaces, plan.map) : { count: 0 };
   if (run.count === 0) return ['run: nothing for a runner to render (no same or render surface with a url)'];
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(path.join(dir, 'matrix.json'), `${JSON.stringify(run.matrix, null, 2)}\n`);
-  fs.writeFileSync(path.join(dir, 'states.json'), `${JSON.stringify(run.states, null, 2)}\n`);
-  const defaults = laneMatrix ? '' : ` (default widths ${DEFAULT_RUN.widths.join(',')} and locale en: no --matrix)`;
-  return [`run: ${path.join(dir, 'matrix.json')} and ${path.join(dir, 'states.json')}, ${run.count} surface(s)${defaults}`];
+  fs.writeFileSync(path.join(dir, 'matrix.json'), run.matrixText);
+  fs.writeFileSync(path.join(dir, 'states.json'), run.statesText);
+  return [`run: ${path.join(dir, 'matrix.json')} and ${path.join(dir, 'states.json')}, ${run.count} surface(s) (${plan.map.source}); render both ends with this matrix.json`];
 }
 
 function plan(argv) {
@@ -195,7 +193,7 @@ function checkPlan(values) {
   const tip = commitOf(repo, values.tip);
   const base = commitOf(repo, values.base);
   const result = planFor({ ...values, tip, base }, repo);
-  if (['visual', 'pixel'].includes(result.depth) && !result.surfaces.some((s) => s.need === 'same')) return checkPass({ tip, repo });
+  if (['visual', 'pixel'].includes(result.depth) && !result.surfaces.some((s) => s.needs.includes('same'))) return checkPass({ tip, repo });
   let records;
   try {
     records = readRecords(storeFile(repo));

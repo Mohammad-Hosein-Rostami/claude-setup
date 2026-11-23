@@ -3,6 +3,7 @@
 // repo; the screens cache, the proof store, the run folder and HOME are temp dirs (P8).
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -68,7 +69,7 @@ function lane(change, removed = [], files = APP) {
 }
 
 const planOf = ({ dir, base, tip }, extra = {}) => planChecks({ repoDir: dir, base, tip, ...extra });
-const needs = (plan) => Object.fromEntries(plan.surfaces.map((s) => [s.id, s.need]));
+const needs = (plan) => Object.fromEntries(plan.surfaces.map((s) => [s.id, s.needs.join('+')]));
 const LOGIC_IN_BUTTON = { 'src/ui/Button.tsx': 'export const limit = (n) => Math.min(n, 3);\nexport default function Button() { return <button />; }\n' };
 const LOOK_IN_BUTTON = { 'src/ui/Button.tsx': 'export default function Button() {\n  return <button className="big" />;\n}\n' };
 
@@ -187,6 +188,8 @@ test('plan --write-run writes the matrix and states of the reached screens under
   const states = JSON.parse(fs.readFileSync(path.join(runs, 'lane-1', 'states.json'), 'utf8'));
   assert.deepEqual(states.states, [{ surface: A, state: 'rest', locale: 'en', url: '/a' }]);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runs, 'lane-1', 'matrix.json'), 'utf8')).surfaces.map((s) => s.id), [A]);
+  const written = crypto.createHash('sha256').update(fs.readFileSync(path.join(runs, 'lane-1', 'matrix.json'))).digest('hex');
+  assert.equal(JSON.parse(cli(['plan', '--base', base, '--tip', tip, '--repo', dir, '--json']).out).map.hash, written, 'the plan names the matrix it writes');
   assert.equal(git(dir, ['status', '--porcelain', '--untracked-files=all']), '', 'nothing written in the repo');
   assert.equal(cli(['plan', '--base', base, '--tip', tip, '--repo', dir, '--write-run', path.join(dir, 'run')], { UI_PLAN_STATE_DIR: runs }).code, 2);
   assert.equal(cli(['plan', '--base', base, '--tip', tip, '--repo', dir, '--write-run', 'x'], { UI_PLAN_STATE_DIR: path.join(dir, 'state') }).code, 2, 'a state dir inside the repo is refused');
@@ -195,45 +198,50 @@ test('plan --write-run writes the matrix and states of the reached screens under
 let serial = 0;
 const record = (over) => ({ id: `r${(serial += 1)}`, createdAt: '2026-11-23T00:00:00Z', verdict: 'FAIL', agentType: 'runner', matrixHash: null, captures: [], same: null, ...over });
 
-/** A base run and a tip run with --same, both at their commits and UI trees. */
-function proofRecords({ dir, base, tip }, { rows, captures = [], agentType = 'runner', tipHead = tip }) {
-  const baseRun = record({ head: base, uiTree: uiTreeAt(dir, base), ledgerSha256: 'b'.repeat(64), agentType });
-  const tipRun = record({ head: tipHead, uiTree: uiTreeAt(dir, tip), ledgerSha256: 'c'.repeat(64), agentType, captures,
+/** A base run and a tip run with --same of the plan's run matrix (`matrixHash` overrides it), both at their commits and UI trees. */
+function proofRecords({ dir, base, tip }, plan, { rows, captures = [], agentType = 'runner', tipHead = tip, matrixHash = plan.map.hash }) {
+  const baseRun = record({ head: base, uiTree: uiTreeAt(dir, base), ledgerSha256: 'b'.repeat(64), agentType, matrixHash });
+  const tipRun = record({ head: tipHead, uiTree: uiTreeAt(dir, tip), ledgerSha256: 'c'.repeat(64), agentType, captures, matrixHash,
     same: { ref: { sha256: 'b'.repeat(64) }, mismatch: null, refused: null, rows } });
   return [baseRun, tipRun];
 }
 
-const row = (verdict, extra = {}) => ({ key: KEY_A, verdict, newFindings: [], newPageErrors: [], ...extra });
+/** One row per state, locale and width of the plan's map on each surface (`ids`); the row of KEY_A gets `extra`. */
+const mapRows = (plan, verdict, extra = {}, ids = plan.surfaces.map((s) => s.id)) => ids.flatMap((id) => plan.map.states.flatMap((state) =>
+  plan.map.locales.flatMap((l) => plan.map.widths.map((width) => `${id} / ${state} / ${l.tag} @${width}`))))
+  .map((key) => ({ key, verdict, newFindings: [], newPageErrors: [], ...(key === KEY_A ? extra : {}) }));
 const prove = (fixture, plan, records) => planProofProblem(plan, { records, repoDir: fixture.dir, base: fixture.base, tip: fixture.tip });
+const visualQaPass = (fixture) => record({ head: fixture.tip, uiTree: uiTreeAt(fixture.dir, fixture.tip), verdict: 'PASS', agentType: 'visual-qa' });
 
 test('noChange request with a changed row -> FAIL unexpected visual change; identical rows PASS', () => {
   const fixture = lane(LOGIC_IN_BUTTON);
   const plan = planOf(fixture, { requestText: 'Refactor the button, no visual change.' });
-  assert.deepEqual(needs(plan), { [A]: 'same' });
-  assert.match(prove(fixture, plan, proofRecords(fixture, { rows: [row('changed')] })).problem, /^unexpected visual change: react-router:\/a \/ rest \/ en @360$/);
-  assert.equal(prove(fixture, plan, proofRecords(fixture, { rows: [row('identical')] })).problem, null);
+  assert.deepEqual(needs(plan), { [A]: 'same+render' });
+  assert.match(prove(fixture, plan, proofRecords(fixture, plan, { rows: mapRows(plan, 'identical', { verdict: 'changed' }) })).problem, /^unexpected visual change: react-router:\/a \/ rest \/ en @360$/);
+  assert.equal(prove(fixture, plan, proofRecords(fixture, plan, { rows: mapRows(plan, 'identical') })).problem, null);
 });
 
 test('old finding -> follow-up and PASS; new finding or more page errors -> FAIL', () => {
   const fixture = lane(LOGIC_IN_BUTTON);
   const plan = planOf(fixture);
   const captures = [{ key: KEY_A, sha256: 'd'.repeat(64), findings: ['contrast .btn'], pageErrors: [] }];
-  assert.deepEqual(prove(fixture, plan, proofRecords(fixture, { rows: [row('changed')], captures })),
+  assert.deepEqual(prove(fixture, plan, proofRecords(fixture, plan, { rows: mapRows(plan, 'changed'), captures })),
     { problem: null, followUps: [`follow-up: ${KEY_A}: contrast .btn (on the base and the tip)`] });
-  assert.match(prove(fixture, plan, proofRecords(fixture, { rows: [row('changed', { newFindings: ['overflow body'] })] })).problem, /^new finding: /);
-  assert.match(prove(fixture, plan, proofRecords(fixture, { rows: [row('equal', { newPageErrors: ['TypeError: x'] })] })).problem, /^more page errors: /);
+  assert.match(prove(fixture, plan, proofRecords(fixture, plan, { rows: mapRows(plan, 'changed', { newFindings: ['overflow body'] }) })).problem, /^new finding: /);
+  assert.match(prove(fixture, plan, proofRecords(fixture, plan, { rows: mapRows(plan, 'equal', { newPageErrors: ['TypeError: x'] }) })).problem, /^more page errors: /);
 });
 
 test('implementer-run records, a stale tip head, zero rows, a missing row, a missing base or a new state -> FAIL', () => {
   const fixture = lane(LOGIC_IN_BUTTON);
   const plan = planOf(fixture);
-  assert.match(prove(fixture, plan, proofRecords(fixture, { rows: [row('identical')], agentType: 'implementer' })).problem, /^no runner or visual-qa run at /);
-  assert.match(prove(fixture, plan, proofRecords(fixture, { rows: [row('identical')], tipHead: fixture.base })).problem, /^no runner or visual-qa run at /);
-  assert.match(prove(fixture, plan, proofRecords(fixture, { rows: [] })).problem, /^zero rows/);
-  assert.match(prove(fixture, plan, proofRecords(fixture, { rows: [row('identical', { key: `${B} / rest / en @360` })] })).problem, /^missing row: /);
-  assert.match(prove(fixture, plan, proofRecords(fixture, { rows: [row('identical')] }).slice(1)).problem, /^the tip run's base ledger/);
-  assert.match(prove(fixture, plan, proofRecords(fixture, { rows: [row('new')] })).problem, /^new state with no base render \(the visual plan/);
-  const pass = record({ head: fixture.tip, uiTree: uiTreeAt(fixture.dir, fixture.tip), verdict: 'PASS', agentType: 'visual-qa' });
+  const rows = mapRows(plan, 'identical');
+  assert.match(prove(fixture, plan, proofRecords(fixture, plan, { rows, agentType: 'implementer' })).problem, /^no runner or visual-qa run at /);
+  assert.match(prove(fixture, plan, proofRecords(fixture, plan, { rows, tipHead: fixture.base })).problem, /^no runner or visual-qa run at /);
+  assert.match(prove(fixture, plan, proofRecords(fixture, plan, { rows: [] })).problem, /^zero rows/);
+  assert.match(prove(fixture, plan, proofRecords(fixture, plan, { rows: mapRows(plan, 'identical', {}, [B]) })).problem, /^missing row: /);
+  assert.match(prove(fixture, plan, proofRecords(fixture, plan, { rows }).slice(1)).problem, /^the tip run's base ledger/);
+  assert.match(prove(fixture, plan, proofRecords(fixture, plan, { rows: mapRows(plan, 'identical', { verdict: 'new' }) })).problem, /^new state with no base render \(the visual plan/);
+  const pass = visualQaPass(fixture);
   assert.equal(prove(fixture, plan, [pass]).problem, null, 'a visual-qa PASS proves render');
   const same = planOf(fixture, { requestText: 'no visual change' });
   assert.match(prove(fixture, same, [pass]).problem, /^no runner or visual-qa run/, 'never same');
@@ -280,4 +288,66 @@ test('hook cwd = main checkout, ledger root = a linked worktree: the record\'s u
   assert.deepEqual(linked.captures, [{ key: KEY_A, sha256: null, findings: [], pageErrors: [] }]);
   assert.equal((await recordFrom(dir, lane({ 'x.css': 'a{}\n' }).dir)).uiTree, workingUiTree(dir));
   assert.equal((await recordFrom(dir, undefined)).uiTree, workingUiTree(dir));
+});
+
+// ---- Review round R1-R4 (the probes of the ui-plan review, as tests) ----
+
+test('R1: a floor or a design word never drops same: a deps-only change with a changed render fails under every request', () => {
+  const fixture = lane({ 'package.json': APP['package.json'].replace('19.0.0', '19.1.0') });
+  for (const requestText of ['', 'UI-PLAN: render\n', 'UI-PLAN: visual\n', 'Bump react; keep it pixel perfect.\n']) {
+    const plan = planOf(fixture, { requestText });
+    assert.ok(plan.surfaces.length === 2 && plan.surfaces.every((s) => s.needs.includes('same')), `${JSON.stringify(requestText)}: ${JSON.stringify(needs(plan))}`);
+    const records = [...proofRecords(fixture, plan, { rows: mapRows(plan, 'identical', { verdict: 'changed' }) }), visualQaPass(fixture)];
+    assert.match(prove(fixture, plan, records).problem ?? 'PASS', /^unexpected visual change: react-router:\/a \/ rest \/ en @360$/, JSON.stringify(requestText));
+    assert.equal(prove(fixture, plan, [...proofRecords(fixture, plan, { rows: mapRows(plan, 'identical') }), visualQaPass(fixture)]).problem, null);
+  }
+  assert.deepEqual(needs(planOf(fixture, { requestText: 'UI-PLAN: visual\n' })), { [A]: 'same+visual', [B]: 'same+visual' });
+  assert.deepEqual(needs(planOf(lane(LOGIC_IN_BUTTON), { requestText: 'UI-PLAN: same\n' })), { [A]: 'same+render' }, 'a same floor adds the identical-render proof');
+});
+
+test('R2: a visible change in an Astro, JSX-in-.js, react-import or Expo repo never plans none; a plain tool repo stays none', () => {
+  const repos = {
+    astro: [{ 'src/pages/index.astro': '<h1>Welcome</h1>\n' }, { 'src/pages/index.astro': '<h1>Welcome - 50% off</h1>\n' }],
+    mdx: [{ 'content/intro.mdx': '# Hello\n' }, { 'content/intro.mdx': '# Hello there\n' }],
+    jsxInJs: [{ 'src/App.js': 'export default function App() { return <p>Hello</p>; }\n' }, { 'src/App.js': 'export default function App() { return <p className="big">Pay now</p>; }\n' }],
+    reactImport: [{ 'src/useTotal.js': "import { useMemo } from 'react';\nexport const useTotal = (a) => useMemo(() => a, [a]);\n" }, { 'src/useTotal.js': "import { useMemo } from 'react';\nexport const useTotal = (a) => useMemo(() => a + 1, [a]);\n" }],
+    expo: [{ 'package.json': '{"dependencies":{"expo":"52.0.0"}}\n', 'src/total.js': 'export const total = (a) => a;\n' }, { 'src/total.js': 'export const total = (a) => a + 1;\n' }],
+  };
+  for (const [name, [files, change]] of Object.entries(repos)) assert.notEqual(planOf(lane(change, [], files)).depth, 'none', name);
+  const tool = lane({ 'lib/tool.js': 'export const less = (a, b) => a < b && b > 0;\n' }, [], { 'package.json': '{"scripts":{"test":"node --test"}}\n', 'lib/tool.js': 'export const less = (a, b) => a < b;\n' });
+  assert.equal(planOf(tool).depth, 'none');
+});
+
+test('R3: a render proof covers every width, locale and state of the map, of the plan\'s own run matrix', () => {
+  const fixture = lane(LOGIC_IN_BUTTON);
+  const matrixDir = makeTempDir('ui-plan-matrix-');
+  const matrixPath = path.join(matrixDir, 'matrix.json');
+  fs.writeFileSync(matrixPath, JSON.stringify({ root: fixture.dir, widths: [360, 1280], locales: [{ tag: 'en', dir: 'ltr' }, { tag: 'fa', dir: 'rtl' }], surfaces: [], cells: [] }));
+  const plan = planOf(fixture, { matrixPath });
+  assert.deepEqual([plan.map.widths, plan.map.locales.map((l) => l.tag), plan.map.states], [[360, 1280], ['en', 'fa'], ['rest']]);
+  const oneRow = mapRows(plan, 'identical').filter((r) => r.key === KEY_A);
+  assert.equal(prove(fixture, plan, proofRecords(fixture, plan, { rows: oneRow })).problem,
+    `missing row: no render of ${A} / rest / en @1280, ${A} / rest / fa @360, ${A} / rest / fa @1280`);
+  assert.match(prove(fixture, plan, proofRecords(fixture, plan, { rows: mapRows(plan, 'identical'), matrixHash: 'f'.repeat(64) })).problem,
+    /^the tip run rendered matrix sha256 ffffffffffff, not the plan's [0-9a-f]{12}: /);
+  assert.equal(prove(fixture, plan, proofRecords(fixture, plan, { rows: mapRows(plan, 'identical') })).problem, null);
+  const withLocales = planOf(lane(LOGIC_IN_BUTTON, [], { ...APP, 'src/locales/en.json': '{}\n', 'src/locales/fa/common.json': '{}\n', 'tests/fixtures/locales/xx.json': '{}\n' }));
+  assert.deepEqual(withLocales.map.locales, [{ tag: 'en', dir: 'ltr' }, { tag: 'fa', dir: 'rtl' }]);
+  assert.match(withLocales.map.source, /locales of the repository's locale folders/);
+  assert.deepEqual([plan.map.source, planOf(fixture).map.source], ['widths of the lane matrix, locales of the lane matrix', 'default widths, locale en: the repository has no locale folder']);
+});
+
+test('R4: STATUS standing rules and owner decisions are never request evidence; the request itself still is', () => {
+  const { dir, base, tip } = lane(LOGIC_IN_BUTTON);
+  const folder = makeTempDir('ui-plan-status-');
+  const rule = '- not every UI work is a full pixel-perfect job: a light change gets a light check; pixel-perfect stays full where it applies {R24}\n';
+  fs.writeFileSync(path.join(folder, 'STATUS.md'), `# Job\n\n## Standing rules\n${rule}\n## Owner decisions\n- match the Figma frame for login\n`);
+  fs.writeFileSync(path.join(folder, 'brief.md'), `Fix the total.\n\n## Standing rules\n${rule}\n## Done\nok\n`);
+  const status = cli(['plan', '--base', base, '--tip', tip, '--repo', dir, '--request', path.join(folder, 'STATUS.md')]);
+  assert.equal(status.out.split('\n')[0], 'plan: render', status.out);
+  assert.match(status.out, /^request STATUS\.md not read: STATUS rules and decisions are not the request \(pass the brief\)$/m);
+  const brief = cli(['plan', '--base', base, '--tip', tip, '--repo', dir, '--request', path.join(folder, 'brief.md')]);
+  assert.equal(brief.out.split('\n')[0], 'plan: render', brief.out);
+  fs.writeFileSync(path.join(folder, 'brief.md'), 'Fix the total; keep it pixel perfect.\n');
+  assert.equal(cli(['plan', '--base', base, '--tip', tip, '--repo', dir, '--request', path.join(folder, 'brief.md')]).out.split('\n')[0], 'plan: pixel');
 });
