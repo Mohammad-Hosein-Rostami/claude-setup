@@ -398,6 +398,10 @@ test('the router reads the exported word lists: Figma link, design words, UI nou
   for (const pattern of [FIGMA_LINK, DESIGN_WORDS, UI_WORDS]) assert.ok(!pattern.global, 'stateless for .test');
 });
 
-test('the module imports nothing, so the router can import it without a cycle (F5)', () => {
-  assert.doesNotMatch(readFileSync(MODULE, 'utf8'), /^\s*import\b|\bimport\(|\brequire\(/m);
+test('the modules import nothing but each other, so the router can import them without a cycle (F5)', () => {
+  const evidence = readFileSync(MODULE, 'utf8');
+  const request = readFileSync(new URL('../home/tools/ui-proof/lib/ui-request.mjs', import.meta.url), 'utf8');
+  for (const source of [evidence, request]) assert.doesNotMatch(source, /^\s*import\b|\bimport\(|\brequire\(/m);
+  assert.deepEqual([...evidence.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)].map((match) => match[1]), ['./ui-request.mjs'], 'only the sibling');
+  assert.doesNotMatch(request, /\bfrom\s+['"]/, 'ui-request.mjs imports nothing');
 });
