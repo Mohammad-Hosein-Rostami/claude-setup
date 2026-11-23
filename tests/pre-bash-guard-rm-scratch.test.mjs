@@ -187,6 +187,11 @@ test('F2: a made folder whose mktemp an earlier command may make fail asks (its 
     `D=$(mktemp -d); ${RM} -rf $D/*`, `chmod 0 $TMPDIR; D=$(mktemp -d) || exit; ${RM} -rf $D/*`].forEach(quiet);
 });
 
+test('F2: a template made folder inside a nested script never counts: the script cannot see the outer line (guard-rm review R2.3)', () => {
+  [`rmdir ${W}; bash -c 'D=$(mktemp -d ${W}/XXXX); ${RM} -rf $D/*'`, `bash -c 'D=$(mktemp -d ${W}/XXXX); ${RM} -rf $D/x'`,
+    `echo $(D=$(mktemp -d ${W}/XXXX); ${RM} -rf $D/x)`].forEach(asksDestructive);
+});
+
 test('a cs-test folder right below claude-<uid> or a project folder is scratch; the project folder itself still asks', () => {
   [`${RM} -rf ${TEMP}/claude-501/cs-test-basecheck`, `${RM} -rf ${TEMP}/claude-501/-Users-owner-proj/cs-test-x/y`].forEach(quiet);
   [`${RM} -rf ${TEMP}/claude-501/-Users-owner-proj`, `${RM} -rf ${TEMP}/claude-501/cs-test-x/../-Users-owner-proj`].forEach(asksDelete);

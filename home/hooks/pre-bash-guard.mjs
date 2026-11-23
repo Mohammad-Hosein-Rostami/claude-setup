@@ -102,7 +102,6 @@ import { logDecision } from './lib/guard-log.mjs';
 import { lex, segments, tokenize } from './lib/shell-words.mjs';
 import { riskyWordInExpansion, unreadableNameReasons } from './lib/raw-risk.mjs';
 import { DESTRUCTIVE_PREFIX, MAX_COMMAND_CHARS } from './lib/verdict.mjs';
-
 export { segments };
 const allow = () => ({ allow: true });
 // Every rule is an ask. The hook turns it into a timed dialog (Allow by default, auto-allow after 2 min), or, the first time a reason can be fixed by
@@ -157,6 +156,7 @@ function reasonsOf(command, context) {
   if (depth > MAX_NESTING) return ['commands are nested too deeply to check (bash -c / eval / $( ) inside each other); write them out flat'];
   const reasons = [];
   const scope = newScope(cwd, project, command, work);
+  if (depth > 0) scope.sameLine.templates.clear(); // a nested script cannot see outer-line commands that may make its mktemp fail
   const { segs, nested } = parse(command);
   const commands = [];
   const folder = newFolder(cwd); // the folders the line's `cd`s may have led to (lib/cd-folder.mjs)
