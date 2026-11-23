@@ -7,7 +7,7 @@
 // - A word matches literally (regex characters included) and case-insensitively. A run of white space inside a list entry matches
 //   any run of white space, line breaks and no-break spaces included, or a camelCase seam, so a name split over two lines or joined
 //   as `QuokkaLtd` still hits (at its first line).
-// - Only whole words or word parts hit: a letter or digit beside the word means no hit (`ice` never hits `service`), unless that edge
+// - Only whole words or word parts hit: a letter or digit beside the word means no hit (`ant` never hits `giant`), unless that edge
 //   is a part seam of an identifier: camelCase (`ZebracorpFrontend`), an acronym before a word (`ZEBRACORPFrontend`) or a letter-digit
 //   change (`zebracorp2`). `_`, `-`, `/`, spaces and every other non-letter are separators.
 // - No bytes are skipped: a UTF-16 BOM decodes as UTF-16; bytes with a NUL are also searched as UTF-8 (NUL as a separator), as UTF-8

@@ -135,16 +135,16 @@ test('--history prints the commits per word, from messages and from changes', ()
   assert.equal(check(dir, '--history', '--staged').status, 2);
 });
 
-test('CRLF list, # comments, literal regex characters and word bounds: ice never hits service', () => {
+test('CRLF list, # comments, literal regex characters and word bounds: ant never hits giant', () => {
   const dir = makeRepo();
-  commit(dir, 'a.md', 'customer service\nslice of nice\naxb\nskipped\nan ice-cream\n');
-  commit(dir, 'b.md', 'pure c++ code\nicepath\nsnake_ice_case\n');
-  const list = listFile('﻿# skipped\r\nice\r\na.b\r\nc++\r\n\r\n');
+  commit(dir, 'a.md', 'a giant tenant\nantler and pants\naxb\nskipped\nan ant-hill\n');
+  commit(dir, 'b.md', 'pure c++ code\nantpath\nsnake_ant_case\n');
+  const list = listFile('﻿# skipped\r\nant\r\na.b\r\nc++\r\n\r\n');
   const result = check(dir, '--deny', list);
   assert.equal(result.status, 1);
   const hits = result.stdout.split('\n').filter((text) => !text.startsWith('share-check:') && text !== '');
-  assert.deepEqual(hits, ['a.md:5: ice', 'b.md:1: c++', 'b.md:3: ice']);
-  assert.equal(check(dir, '--deny', listFile('ice\n'), 'base.txt').status, 0, 'a path limits the check');
+  assert.deepEqual(hits, ['a.md:5: ant', 'b.md:1: c++', 'b.md:3: ant']);
+  assert.equal(check(dir, '--deny', listFile('ant\n'), 'base.txt').status, 0, 'a path limits the check');
 });
 
 test('a tracked symlink is checked by its target, and a repo with no tracked file is clean with 0 files', () => {

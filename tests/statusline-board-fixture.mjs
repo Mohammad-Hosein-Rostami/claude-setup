@@ -197,12 +197,12 @@ export function mockupStates() {
     'git     claude-setup  main  ↑2 to push · 1 staged · 3 changed · 1 new · check failed: tests', session.calm] });
 
   now = at(19, 15);
-  const ice = repoOf('demo-web-ui', [branch('feat/auth-i18n', { upstream: 'origin/feat/auth-i18n', upAhead: 1, upBehind: 2, op: 'rebase', opStep: '3/7', staged: null, changed: null, untracked: null, conflicts: null })], { trust: 'refs' });
+  const demo = repoOf('demo-web-ui', [branch('feat/auth-i18n', { upstream: 'origin/feat/auth-i18n', upAhead: 1, upBehind: 2, op: 'rebase', opStep: '3/7', staged: null, changed: null, untracked: null, conflicts: null })], { trust: 'refs' });
   add('several-repos', now, {
     ...calmSession(now),
     segment: segmentOf({ rowsDone: 3, rowsTotal: 8, leftMin: 200, finishMs: at(23, 10), road: roadStep(now) }),
     board: boardOf(now, {
-      agents: ['a', 'b', 'c', 'd'].map((id) => runningAgent(`impl-${id}`)), road: ROAD_FACTS, repos: [ice],
+      agents: ['a', 'b', 'c', 'd'].map((id) => runningAgent(`impl-${id}`)), road: ROAD_FACTS, repos: [demo],
       repo: repoOf('claude-setup', [mainBranch({ upAhead: 3, changed: 2 }), branch('r18-git', { ahead: 2, changed: 1, agents: ['implementer'] }), LANE_EST]),
     }),
   }, { 100: [
