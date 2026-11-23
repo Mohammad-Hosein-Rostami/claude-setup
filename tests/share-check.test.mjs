@@ -105,6 +105,11 @@ test('--staged reads the index blobs, not the working tree, and names with space
   assert.match(staged.stdout, new RegExp(`^${name}:2: zebracorp$`, 'm'));
   assert.equal(check(dir).status, 0, 'the working tree copy is clean');
   git(dir, 'add', '--', name);
+  const forged = `x\nnotes.md:9: ${WORD}`; // a file name that would print a fake hit line of its own
+  writeFileSync(join(dir, forged), `${WORD}\n`);
+  git(dir, 'add', '--', forged);
+  assert.deepEqual(check(dir, '--staged').stdout.split('\n').filter((text) => text.endsWith(`: ${WORD}`)), [`"x\\nnotes.md:9: ${WORD}":1: ${WORD}`]);
+  git(dir, 'rm', '-q', '--cached', '--', forged);
   writeFileSync(join(dir, 'other.md'), `${WORD}\n`);
   assert.equal(check(dir, '--staged').status, 0, 'an untracked file is not in the commit');
 });

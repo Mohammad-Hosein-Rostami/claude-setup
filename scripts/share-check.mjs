@@ -11,7 +11,8 @@
 //   0 with `share-check: not run (no deny list at <path>)` when there is no list, 2 with `share-check: error: <why>` on any failure.
 // Exports: DENY_LIST_PATH, FILE_MAX_BYTES, parseDenyList, wordPattern, findHits, readDenyList, main.
 // Invariants:
-// - Trust boundary: the output never holds a line's text or the list; only file names, line numbers and the deny word that matched.
+// - Trust boundary: the output never holds a line's text or the list; only file names (quoted and escaped when they hold a control
+//   character, so a name cannot print a fake line), line numbers and the deny word that matched.
 // - Read only: no file is written and git takes no optional lock, so two commits in two worktrees can run it at once.
 // - The default list is `personal/share-deny.txt` of the main checkout (the parent of git's common folder), so a lane worktree, which
 //   has no `personal/`, finds the same list; it never comes from the commit or the index.
@@ -23,6 +24,7 @@ import { lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { readPlainFile } from '../home/hooks/lib/plain-file.mjs';
+import { escaped } from '../home/hooks/lib/shown-name.mjs';
 
 export const DENY_LIST_PATH = ['personal', 'share-deny.txt']; // below the main checkout
 export const FILE_MAX_BYTES = 2 * 1024 * 1024; // a larger tracked file is listed as skipped, not read
@@ -182,6 +184,9 @@ function stagedFiles(cwd, paths) {
   return entries.map((entry) => ({ name: entry.name, read: () => readStaged(top, entry, sizes) }));
 }
 
+/** A file name as printed: as it is, or quoted and escaped when it holds a control or format character (repository text, P5). */
+const shownFile = (name) => (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(name) ? `"${escaped(name)}"` : name);
+
 /** Checks files and prints hits, skips and the summary; returns the exit code. */
 function checkFiles(files, denied, what) {
   let hitCount = 0;
@@ -191,13 +196,13 @@ function checkFiles(files, denied, what) {
     const content = read();
     if (content.skip !== undefined) {
       skipped += 1;
-      console.log(`share-check: skipped ${name} (${content.skip})`);
+      console.log(`share-check: skipped ${shownFile(name)} (${content.skip})`);
       continue;
     }
     for (const hit of findHits(content.text, denied)) {
       hitCount += 1;
       hitFiles.add(name);
-      console.log(`${name}:${hit.line}: ${hit.word}`);
+      console.log(`${shownFile(name)}:${hit.line}: ${hit.word}`);
     }
   }
   const counts = `${files.length - skipped} ${what} checked, ${skipped} skipped, ${denied.length} words`;
