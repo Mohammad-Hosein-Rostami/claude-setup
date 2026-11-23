@@ -11,18 +11,25 @@
 // - No account name, no file (a sample with no account would mix accounts); a gap is never filled by a guess; nothing here throws
 //   (any failure reads as no file, or a write that returns false).
 // - Many sessions on one account write at once, each with its own view of the limits, some older than others. A sample is stored
-//   only when it is news and behind the newest stored one in no window (see isNews), so an older view never undoes a newer one
-//   (two sessions alternating 43% and 63% of one window stored the sawtooth before). The check and the write run under the
-//   account's lock (hooks/lib/session-lock.mjs), so two sessions never both store against the same newest sample.
-// - The log line is one write on an O_APPEND handle opened without following a link; a torn last line (a writer killed mid-line)
-//   gets a line break first, so the next line stays whole and the torn one is dropped at the next rewrite.
+//   only when it is news and behind the stored limits in no window (see isNews), so an older view never undoes a newer one (two
+//   sessions alternating 43% and 63% of one window stored the sawtooth before). Each window is compared with the newest stored
+//   sample that has that window, so a sample without the 5-hour window does not let an older 5-hour value back in. The check and
+//   the write run under the account's lock (hooks/lib/session-lock.mjs), so two sessions never both store against the same newest
+//   sample.
+// - The render never waits on that lock (board README: render under 50 ms): it is tried once, and when it is held the sample is
+//   dropped (the next render, about 5 s later, tries again). A lock left by a killed holder is removed by session-lock's stale rules
+//   (a gone pid after 0.5 s, any lock after 5 s), never one whose holder still runs.
+// - The log line is one O_APPEND write through hooks/lib/plain-file.mjs: no link followed, no FIFO waited on, and never into a file
+//   with a second hard link (a rewrite renames a new file over the name and leaves the linked file as it was). A torn last line (a
+//   writer killed mid-line) gets a line break first, so the next line stays whole and the torn one is dropped at the next rewrite.
 // - The log never passes MAX_LOG_BYTES, the byte cap its writer and readers share: before a line would pass it, the log is rewritten
 //   to its newest half. It is also rewritten once its first line is LOG_TRIM_SLACK_MS older than LOG_KEEP_MS (about once a day),
 //   so it holds the 7 days the token view needs and no more. A rewrite is a temp file `<account>.jsonl.<hex>.tmp` and a rename.
 import { randomBytes } from 'node:crypto';
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, renameSync, rmSync, writeSync } from 'node:fs';
+import { closeSync, lstatSync, openSync, readSync, renameSync, rmSync, writeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { appendPlainFile, readPlainFileWith } from '../../../hooks/lib/plain-file.mjs';
 import { withSessionLock } from '../../../hooks/lib/session-lock.mjs';
 import {
   CREATE_FLAGS, FILE_MODE, isPrivateFile, isSessionId, lstatOrNull, privateFolder, readSessionFile, sameNode, TEMP_NAME_BYTES, writeSessionFile,
@@ -42,8 +49,8 @@ export const MAX_LOG_BYTES = 1024 * 1024;
 const KEEP_LOG_BYTES = MAX_LOG_BYTES / 2;
 /** Bytes read from the start of the log to date its first line; a sample line is about 170 bytes. */
 const FIRST_LINE_BYTES = 1024;
-// O_APPEND: each line lands at the end; O_NOFOLLOW and O_NONBLOCK (POSIX only): never through a link, never stuck on a FIFO.
-const APPEND_FLAGS = constants.O_RDWR | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+/** The render tries the account lock once and never waits for another session's turn (see the header). */
+const RENDER_LOCK_WAIT_MS = 0;
 const LINE_BREAK = '\n';
 const WINDOWS = ['five_hour', 'seven_day'];
 const MAX_PERCENT = 100;
@@ -88,7 +95,10 @@ export function readLimits(account, { dir = limitsDir() } = {}) {
 /** @returns {object | null} the newest sample of a limits file */
 export const latestSample = (file) => file?.samples.at(-1) ?? null;
 
-/** @returns {number} how one window of a new sample stands to that window of the newest stored sample: AHEAD, NO_NEWS or BEHIND */
+/** @returns {{ five_hour: object | null, seven_day: object | null }} per window, its value in the newest stored sample that has it */
+const newestWindows = (samples) => Object.fromEntries(WINDOWS.map((name) => [name, samples.findLast((s) => s[name])?.[name] ?? null]));
+
+/** @returns {number} how one window of a new sample stands to the newest stored value of that window: AHEAD, NO_NEWS or BEHIND */
 function windowStanding(next, newest) {
   if (next === null) return NO_NEWS; // a window the input lacks tells nothing, and the stored one is never filled from a guess
   if (newest === null) return AHEAD;
@@ -99,10 +109,15 @@ function windowStanding(next, newest) {
   return next.resets_at !== null && newest.resets_at === null ? AHEAD : NO_NEWS; // the same use, now with its reset time
 }
 
-/** @returns {boolean} true when the sample is ahead of the newest stored one in some window and behind it in none */
-function isNews(sample, newest) {
-  if (newest === null) return true;
-  const standings = WINDOWS.map((name) => windowStanding(sample[name], newest[name] ?? null));
+/**
+ * @param {object} sample the new sample (at least one window)
+ * @param {object[]} samples the stored samples, oldest first
+ * @returns {boolean} true when the sample is ahead of the stored limits in some window and behind them in none, each window
+ *   compared with the newest stored sample that has that window
+ */
+function isNews(sample, samples) {
+  const newest = newestWindows(samples);
+  const standings = WINDOWS.map((name) => windowStanding(sample[name], newest[name]));
   return standings.includes(AHEAD) && !standings.includes(BEHIND);
 }
 
@@ -172,30 +187,34 @@ function rewriteLog(dir, path, text) {
   }
 }
 
-/** Adds one line to the account's log (see the header); a link or a foreign file is left alone. */
+/**
+ * Reads what the next log line needs, through plain-file.mjs (no link followed, no FIFO waited on).
+ * @returns {{ kept?: string, torn: boolean }} kept: the lines a rewrite keeps, when one is due (see needsRewrite); torn: the last
+ *   line has no line break
+ */
+function logState(path, lineBytes, now) {
+  return readPlainFileWith(path, (fd, size) => {
+    if (needsRewrite(fd, size, lineBytes, now)) return { kept: keptLines(fd, size, lineBytes, now), torn: false };
+    return { torn: size > 0 && readAt(fd, size - 1, 1) !== LINE_BREAK };
+  });
+}
+
+/** Adds one line to the account's log (see the header); a link, a hard-linked or a foreign file is never written into. */
 function appendLog(dir, account, sample) {
   const path = join(dir, `${account}.jsonl`);
   const existing = lstatOrNull(path);
   if (existing !== null && !isPrivateFile(existing)) return false; // also where O_NOFOLLOW does not exist (Windows)
   const line = `${JSON.stringify(sample)}${LINE_BREAK}`;
   const lineBytes = Buffer.byteLength(line) + LINE_BREAK.length; // room for the break a torn last line needs
-  const fd = openSync(path, APPEND_FLAGS, FILE_MODE);
-  try {
-    const stats = fstatSync(fd);
-    if (!isPrivateFile(stats)) return false; // something else was put there after the lstat
-    if (needsRewrite(fd, stats.size, lineBytes, sample.t)) return rewriteLog(dir, path, keptLines(fd, stats.size, lineBytes, sample.t) + line);
-    const torn = stats.size > 0 && readAt(fd, stats.size - 1, 1) !== LINE_BREAK;
-    writeAll(fd, torn ? `${LINE_BREAK}${line}` : line);
-    return true;
-  } finally {
-    closeSync(fd);
-  }
+  const state = existing === null ? { torn: false } : logState(path, lineBytes, sample.t);
+  if (state.kept !== undefined) return rewriteLog(dir, path, state.kept + line);
+  return appendPlainFile(path, state.torn ? `${LINE_BREAK}${line}` : line, { mode: FILE_MODE, maxBytes: MAX_LOG_BYTES });
 }
 
-/** Under the account's lock: stores the sample in the file and the log when it is still news against the newest stored one. */
+/** Under the account's lock: stores the sample in the file and the log when it is still news against the stored limits. */
 function storeSample(dir, account, sample) {
   const samples = readLimits(account, { dir })?.samples ?? [];
-  if (!isNews(sample, samples.at(-1) ?? null)) return false; // another session stored the same or newer while this one waited
+  if (!isNews(sample, samples)) return false; // another session stored the same or newer since the first look
   const text = JSON.stringify({ account, samples: [...samples, sample].slice(-MAX_SAMPLES) });
   if (Buffer.byteLength(text) > MAX_FILE_BYTES) return false; // readLimits would refuse it
   return writeSessionFile(dir, account, text, { sweep: false }) && appendLog(dir, account, sample);
@@ -213,9 +232,10 @@ export function recordSample(account, rateLimits, { dir = limitsDir(), now = Dat
   try {
     if (!isAccountName(account) || !rateLimits || typeof rateLimits !== 'object') return false;
     const sample = sampleOf(rateLimits, now, session);
-    // A first look without the lock: most renders bring nothing new and must not wait for another session's turn.
-    if (sample === null || !isNews(sample, latestSample(readLimits(account, { dir })))) return false;
-    return withSessionLock(dir, account, () => storeSample(dir, account, sample)) === true;
+    // A first look without the lock: most renders bring nothing new and need not touch it.
+    if (sample === null || !isNews(sample, readLimits(account, { dir })?.samples ?? [])) return false;
+    const stored = withSessionLock(dir, account, () => storeSample(dir, account, sample), { waitMs: RENDER_LOCK_WAIT_MS });
+    return stored === true; // undefined: the lock was held (this sample is dropped) or the folder is unusable
   } catch {
     return false; // the status line must render even when the state folder is unusable
   }

@@ -1,5 +1,5 @@
 // A lock file that makes hooks (and status.mjs) take turns on the files of one store folder, built on lib/session-store.mjs.
-// Exports: withSessionLock(dir, session, work, { lockFile }?) -> work's result | undefined; BREAKER_SUFFIX (the breaker file's suffix, for
+// Exports: withSessionLock(dir, session, work, { lockFile, waitMs }?) -> work's result | undefined; BREAKER_SUFFIX (the breaker file's suffix, for
 // a caller that names a file that blocks the lock).
 // Why: two hooks that read and write one session file at the same moment must not drop each other's change, and a hook killed
 // mid-turn must not block the store for good.
@@ -14,6 +14,8 @@
 //   lock another took. Left over: if the stale lock's own holder releases in the instant before the rename and two callers then take
 //   the name, the lock moved aside is deleted (a lost mutual exclusion, not a crash). Worst wait a caller sees: LOCK_WAIT_MS (1 s),
 //   after which it stores nothing; after a killed holder the next caller waits until that lock is STALE_LOCK_MS old (about 0.5 s).
+//   A caller that must not wait (the status line render) passes waitMs 0: one try, one stale check (a stale lock is removed for the
+//   next call), then nothing is stored.
 //   Only a send that may be denied (a bounce or advice) takes the lock: a plain allow never touches the store. A link, FIFO or folder
 //   at the lock's or the breaker's name makes the store unusable.
 // - Nothing here throws.
@@ -43,25 +45,26 @@ const PAUSE = new Int32Array(new SharedArrayBuffer(4)); // Atomics.wait on it is
  * @param {string} dir the store folder (made 0700 when missing)
  * @param {string} session the session id (see isSessionId)
  * @param {() => T} work the read and the write; it runs at most once
- * @param {{lockFile?: string}} [options] lockFile: the lock's file name in dir instead of `<session>.lock`, for a folder other tools
- *   write lock files into (status.mjs uses `.<name>.status-lock`); one name with an extension, no path (LOCK_FILE_NAME)
- * @returns {T | undefined} what work returned; undefined when the id or lock name is bad, the store is unusable, the lock stayed
- *   taken for LOCK_WAIT_MS, or anything failed
+ * @param {{lockFile?: string, waitMs?: number}} [options] lockFile: the lock's file name in dir instead of `<session>.lock`, for a folder other tools
+ *   write lock files into (status.mjs uses `.<name>.status-lock`); one name with an extension, no path (LOCK_FILE_NAME); waitMs:
+ *   how long to wait for a taken lock, 0 to LOCK_WAIT_MS (the default); 0 tries once
+ * @returns {T | undefined} what work returned; undefined when the id, lock name or waitMs is bad, the store is unusable, the lock
+ *   stayed taken for waitMs, or anything failed
  */
-export function withSessionLock(dir, session, work, { lockFile = `${session}.lock` } = {}) {
+export function withSessionLock(dir, session, work, { lockFile = `${session}.lock`, waitMs = LOCK_WAIT_MS } = {}) {
   try {
-    const usable = isSessionId(session) && LOCK_FILE_NAME.test(lockFile);
+    const usable = isSessionId(session) && LOCK_FILE_NAME.test(lockFile) && waitMs >= 0 && waitMs <= LOCK_WAIT_MS;
     const folder = usable ? privateFolder(dir) : undefined;
     if (folder === undefined) return undefined;
     const lock = join(dir, lockFile);
     const token = `${process.pid} ${randomBytes(LOCK_TOKEN_BYTES).toString('hex')}`;
-    const deadline = Date.now() + LOCK_WAIT_MS;
-    while (Date.now() < deadline) {
+    const deadline = Date.now() + waitMs;
+    for (;;) {
       if (takeLock(lock, token)) return runAndRelease(work, { dir, folder, lock, token });
-      if (!clearStaleLock(dir, folder, lock)) return undefined;
+      // still taken at the deadline: nothing is stored, as for any other unusable store
+      if (!clearStaleLock(dir, folder, lock) || Date.now() >= deadline) return undefined;
       Atomics.wait(PAUSE, 0, 0, LOCK_PAUSE_MS);
     }
-    return undefined; // still taken: nothing is stored, as for any other unusable store
   } catch {
     return undefined;
   }

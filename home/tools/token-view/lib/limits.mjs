@@ -3,9 +3,13 @@
 // { used_percentage, resets_at }; format owned by home/tools/estimate/lib/limits-store.mjs).
 // Exports: readLimitLogs(dir, sinceMs) -> [{ account, samples, days }].
 // Invariants: read-only; a missing folder gives []; a line that is not a sample is skipped; a gap is shown as a gap (a day with
-// no sample has no row), never filled.
-import { readdirSync, readFileSync } from 'node:fs';
+// no sample has no row), never filled. A log is read through hooks/lib/plain-file.mjs within MAX_LOG_BYTES, the cap its writer
+// keeps (one cap in bytes for writer and reader): a log over it, a link, a FIFO or a folder at a log's name is not read (one
+// stderr line), so a planted or foreign file is never followed nor read in full.
+import { readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
+import { MAX_LOG_BYTES } from '../../estimate/lib/limits-store.mjs';
 
 const LOG_SUFFIX = '.jsonl';
 
@@ -17,7 +21,7 @@ const percent = (window) => (typeof window?.used_percentage === 'number' ? windo
 function samplesOf(file, sinceMs) {
   let text = '';
   try {
-    text = readFileSync(file, 'utf8');
+    text = readPlainFile(file, MAX_LOG_BYTES);
   } catch (error) {
     process.stderr.write(`token-view: cannot read ${file}: ${error.message}\n`);
     return [];
