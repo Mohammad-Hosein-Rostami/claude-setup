@@ -4,7 +4,8 @@
 //     instructions (CLAUDE.md, AGENTS.md and whether it loads, .claude/rules), skills (ours hide a same-name project skill:
 //     named with its path), agents (with maxTurns), hooks beside ours, settings that change ours (a weaker model, our check
 //     switches, permission mode, and a clear warning when the project turns all hooks off or may hide our CLAUDE.md), MCP
-//     servers, the note line, the project-agents line (lib/project-agents-timed.mjs) and the notes.
+//     servers, the note line, the project-agents line (lib/project-agents-timed.mjs; from the session folder by a filesystem
+//     walk, also when git fails) and the notes.
 //   SubagentStart -> the worker note: the hidden project skills and the notes.
 // Notes: `<key>.md` in the setup's shared folder (home/project-notes, found from this file's real path), then the personal one
 // (~/.claude/project-notes); a note CLAUDE.local.md already imports is named, not repeated.
@@ -134,8 +135,9 @@ export async function hookOutput(input, { home = homedir(), coreHome = CORE_HOME
   let text;
   if (event === 'SubagentStart') text = workerNote(setup, notes);
   else {
-    const agentNote = identity.top === null ? ''
-      : timedProjectAgentNote(input.cwd, join(home, '.claude', 'agents'), { ...agentNoteOptions, budgetLeftMs: timeLeft() - NOTES_RESERVE_MS });
+    // From the session folder whatever git said: the child finds the agent folders by its own filesystem walk, so a missing or
+    // failing git (identity.top null) never hides the line (review R1 of agents-note; the old session-notes did the same).
+    const agentNote = timedProjectAgentNote(input.cwd, join(home, '.claude', 'agents'), { ...agentNoteOptions, budgetLeftMs: timeLeft() - NOTES_RESERVE_MS });
     text = leadNote(setup, notes, agentNote, identity);
   }
   return text ? { hookSpecificOutput: { hookEventName: event, additionalContext: text } } : null;

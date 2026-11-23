@@ -202,6 +202,17 @@ test('a project agent named like ours brings the project-agents line', async () 
   assert.ok(text.split('\n').some((line) => line.startsWith(NOTE_START)));
 });
 
+test('review R1: git failing or hanging in a repository still brings the project-agents line (filesystem walk)', async () => {
+  const box = sandbox({ project: { '.claude/agents/runner.md': AGENT('runner') } });
+  const failing = () => ({ status: 128, stdout: '' }); // missing git, dubious ownership or a broken .git
+  const hanging = () => ({ status: null, signal: 'SIGKILL', error: Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }) });
+  for (const git of [failing, hanging]) {
+    const text = await textOf(start(box.top), box, { git });
+    assert.match(text, /^Note: repo key not checked \(git is missing, timed out or failed in this repository\)/m);
+    assert.ok(text.split('\n').some((line) => line.startsWith(NOTE_START) && line.includes('Shadowed personal agents: runner')), text);
+  }
+});
+
 test('review R1: CLAUDE.local.md importing another project-notes file leaves our note shown', async () => {
   const box = sandbox({ project: { 'CLAUDE.local.md': '@docs/project-notes/onboarding.md\n@~/.claude/project-notes/other-key.md\n' }, notes: { 'proj-repo': 'MY NOTE BODY' } });
   const text = await textOf(start(box.top), box);
