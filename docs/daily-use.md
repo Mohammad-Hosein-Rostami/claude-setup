@@ -17,8 +17,16 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   (`/quick` for a read-only one), reading code, one command, a one-file or under-30-line edit. Everything else runs as steps of at most 5 agents at a time: build batch (lanes that share no
   file), then a fix batch when the gate finds something. A job of several steps is a road (`road-<id>.json` beside `STATUS.md`): each step ends
   with a gate (`road.mjs gate`) and one update to you. Fixed sequences are one script call, not an agent: `land-lane` lands a
-  lane (the only way to land, one at a time), `scripts/sync-machines.mjs` syncs the machines.
-- UI work always ends with `ui-quality-pass` and the `ui-check` loop, and `visual-qa` runs the final gate.
+  lane (the only way to land, one at a time), and a machine sync, where your setup has one, brings your other machines along
+  (`docs/setup.md`, "Sync the machines").
+- UI work is checked as closely as the change needs, by the check plan (`node ~/.claude/tools/ui-proof/ui-proof.mjs plan`, rules
+  in `home/standards/ui-checks.md`): nobody labels the work; the request, the diff and the screens it reaches decide. A docs page,
+  tests or config need no UI proof (none); a dependency bump or a "no visual change" request needs identical renders before and
+  after (same); logic, text or look on a screen with no design needs before and after renders with no new problem (render); a new
+  screen or state takes the `ui-implementer` loop and the `visual-qa` final gate (visual). A design word in the request, or a look
+  change on a screen with a Figma frame, takes the full pixel-perfect path, unchanged: `figma-pixel-perfect`, `ui-check run` rounds
+  until every state passes, then the `visual-qa` final gate on the tree that lands (pixel). `ui-quality-pass` runs before done at
+  every depth but none (under same as a review that lists `follow-up:` lines).
   The code check described under "The done-check" below runs by itself and has no category switch. The other guards stay: the Bash
   guard, gitleaks and `node --check` of hook files at commit, and the `git-tidy` gate.
 - While agents run you can keep talking to the lead: it answers questions and asks yours without stopping the
@@ -55,8 +63,8 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   per model and effort (older rows show as `unknown`). `scripts/doctor.sh` runs `stats --doctor` and prints a `WARN` for a
   check whose false-alarm rate is over 10% after 10 blocks, or when the ledger is full; with no runs yet it prints only an ok line
   (shown with `--all`). Whether to change `risk-rules.json` or a project's skip list is your decision.
-- **What it does not catch.** Wrong behaviour no test covers, and what only you see on screen. The UI pixel checks and the final
-  visual check are separate and unchanged.
+- **What it does not catch.** Wrong behaviour no test covers, and what only you see on screen. The UI checks are separate: the
+  check plan (above) decides them, and the pixel-perfect path is unchanged.
 - Tool details: `home/tools/done-check/README.md`.
 
 ## Long or unattended runs
@@ -100,9 +108,10 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   (watch by session id, not by file path); in any doubt the silence is still a stall.
 - A run that must survive a dropped connection starts a watch on its own session id with
   `--exit-on-event api-error,stall,limit`, as a background command with `timeout` 7200000 (an unattended run stops one without it after 30 min); when the watch exits, the run is woken and carries on.
-- Long jobs run as background agents in steps of at most 5. Landing is `land-lane` (it checks free disk and the tip, rebases, runs the UI proof when UI files changed, then
-  fast-forwards). To bring the other machines along after the last landing, run on the MacBook, in the repo folder:
-  `node scripts/sync-machines.mjs --repo "$PWD"` (it never pushes; see `docs/setup.md`).
+- Long jobs run as background agents in steps of at most 5. Landing is `land-lane` (it checks free disk and the tip, rebases, proves the UI check plan of the rebased diff, then
+  fast-forwards; a lane that changes the app needs `--brief <brief file>`, the request the plan reads, and there are no UI waivers).
+  To bring your other machines along after the last landing, run the machine sync on the machine you landed on, in the repo folder,
+  as `docs/setup.md` ("Sync the machines") gives it; it never pushes.
 - Background agents hand decisions to the lead through the ask queue: `node ~/.claude/tools/ask/ask.mjs init` prints
   the queue path, and the lead runs Monitor on `node ~/.claude/tools/ask/ask.mjs watch --queue <path>`. See
   `home/tools/ask/README.md` and the `ask-owner` skill.
@@ -173,7 +182,7 @@ on Opus (`claude --model opus --effort high -c`), not credits.
 ## Another machine
 `git pull`, then `scripts/install.sh` (Windows PowerShell:
 `powershell -ExecutionPolicy Bypass -File scripts\install.ps1`). Run `scripts/doctor.sh` to check: it prints one summary line
-(`doctor (MacBook, Claude Code 2.1.328): 1 FAIL, 1 WARN, 38 ok`), then only the lines that need a fix; `--all` prints every line.
+(`doctor (<machine>, Claude Code <version>): 1 FAIL, 1 WARN, 38 ok`), then only the lines that need a fix; `--all` prints every line.
 
 On Windows without Developer Mode the installer copies files instead of linking them, so they do not follow later
 edits: re-run the installer after every pull. Not yet tested on Windows: `install.ps1` has not been run there, the

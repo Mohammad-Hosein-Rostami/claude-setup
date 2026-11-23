@@ -29,7 +29,9 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 ## How one prompt flows
 
 1. You start Claude with `claude --model <m> --effort <e>`. The `session-notes.mjs` and `lead-text.mjs` hooks print the lead rules.
-2. `skill-router.mjs` reads your prompt and names the skills that fit (for example `ui-quality-pass` for a UI edit).
+2. `skill-router.mjs` reads your prompt and names the skills that fit (for example `ui-quality-pass` for a UI edit). A design
+   word or Figma link gets the full pixel-perfect text; any other UI request gets one line that leaves the depth to the check plan
+   (section "The UI checks" below).
 3. Claude reads `home/CLAUDE.md` and the rules whose paths match the files it works on.
 4. The lead hands work to agents from `home/agents/`. Each agent file lists its model, tools and size limits.
 5. Before each Bash command, `pre-bash-guard.mjs` checks it. Risky commands (push, `rm -rf`, prod-host writes) open a dialog. When a
@@ -45,7 +47,8 @@ The hook list with exact triggers is in `docs/catalog.md` (section Hooks) and `h
 ## The done-check
 
 Layer by layer, from the cheapest: the Bash guard and gitleaks (safety, unchanged), the formatter after each edit, the **done-check** at
-every stop, the same check again when a lane is landed, one risk review for risky lanes, and the UI pixel checks.
+every stop, the same check again when a lane is landed, one risk review for risky lanes, and the UI checks of the check plan
+(section below).
 
 - **At a stop.** The hook `home/hooks/done-check.mjs` (Stop and SubagentStop) finds the code files the stopping agent changed since its
   first tool call and, per package (the nearest `package.json`), detects what the project itself offers: a `typecheck` script or
@@ -58,11 +61,31 @@ every stop, the same check again when a lane is landed, one risk review for risk
   state again passes as `left open`, and the third stop in a row passes with "change approach". A check that cannot run
   (`not run`) never blocks and is never shown as ok. If the hook itself crashes the stop goes through; the land check is the hard gate.
 - **Landing.** `land-lane` runs the same check on the landed tip, reuses a green result for the same change, and for a lane in a risk
-  class asks for the one `reviewer` run (`home/agents/reviewer.md`) before it lands.
+  class asks for the one `reviewer` run (`home/agents/reviewer.md`) before it lands. It also proves the lane's UI check plan (section
+  "The UI checks").
 - **The ledger.** Every run and every label (`done-check.mjs label`) is one row in `~/.claude/state/done-check/ledger.jsonl`, with no
   code and no file names. `done-check.mjs stats` and a line of `scripts/doctor.sh` show which check raises too many false alarms
   (over 10% after 10 blocks). Changing a rule is a human decision: edit `home/tools/done-check/risk-rules.json`.
 - **Skip it by hand.** `DONE_CHECK_SKIP=all` (or `types`, `lint`, `tests`, comma separated) in the environment of the session.
+
+## The UI checks
+
+Nobody labels UI work. `node ~/.claude/tools/ui-proof/ui-proof.mjs plan` reads the request (the brief, which quotes your words),
+the diff and the screens the diff reaches, and returns the check plan, whose depth fits the change (rules:
+`home/standards/ui-checks.md`):
+
+| Depth | When | Proof |
+| ----- | ---- | ----- |
+| none | only tests, docs pages or dev config changed | nothing |
+| same | dependencies only, or a "no visual change" request | renders before and after are identical |
+| render | logic, text or look on a screen with no design | renders before and after: no new problem; logic also needs its tests |
+| visual | a new screen or state (no render before), or a screen with no url to open | the `ui-implementer` loop and the `visual-qa` final gate |
+| pixel | a design word or Figma link in the request, or a look change on a screen with a Figma frame | the full pixel-perfect path, unchanged: `figma-pixel-perfect`, `ui-check run` rounds until every state passes, then the `visual-qa` final gate on the tree that lands |
+
+Evidence only raises the plan: a brief line `UI-PLAN: <depth>` can make it stricter, never lighter, and what cannot be read takes
+a stricter path. At landing, `land-lane` computes the plan again on the rebased diff and `git-tidy land` checks its proof
+(`ui-proof check --plan`); a lane that changes the app needs `--brief`. There are no waivers. Old problems on both sides are
+printed as `follow-up:` lines; new ones block.
 
 ## Where each kind of rule lives, and how to change one
 
