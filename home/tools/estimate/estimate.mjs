@@ -46,7 +46,7 @@ function readOptions(argv) {
   const store = values['state-dir'] ?? (values.now === undefined ? stateDir() : null);
   // A run pointed at another store or transcript folder is a probe: its result must not reach the real status-line cache.
   const isProbe = values['state-dir'] !== undefined || values.projects !== undefined;
-  return { path: positionals[0], isProbe, options: { now: values.now, stateDir: store, projectsDir: values.projects, sessionId, record: store !== null } };
+  return { path: positionals[0], isProbe, options: { now: values.now, stateDir: store, projectsDir: values.projects, sessionId, record: store !== null, cli: true } };
 }
 
 /**

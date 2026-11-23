@@ -45,11 +45,12 @@ test('open rows exit 0 with the Finish block on the local clock (TZ honoured), t
   assert.match(all.find((line) => line.startsWith('Not in this time:')) ?? 'Not in this time: none', /^Not in this time: (none|work not listed yet, usually about (\d+ min|\d+ h \d\d) more \(\d+% of the work left in past jobs\)\.)$/);
   const lines = all.filter((line) => !line.startsWith('Not in this time:'));
   assert.match(lines[0], /^Finish: \w{3} \d+ Nov \d\d:\d\d \(likely; 85% by (\w{3} )?\d\d:\d\d, 95% by (\w{3} )?\d\d:\d\d; local \+00:00, now 01:00\)$/);
-  assert.equal(lines[1], 'Range: not yet measured (0 of 20 scored jobs).');
-  assert.match(lines[2], /^Covers: 2 open rows \(1 running; 1 S, 1 M\); (\d+ min|\d+ h \d\d) of work left in this time\.$/);
-  assert.equal(lines[3], 'Excludes: pauses (nights, usage limits, waiting for you) move the time hour for hour; rework after hand-over; new requests.');
-  assert.equal(lines[4], 'Held: given Tue 10 Nov 01:00, unchanged since.');
-  assert.match(lines[5], /^Track record: no job scored yet; learned from \d+ finished rows and \d+ jobs\.$/);
+  // Model s1: the past-jobs band (`Range:`) is retired with the hold (estimate-spec section 7); no promise from a --now run.
+  assert.ok(!lines.some((line) => line.startsWith('Range:')));
+  assert.match(lines[1], /^Covers: 2 open rows \(1 running; 1 S, 1 M\); (\d+ min|\d+ h \d\d) of work left in this time\.$/);
+  assert.equal(lines[2], 'Excludes: pauses (nights, usage limits, waiting for you) move the time hour for hour; rework after hand-over; new requests.');
+  assert.equal(lines[3], 'Held: given Tue 10 Nov 01:00, unchanged since.');
+  assert.match(lines[4], /^Track record: no job scored yet; learned from \d+ finished rows and \d+ jobs\.$/);
   assert.equal(result.stderr, '');
   assert.equal(run(status, '--now', NOW, ...projects).stdout, result.stdout);
 });
@@ -70,7 +71,7 @@ test('a --now run without --state-dir records nothing; with it the store holds t
   assert.equal(existsSync(join(dir, 'home')), false);
   const state = join(dir, 'state');
   assert.equal(run(status, '--now', NOW, '--state-dir', state, ...projects).status, 0);
-  assert.deepEqual(readdirSync(state).sort(), ['activity', 'table']);
+  assert.deepEqual(readdirSync(state).sort(), ['activity', 'facts', 'table']); // facts: the transcripts' ask cursors (job-inputs.mjs)
 });
 
 test('a table file over the size cap: the estimate still prints, stderr names the file, and no line blames a busy store', async () => {

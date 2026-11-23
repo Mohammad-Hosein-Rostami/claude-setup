@@ -102,14 +102,12 @@ test('estimateFile, finish state: the percent is worked / (worked + median left)
   assert.deepEqual(result.progress, { pct: Math.floor((100 * 60) / (60 + result.work.p50)), approx: false, rowsDone: 1, rowsTotal: 2, leftMin: result.work.p50, tag: null });
 });
 
-test('estimateFile, refusal: the weights path with its flag; pool medians S 40 (6 rows) and the default M 9', async () => {
+test('estimateFile, model s1: M rows with no finished M row still get a time and the forecast path (the size minimum is retired)', async () => {
   const doc = statusDoc([tableRow({ id: 'D1', startedH: 0, doneH: 0.5 }), tableRow({ id: 'O1', size: 'M', startedH: 0.5 }), tableRow({ id: 'O2', size: 'M' })]);
   const { run } = await setup(doc, S_COSTS.flatMap((cost) => seedRows('S', 1, cost)));
   const { result } = await run(1);
-  assert.equal(result.state, 'refused');
-  assert.equal(result.refusal.reason, 'no-reference');
-  // pool S costs 20 30 40 60 80 100 (D1 cost 30) -> median 40; earned = 40 + min(8.1, 30 min elapsed of O1); total = 40 + 9 + 9 = 58
-  assert.deepEqual(result.progress, { pct: 82, approx: true, rowsDone: 1, rowsTotal: 3, leftMin: null, tag: null });
+  assert.equal(result.state, 'finish');
+  assert.deepEqual(result.progress, { pct: Math.floor((100 * 60) / (60 + result.work.p50)), approx: false, rowsDone: 1, rowsTotal: 3, leftMin: result.work.p50, tag: null });
 });
 
 test('no row at all and a handed-over job show no progress; all rows done shows 100', async () => {
@@ -130,7 +128,7 @@ test('the percent falls after rows are added, a next job starts again, a run tha
   const added = statusDoc([tableRow({ id: 'D1', startedH: 0, doneH: 0.5 }), tableRow({ id: 'O1', startedH: 0.5 }), ...['O2', 'O3', 'O4', 'O5', 'O6', 'O7'].map((id) => tableRow({ id }))]);
   const second = (await run(1, added)).result;
   assert.ok(second.progress.pct < first.pct, 'more work left: the percent falls (audit case 8)');
-  assert.equal(second.progress.tag, '+rows');
+  assert.equal(second.progress.tag, null, 'no promise yet, so no rows were added to one (the +rows tag: estimate-from-files.test.mjs)');
   assert.equal((await run(1, undefined, { record: false })).result.progress.pct, second.progress.pct);
   const nextJob = statusDoc([
     tableRow({ id: 'D1', startedH: 0, doneH: 0.5 }), tableRow({ id: 'O1', startedH: 0.5, doneH: 0.9 }),

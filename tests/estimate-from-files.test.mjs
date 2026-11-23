@@ -1,281 +1,258 @@
-// Tests for estimateFile (home/tools/estimate/lib/from-files.mjs), the one function behind the CLI and the status line: states,
-// the committed time across a pause, a move with its stored cause, the hand-over, what is recorded, the capped log that keeps every
-// first and scored entry (also with two runs at once), the job's pace, and the status line numbers (late, per-row left, byte size).
-// Synthetic tables, transcripts and seeds only; the clock is always passed in.
+// Tests for estimateFile (home/tools/estimate/lib/from-files.mjs), model s1, the one function behind the CLI and the status line:
+// states, the clocks across a pause, the job's one promise (made by a recorded CLI run at the real clock, never re-made, late in
+// working minutes only), the hand-over, what is recorded (rows with k/runMin, the upgrade of a c3 file), the capped log under two
+// runs at once, the store key, held and stalled rows, pause reasons from the limits log and the owner's questions, the seed dedupe
+// and the status line numbers (per-row minutes, late with its cause, v2 rounded once, the byte cap).
+// Synthetic tables, transcripts and seeds only; the clock is passed in except where the promise needs the real clock.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { promiseJobKey } from '../home/tools/estimate/lib/finish-result.mjs';
 import { UsageError, estimateFile } from '../home/tools/estimate/lib/from-files.mjs';
 import { formatEstimate } from '../home/tools/estimate/lib/report.mjs';
-import { MAX_CACHE_BYTES } from '../home/tools/estimate/lib/segment-cache.mjs';
+import { MAX_CACHE_BYTES, readEntry, writeEntry } from '../home/tools/estimate/lib/segment-cache.mjs';
 import { resultSegment } from '../home/tools/estimate/lib/segment-text.mjs';
+import { poolRuns, seedTablesInStore } from '../home/tools/estimate/lib/store-pools.mjs';
 import { tableId, updateTable } from '../home/tools/estimate/lib/table-store.mjs';
-import { MIN_MS, SESSION, iso, row, seedRows, statusDoc, writeSeed, writeTranscript } from './estimate-tables.mjs';
+import { BASE_MS, MIN_MS, SESSION, iso, row, seedRows, statusDoc, writeSeed, writeTranscript } from './estimate-tables.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
-const S_COSTS = [20, 40, 60, 80, 100];
+const TASK_RUNS = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 const OPEN_DOC = statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5 })]);
+const at = (hours) => Date.parse(iso(hours));
 
-/** A table, a transcript active from 0 to 1 h, a seed of S and M rows and an empty store; run(now, doc?) estimates it. */
-async function setup(doc = OPEN_DOC, seed = [...S_COSTS.flatMap((cost) => seedRows('S', 1, cost)), ...seedRows('M', 5, 90)]) {
-  const root = makeTempDir('estimate-file-');
+/** A seed-runs.json of task runs (seed table t1), so the kind pools are known: task = 10..100 plus the store's own runs. */
+const writeSeedRuns = (file, runs = TASK_RUNS) => writeFileSync(file, JSON.stringify({ v: 2, rows: runs.map((runMin, k) => ({ t: 't1', k: 'task', runMin, doneMin: 1000 + k })) }));
+
+/** A table, a transcript active from 0 to 1 h, the seeds and an empty store; run(hours, doc?, extra?) estimates it. */
+async function setup(doc = OPEN_DOC) {
+  const root = realpathSync(makeTempDir('estimate-file-'));
   const statusPath = join(root, 'STATUS.md');
   const projectsDir = join(root, 'projects');
   const stateDir = join(root, 'state');
   const seedFile = join(root, 'seed.json');
+  const seedRunsFile = join(root, 'seed-runs.json');
+  const limitsDir = join(root, 'limits');
   await writeFile(statusPath, doc);
   writeTranscript(projectsDir, SESSION, 0, 1);
-  writeSeed(seedFile, seed);
-  const options = { stateDir, projectsDir, sessionId: SESSION, record: true, seedFile };
-  const run = async (hours, nextDoc) => {
+  writeSeed(seedFile, seedRows('S', 5, 30));
+  writeSeedRuns(seedRunsFile);
+  const env = { HOME: root };
+  const options = { stateDir, projectsDir, sessionId: SESSION, record: true, seedFile, seedRunsFile, account: undefined, limitsDir, env };
+  const run = async (hours, nextDoc, extra = {}) => {
     if (nextDoc !== undefined) await writeFile(statusPath, nextDoc);
-    return estimateFile(statusPath, { ...options, now: iso(hours) });
+    return estimateFile(statusPath, { ...options, ...(hours === null ? {} : { now: iso(hours) }), ...extra });
   };
   const stored = () => JSON.parse(readFileSync(join(stateDir, 'table', `${tableId(statusPath)}.json`), 'utf8'));
-  return { root, statusPath, stateDir, projectsDir, seedFile, run, stored };
+  return { root, statusPath, stateDir, projectsDir, seedFile, seedRunsFile, limitsDir, options, run, stored };
 }
 
-test('now moved over a silence changes no work number and moves the shown clock by the silence, on the 5-minute grid', async () => {
+/** Stores a promise of the job after no hand-over, made at `hours` for `workMin` of 80% work, as promiseOf would. */
+function storePromise({ stateDir, statusPath }, hours, workMin, rows) {
+  updateTable(stateDir, statusPath, (table) => ({ ...table, promise: { model: 's1', job: promiseJobKey(tableId(statusPath), null), atMs: at(hours), p80Ms: at(hours) + workMin * MIN_MS, workMin, rows } }));
+}
+
+test('now moved over a silence changes no work number and moves the clocks by the silence, on the 5-minute grid', async () => {
   const { run } = await setup();
   const before = (await run(1)).result;
   const after = (await run(3)).result; // no activity from 1 h to 3 h
   assert.equal(before.state, 'finish');
-  assert.deepEqual(after.work, before.work);
-  assert.equal(after.commit.leftMin, before.commit.leftMin);
+  assert.equal(before.model, 's1');
+  assert.deepEqual(after.job, before.job);
   assert.equal(after.finish.clockMs - before.finish.clockMs, 120 * MIN_MS);
-  assert.equal(after.commit.pausedMin, 120);
-  const clock = (result) => formatEstimate(result, { timeZone: 'UTC' }).split('\n')[0].match(/\d\d:\d\d/)[0];
-  const [h1, m1] = clock(before).split(':').map(Number);
-  const [h2, m2] = clock(after).split(':').map(Number);
-  assert.equal((h2 * 60 + m2) - (h1 * 60 + m1), 120);
-  assert.equal(m1 % 5, 0);
+  assert.equal(before.finish.clockMs % (5 * MIN_MS), 0, 'R10: the clock is rounded up once, in the numbers');
+  assert.equal(before.numbers.v2.job.p50Ms, before.finish.clockMs);
+  assert.ok(before.numbers.v2.job.p80Ms >= before.numbers.v2.job.p50Ms);
 });
 
-test('while work runs the committed clock holds; the first run commits the median of the fresh forecast', async () => {
+test('the promise: no --now or status-line run makes it; a recorded CLI run at the real clock makes it once and never again', async () => {
   const { run, stored } = await setup();
-  const first = (await run(1)).result;
-  assert.equal(first.commit.budgetMin, first.work.p50);
-  assert.equal(first.commit.leftMin, first.work.p50);
-  assert.equal(stored().log.length, 1);
-  assert.equal(stored().log[0].first, true);
-  const again = (await run(1)).result;
-  assert.equal(again.finish.clockMs, first.finish.clockMs);
-  assert.equal(stored().log.length, 1, 'a hold logs nothing');
+  assert.equal((await run(1, undefined, { cli: true })).result.promise, null, 'a --now run describes another instant');
+  assert.equal((await run(null)).result.promise, null, 'a status-line refresh never promises');
+  const first = (await run(null, undefined, { cli: true })).result;
+  assert.notEqual(first.promise, null);
+  assert.deepEqual(first.promise.rows.map((each) => each.id), ['D1', 'O1']);
+  const again = (await run(null, statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5 }), row({ id: 'O2' })]), { cli: true })).result;
+  assert.equal(again.promise.atMs, first.promise.atMs, 'never re-made inside the job');
+  assert.deepEqual(stored().promise, first.promise);
 });
 
-test('15 minutes of work after the commitment: the budget is held when the fresh median is within the hold band of it, else it moves to the fresh median', async () => {
-  const { run, projectsDir } = await setup();
-  const first = (await run(1)).result;
-  writeTranscript(projectsDir, SESSION, 1, 1.25);
-  const later = (await run(1.25)).result;
-  const left = first.commit.leftMin - 15;
-  const held = Math.abs(left - later.work.p50) <= Math.max(15, 0.25 * Math.max(left, later.work.p50));
-  assert.equal(later.commit.leftMin, held ? first.commit.leftMin - 15 : later.work.p50);
-  if (held) assert.equal(later.finish.clockMs, first.finish.clockMs);
-  assert.equal(later.commit.pausedMin, 0);
+test('F2: two wall hours of pause after the promise are no lateness: the difference runs in worked minutes, the pause moves the clock', async () => {
+  const setupDone = await setup();
+  const { run } = setupDone;
+  const before = (await run(1)).result;
+  storePromise(setupDone, 1, before.job.p80, [{ id: 'D1', likelyMin: 30 }, { id: 'O1', likelyMin: 70 }]);
+  const after = (await run(3)).result; // the transcript stops at 1 h: 120 wall minutes, 0 worked
+  assert.equal(after.diff.min, 0, 'a wall-time difference would be 120');
+  assert.equal(after.numbers.lateMin, null);
+  assert.equal(after.pauses.min, 120);
+  assert.deepEqual(after.pauses.byReason, { 'no activity': 120 });
+  assert.equal(after.numbers.v2.promise.movedMs, after.numbers.v2.promise.p80Ms + 120 * MIN_MS);
 });
 
-test('a moved commitment prints its stored cause, and a later run prints the same cause', async () => {
-  const { run, stored } = await setup();
-  await run(1);
-  const added = statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5 }), ...['O2', 'O3', 'O4', 'O5', 'O6', 'O7'].map((id) => row({ id }))]);
-  const moved = (await run(1, added)).result;
-  assert.equal(moved.commit.moved.cause, 'rows-added');
-  assert.deepEqual(moved.commit.moved.ids, ['O2', 'O3', 'O4', 'O5', 'O6', 'O7']);
-  assert.ok(moved.finish.clockMs > moved.commit.moved.wasClockMs, 'a move is always later');
-  const later = formatEstimate((await run(1.05)).result, { timeZone: 'UTC' }).split('\n').find((line) => line.startsWith('Moved:'));
-  assert.match(later, /^Moved: at 01:00 from \d\d:\d\d, /);
-  assert.match(later, /, because 6 rows were added \(O2, O3, O4, O5, O6 and 1 more\); unchanged since\.$/);
-  assert.equal(stored().log.filter((entry) => entry.first === false).length, 1);
+test('late against the promise: rows added after it make the job later, with their ids as the cause, once 10 min over', async () => {
+  const world = await setup();
+  const first = (await world.run(1)).result;
+  storePromise(world, 1, first.job.p80, [{ id: 'D1', likelyMin: 30 }, { id: 'O1', likelyMin: 70 }]);
+  const added = statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5 }), ...['O2', 'O3', 'O4'].map((id) => row({ id }))]);
+  const late = (await world.run(1, added)).result;
+  assert.ok(late.diff.min >= 10, `${late.diff.min}`);
+  assert.equal(late.numbers.lateMin, Math.round(late.diff.min * 10) / 10);
+  assert.deepEqual(late.numbers.lateCause, { cause: 'rows-added', ids: ['O2', 'O3', 'O4'], count: 3 });
+  assert.equal(late.numbers.firstBudgetMin, Math.round(first.job.p80 * 10) / 10);
+  assert.equal(late.progress.tag, '+rows');
 });
 
-test('the hand-over: no open row and a deliver row after every done row is handed over, clears the commitment and scores it', async () => {
-  const { run, stored, projectsDir } = await setup();
-  await run(1);
-  writeTranscript(projectsDir, SESSION, 1, 2);
+test('the status line numbers: each open row\'s kind median and likely minutes left; held rows are out', async () => {
+  const doc = statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5 }), row({ id: 'P1', evidence: 'parked: later' }), row({ id: 'W1', evidence: 'waiting: which one?' })]);
+  const { run } = await setup(doc);
+  const { result } = await run(1);
+  // task pool: 10..100 and D1's own 30 (11 runs, median 50); O1 has run 30 min: longer runs 40..100, median 70, so 40 left.
+  assert.deepEqual(result.numbers.rows, [{ id: 'O1', expectMin: 50, leftMin: 40, startedMs: at(0.5) }]);
+  assert.deepEqual(result.parked, ['P1']);
+  assert.deepEqual(result.waiting.map((each) => [each.id, each.question, each.sinceMs]), [['W1', 'which one?', at(1)]]);
+  assert.deepEqual([result.numbers.v2.waiting, result.numbers.v2.parked], [1, 1]);
+});
+
+test('the hand-over: no open row and a deliver row after every done row is handed over; the promise is scored and cleared', async () => {
+  const world = await setup();
+  const first = (await world.run(1)).result;
+  storePromise(world, 1, first.job.p80, [{ id: 'D1', likelyMin: 30 }, { id: 'O1', likelyMin: 70 }]);
+  writeTranscript(world.projectsDir, SESSION, 1, 2);
   const doc = statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5, doneH: 1.5 }), row({ id: 'deliver:1', item: 'report', raw: { done: iso(1.6) }, evidence: '-' })]);
-  const { result } = await run(1.7, doc);
+  const { result } = await world.run(1.7, doc);
   assert.equal(result.state, 'handed-over');
-  assert.equal(result.rows, 2);
-  assert.equal(result.workedMin, 90); // D1 30 minutes, O1 60
-  assert.equal(stored().commit, null);
-  const [entry] = stored().log;
-  assert.equal(entry.scored.actualMin, 36); // worked from the commitment at 1:00 to the hand-over at 1:36
-  assert.equal(entry.scored.met, 36 <= entry.p85);
+  assert.deepEqual([result.rows, result.workedMin], [2, 90]);
+  assert.equal(world.stored().promise, null);
+  const scored = world.stored().log.find((entry) => entry.model === 's1');
+  assert.deepEqual([scored.scored.workedMin, scored.scored.met], [36, 36 <= first.job.p80]); // worked from 1:00 to the hand-over at 1:36
+  assert.deepEqual(result.record, { met: scored.scored.met ? 1 : 0, of: 1 });
 });
 
-test('all done without a hand-over says so; the commitment is kept for the hand-over', async () => {
-  const { run, stored } = await setup();
-  await run(1);
+test('all done without a hand-over says so; no work row is the one refusal left', async () => {
+  const { run } = await setup();
   const { result } = await run(1, statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5, doneH: 1 })]));
-  assert.deepEqual(result, { state: 'all-done', nowMs: Date.parse(iso(1)), rows: 2, progress: { pct: 100, approx: false, rowsDone: 2, rowsTotal: 2, leftMin: 0, tag: null }, checks: [] });
-  assert.notEqual(stored().commit, null);
-});
-
-test('refusals: no work row, too few rows of a size (no time, the commitment left alone), each logged once', async () => {
-  const { run, stored } = await setup();
-  await run(1);
-  const withL = statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5 }), row({ id: 'B1', size: 'L' })]);
-  const refused = (await run(1, withL)).result;
-  assert.deepEqual(refused.refusal, { reason: 'no-reference', size: 'L', rows: 0, needed: 5 });
-  assert.equal(refused.finish, undefined);
-  await run(1);
-  assert.notEqual(stored().commit, null);
-  assert.equal(stored().log.filter((entry) => entry.refusal === 'no-reference').length, 1);
+  assert.deepEqual(result, { state: 'all-done', nowMs: at(1), rows: 2, progress: { pct: 100, approx: false, rowsDone: 2, rowsTotal: 2, leftMin: 0, tag: null }, checks: [] });
   assert.equal((await run(1, statusDoc([]))).result.refusal.reason, 'no-rows');
 });
 
 test('a table problem throws a UsageError carrying the problems; a bad now is a UsageError', async () => {
   const { run, statusPath } = await setup();
   await assert.rejects(run(1, statusDoc([row({ id: 'M1', doneH: 0.5 })])), (error) => error instanceof UsageError && error.problems[0].id === 'M1');
-  await assert.rejects(run(0.2, OPEN_DOC), (error) => error instanceof UsageError && /later than now/.test(error.message)); // D1 is done at 0:30
+  await assert.rejects(run(0.2, OPEN_DOC), (error) => error instanceof UsageError && /later than now/.test(error.message));
   assert.throws(() => estimateFile(statusPath, { now: '2026-02-30T08:00Z' }), UsageError);
 });
 
-test('without a store nothing is read or written; with one the rows are stored for other tables and no session is linked', async () => {
-  const { root, statusPath, projectsDir, seedFile, stateDir, run, stored } = await setup();
-  const { result, inputs } = estimateFile(statusPath, { now: iso(1), stateDir: null, projectsDir, sessionId: SESSION, seedFile });
+test('without a store nothing is read or written; with one the rows are stored with kind and run minutes and no session is linked', async () => {
+  const { root, statusPath, options, run, stored, stateDir } = await setup();
+  const { result, inputs } = estimateFile(statusPath, { ...options, now: iso(1), stateDir: null });
   assert.equal(result.state, 'finish');
   assert.deepEqual([inputs.recorded, inputs.busy], [false, false]);
   assert.equal(existsSync(join(root, 'state')), false);
   const recorded = await run(1);
   assert.deepEqual([recorded.inputs.recorded, recorded.inputs.sessions], [true, 1]);
-  assert.deepEqual(stored().rows.map((stored) => [stored.size, stored.cost]), [['S', 30]]);
-  assert.deepEqual(Object.keys(stored().added).sort(), ['D1', 'O1'], 'first-seen times are still recorded');
-  // Only status.mjs edits link a session (audit option a): an estimate or a status-line refresh must not make a session's
-  // transcripts count for this table for good, nor point its Stop hook at this table.
+  assert.deepEqual(stored().rows.map((each) => [each.size, each.k, each.runMin]), [['S', 'task', 30]]);
+  assert.deepEqual(Object.keys(stored().added).sort(), ['D1', 'O1']);
   assert.deepEqual(stored().sessions, []);
   assert.equal(existsSync(join(stateDir, 'session', `${SESSION}.json`)), false);
 });
 
-test('while no row of the job has started, a run replaces the first commitment in place: no move, still one first entry', async () => {
-  const unstarted = (ids) => statusDoc(ids.map((id) => row({ id })));
-  const { run, stored } = await setup(unstarted(['O1']));
-  await run(1);
-  const listed = (await run(1.05, unstarted(['O1', 'O2', 'O3', 'O4', 'O5', 'O6', 'O7']))).result;
-  assert.equal(listed.commit.moved, null);
-  assert.equal(listed.commit.budgetMin, listed.work.p50);
-  assert.deepEqual(stored().log.map((entry) => [entry.first, entry.ids.length]), [[true, 7]]);
-  assert.doesNotMatch(formatEstimate(listed, { timeZone: 'UTC' }), /Moved/);
-  const more = ['O2', 'O3', 'O4', 'O5', 'O6', 'O7', 'O8', 'O9', 'O10', 'O11', 'O12', 'O13'].map((id) => row({ id }));
-  const moved = (await run(1.1, statusDoc([row({ id: 'O1', startedH: 1.05 }), ...more]))).result;
-  assert.equal(moved.commit.moved?.cause, 'rows-added', 'once a row has started the hold/move rule applies again');
-  assert.deepEqual(stored().log.map((entry) => entry.first), [true, false]);
+test('F1 upgrade: a c3 table file is read and rewritten in the s1 shape; its old first and scored entries stay', async () => {
+  const world = await setup();
+  const c3Log = [{ at: iso(-5), first: true, model: 'c3', budgetMin: 40, ids: ['x'], scored: { met: true } }];
+  updateTable(world.stateDir, world.statusPath, (table) => ({ v: 2, path: table.path, sessions: [], added: {}, rows: [{ size: 'S', kind: 'build', done: iso(-6), cost: 12 }],
+    jobs: [], commit: { at: iso(-5), budgetMin: 40, ids: ['x'], moved: null }, log: c3Log }));
+  assert.equal((await world.run(1)).result.state, 'finish');
+  const table = world.stored();
+  assert.equal(table.commit, null);
+  assert.deepEqual([table.promise, table.steps, table.waitSeen], [null, [], {}]);
+  assert.deepEqual(table.rows.map((each) => [each.k, each.runMin]), [['task', 30]]);
+  assert.deepEqual(table.log, c3Log);
 });
 
-test('a commitment made in the same minute as the last hand-over belongs to the new job: logged as first once', async () => {
-  const handedOver = [row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'deliver:1', item: 'report', raw: { done: iso(1) }, evidence: '-' })];
-  const { run, stored } = await setup(statusDoc([...handedOver, row({ id: 'O1', startedH: 1 })]));
-  await run(1);
-  await run(1);
-  assert.deepEqual(stored().log.map((entry) => entry.first), [true]);
-});
-
-test('a commitment of the old job made in the hand-over\'s minute stays the old job\'s: the next job gets its own first entry', async () => {
-  const { run, stored } = await setup(statusDoc([row({ id: 'O1', startedH: 0.5 })]));
-  await run(1); // commits at 1:00 for O1
-  const handedOver = [row({ id: 'O1', startedH: 0.5, doneH: 1 }), row({ id: 'deliver:1', item: 'report', raw: { done: iso(1) }, evidence: '-' })];
-  await run(1.05, statusDoc([...handedOver, row({ id: 'O2' })]));
-  assert.deepEqual(stored().log.map((entry) => [entry.first, entry.ids]), [[true, ['O1']], [true, ['O2']]]);
-});
-
-test('rows done before the last hand-over do not count as a started job: listing the next job\'s rows still replaces its first commitment', async () => {
-  const handedOver = [row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'deliver:1', item: 'report', raw: { done: iso(0.6) }, evidence: '-' })];
-  const listed = (ids) => statusDoc([...handedOver, ...ids.map((id) => row({ id }))]);
-  const { run, stored } = await setup(listed(['O1']));
-  await run(1);
-  const more = (await run(1.05, listed(['O1', 'O2', 'O3', 'O4', 'O5', 'O6', 'O7', 'O8']))).result;
-  assert.equal(more.commit.moved, null);
-  assert.deepEqual(stored().log.map((entry) => [entry.first, entry.ids.length]), [[true, 8]]);
-});
-
-const FROM_FILES_URL = new URL('../home/tools/estimate/lib/from-files.mjs', import.meta.url).href;
-const runChild = promisify(execFile);
-const MOVES = 250;
-/** 250 logged entries before now: moves, every 10th scored, the first 5 scored first commitments of the old model c2b. */
-const pastLog = () => Array.from({ length: MOVES }, (_, k) => ({
-  at: new Date(Date.parse(iso(-10)) + k * MIN_MS).toISOString(), ids: ['gone'], p50: 10, raw85: 20, p85: 20, p95: 30, g: 0, kappa: 1,
-  first: k < 5, cause: k < 5 ? null : 'pace', model: k < 5 ? 'c2b' : 'c3',
-  ...(k % 10 === 0 ? { scored: { at: iso(-1), actualMin: 15, met: true, ratio: 0.75, ratio50: 1.5 } } : {}),
-}));
-const keptForGood = (log) => log.filter((entry) => entry.first === true || entry.scored !== undefined).map((entry) => entry.at);
-
-test('the capped log: 250 moves then a first commitment keeps that first entry, every scored and every old first entry', async () => {
-  const { statusPath, stateDir, run, stored } = await setup();
-  const before = pastLog();
-  updateTable(stateDir, statusPath, (table) => ({ ...table, log: before }));
-  await run(1);
-  const { log } = stored();
-  assert.equal(log.at(-1).first, true);
-  assert.equal(log.at(-1).model, 'c3');
-  const kept = new Set(log.map((entry) => entry.at));
-  assert.deepEqual(keptForGood(before).filter((at) => !kept.has(at)), [], 'no first or scored entry was dropped');
-  assert.equal(log.length, 200 + keptForGood(before.slice(0, MOVES + 1 - 200)).length, 'the newest 200 plus the older kept ones');
-  assert.equal(kept.has(before[6].at), false, 'an old unscored move still leaves');
-});
-
-test('two refreshes at once: under the table lock no first or scored entry is lost and one first commitment is added', async () => {
-  const { statusPath, stateDir, projectsDir, seedFile, stored } = await setup();
-  const before = pastLog();
+test('two refreshes at once: under the table lock no first or scored entry is lost', async () => {
+  const { statusPath, stateDir, projectsDir, seedFile, seedRunsFile, stored } = await setup();
+  const before = Array.from({ length: 250 }, (_, k) => ({ at: new Date(at(-10) + k * MIN_MS).toISOString(), ids: ['gone'], p50: 10, raw85: 20, p85: 20, first: k < 5, model: 'c3', ...(k % 10 === 0 ? { scored: { met: true } } : {}) }));
   updateTable(stateDir, statusPath, (table) => ({ ...table, log: before }));
   const startAt = Date.now() + 300;
   const script = `
-    import { estimateFile } from ${JSON.stringify(FROM_FILES_URL)};
+    import { estimateFile } from ${JSON.stringify(new URL('../home/tools/estimate/lib/from-files.mjs', import.meta.url).href)};
     while (Date.now() < ${startAt});
-    const [statusPath, stateDir, projectsDir, seedFile, sessionId, now] = process.argv.slice(1);
-    const { inputs } = estimateFile(statusPath, { stateDir, projectsDir, seedFile, sessionId, now, record: true });
+    const [statusPath, stateDir, projectsDir, seedFile, seedRunsFile, sessionId, now] = process.argv.slice(1);
+    const { inputs } = estimateFile(statusPath, { stateDir, projectsDir, seedFile, seedRunsFile, sessionId, now, record: true, account: 'none' });
     process.stdout.write(inputs.busy ? 'busy' : 'recorded');`;
-  const args = ['--input-type=module', '-e', script, statusPath, stateDir, projectsDir, seedFile, SESSION, iso(1)];
-  const runs = await Promise.all([1, 2].map(() => runChild(process.execPath, args)));
-  assert.ok(runs.some((result) => result.stdout === 'recorded'));
-  const { log } = stored();
-  const kept = new Set(log.map((entry) => entry.at));
-  assert.deepEqual(keptForGood(before).filter((at) => !kept.has(at)), []);
-  assert.equal(log.filter((entry) => entry.first === true && entry.model === 'c3').length, 1);
+  const args = ['--input-type=module', '-e', script, statusPath, stateDir, projectsDir, seedFile, seedRunsFile, SESSION, iso(1)];
+  const runs = await Promise.all([1, 2].map(() => promisify(execFile)(process.execPath, args)));
+  assert.ok(runs.some((each) => each.stdout === 'recorded'));
+  const kept = new Set(stored().log.map((entry) => entry.at));
+  assert.deepEqual(before.filter((entry) => entry.first || entry.scored).map((entry) => entry.at).filter((entryAt) => !kept.has(entryAt)), []);
 });
 
-test('the status line numbers: per-row median left, first budget, and late with its cause only once 10 min over the first', async () => {
-  const { run } = await setup();
-  const first = (await run(1)).result;
-  // O1 has run 30 min; the S pool is 20, 30 (D1), 40, 60, 80, 100: it needs 10, 30, 50 or 70 more, median 30.
-  assert.deepEqual(first.numbers.rows, [{ id: 'O1', expectMin: 40, leftMin: 30, startedMs: Date.parse(iso(0.5)) }]);
-  assert.deepEqual([first.numbers.firstBudgetMin, first.numbers.lateMin, first.numbers.lateCause], [first.work.p50, null, null]);
-  const added = statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5 }), ...['O2', 'O3', 'O4'].map((id) => row({ id }))]);
-  const late = (await run(1, added)).result;
-  assert.equal(late.commit.moved.cause, 'rows-added');
-  assert.equal(late.numbers.firstBudgetMin, first.work.p50);
-  assert.equal(late.numbers.lateMin, late.commit.leftMin - first.work.p50);
-  assert.ok(late.numbers.lateMin >= 10);
-  assert.deepEqual(late.numbers.lateCause, { cause: 'rows-added', ids: ['O2', 'O3', 'O4'], count: 3 });
+test('F3: the store key comes from the real path: a linked STATUS.md and its target share one table file', async () => {
+  const world = await setup();
+  const link = join(world.root, 'linked-STATUS.md');
+  symlinkSync(world.statusPath, link);
+  assert.equal(tableId(link), tableId(world.statusPath));
+  estimateFile(link, { ...world.options, now: iso(1) });
+  assert.deepEqual(world.stored().rows.map((each) => each.k), ['task']);
 });
 
-test('the job\'s pace: 3 done rows slower than the pool scale the work left; rows done before the hand-over do not count', async () => {
-  const done = [row({ id: 'D1', startedH: 0, doneH: 2 }), row({ id: 'D2', startedH: 2, doneH: 4 }), row({ id: 'D3', startedH: 4, doneH: 6 })];
-  const handOver = row({ id: 'deliver:1', item: 'report', raw: { done: iso(6) }, evidence: '-' });
-  const { statusPath, projectsDir, seedFile } = await setup(statusDoc([...done, row({ id: 'O1', startedH: 6 })]));
-  writeTranscript(projectsDir, SESSION, 1, 6.5);
-  const estimate = () => estimateFile(statusPath, { now: iso(6.5), stateDir: null, projectsDir, sessionId: SESSION, seedFile }).result;
-  const paced = estimate();
-  await writeFile(statusPath, statusDoc([...done, handOver, row({ id: 'O1', startedH: 6 })]));
-  const plain = estimate();
-  // Pool S: 20, 40, 60, 80, 100 and three of 120; middle cost 100; pace 360 / 300 = 1.2.
-  for (const name of ['p50', 'p85', 'p95']) assert.ok(Math.abs(paced.work[name] - 1.2 * plain.work[name]) < 1e-9, name);
-  assert.ok(Math.abs(paced.numbers.rows[0].leftMin - 1.2 * plain.numbers.rows[0].leftMin) <= 0.05);
+test('a row open far past its kind\'s runs with no agent stalls: one fresh run of its kind, and a Check line names it', async () => {
+  const world = await setup(statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'S1', startedH: 0 })]));
+  writeTranscript(world.projectsDir, SESSION, 1, 3);
+  const { result } = await world.run(3);
+  assert.deepEqual(result.stalled, ['S1']);
+  assert.deepEqual(result.checks.filter((check) => check.kind === 'stalled').map((check) => [check.id, check.countedMin]), [['S1', 50]]);
+  assert.ok(formatEstimate(result, { timeZone: 'UTC' }).split('\n').includes('Check: row S1 is still open after 3 h 00 of work: done, park or drop it (counted as one fresh task, 50 min).'));
 });
 
-test('a 300-row job with a late cause of 300 added rows stays under the cache byte cap', async () => {
+test('pause reasons: a silence ending at a 5-hour reset seen at 100 % only in the 7-day log is a usage limit; an open question is waiting for you', async () => {
+  const world = await setup();
+  writeTranscript(world.projectsDir, SESSION, 2, 2.5);
+  mkdirSync(world.limitsDir, { recursive: true });
+  // Only the log holds the 100 % sample (the limits file keeps the newest 12): readLimits alone would miss it.
+  appendFileSync(join(world.limitsDir, 'acct1.jsonl'), `${JSON.stringify({ t: at(0.9), five_hour: { used_percentage: 100, resets_at: at(2) / 1000 }, seven_day: null })}\n`);
+  const limited = (await world.run(2.5, undefined, { account: 'acct1' })).result;
+  assert.deepEqual(limited.pauses.byReason, { 'usage limit': 60 });
+  const ask = { type: 'assistant', timestamp: new Date(at(2.5)).toISOString(), message: { content: [{ type: 'tool_use', id: 'q1', name: 'AskUserQuestion' }] } };
+  const answer = { type: 'user', timestamp: new Date(at(3.5)).toISOString(), message: { content: [{ type: 'tool_result', tool_use_id: 'q1' }] } };
+  appendFileSync(join(world.projectsDir, '-synthetic-project', `${SESSION}.jsonl`), `${JSON.stringify(ask)}\n${JSON.stringify(answer)}\n`);
+  const asked = (await world.run(3.5, undefined, { account: 'acct1' })).result;
+  // The question's own line is the minute 2:30-2:31 of activity, so the silence it overlaps runs from 2:31 to the answer at 3:30.
+  assert.equal(asked.pauses.byReason['waiting for you'], 59);
+});
+
+test('seed dedupe: a seed table the store holds (same kinds, done minutes one shift apart) leaves the pool; a partial match does not', () => {
+  const seed = [{ t: 't1', k: 'lane', runMin: 20, doneMin: 10 }, { t: 't1', k: 'fix', runMin: 9, doneMin: 40 }, { t: 't2', k: 'lane', runMin: 30, doneMin: 5 }, { t: 't2', k: 'fix', runMin: 4, doneMin: 7 }];
+  const shift = Math.floor(BASE_MS / MIN_MS);
+  const stamp = (minute) => new Date((minute + shift) * MIN_MS).toISOString();
+  const store = [{ rows: [{ k: 'lane', runMin: 21, done: stamp(10) }, { k: 'fix', runMin: 9, done: stamp(40) }, { k: 'lane', runMin: 30, done: stamp(99) }] }];
+  assert.deepEqual(seedTablesInStore(seed, store), ['t1']);
+  assert.deepEqual(poolRuns(store, seed), [{ k: 'lane', runMin: 21 }, { k: 'fix', runMin: 9 }, { k: 'lane', runMin: 30 }, { k: 'lane', runMin: 30 }, { k: 'fix', runMin: 4 }]);
+  const shifted = [{ rows: [{ k: 'lane', runMin: 21, done: stamp(10) }, { k: 'fix', runMin: 9, done: stamp(41) }] }];
+  assert.deepEqual(seedTablesInStore(seed, shifted), [], 'two shifts are two tables, not one');
+  assert.deepEqual(seedTablesInStore(seed, [{ rows: [{ size: 'S', kind: 'build', done: stamp(10), cost: 5 }] }]), [], 'a c3 row matches nothing');
+});
+
+test('F4: a 300-row job stays under the cache byte cap with 64 rows and its late cause cut; an R18 entry is still read', async () => {
   const longId = (k) => `row-with-a-rather-long-name-${String(k).padStart(4, '0')}`;
-  const { run, seedFile } = await setup(statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5 })]));
-  writeSeed(seedFile, S_COSTS.flatMap((cost) => seedRows('S', 1, cost)), 100_000); // a long past job, so 300 rows are within the horizon
-  await run(1);
+  const world = await setup();
+  const first = (await world.run(1)).result;
+  storePromise(world, 1, first.job.p80, [{ id: 'D1', likelyMin: 30 }, { id: 'O1', likelyMin: 70 }]);
   const many = statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5 }), ...Array.from({ length: 300 }, (_, k) => row({ id: longId(k) }))]);
-  const { result } = await run(1, many);
+  const { result } = await world.run(1, many);
   assert.equal(result.numbers.rows.length, 64);
   assert.deepEqual([result.numbers.lateCause.count, result.numbers.lateCause.ids.length], [300, 64]);
-  const entry = { path: '/x'.repeat(100), ...resultSegment(result), mtimeMs: Date.now(), size: 1e6, computedAt: Date.now(), refreshStartedAt: Date.now() };
+  const cache = join(world.root, 'cache');
+  const entry = { path: world.statusPath, ...resultSegment(result), mtimeMs: 1, size: 1e6, computedAt: Date.now(), refreshStartedAt: Date.now() };
   assert.ok(Buffer.byteLength(JSON.stringify(entry)) < MAX_CACHE_BYTES, `${Buffer.byteLength(JSON.stringify(entry))} bytes`);
+  assert.ok(writeEntry(cache, world.statusPath, entry));
+  assert.equal(readEntry(cache, world.statusPath).numbers.v2.model, 's1');
+  const r18 = { ...entry, numbers: { finishMs: at(2), p85Ms: at(3), leftMin: 30, workedMin: 10, rowsDone: 1, rowsTotal: 2, rows: [{ id: 'O1', expectMin: 9, leftMin: 3, startedMs: null }] } };
+  assert.ok(writeEntry(cache, world.statusPath, r18));
+  assert.deepEqual(readEntry(cache, world.statusPath).numbers, r18.numbers);
 });

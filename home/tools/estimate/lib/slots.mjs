@@ -18,7 +18,8 @@
 import { MAX_LANES_PER_STEP } from '../../road/lib/road-file.mjs';
 import { mulberry32, nearestRank, seedOf } from './forecast.mjs';
 import { AGENT_KINDS, holdsOf, kindOf, rowState } from './kinds.mjs';
-import { roadStepOf } from './road-steps.mjs';
+import { currentStepOf, roadStepOf } from './road-steps.mjs';
+import { isQuietAt } from './row-agents.mjs';
 import { workedMinutes } from './worked.mjs';
 
 /** Slots before any agent row ran (R7): 4 lanes at once is the usual step (3.87 agents ran on average, spec section 3). */
@@ -31,12 +32,6 @@ export const RUNS = 1000;
 export const STEP_GATE_MIN = 3;
 const SLOT_WINDOW_MIN = 120;
 const SLOT_SAMPLE_MIN = 5;
-/** R5 with no agent known: a row open longer than max(its kind's 95th percentile, 90) working minutes has stalled. The 90 min
- *  floor kept 3 real 52-86 min lanes from being flagged (spec U1). */
-const STALL_SHARE = 0.95;
-const STALL_FLOOR_MIN = 90;
-/** R5 with its agent known (R13): an agent with no transcript entry for this many working minutes has stopped. */
-const QUIET_MIN = 15;
 const TAIL_KINDS = ['review', 'fix'];
 const MEDIAN = 0.5;
 const P80 = 0.8;
@@ -63,14 +58,9 @@ function poolOf(pools, kind) {
   return pool;
 }
 
-/** R5 at `atMs` for a started open row: its agent (R13) quiet for QUIET_MIN working minutes by then, or, with no agent known, the
- *  row open longer than max(its kind's 95th percentile, STALL_FLOOR_MIN) working minutes by then. */
-function isStalledAt(row, context, atMs) {
-  const agent = context.rowAgents?.get(row.id);
-  if (agent) return workedMinutes(context.intervals, toMin(agent.lastActiveMs), toMin(atMs)) >= QUIET_MIN;
-  const limit = Math.max(nearestRank(poolOf(context.pools, row.k), STALL_SHARE), STALL_FLOOR_MIN);
-  return workedMinutes(context.intervals, toMin(row.started), toMin(atMs)) > limit;
-}
+/** R5 at `atMs` for a started open row, by the one stall rule (row-agents.mjs isQuietAt): its agent (R13) quiet, or, with no
+ *  agent known, the row open far past its kind's runs. */
+const isStalledAt = (row, context, atMs) => isQuietAt({ startedMs: row.started, agent: context.rowAgents?.get(row.id), pool: poolOf(context.pools, row.k), intervals: context.intervals }, atMs);
 
 /** The context parts the stall rule reads, checked: pools, working intervals and the optional row agents. */
 function checkedRunContext(context) {
@@ -158,13 +148,8 @@ function roadPlans(rows, indexOf) {
   for (const [road, roadRows] of byRoad) {
     const counted = roadRows.filter((row) => row.state !== 'parked');
     const numbers = [...new Set(counted.map((row) => row.at.step))].sort((a, b) => a - b);
-    const ofStep = (step) => counted.filter((row) => row.at.step === step);
-    const closed = (step) => {
-      const gates = ofStep(step).filter((row) => row.k === 'gate');
-      return (gates.length > 0 ? gates : ofStep(step)).every((row) => row.state === 'done');
-    };
-    const current = numbers.find((step) => !closed(step));
-    if (current === undefined) continue;
+    const current = currentStepOf(counted.map((row) => ({ step: row.at.step, kind: row.k, state: row.state })));
+    if (current === null) continue;
     // A held (parked or waiting) row is left out of the plan: a held review or fix does not stand in for the expected one.
     const unheld = counted.filter((row) => row.state === 'open' || row.state === 'done');
     const steps = numbers.filter((step) => step >= current).map((step) => stepPlan(step, unheld.filter((row) => row.at.step === step), indexOf));

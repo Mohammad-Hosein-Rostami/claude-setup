@@ -164,6 +164,12 @@ function checkLines(checks) {
   for (const check of checks.filter((item) => item.kind === 'carried')) {
     lines.push(`Check: ${plural(check.ids.length, 'row')} carried from the last hand-over (${listed(check.ids)}), not counted: close them or drop them.`);
   }
+  // Model s1 (estimate-spec R5, R15): a stalled row counts as one fresh run of its kind; a queued road is out of the job.
+  for (const check of checks.filter((item) => item.kind === 'stalled')) {
+    const why = check.agentQuietSinceMs === null ? `is still open after ${workText(check.elapsedMin)} of work` : 'has an agent that stopped';
+    lines.push(`Check: row ${check.id} ${why}: done, park or drop it (counted as one fresh ${check.rowKind}, ${workText(check.countedMin)}).`);
+  }
+  for (const check of checks.filter((item) => item.kind === 'queued')) lines.push(`Queued: road ${check.road}: ${plural(check.rows, 'row')}, not started`);
   for (const check of checks.filter((item) => item.kind === 'unstepped')) {
     lines.push(`Check: ${plural(check.ids.length, 'open row')} with no step of the road (${listed(check.ids)}) counted in step ${check.step}: give each a road id.`);
   }

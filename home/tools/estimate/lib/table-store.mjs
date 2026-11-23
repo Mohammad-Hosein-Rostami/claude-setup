@@ -2,12 +2,17 @@
 // its log), one link per session to the STATUS.md it last edited with status.mjs (only noteTable with a session id writes it), and
 // the seed shipped in the repo.
 // Exports: stateDir(), tableId(statusPath), isScratchStatusPath(path), isScratchTable(dir, statusPath), readAllTables(dir),
-// updateTable(dir, statusPath, change), noteTable(dir, statusPath, { sessionId, ids, nowMs }), linkedStatusPath(dir, sessionId), readSeed(file).
+// updateTable(dir, statusPath, change), noteTable(dir, statusPath, { sessionId, ids, nowMs }), linkedStatusPath(dir, sessionId),
+// readSeed(file), readSeedRuns(file).
 // Layout under dir (default ~/.claude/state/estimate): table/<id>.json = { v: 2, path, sessions, added: { rowId: iso }, rows:
-// [{ size, kind, done, cost }], jobs: [{ at, minutes, growthNum, growthDen }], commit, log }; an old file's `held` (a
-// progress percent that never fell) is kept as it is and no longer read (the percent may fall now); session/<session-id>.json =
-// { path, at }; activity/ belongs to activity.mjs. All files go through hooks/lib/session-store.mjs (no links followed, private
-// files) and every write passes { sweep: false }: this is history, never expired.
+// [{ size, kind, done, cost, k, runMin }], jobs: [{ at, minutes, growthNum, growthDen }], commit, log, promise, steps, waitSeen };
+// model s1 (estimate-spec section 9) added `k` (kinds.mjs kindOf) and `runMin` (working minutes start to done) to each row, the
+// job's one `promise` (commitment.mjs promiseOf), the scored `steps` ({ road, step, atMs, p80Min, truthMin }: the conformal
+// margin's data, throughput.mjs) and `waitSeen` ({ rowId: iso }, when a run first saw the row's `waiting:` hold). A file written
+// before s1 has none of them and reads as a table all the same (F1: the next recorded run rewrites it in the new shape); the c3
+// `commit` is no longer kept (null), so a rolled-back tool makes its own again. An old file's `held` is kept and not read;
+// session/<session-id>.json = { path, at }; activity/ belongs to activity.mjs, facts/ to job-inputs.mjs. All files go through
+// hooks/lib/session-store.mjs (no links followed, private files) and every write passes { sweep: false }: history, never expired.
 // A scratch STATUS.md (a temp folder, a `/scratchpad/` folder: probes and throw-away jobs) is neither written nor pooled in the owner's
 // store (stateDir()), so its fake jobs never skew the forecasts. Any other store (`--state-dir`, a test's, a probe's) keeps what it is given.
 // Invariants: the table lock is held only for one read-change-write of one table file (the lock is taken as abandoned after 0.5 s,
@@ -33,6 +38,7 @@ const MAX_TABLE_TEXT = '16 MiB';
 const MAX_LINK_BYTES = 1 << 10; // 1 KiB: one path and one time
 const SIZES = ['S', 'M', 'L'];
 const DEFAULT_SEED = fileURLToPath(new URL('../seed.json', import.meta.url));
+const DEFAULT_SEED_RUNS = fileURLToPath(new URL('../seed-runs.json', import.meta.url));
 const NO_SEED = { rows: [], jobs: [] };
 const STORE = { sweep: false };
 
@@ -74,7 +80,7 @@ export function isScratchStatusPath(path) {
 /** True when `dir` is the owner's store (stateDir()) and `statusPath` is a scratch STATUS.md: such a table is neither written nor pooled. */
 export const isScratchTable = (dir, statusPath) => realStatusPath(dir) === realStatusPath(stateDir()) && isScratchStatusPath(realStatusPath(statusPath));
 
-const emptyTable = (statusPath) => ({ v: TABLE_VERSION, path: realStatusPath(statusPath), sessions: [], added: {}, rows: [], jobs: [], commit: null, log: [] });
+const emptyTable = (statusPath) => ({ v: TABLE_VERSION, path: realStatusPath(statusPath), sessions: [], added: {}, rows: [], jobs: [], commit: null, log: [], promise: null, steps: [], waitSeen: {} });
 const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isTable = (value) => isPlainObject(value) && value.v === TABLE_VERSION && typeof value.path === 'string'
   && Array.isArray(value.sessions) && value.sessions.every(isSessionId)
@@ -232,4 +238,28 @@ export function readSeed(file = DEFAULT_SEED) {
     throw new Error(`${file} is not a version ${TABLE_VERSION} estimate seed`);
   }
   return { rows: seed.rows.filter(isSeedRow), jobs: seed.jobs.filter(isSeedJob) };
+}
+
+const SEED_RUNS_VERSION = 2; // freeze-data.mjs SEED_RUNS_VERSION, the writer
+const FROZEN_TABLE = /^t\d{1,4}$/;
+const isSeedRun = (row) => isPlainObject(row) && typeof row.t === 'string' && FROZEN_TABLE.test(row.t) && typeof row.k === 'string'
+  && isCount(row.runMin) && isCount(row.doneMin);
+
+/**
+ * The seed runs shipped in the repo (`seed-runs.json`, written by `backtest.mjs --freeze`): the kind pools' boot data (R2).
+ * @param {string} [file] default: seed-runs.json beside the tool
+ * @returns {{ t: string, k: string, runMin: number, doneMin: number }[]} only well-formed runs; [] when the file does not exist
+ * @throws {Error} naming the file when it exists but is not a version-2 seed-runs file (a broken repo file must be seen)
+ */
+export function readSeedRuns(file = DEFAULT_SEED_RUNS) {
+  let text;
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }
+  const seed = parsedOrUndefined(text);
+  if (!isPlainObject(seed) || seed.v !== SEED_RUNS_VERSION || !Array.isArray(seed.rows)) throw new Error(`${file} is not a version ${SEED_RUNS_VERSION} seed-runs file`);
+  return seed.rows.filter(isSeedRun);
 }
