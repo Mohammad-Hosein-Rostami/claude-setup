@@ -240,7 +240,9 @@ test('a FIFO at both session files or at the guard log never makes the hook wait
     mkdirSync(dirOf({ HOME: home }), { recursive: true, mode: 0o700 });
     mkfifo(join(dirOf({ HOME: home }), 'sess-1.json'));
   }
-  assert.equal(runHook(home, SECRET_COMMAND).decision, 'ask', 'both stores unusable: today\'s ask');
+  // a literal secret alone runs since owner G1; next to a variable command word the bounce store is needed, and unusable it asks
+  assert.equal(runHook(home, SECRET_COMMAND).decision, 'allow', 'G1: the secret alone runs, whatever the stores');
+  assert.equal(runHook(home, `${SECRET_COMMAND}; $CMD --version`).decision, 'ask', 'both stores unusable: today\'s ask');
   const advice = runHook(home, ADVICE_COMMAND);
   assert.equal(advice.decision, 'allow', 'advice with an unusable store: the command runs, no deny that repeats, no owner');
   assert.ok(advice.ms < HOOK_TIMEOUT_MS / 4, `advice answered at once (${advice.ms} ms)`);
