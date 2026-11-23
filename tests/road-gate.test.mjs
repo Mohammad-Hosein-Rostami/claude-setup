@@ -1,8 +1,11 @@
-// Tests of road-gate.mjs line 2 and the `<close row>.landed` correction row (STATUS row p8-gate-evidence).
+// Tests of road-gate.mjs line 2 and the `<close row>.landed` correction row (STATUS row p8-gate-evidence), and line 4's setup reports folder.
 // A fake `run` stands in for git and the tools, so no repo is needed; it records every git argv to show which sha was checked.
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { gateStep } from '../home/tools/road/lib/road-gate.mjs';
+import { setupReportsFolder } from '../home/tools/road/lib/road-gate-ui.mjs';
 
 const START = 'a'.repeat(40);
 const TO = 'b'.repeat(40);
@@ -323,4 +326,21 @@ test('with two "landed within" claims in one evidence the last is the one read',
 // The gate gets rows as parsed; it trims the evidence itself, so a padded cell still anchors at its start.
 test('spaces around the evidence of a within row do not hide it', () => {
   assert.match(rangeLine(gate(fixWithin(`  ${within('rd.s1.a-land')}  `)).result), /^PASS 2 range: 2 close rows/);
+});
+
+// Line 4's setup reports tree (lane share-scrub, F7): CLAUDE_SETUP_REPORTS names it; unset, empty or relative, the HOME default stays.
+test('the setup reports tree is CLAUDE_SETUP_REPORTS when absolute, else ~/Desktop/claude-setup-reports under HOME', () => {
+  const saved = process.env.HOME;
+  const home = join(tmpdir(), 'cs-test-road-home');
+  try {
+    process.env.HOME = home;
+    const fallback = { folder: join(home, 'Desktop', 'claude-setup-reports'), shown: join('~', 'Desktop', 'claude-setup-reports') };
+    assert.deepEqual(setupReportsFolder({}), fallback);
+    assert.deepEqual(setupReportsFolder({ CLAUDE_SETUP_REPORTS: '' }), fallback);
+    assert.deepEqual(setupReportsFolder({ CLAUDE_SETUP_REPORTS: 'reports' }), fallback, 'a relative value is never resolved against a cwd');
+    const chosen = join(tmpdir(), 'cs-test-team-reports');
+    assert.deepEqual(setupReportsFolder({ CLAUDE_SETUP_REPORTS: chosen }), { folder: chosen, shown: chosen });
+  } finally {
+    if (saved === undefined) delete process.env.HOME; else process.env.HOME = saved;
+  }
 });

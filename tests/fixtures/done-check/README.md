@@ -7,15 +7,15 @@ The fake tools in `tests/done-check-fixture.mjs` can replay these files too.
 ## Where they come from
 
 Every sample was captured from the installed tool, in a throw-away folder outside any project, with the tool run from the
-`ice-web-app` checkout's `node_modules` (read only: the folder had no new or changed file afterwards). The throw-away folder held
+`node_modules` of a work project's checkout, shown as `<tools-checkout>` (read only: the folder had no new or changed file afterwards). The throw-away folder held
 a few small source files with known mistakes, one of them in a folder whose name has a space (`src/two words/`). Machine paths were
 replaced by `/work/proj` (the project) and `/work/tools` (the tool's own files), so no sample holds a user or machine name.
 
 | Sample | Tool and version | Command (run in the throw-away project folder) |
 |---|---|---|
-| `tsc-5.8.3-errors.txt` | typescript 5.8.3 | `node <ice-web-app>/node_modules/typescript/bin/tsc -p tsconfig.json --noEmit --pretty false` (exit 2, stdout) |
-| `eslint-9.39.5-errors.json` | eslint 9.39.5 | `node <ice-web-app>/node_modules/eslint/bin/eslint.js --format json src` (exit 1, stdout) |
-| `vitest-4.1.9-fail.json` | vitest 4.1.9 | `node <ice-web-app>/node_modules/vitest/vitest.mjs related --run --reporter=json --outputFile out.json --passWithNoTests src/math.ts "src/two words/note.ts"` (exit 1, the `out.json` file) |
+| `tsc-5.8.3-errors.txt` | typescript 5.8.3 | `node <tools-checkout>/node_modules/typescript/bin/tsc -p tsconfig.json --noEmit --pretty false` (exit 2, stdout) |
+| `eslint-9.39.5-errors.json` | eslint 9.39.5 | `node <tools-checkout>/node_modules/eslint/bin/eslint.js --format json src` (exit 1, stdout) |
+| `vitest-4.1.9-fail.json` | vitest 4.1.9 | `node <tools-checkout>/node_modules/vitest/vitest.mjs related --run --reporter=json --outputFile out.json --passWithNoTests src/math.ts "src/two words/note.ts"` (exit 1, the `out.json` file) |
 | `vitest-4.1.9-none-related.json` | vitest 4.1.9 | the same command with `src/orphan.ts`, which no test imports (exit 0, 0 tests) |
 | `node-tap-26.5.0-fail.txt` | node 26.5.0 (this Mac) | `node --test --test-reporter=tap test/slug.test.mjs "test/two words/sum.test.mjs" test/load.test.mjs` (exit 1, stdout) |
 | `node-tap-26.5.0-pass.txt` | node 26.5.0 | `node --test --test-reporter=tap test/pass.test.mjs` (exit 0) |

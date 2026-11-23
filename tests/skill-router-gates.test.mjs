@@ -27,7 +27,7 @@ async function routerSession() {
 }
 
 test('gateLinesForPrompt: repository-level restructure intents fire repo-restructure', () => {
-  for (const prompt of ['i want to restructure ice-web-app, i want to remove nx from our project completely', 'restructure the project folders', 'restructure the repo',
+  for (const prompt of ['i want to restructure demo-web-ui, i want to remove nx from our project completely', 'restructure the project folders', 'restructure the repo',
     'migrate off Nx', 'migrate away from turborepo', 'get rid of module federation', 'module federation is no longer needed, remove it',
     'merge the apps and libraries into one project', 'merge everything into a simple project called portal', 'convert the monorepo to a single app',
     'clean up the root of the repo and old configs', 'تغییر ساختار پروژه']) {

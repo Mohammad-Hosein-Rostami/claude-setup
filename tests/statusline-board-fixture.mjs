@@ -197,7 +197,7 @@ export function mockupStates() {
     'git     claude-setup  main  ↑2 to push · 1 staged · 3 changed · 1 new · check failed: tests', session.calm] });
 
   now = at(19, 15);
-  const ice = repoOf('ice-web-app', [branch('feat/auth-i18n', { upstream: 'origin/feat/auth-i18n', upAhead: 1, upBehind: 2, op: 'rebase', opStep: '3/7', staged: null, changed: null, untracked: null, conflicts: null })], { trust: 'refs' });
+  const ice = repoOf('demo-web-ui', [branch('feat/auth-i18n', { upstream: 'origin/feat/auth-i18n', upAhead: 1, upBehind: 2, op: 'rebase', opStep: '3/7', staged: null, changed: null, untracked: null, conflicts: null })], { trust: 'refs' });
   add('several-repos', now, {
     ...calmSession(now),
     segment: segmentOf({ rowsDone: 3, rowsTotal: 8, leftMin: 200, finishMs: at(23, 10), road: roadStep(now) }),
@@ -210,7 +210,7 @@ export function mockupStates() {
     'now     step 2 of 4 git rows · ██░░░░ 1/3 lanes landed · 40 min work left · step done by 19:55',
     'agents  4 running',
     'git     claude-setup  main  ↑3 to push · 2 changed │ r18-git ↑2 ~1 · r18-est ↑4 ready',
-    'git     ice-web-app  feat/auth-i18n  ↑1 to push · ↓2 to pull · rebase 3/7 · changes ?', session.calm] });
+    'git     demo-web-ui  feat/auth-i18n  ↑1 to push · ↓2 to pull · rebase 3/7 · changes ?', session.calm] });
   add('outside-repo', now, {
     ...calmSession(now, MOCKUP_HOME),
     segment: segmentOf({ rowsDone: 9, rowsTotal: 10, leftMin: 10, finishMs: at(19, 50), rows: [{ id: 'R18.land', expectMin: 20, leftMin: 10, startedMs: now - 10 * MIN_MS }] }),

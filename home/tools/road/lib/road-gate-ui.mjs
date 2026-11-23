@@ -1,5 +1,5 @@
 // Purpose: line 4 of the road gate (road-gate.mjs): the UI proof of a step, on the web path or on the terminal path.
-// Exports: uiLine(road, rows, ranges, step, ctx) -> one PASS or FAIL line; TERMINAL_PROOF_SUFFIX.
+// Exports: uiLine(road, rows, ranges, step, ctx) -> one PASS or FAIL line; TERMINAL_PROOF_SUFFIX; setupReportsFolder(env).
 // Web path (owner standard: pixel-perfect web UI, never weakened): when any landing range of the step (a lane's or a fix row's
 //   `<road>.s<N>.fix-<name>`) changes UI files (`ui-proof changed` exit 1) or a lane has a coverage matrix path,
 //   `ui-proof check --tip <tip> --against-step <road>.s<N>` exit 0 and the step-start record taken at or before every `<from>`, except a
@@ -9,7 +9,7 @@
 //   changed a UI file: the status line and board renderers are `.mjs` that print rows) has no web page for visual-qa to check, so its
 //   proof is the owner's yes on a real render: a done STATUS row `<road>.s<N>.terminal-proof` whose evidence is exactly
 //   `terminal proof: <absolute path of the real-render file> (owner yes <YYYY-MM-DD>)`, where the file (real path) lies in the job's folder
-//   (beside STATUS.md) or the setup reports tree `~/Desktop/claude-setup-reports/`, is a non-empty file written at or after the start of
+//   (beside STATUS.md) or the setup reports tree (`$CLAUDE_SETUP_REPORTS`, else `~/Desktop/claude-setup-reports/`), is a non-empty file written at or after the start of
 //   the step's first landing row, the date is a real day not after today (UTC), and the owner's yes is on record: the lead asks it with
 //   AskUserQuestion and records the answer with `status.mjs decision`, so `## Owner decisions` holds the bullet
 //   `- <same date> terminal proof <road>.s<N>: owner yes on <same path> (AskUserQuestion answer)` (status.mjs writes the date; a timeout
@@ -31,7 +31,8 @@ export const TERMINAL_PROOF_SUFFIX = '.terminal-proof';
 const NO_MATRIX = 'none:'; // road-file.mjs: a lane with no coverage matrix says `none: <reason>`
 const TERMINAL_PROOF = /^terminal proof: (.+) \(owner yes (\d{4}-\d{2}-\d{2})\)$/;
 const RECORD_AT = /\bat ([0-9a-f]{7,40})\b/;
-const SETUP_REPORTS = ['Desktop', 'claude-setup-reports']; // under HOME: the setup's reports tree (docs/daily-use.md)
+const SETUP_REPORTS = ['Desktop', 'claude-setup-reports']; // under HOME: the setup's default reports tree (docs/daily-use.md)
+const REPORTS_VARIABLE = 'CLAUDE_SETUP_REPORTS'; // an absolute folder that replaces the default (a teammate keeps reports elsewhere)
 const OWNER_DECISIONS = 'Owner decisions'; // the STATUS.md section status.mjs `decision` writes to
 const DECISION_BULLET = /^- (\d{4}-\d{2}-\d{2}) terminal proof (\S+): owner yes on (.+) \(AskUserQuestion answer\)$/;
 
@@ -44,6 +45,18 @@ function recordCovers(ctx, at, range, uiChanged) {
   if (ctx.isAncestor(at, range.landed.from) === 0) return true;
   const uiLane = range.entry !== null && isUiLane(range.entry.lane, ctx.isUiPath); // a fix row (no entry) is no lane: its own range counts
   return !uiChanged && !uiLane && ctx.isAncestor(range.landed.to, at) === 0;
+}
+
+/**
+ * The setup reports tree a terminal proof may lie in: `$CLAUDE_SETUP_REPORTS` when it is an absolute path, else
+ * `~/Desktop/claude-setup-reports` (a relative or empty value is not used, so the gate never resolves it against a cwd).
+ * @param {NodeJS.ProcessEnv} [env] the environment to read
+ * @returns {{folder: string, shown: string}} the folder, and how a FAIL line names it
+ */
+export function setupReportsFolder(env = process.env) {
+  const chosen = env[REPORTS_VARIABLE];
+  if (typeof chosen === 'string' && isAbsolute(chosen)) return { folder: chosen, shown: chosen };
+  return { folder: join(homedir(), ...SETUP_REPORTS), shown: join('~', ...SETUP_REPORTS) };
 }
 
 /** The real path of a folder or file, or null when it does not exist. */
@@ -68,11 +81,12 @@ function stepStartMs(rows, own) {
  */
 function renderFileProblem(path, ctx, startMs) {
   const real = realPathOrNull(path);
-  const folders = [ctx.statusFile === undefined ? null : dirname(ctx.statusFile), join(homedir(), ...SETUP_REPORTS)];
+  const reports = setupReportsFolder();
+  const folders = [ctx.statusFile === undefined ? null : dirname(ctx.statusFile), reports.folder];
   const allowed = folders.filter((folder) => folder !== null).map(realPathOrNull).filter((folder) => folder !== null);
   const found = real === null ? null : statSync(real);
   if (found === null || !found.isFile() || found.size === 0) return `names ${path}, which is not a non-empty file`;
-  if (!allowed.some((folder) => real.startsWith(`${folder}${sep}`))) return `names ${path}, which lies outside the job's folder and ${join('~', ...SETUP_REPORTS)}`;
+  if (!allowed.some((folder) => real.startsWith(`${folder}${sep}`))) return `names ${path}, which lies outside the job's folder and ${reports.shown}`;
   if (startMs === null) return 'has no started landing row of the step to date the render against';
   if (found.mtimeMs < startMs) return `names ${path}, written before the step's first landing row started (${new Date(startMs).toISOString()})`;
   return null;

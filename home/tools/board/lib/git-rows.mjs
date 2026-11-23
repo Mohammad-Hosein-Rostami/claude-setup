@@ -1,7 +1,7 @@
 // The git rows of the status line (spec R18 "Rows" and "Git facts", owner decisions RC15 and RC18; at 100 columns) and of `/where`:
 //   git     claude-setup  main  ↑2 to push · 1 staged · 3 changed · 1 new · stash 1 · check ok      (the session's repository)
 //   lanes   r18-git ↑2 ~3 implementer · r18-est ↑4 ready to land · r17-col ↓5 needs rebase · +2 more  (its other active branches)
-//   git     ice-web-app  feat/auth-i18n  ↑1 to push · ↓2 to pull · rebase 3/7 · changes ?          (outside one, or a 2nd one)
+//   git     demo-web-ui  feat/auth-i18n  ↑1 to push · ↓2 to pull · rebase 3/7 · changes ?          (outside one, or a 2nd one)
 // Exports: gitLineRows(board, slots, look, folder) (the status line's 1 or 2 git rows); gitRows(repo, slots, ctx, look); repoRows(board,
 // slots, ctx, look) (`/where`: `⎇ main ✓ · last 12 min ago │ r9-a ↑2 ●3 impl-a`, every repository, plain text); gitCounts(repo, look).
 // Status line, from board.repo and board.repos (repos.mjs: the session folder's repository first): in the session's repository its

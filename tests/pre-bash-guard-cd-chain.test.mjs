@@ -92,7 +92,7 @@ const UNKNOWN_TARGETS = [
   `pushd ~ && pushd ${PROJECT} && pushd +1 && ${RM} -rf Documents`,
   `pushd ~ && pushd ${PROJECT} && cd +1 && ${RM} -rf Documents`,
   `cd C: && ${RM} -rf Users`,
-  `CDPATH=/Users cd pejvak && ${RM} -rf Documents`,
+  `CDPATH=/Users cd devuser && ${RM} -rf Documents`,
   `export CDPATH=~; cd Documents && ${RM} -rf Work`,
   `CDPATH=/etc; cd src && ${RM} -rf gen`,
   `cdpath=(~ /); cd src && ${RM} -rf gen`,

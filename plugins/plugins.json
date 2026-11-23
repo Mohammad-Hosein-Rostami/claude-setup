@@ -41,7 +41,7 @@
   "perProject": {
     "note": "Off globally to keep the skill list short; enable in a project's .claude/settings.local.json under enabledPlugins.",
     "miro@claude-plugins-official": [
-      "pejvak-frontend-nx-workspace (PC)"
+      "a design-heavy frontend project (named in its personal project note)"
     ],
     "superdesign@anthropic-plugin-directory": []
   }

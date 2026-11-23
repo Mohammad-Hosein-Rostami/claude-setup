@@ -141,7 +141,7 @@ test('mock words and code closed by a real boundary stay silent', () => {
   }
 });
 
-// Desap Go test table: 1-2 char query values (`token=t`, `ticket=t1`) are fixtures, not secrets; the minimum is the allow-list's own.
+// A work project's Go test table: 1-2 char query values (`token=t`, `ticket=t1`) are fixtures, not secrets; the minimum is the allow-list's own.
 test('a URL query value shorter than the minimum is not a literal secret, one of that length still asks', () => {
   for (const command of ['{path: "/verify-email?token=t", want: 200},', 'appLogoutQuery + "&ticket=t1"', url('token=abcdefg'), url('password=t1'), '{path: "/r?api_key=k1", x}']) {
     assert.equal(findLiteralSecret(command), undefined, command);
@@ -150,7 +150,7 @@ test('a URL query value shorter than the minimum is not a literal secret, one of
   for (const command of [url('token=aB3xK9qZ'), url('password=aB3xK9qZ')]) assert.ok(findLiteralSecret(command), command);
 });
 
-// Desap: a Go html/template attribute in a python heredoc fired the key=value rule (`data-title-password=\"{{t .L \"...\"}}\"`).
+// A work project: a Go html/template attribute in a python heredoc fired the key=value rule (`data-title-password=\"{{t .L \"...\"}}\"`).
 test('a template expression that reads a value is not a literal secret', () => {
   for (const command of [
     'data-title-password=\\"{{t .L \\"register.password.heading\\"}}\\"', 'data-msg-short=\\"{{t .L \\"register.validation.password_short\\"}}\\"',
@@ -169,7 +169,7 @@ test('a token inside template braces is still a secret', () => {
   }
 });
 
-// Desap probe script: a JS/Python list writes `','` with no space between the quoted URLs.
+// A work-project probe script: a JS/Python list writes `','` with no space between the quoted URLs.
 test('a comma that closes a quoted query value ends it when whitespace or the next list item follows (3-part mock words too)', () => {
   for (const command of ["const paths = ['/verify-email?token=verify-ok','/register/link','/accept-invitation?token=inv-staff-new','/accept-nomination?token=nom-ok'];",
     'x = ["/r?token=reset-ok","/s"]', "f('/r?token=inv-staff-new',\n 1)"]) {

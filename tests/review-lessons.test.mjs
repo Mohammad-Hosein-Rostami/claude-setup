@@ -1,6 +1,7 @@
 // Text checks for the lessons folded in from the old reviewer and security-auditor notes (2026-11-22): the size caps of
 // home/rules/principles.md and home/agents/reviewer.md, the `from:` defect class on every sharpened principle, the key clauses
-// that carry each lesson, the checked project facts, and that no part of the setup reads the old note folders any more.
+// that carry each lesson, and that no part of the setup reads the old note folders any more. The checked project facts the old notes
+// held live in the owner's project notes, which leave core (R22): their case moved with them to personal/tests/project-notes-facts.test.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
@@ -62,14 +63,6 @@ test('reviewer.md stays within its line cap and carries the proof rules', () => 
     'Kinder fakes: a test double that forgives what the real dependency does not',
     "with a made-up `CLAUDE_CODE_SESSION_ID` (you share the lead's)",
   ]) assert.ok(text.replace(/\n\s*/g, ' ').includes(clause), clause);
-});
-
-test('the project notes carry the checked project facts', () => {
-  const bb = read('home/project-notes/bill-and-ben-platform.md');
-  assert.match(bb, /`services\/bb-authz\/test\/cross-tenant\/coverage\.yaml`/);
-  assert.match(bb, /run `node node_modules\/vitest\/vitest\.mjs run <file>`/);
-  const ice = read('home/project-notes/ice-web-app.md');
-  assert.match(ice, /`pnpm verify` does not run `pnpm docs:ice-calls:verify`/);
 });
 
 /** Every file below `dir`, as paths relative to the repo. */

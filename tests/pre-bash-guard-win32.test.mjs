@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const RUNNER = fileURLToPath(new URL('./win32-decide.mjs', import.meta.url));
-const PROJECT = 'C:\\Users\\pejvak\\proj';
+const PROJECT = 'C:\\Users\\devuser\\proj';
 const RM = 'rm'; // kept apart so this file's own text never reads as a command
 const skip = typeof nodeModule.registerHooks === 'function' ? false : 'node:module registerHooks is missing in this Node (added in 22.15)';
 
@@ -23,9 +23,9 @@ function win32Answers(commands) {
 
 const ASK = [
   `cd /c && ${RM} -rf Users`,
-  `cd /c && ${RM} -rf Users/pejvak`,
-  `cd /C && ${RM} -rf Users/pejvak/Documents`,
-  `cd /c && ${RM} -rf Users/pejvak/proj`,
+  `cd /c && ${RM} -rf Users/devuser`,
+  `cd /C && ${RM} -rf Users/devuser/Documents`,
+  `cd /c && ${RM} -rf Users/devuser/proj`,
   `cd /c/ && ${RM} -rf Users`,
   `cd /c && ${RM} -rf *`,
   `cd /d && ${RM} -rf x`,
@@ -34,16 +34,16 @@ const ASK = [
   `${RM} -rf /c/*`,
   `${RM} -rf /c/Users/*`,
   `${RM} -rf C:/*`,
-  `${RM} -rf /c/Users/pejvak/proj/*`,
+  `${RM} -rf /c/Users/devuser/proj/*`,
   `${RM} -rf *`,
   `cd .. && ${RM} -rf proj`,
 ];
 const SILENT = [
   `${RM} -rf src/*`,
-  `${RM} -rf /c/Users/pejvak/proj/src/gen`,
-  `cd /c/Users/pejvak/proj/src && ${RM} -rf gen`,
-  `cd /c && ${RM} -rf Users/pejvak/proj/src/gen`,
-  `cd /c && ${RM} -rf /c/Users/pejvak/proj/dist`,
+  `${RM} -rf /c/Users/devuser/proj/src/gen`,
+  `cd /c/Users/devuser/proj/src && ${RM} -rf gen`,
+  `cd /c && ${RM} -rf Users/devuser/proj/src/gen`,
+  `cd /c && ${RM} -rf /c/Users/devuser/proj/dist`,
 ];
 
 test('a bare Git Bash drive is the drive root: a cd to it moves, and what rm then names is judged from there', { skip }, () => {

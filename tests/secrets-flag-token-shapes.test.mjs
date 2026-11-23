@@ -1,4 +1,4 @@
-// Two live false positives from an unattended Desap session (each ask stalls up to 2 min), and the probes that must keep asking:
+// Two live false positives from an unattended work-project session (each ask stalls up to 2 min), and the probes that must keep asking:
 // 1. a BEM modifier / state id glued to a word (`.card--password`, `inv-new-staff--password`) is not a `--password` flag;
 // 2. JS code that mentions a token name (`'csrf_token=…').slice(0, 80)`) is not a token value, but a password-kind value keeps the broad rule.
 // Every secret-looking value is built at runtime so the repo itself holds no token-shaped string (gitleaks).
@@ -20,7 +20,7 @@ const expectAsk = (command, secret) => {
   if (secret) assert.ok(!maskSecrets(command).includes(secret), command);
 };
 
-test('Desap shapes: a BEM modifier or state id ending in --password, and JS that mentions csrf_token=, are silent', () => {
+test('Work-project shapes: a BEM modifier or state id ending in --password, and JS that mentions csrf_token=, are silent', () => {
   for (const command of [
     `python3 - <<'PY'\nimport re\ns = re.sub(".card--password .card__body {", ".card--password .card__body {\\n  gap: 8px;", s)\nPY`,
     'the field inv-new-staff--password (12 px) wraps on a phone',

@@ -198,7 +198,7 @@ The old `~/.claude/state/estimate-log/` is no longer read; it can be deleted by 
 then, as in the tool) and checks the numbers against the
 thresholds in `backtest.mjs` (exit 1 on a miss). One threshold differs from the design: a time at 58 or more of the 64
 instants, not 60, because the 5-row minimum per size refuses 5 instants honestly (the design's checker had no minimum). `seed.json` was written by it at the cut-over from the setup and
-bill-and-ben tables and two finished tables (147 rows, 10 jobs): size, kind, done time and cost only, keyed by table hash.
+work-project tables and two finished tables (147 rows, 10 jobs): size, kind, done time and cost only, keyed by table hash.
 A `Scores` block follows the thresholds (`lib/backtest-scores.mjs`, never failing the run): the per-job median miss of the
 shown (median) time and the jobs within 60 min or 30%, a naive baseline (the median work of the other tables' jobs of the same
 size class, a job's class being its largest row size), the signed bias (median log(shown/actual), all jobs and jobs over 6 h),

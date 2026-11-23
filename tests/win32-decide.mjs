@@ -5,7 +5,7 @@
 // A simulation, not Windows: fs, the real Git Bash and cmd are not involved. The commands are only passed to decide(); nothing is executed.
 import { registerHooks } from 'node:module';
 
-const WIN32_HOME = 'C:\\Users\\pejvak';
+const WIN32_HOME = 'C:\\Users\\devuser';
 const GUARD_TREE = new URL('../home/hooks/', import.meta.url).href;
 const WIN32_PATH = `data:text/javascript,${encodeURIComponent(
   "import path from 'node:path'; const w = path.win32; export default w; export const posix = path.posix; export const win32 = w;"

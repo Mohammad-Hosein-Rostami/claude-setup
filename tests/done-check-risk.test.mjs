@@ -96,7 +96,7 @@ for (const [lane, { classes, files }] of Object.entries(REAL_RISKY_LANES)) {
 
 const QUIET_LANES = {
   'tests-only (931b537b)': ['tests/timed-ask.test.mjs', 'tests/main-module-guard.test.mjs'],
-  'plain docs': ['home/project-notes/ice-web-app.md', 'home/hooks/lib/README.md', 'docs/token-optimization.md', 'notes/session.txt'],
+  'plain docs': ['home/project-notes/demo-web-ui.md', 'home/hooks/lib/README.md', 'docs/token-optimization.md', 'notes/session.txt'],
   'tests named for security words': ['tests/auth.test.mjs', 'src/auth/login.test.ts', 'test/token.spec.js', 'src/__tests__/session.test.tsx'],
   'estimate math (77a31375)': ['home/tools/estimate/lib/forecast.mjs', 'home/tools/estimate/lib/commitment.mjs', 'tests/estimate-forecast.test.mjs'],
 };
@@ -107,7 +107,7 @@ for (const [lane, files] of Object.entries(QUIET_LANES)) {
 }
 
 test('a change to the rule texts only (b5adcc96: reviewer agent, principles) is gate', async () => {
-  const files = ['home/agents/reviewer.md', 'home/project-notes/ice-web-app.md', 'home/rules/principles.md', 'tests/review-lessons.test.mjs'];
+  const files = ['home/agents/reviewer.md', 'home/project-notes/demo-web-ui.md', 'home/rules/principles.md', 'tests/review-lessons.test.mjs'];
   assert.deepEqual(await classesOf(files), ['gate']);
 });
 

@@ -138,10 +138,10 @@ const RUNNER = fileURLToPath(new URL('./win32-decide.mjs', import.meta.url));
 const skip = typeof nodeModule.registerHooks === 'function' ? false : 'node:module registerHooks is missing in this Node (added in 22.15)';
 
 test('Windows paths: a drive or Git Bash path is never read as a session area; a cs-test folder on a drive is one', { skip }, () => {
-  const project = 'C:\\Users\\pejvak\\proj';
-  const temp = '/c/Users/pejvak/AppData/Local/Temp';
-  const answers = { ask: [`${RM} -rf /c/Users/pejvak/x`, `${RM} -rf ${temp}/claude-501/p/8e63904d`, `${RM} -rf /c/tmp/claude-501/p/8e63904d`,
-    `${RM} -rf /c/cs-test-a/../x`], allow: [`${RM} -rf C:/Users/pejvak/cs-test-a/x`, `cd /c/Users/pejvak/cs-test-a && ${RM} -rf x`, `${RM} -rf $TMPDIR/cs-test-x`] };
+  const project = 'C:\\Users\\devuser\\proj';
+  const temp = '/c/Users/devuser/AppData/Local/Temp';
+  const answers = { ask: [`${RM} -rf /c/Users/devuser/x`, `${RM} -rf ${temp}/claude-501/p/8e63904d`, `${RM} -rf /c/tmp/claude-501/p/8e63904d`,
+    `${RM} -rf /c/cs-test-a/../x`], allow: [`${RM} -rf C:/Users/devuser/cs-test-a/x`, `cd /c/Users/devuser/cs-test-a && ${RM} -rf x`, `${RM} -rf $TMPDIR/cs-test-x`] };
   const commands = [...answers.ask, ...answers.allow];
   const { status, stdout, stderr } = spawnSync(process.execPath, [RUNNER, JSON.stringify({ cwd: project, project, commands })], { encoding: 'utf8' });
   assert.equal(status, 0, stderr);

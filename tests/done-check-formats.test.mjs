@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseEslintJson, parseJestJson, parseTap, parseTsc, parseVitestJson } from '../home/tools/done-check/lib/parse.mjs';
+import { findHits, readDenyList, wordPattern } from '../scripts/share-check.mjs';
 
 const SAMPLES = fileURLToPath(new URL('./fixtures/done-check/', import.meta.url));
 const sample = (name) => readFileSync(SAMPLES + name, 'utf8');
@@ -37,10 +38,28 @@ test('every sample file is described in the README, and each Windows variant rea
   }
 });
 
+// The folder in front of a `node_modules/` may only be a neutral one: the tools folder `/work/tools`, the README's `<tools-checkout>`
+// placeholder, or a pnpm store entry (`@scope+name@version`), so no sample names the project the tools came from.
+const NODE_MODULES_PARENT = /([^\s/"'`(]+)\/node_modules\//g;
+const neutralParent = (folder) => folder === 'tools' || folder === '<tools-checkout>' || /^@[^@/]+\+[^@/]+@[\d.]+$/.test(folder);
+
 test('no sample holds a user name, a home folder or a scratch path', () => {
+  // the person's private words (personal/share-deny.txt of the main checkout, scripts/share-check.mjs); none listed: the generic checks
+  const { words } = readDenyList(SAMPLES);
+  const denied = (words ?? []).map((word) => ({ word, pattern: wordPattern(word) }));
   for (const name of readdirSync(SAMPLES)) {
-    assert.doesNotMatch(sample(name), /\/Users\/|\/home\/\w|mohammad|scratchpad|\/private\/tmp|\/var\/folders|Desap|ice-web-app\/node_modules/i, name);
+    const text = sample(name);
+    assert.doesNotMatch(text, /\/Users\/|\/home\/\w|scratchpad|\/private\/tmp|\/var\/folders/i, name);
+    const parents = [...text.matchAll(NODE_MODULES_PARENT)].map((match) => match[1]);
+    assert.deepEqual(parents.filter((folder) => !neutralParent(folder)), [], `${name}: node_modules under a named folder`);
+    assert.deepEqual(findHits(text, denied).map((hit) => `${name}:${hit.line}`), [], `${name}: a share deny word`);
   }
+});
+
+test('the node_modules folder check refuses a project-named folder and keeps the neutral ones', () => {
+  const parents = (text) => [...text.matchAll(NODE_MODULES_PARENT)].map((match) => match[1]).filter((folder) => !neutralParent(folder));
+  assert.deepEqual(parents('node <my-shop>/node_modules/vitest/vitest.mjs and /x/my-shop/node_modules/a'), ['<my-shop>', 'my-shop']);
+  assert.deepEqual(parents('file:///work/tools/node_modules/.pnpm/@vitest+runner@4.1.9/node_modules/x <tools-checkout>/node_modules/y'), []);
 });
 
 test('tsc: five diagnostics with file, line, code in the id, the message cut to one line, a path with a space', () => {

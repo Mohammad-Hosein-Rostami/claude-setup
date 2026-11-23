@@ -6,7 +6,7 @@ Where the tokens of a period went, read from this machine's Claude Code transcri
 ```sh
 node ~/.claude/tools/token-view/token-view.mjs            # the last 7 days
 node ~/.claude/tools/token-view/token-view.mjs --days 1 --detail
-node ~/.claude/tools/token-view/token-view.mjs --project bill-gin --json
+node ~/.claude/tools/token-view/token-view.mjs --project my-app --json
 ```
 
 Sections: (a) limits against time per account (highest 7-day and 5-hour use per day); (b) use per role (agent type, the lead

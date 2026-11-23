@@ -28,6 +28,6 @@ no file; you report and propose.
 5. Report, ranked by recurring cost: start tokens per agent type, the largest always-loaded parts, compactions, waste, each
    project's `MEMORY.md` size, always-loaded files over 200 lines, rules without `paths:`, skill descriptions over 300 chars and
    MCP servers unused in recent work. No dollar figures, except in a detail view, labelled "API-price equivalent".
-6. A `MEMORY.md` trim (for example the bill-gin one): show the owner the duplicate or near-duplicate lines read-only, with the
+6. A `MEMORY.md` trim (for example a large project's one): show the owner the duplicate or near-duplicate lines read-only, with the
    file path, and ask before any trim; trimming is the owner's decision, never done here.
 7. Propose cuts as concrete edits; the session applies only the ones the owner approves.
