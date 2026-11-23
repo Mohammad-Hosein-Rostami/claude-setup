@@ -5,8 +5,8 @@
 // Store: <HOME>/.claude/state/call-windows/<session>.jsonl (open, close, batch, quiet, watch lines: spec-p1-gates-fix 2.2) and
 //   <session>--watch.json ({reflogs: [real path by index k], folders: [folders already resolved]}) under withSessionLock.
 // Invariants: never throws; never runs git (`.git` entries are read); every write goes through appendPlainFile (no link followed, no
-//   FIFO waited on); a lost line only widens own windows; one cap for writer and reader (P6): a log within MAX_EDGE_LINE_BYTES of
-//   MAX_WINDOW_LOG_BYTES may have refused a line, so it reads as unusable.
+//   FIFO waited on); a lost line only widens own windows; one cap for writer and reader (P6, lib/call-window-cap.mjs): a log over
+//   MAX_USABLE_LOG_BYTES may have refused a line, so it reads as unusable, and the writer reports that once per session in guard.jsonl.
 import { closeSync, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, sep } from 'node:path';
@@ -16,10 +16,9 @@ import { appendPlainFile, readPlainFile } from './plain-file.mjs';
 import { withSessionLock } from './session-lock.mjs';
 import { isPrivateFile, isSessionId, lstatOrNull, privateFolder, READ_FLAGS, readSessionFile, writeSessionFile } from './session-store.mjs';
 import { buildWindows, parseLog } from './call-window-build.mjs';
+import { MAX_EDGE_LINE_BYTES, MAX_USABLE_LOG_BYTES, MAX_WINDOW_LOG_BYTES, reportFullLogOnce } from './call-window-cap.mjs';
 
-export { buildWindows, parseLog };
-export const MAX_WINDOW_LOG_BYTES = 8 * 1024 * 1024;
-export const MAX_EDGE_LINE_BYTES = 16 * 1024; // the longest line the writer sends (ids, types and paths are capped below)
+export { buildWindows, MAX_EDGE_LINE_BYTES, MAX_USABLE_LOG_BYTES, MAX_WINDOW_LOG_BYTES, parseLog };
 export const EDGE_SLACK_MS = 2000; // coarse file-system clocks
 export const NO_WINDOW_TOOLS = new Set(['Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'AskUserQuestion', 'ToolSearch', 'Agent', 'Task']);
 export const FILE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -257,7 +256,9 @@ export function recordCallEdge(input, env = process.env) {
     for (const folder of [env.CLAUDE_PROJECT_DIR, input.cwd]) watchFolder(env, input.session_id, folder);
     const reflogs = readWatchState(logFolderOf(env), input.session_id)?.reflogs ?? [];
     if (line.path !== undefined && reflogs.some((reflog) => line.path.startsWith(reflog.slice(0, reflog.indexOf(HEADS) + 1)))) delete line.path;
-    return appendLine(env, input.session_id, { ...line, b: reflogs.map(sizeOrNull) });
+    const written = appendLine(env, input.session_id, { ...line, b: reflogs.map(sizeOrNull) });
+    reportFullLogOnce(env, logFolderOf(env), input.session_id);
+    return written;
   } catch {
     return false;
   }
@@ -287,8 +288,8 @@ export function readCallWindows(env, session, deadlineMs) {
     const path = join(logFolderOf(env), `${session}.jsonl`);
     const stats = isSessionId(session) ? lstatOrNull(path) : undefined;
     if (stats === null) return { ...UNUSABLE, missing: true };
-    if (!stats || !isPrivateFile(stats) || stats.size > MAX_WINDOW_LOG_BYTES - MAX_EDGE_LINE_BYTES) return UNUSABLE;
-    const lines = parseLog(readPlainFile(path, MAX_WINDOW_LOG_BYTES - MAX_EDGE_LINE_BYTES));
+    if (!stats || !isPrivateFile(stats) || stats.size > MAX_USABLE_LOG_BYTES) return UNUSABLE;
+    const lines = parseLog(readPlainFile(path, MAX_USABLE_LOG_BYTES));
     if (lines === null || Date.now() > deadlineMs) return UNUSABLE;
     const stopHookMs = largestHookTimeoutMs(env, ['Stop', 'SubagentStop']);
     const postHookMs = largestHookTimeoutMs(env, ['PostToolUse', 'PostToolUseFailure']);

@@ -9,13 +9,13 @@
 //   claims only when its first line is older than this session's first line (a session this one started is always younger: U6 open).
 import { closeSync, fstatSync, lstatSync, openSync, readdirSync, readSync } from 'node:fs';
 import { join, sep } from 'node:path';
-import { buildWindows, EDGE_SLACK_MS, logFolderOf, NO_WINDOW_TOOLS, parseLog } from './call-windows.mjs';
+import { buildWindows, EDGE_SLACK_MS, logFolderOf, MAX_WINDOW_LOG_BYTES, NO_WINDOW_TOOLS, parseLog } from './call-windows.mjs';
 import { realPathOf } from './own-edits.mjs';
 import { readPlainFile } from './plain-file.mjs';
 import { isPrivateFile, lstatOrNull, READ_FLAGS } from './session-store.mjs';
 
 export const VERDICT_DEADLINE_MS = 1500;
-const MAX_CLAIM_LOG_BYTES = 16 * 1024 * 1024;
+const MAX_CLAIM_LOG_BYTES = MAX_WINDOW_LOG_BYTES; // the other logs together read at most one full log (P6; read time: lib/call-window-cap.mjs)
 const CROSS_CHECK_TAIL_BYTES = 512 * 1024;
 const MAX_AGENT_TRANSCRIPTS = 20;
 const MAX_FOLDER_FILES = 200;
