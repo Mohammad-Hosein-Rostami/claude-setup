@@ -54,6 +54,19 @@ function upstreamText(upstream) {
   return [...warn, `published ${upstream.published} base commit(s) are on ${upstream.upstream} (${upstream.unpublished} not pushed): fixes go on top, never amend or rebase them (C37)`];
 }
 
+/**
+ * The refusal of a UI check plan that is not proved: a planned check (`uiDepth`) names its plan; a visual or pixel plan, which prints
+ * today's visual-qa check, keeps today's line word for word (F5).
+ */
+function uiProofText({ tip, why, uiDepth }) {
+  const short = tip.slice(0, 8);
+  if (typeof uiDepth !== 'string') return `ui-proof: the UI files changed and ${short} has no visual-qa PASS: ${why} (run visual-qa on the rebased tip, then land again)`;
+  return `ui-proof: the ui check plan (${uiDepth}) of ${short} is not proved: ${why} (ui-proof plan --base <base> --tip ${short} --request <brief> shows what it needs; prove it on the rebased tip, then land again)`;
+}
+
+/** The lines of a proved check plan (the row pointer land-lane writes): `ui plan <depth>: proved`, then its `follow-up:` lines. */
+const planText = (uiPlan) => (uiPlan ? [`ui plan ${uiPlan.depth}: proved`, ...uiPlan.followUps] : []);
+
 /** `land` result as text (`tip` and `patches-changed` for a rebase; else what happened, what was removed, `check: clean` or the findings) or as JSON. */
 export function formatLand(result, json) {
   if (json) return JSON.stringify(result, null, 2);
@@ -63,12 +76,11 @@ export function formatLand(result, json) {
   if (status === 'tip-moved') return `tip-moved: ${why}: the lane changed since the tip was read: land again with its new tip (nothing was touched)`;
   if (status === 'rebased') return `tip ${tip}\npatches-changed ${patchesChanged}`;
   if (status === 'conflict') return [`conflict: the rebase hit conflicts and was aborted, the lane is unchanged`, ...files.map((file) => `conflict ${file}`)].join('\n');
-  if (status === 'ui-proof') return `ui-proof: the UI files changed and ${tip.slice(0, 8)} has no visual-qa PASS: ${why} (run visual-qa on the rebased tip, then land again)`;
+  if (status === 'ui-proof') return uiProofText(result);
   if (status === 'new-file-size') return [`new-file-size: the lane adds files over the size limit that its brief does not name: ${why}`, ...files.map((file) => `big ${file}`)].join('\n');
   if (status === 'base-moved') return `base-moved: ${why ?? 'the base moved during the landing'}: land again with --tip ${tip} (the lane stays rebased, nothing landed)`;
   const outcome = findings.length === 0 ? ['check: clean'] : findings.map(line);
   const refused = cleanupRefused === null ? [] : [`cleanup skipped: ${cleanupRefused}`];
-  const waived = typeof result.uiWaived === 'string' ? [`ui-proof: waived by owner decision (${result.uiWaived})`] : [];
   const detached = typeof result.detached?.folder === 'string' ? [`lane folder ${result.detached.folder} detached at ${tip} (kept for the next lane)`] : [];
-  return [`landed ${tip}`, ...(from ? [`from ${from}`] : []), ...waived, ...upstreamLines, ...detached, ...removed.map((entry) => `removed ${entry}`), ...refused, ...outcome].join('\n');
+  return [`landed ${tip}`, ...(from ? [`from ${from}`] : []), ...planText(result.uiPlan), ...upstreamLines, ...detached, ...removed.map((entry) => `removed ${entry}`), ...refused, ...outcome].join('\n');
 }

@@ -1,17 +1,16 @@
 #!/usr/bin/env node
 // CLI of `land-lane`: put one lane on the base branch with one command: disk check, the tip check, the rebase check, the tip-object and union-row checks, the done-check of the
-// rebased tip (run or reused, new failures refused, the one review of a risky lane asked for), `git-tidy land` (rebase, UI proof, ff-only,
-// prune) and the STATUS.md close row. It replaces the land workflow. There is no test run or audit step of its own: the checks are done-check's.
+// rebased tip (run or reused, new failures refused, the one review of a risky lane asked for), `git-tidy land` (rebase, UI check plan proof,
+// ff-only, prune) and the STATUS.md close row. It replaces the land workflow. There is no test run or audit step of its own: the checks are done-check's.
 // Usage: land-lane.mjs --repo <abs base folder> --branch <name> --tip <40-hex> --base <branch> --status-file <abs> --close-row <row id>
-//        [--worktree <abs>] [--brief <file>] [--reviewed <40-hex> | --skip-review <reason>] [--accept-open <reason>]
-//        [--owner-waive-ui <reason>] [--json]
+//        [--worktree <abs>] [--brief <file>] [--reviewed <40-hex> | --skip-review <reason>] [--accept-open <reason>] [--json]
 //   `--reviewed` is the tip the one review read (the --tip or an ancestor of it, else exit 2); `--skip-review` is a reason of 1 to 200 characters;
 //   `--accept-open` lands a lane whose only open failure is a weakened-test item, with a reason (1 to 200 characters). The answers go into the row.
-//   `--owner-waive-ui <reason>` (same reason rules; --close-row a road row) skips only the UI proof of `git-tidy land`, and only when the
-//   --status-file holds that row and the owner's line `ui-proof waiver for road <road>` and lies outside the repo (ui-proof/lib/owner-waiver.mjs);
-//   else exit 2 before anything runs. The output prints `ui-proof: waived by owner decision (<reason>)` and the row evidence ends with
-//   ` (ui-proof waived: owner decision)`.
-//   The removed flags `--audit-base` and `--checks` are refused with exit 2 and a plain message.
+//   UI check plan (lib/ui-plan-step.mjs, ui-kinds-spec.md section 3): computed from the diff, the brief and the lane's matrix in the road beside the
+//   --status-file; a lane whose diff changes the app needs a readable --brief (exit 2 before anything runs); a plan with logic needs done-check
+//   `tests` ok (exit 4); `git-tidy land` proves the plan (exit 6); a proved plan other than pixel ends the row evidence with ` (ui plan <depth>: proved)`
+//   and prints its `follow-up:` lines; a plan that cannot be computed is exit 14.
+//   The removed flags `--audit-base`, `--checks` and `--owner-waive-ui` are refused with exit 2 and a plain message.
 // Output: the first line is `land: <state>`; a landing prints `landed <to> on <base> from <from>` and the `checks:` line of done-check (and a
 //   `review:` line for a risky lane). With --json one object `{ state, exit, to, from, lines }`.
 // Exit: 0 landed clean, 1 landed with `git-tidy check` findings left, 2 usage, 3 conflict, 4 done-check found new failures or an open weakened
@@ -29,11 +28,12 @@ import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { parseWorkItems } from '../estimate/lib/items.mjs';
 import { readStatusFile } from '../status/status-file.mjs';
-import { UI_WAIVER_EVIDENCE, ownerWaiverProblem } from '../ui-proof/lib/owner-waiver.mjs';
+import { planEvidence } from '../ui-proof/lib/ui-evidence.mjs';
 import { UsageError, parseArgs } from './lib/args.mjs';
 import { assertReviewedIsAncestor, checkRebasedTip } from './lib/checks-step.mjs';
 import { Stop, stop } from './lib/stop.mjs';
 import { git, parseJson, tool } from './lib/tools.mjs';
+import { laneMatrix, planAt, requireBriefForApp, restartPlan } from './lib/ui-plan-step.mjs';
 import { checkTipRows } from './lib/union-rows.mjs';
 
 const DISK_TIMEOUT_MS = 120_000;
@@ -42,7 +42,7 @@ const ROW_TIMEOUT_MS = 30_000;
 const ALREADY_DONE = /is already done/;
 const REFUSED_BY_TIDY = {
   3: [3, 'conflict', 'the rebase hit conflicts and was aborted, the lane is unchanged'],
-  6: [6, 'ui-proof', 'the UI files changed and the rebased tip has no visual-qa PASS'],
+  6: [6, 'ui-proof', 'the ui check plan of the rebased tip is not proved'],
   7: [7, 'new-file-size', 'the lane adds a file over the size limit that its brief does not name'],
   8: [8, 'upstream-moved', 'the base\'s upstream holds commits the base lacks: `git pull --rebase` first'],
   9: [9, 'tip-moved', 'the branch is not at the given tip'],
@@ -51,8 +51,6 @@ const REFUSED_BY_TIDY = {
 export { Stop };
 
 const tidy = (args) => tool('git-tidy', 'git-tidy.mjs', args, { timeoutMs: TIDY_TIMEOUT_MS });
-/** True when the lead asked to land under the owner's ui-proof waiver (--owner-waive-ui; checked against STATUS.md in land()). */
-const waivesUi = (options) => typeof options.ownerWaiveUi === 'string';
 const reason = (run) => (run.err || run.out).split('\n').find((line) => line.trim() !== '') ?? `exit ${run.status}`;
 
 function checkDisk() {
@@ -113,20 +111,27 @@ function closeRow(options, evidence, to) {
 /**
  * Steps after a landing: the close row, then the exit.
  * @param {object} options the parsed arguments
- * @param {{ to: string, from: string|null, restart: boolean, findings: string[], notes: string[], evidence?: string[] }} landing what landed;
- *   `evidence` is what the done-check step adds to the row (an accepted open failure, the review answer)
+ * @param {{ to: string, from: string|null, restart: boolean, findings: string[], notes: string[], evidence?: string[],
+ *   uiPlan?: { depth: string, followUps: string[] }|null }} landing what landed; `evidence` is what the done-check step adds to the row (an
+ *   accepted open failure, the review answer); `uiPlan` the check plan `git-tidy land` proved (null: no pointer, e.g. pixel or no UI file)
  */
 function finishLanding(options, landing) {
-  const { to, from, restart, findings, notes, evidence = [] } = landing;
+  const { to, from, restart, findings, notes, evidence = [], uiPlan = null } = landing;
   const where = `landed ${to} on ${options.base}${from ? ` from ${from}` : ''}`;
   const answers = evidence.length > 0 ? ` (${evidence.join('; ')})` : '';
-  const waived = waivesUi(options) ? UI_WAIVER_EVIDENCE : ''; // last, so the road gate finds it at the end of the evidence
-  const row = closeRow(options, `${restart ? `${where} (found already on ${options.base} after a restart)` : `${where}${answers}`}${waived}`, to);
-  const waiverLine = waivesUi(options) ? [`ui-proof: waived by owner decision (${options.ownerWaiveUi})`] : [];
-  const lines = [where, ...waiverLine, ...(from ? [] : ['warning: no `from` sha (the base reflog does not show the step): the road gate will refuse this row']), ...notes, ...findings, ...[row.note, row.problem].filter(Boolean)];
+  const proved = uiPlan === null ? '' : planEvidence(uiPlan.depth); // last, so the road gate finds it at the end of the evidence
+  const row = closeRow(options, `${restart ? `${where} (found already on ${options.base} after a restart)` : `${where}${answers}`}${proved}`, to);
+  const planLines = uiPlan === null ? [] : [`ui plan ${uiPlan.depth}: proved`, ...uiPlan.followUps];
+  const lines = [where, ...planLines, ...(from ? [] : ['warning: no `from` sha (the base reflog does not show the step): the road gate will refuse this row']), ...notes, ...findings, ...[row.note, row.problem].filter(Boolean)];
   if (row.problem !== null) return { code: 13, state: 'row-not-closed', lines, to, from };
   if (findings.length > 0) return { code: 1, state: 'landed, check findings left', lines, to, from };
   return { code: 0, state: restart ? 'already landed' : 'landed', lines, to, from };
+}
+
+/** A landing found again after a restart: its row keeps the plan pointer a landing in one run writes (F2). */
+function finishRestart(options, range, notes) {
+  const { plan, note } = restartPlan(options, range, options.matrix);
+  return finishLanding(options, { ...range, restart: true, findings: [], notes: note === null ? notes : [...notes, note], uiPlan: plan });
 }
 
 /** The landing a killed run already made: the branch is gone, or it is at a commit the base's reflog holds. */
@@ -136,13 +141,13 @@ function resumeLanding(options, current) {
     if (!patchesAreOnBase(options)) stop(14, 'tool-failed', `branch ${options.branch} not found in ${options.repo}, and the base ${options.base} lacks patches of ${options.tip}: nothing was landed`);
     const range = landedRange(options, []);
     if (range === null) stop(14, 'tool-failed', `branch ${options.branch} is gone and its patches are on ${options.base}, but the base reflog does not show the landing step: record the row by hand`);
-    return finishLanding(options, { ...range, restart: true, findings: [], notes });
+    return finishRestart(options, range, notes);
   }
   const range = landedRange(options, ['--landed', current]);
   if (range === null) stop(9, 'tip-moved', `branch ${options.branch} is at ${current}, not at ${options.tip}: nothing was landed`);
   const prune = tidy(['prune', options.repo, '--base', options.base, '--apply']);
   notes.push(prune.ok ? 'landed before a restart; the lane\'s leftovers are pruned' : `landed before a restart; prune did not finish: ${reason(prune)}`);
-  return finishLanding(options, { ...range, restart: true, findings: [], notes });
+  return finishRestart(options, range, notes);
 }
 
 /** Step 4: rebase onto the base without landing; returns the rebased tip. */
@@ -157,8 +162,7 @@ function rebaseStep(options, expected) {
 
 /** Step 5: `git-tidy land` at the rebased tip. `{ moved: true, tip }` when the base moved, else what landed. */
 function landStep(options, rebased) {
-  const waiver = waivesUi(options) ? ['--owner-waive-ui', options.ownerWaiveUi, '--status-file', options.statusFile, '--close-row', options.closeRow] : [];
-  const optional = [...(options.brief === null ? [] : ['--brief', options.brief]), ...waiver];
+  const optional = [...(options.brief === null ? [] : ['--brief', options.brief]), ...(options.matrix === null ? [] : ['--matrix', options.matrix])];
   const run = tidy(['land', options.branch, options.repo, '--base', options.base, '--tip', rebased, ...optional, '--json']);
   const result = parseJson(run.out);
   if (run.status === 5) return { moved: true, tip: result?.tip ?? rebased };
@@ -167,16 +171,24 @@ function landStep(options, rebased) {
   if (run.status !== 0 && run.status !== 1) stop(14, 'tool-failed', `git-tidy land failed (exit ${run.status}): ${reason(run)}`);
   const findings = (result?.findings ?? []).map(({ kind, subject, detail }) => `${kind} ${subject} ${detail}`);
   const notes = result?.cleanupRefused ? [`cleanup skipped: ${result.cleanupRefused}`] : [];
-  return { moved: false, to: result?.tip ?? baseTip(options), from: result?.from ?? null, findings, notes };
+  return { moved: false, to: result?.tip ?? baseTip(options), from: result?.from ?? null, findings, notes, uiPlan: provedPlan(result?.uiPlan) };
+}
+
+/** The plan `git-tidy land` proved (its JSON `uiPlan`), or null when it set none or the value has another shape (no pointer, never a guess). */
+function provedPlan(value) {
+  const sound = typeof value?.depth === 'string' && Array.isArray(value.followUps) && value.followUps.every((line) => typeof line === 'string');
+  return sound ? { depth: value.depth, followUps: value.followUps } : null;
 }
 
 /**
  * Step 5 with the tip and union-row checks and the done-check before it: the checks of the rebased tip, then `git-tidy land --tip` of that same
- * tip, which lands only that sha (a base that moved since rewrites it: exit 5, and the loop rebases and checks again).
+ * tip, which lands only that sha (a base that moved since rewrites it: exit 5, and the loop rebases and checks again). The check plan is
+ * computed again for every rebased tip (F1: never one of an earlier base); its `tests` decide whether done-check tests must be ok.
  */
 function checkedLandStep(options, rebased) {
   checkTipRows(options, rebased);
-  const checked = checkRebasedTip(options, rebased);
+  const plan = planAt(options, baseTip(options), rebased, options.matrix);
+  const checked = checkRebasedTip(options, rebased, { testsNeeded: plan.tests });
   const landed = landStep(options, rebased);
   return landed.moved ? landed : { ...landed, notes: [...checked.lines, ...landed.notes], evidence: checked.evidence };
 }
@@ -206,14 +218,13 @@ export function landLoop(options, steps) {
 }
 
 /** Steps 1-6; the result is `{ code, state, lines, to, from }`; a refusal is a thrown Stop. */
-function land(options) {
-  assertReviewedIsAncestor(options);
-  // The owner's waiver is read only from the STATUS.md that holds the close row (outside the repo), checked before anything runs;
-  // git-tidy land checks the same rule again right before it lands.
-  const waiverProblem = waivesUi(options) ? ownerWaiverProblem({ statusFile: options.statusFile, closeRow: options.closeRow, repo: options.repo }) : null;
-  if (waiverProblem !== null) throw new UsageError(waiverProblem);
-  checkDisk();
+function land(parsed) {
+  assertReviewedIsAncestor(parsed);
+  // The lane's matrix comes from its road beside the STATUS.md (the lead's file), never from the lane; read once, before anything runs.
+  const options = { ...parsed, matrix: laneMatrix(parsed) };
   const current = refTip(options);
+  if (current === options.tip) requireBriefForApp(options); // exit 2 before anything runs
+  checkDisk();
   if (current !== options.tip) return resumeLanding(options, current);
   return finishLanding(options, { ...landLoop(options, REAL_STEPS), restart: false });
 }

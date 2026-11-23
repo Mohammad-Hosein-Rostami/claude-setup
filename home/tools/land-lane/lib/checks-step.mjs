@@ -1,6 +1,7 @@
 // Purpose: the done-check step of `land-lane` (design "Land check" and the risk review): after the rebase, run or reuse `done-check run --where land`
-// on the lane at the rebased tip, refuse new failures (exit 4), and ask for the one review of a risky lane (exit 10).
-// Exports: assertReviewedIsAncestor(options), checkRebasedTip(options, rebased) -> { lines, evidence }.
+// on the lane at the rebased tip, refuse new failures (exit 4), refuse logic the UI check plan found that no test ran (exit 4: done-check
+// `tests` none related or not run), and ask for the one review of a risky lane (exit 10).
+// Exports: assertReviewedIsAncestor(options), checkRebasedTip(options, rebased, { testsNeeded }) -> { lines, evidence }.
 // Invariants: the check runs on a folder whose HEAD is exactly the rebased tip and whose tree is clean (the lane's own worktree, the worktree git
 //   lists for the branch, or a temporary detached one that is always removed), so what is checked is what lands. A done-check that cannot run,
 //   times out or answers something unreadable is exit 14, never a pass (P3). `--accept-open` covers only the `tests-weakened` kind: a new type,
@@ -100,14 +101,24 @@ function judgeReview(options, verdict) {
     'nothing was landed: run the one review of the lane and give its tip with --reviewed <sha> (the --tip or an ancestor of it), or give --skip-review "<reason>"');
 }
 
+/** Exit 4 when the check plan has logic (`tests`) and the done-check's tests did not run and pass: none related, not run, or missing. */
+function requireTests(verdict, base) {
+  const result = verdict.row.checks.tests?.result;
+  if (result === 'ok') return;
+  stop(4, 'checks-red', verdict.line, `the change has logic: a test must run it (done-check tests: ${result ?? 'no result'})`,
+    `nothing was landed; the lane is rebased onto ${base}: add a test that runs the changed logic (or relate one to it) and land again`);
+}
+
 /**
  * Runs or reuses the done-check on the rebased tip and applies its verdict.
  * @param {object} options the parsed arguments
  * @param {string} rebased the lane's tip after the rebase check
+ * @param {{ testsNeeded?: boolean }} [plan] `testsNeeded`: the UI check plan found logic, so done-check `tests` must be ok
  * @returns {{ lines: string[], evidence: string[] }} what to print and what to add to the close row's evidence
- * @throws {import('./stop.mjs').Stop} exit 4 (new failures or an open weakened item), 10 (review needed), 14 (the check could not run)
+ * @throws {import('./stop.mjs').Stop} exit 4 (new failures, an open weakened item, or logic no test ran), 10 (review needed), 14 (the
+ *   check could not run)
  */
-export function checkRebasedTip(options, rebased) {
+export function checkRebasedTip(options, rebased, { testsNeeded = false } = {}) {
   const base = git(options.repo, ['rev-parse', '--verify', `refs/heads/${options.base}`]);
   if (!base.ok) stop(14, 'tool-failed', `the base ${options.base} could not be read: ${firstLine(base)}`);
   const verdict = withLaneFolder(options, rebased, (folder) => {
@@ -116,6 +127,7 @@ export function checkRebasedTip(options, rebased) {
   });
   const lines = [verdict.line];
   if (verdict.verdict === 'block') lines.push(judgeFailures(options, verdict, options.base));
+  if (testsNeeded) requireTests(verdict, options.base);
   if (verdict.risk.length > 0) lines.push(judgeReview(options, verdict));
   const evidence = lines.slice(1).map((line) => line.replace(PIPE, '/'));
   return { lines, evidence };

@@ -136,7 +136,9 @@ test('ui-proof: a changed UI file (the proof is always on) with no visual-qa PAS
   git(world.dir, 'checkout', '-q', '-b', 'lane/ui');
   const tip = commit(world.dir, 'page.css', 'body { color: red; }\n');
   git(world.dir, 'checkout', '-q', 'main');
-  const result = landed(world, 'lane/ui', tip);
+  const brief = join(makeTempDir('land-lane-brief-'), 'brief.md'); // a lane that changes the app lands with its brief (the plan reads it)
+  writeFileSync(brief, 'Make the page text red.\n');
+  const result = landed(world, 'lane/ui', tip, ['--brief', brief]);
   assert.equal(result.status, 6, result.stdout + result.stderr);
   assert.equal(firstLineOf(result), 'land: ui-proof');
   assert.ok(branches(world.dir).includes('lane/ui'));

@@ -3,21 +3,21 @@
 // whose work is already on the base; `prune` removes exactly those, and only when it can prove they are merged.
 // Usage: git-tidy.mjs check [dir] [--base <branch>] [--json]
 //        git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--include-recent] [--json]
-//        git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] --tip <sha> [--brief <file>]
-//                     [--owner-waive-ui <reason> --status-file <abs STATUS.md> --close-row <road row id>] [--json]
+//        git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] --tip <sha> [--brief <file>] [--matrix <abs lane matrix>] [--json]
 //   --tip is the full sha the caller expects the lane to be at: required for a full land (exit 2 without it), optional with --rebase-only;
 //   a branch that is not at it exits 9 before anything changes; a full land lands only that sha (a rebase that rewrites it is exit 5, the lane
-//   stays rebased: land again with the new tip). `--checks` (a removed flag) is refused with exit 2.
-//   --owner-waive-ui skips only the UI proof of a full land, and only when the STATUS.md lies outside every worktree of the repo (real paths),
-//   holds the close row and the owner's decision line for its road (ui-proof/lib/owner-waiver.mjs); else, or with a bad reason, exit 2
-//   and nothing changes. The output says so.
+//   stays rebased: land again with the new tip). The removed flags `--checks` and `--owner-waive-ui` are refused with exit 2.
+//   --brief is the lane's brief: the request the UI check plan reads, and the paths that may add files over the size limit;
+//   --matrix is the lane's coverage matrix (its Figma frames, widths and locales raise the plan; never lower it).
 //        git-tidy.mjs range <sha> [dir] [--base <branch>] [--landed <sha>] [--json]
 //        --include-recent  lifts only the rule that keeps a worktree used in the last 60 minutes, and not for a lane
 //                          with no commit of its own yet (it stays protected for those 60 minutes)
 // land: rebases the lane onto the base, fast-forwards the base and cleans up (no test or review step). Exit: 0 landed and check
 //   clean (or --rebase-only done), 1 landed with findings left, 2 usage or base folder not
-//   ready, 3 conflict, 5 base moved (during the landing, or since the `--tip` was rebased), 6 ui-proof: the UI files differ from the base and
-//   `ui-proof check --tip <rebased tip>` does not exit 0 (or the ui-proof tool cannot be loaded; always on unless the owner's waiver holds), 7 new-file-size:
+//   ready, 3 conflict, 5 base moved (during the landing, or since the `--tip` was rebased), 6 ui-proof: the check plan of the rebased
+//   diff (`ui-proof check --plan --base <base> --tip <rebased tip>` with the brief and the matrix, lib/ui-plan-check.mjs) is not proved, or
+//   it is not none and no --brief was given, or the ui-proof tool cannot be loaded (always on: no waiver); a proved plan other than pixel
+//   prints `ui plan <depth>: proved` and its `follow-up:` lines (JSON `uiPlan`), 7 new-file-size:
 //   the lane adds a file over the commit gate's MAX_NEW_FILE_BYTES that the `--brief` file does not name (no brief names none).
 //   8 upstream-moved: after a fetch of the base's upstream (timeout; offline is a WARN line), the upstream holds commits the base lacks:
 //   `git pull --rebase` first. 9 tip-moved: `refs/heads/<branch>` is not the `--tip` sha (changed since the caller read it; nothing was touched).
@@ -35,9 +35,6 @@
 import { runCheck } from './lib/check.mjs';
 import { UsageError } from './lib/git.mjs';
 import { readFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { landLane } from './lib/land.mjs';
 import { runLaneCommand } from './lib/lane-cli.mjs';
 import { landedRange } from './lib/landed-range.mjs';
@@ -49,31 +46,20 @@ const EXIT_FINDINGS = 1;
 const EXIT_USAGE = 2;
 const EXIT_NOT_FOUND = 1;
 const MAX_BRIEF_BYTES = 1024 * 1024; // a brief is text; the first MB is what the commit gate reads too
-const UI_PROOF_TIMEOUT_MS = 60_000;
-const TOOLS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..');
-const USAGE = 'usage: git-tidy.mjs check [dir] [--base <branch>] [--json]\n       git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--include-recent] [--json]\n       git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] [--tip <sha>] [--brief <file>] [--owner-waive-ui <reason> --status-file <abs> --close-row <road row id>] [--json]\n       git-tidy.mjs range <sha> [dir] [--base <branch>] [--landed <sha>] [--json]\n       git-tidy.mjs lane claim|list|release|reclaim --repo <abs> ... (run `git-tidy.mjs lane` for its usage)';
+const USAGE = 'usage: git-tidy.mjs check [dir] [--base <branch>] [--json]\n       git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--include-recent] [--json]\n       git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] [--tip <sha>] [--brief <file>] [--matrix <abs>] [--json]\n       git-tidy.mjs range <sha> [dir] [--base <branch>] [--landed <sha>] [--json]\n       git-tidy.mjs lane claim|list|release|reclaim --repo <abs> ... (run `git-tidy.mjs lane` for its usage)';
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const COMMANDS = ['check', 'prune', 'land', 'range'];
-const VALUE_FLAGS = {
-  '--brief': ['land', 'brief'], '--tip': ['land', 'tip'], '--landed': ['range', 'landed'],
-  '--owner-waive-ui': ['land', 'ownerWaiveUi'], '--status-file': ['land', 'statusFile'], '--close-row': ['land', 'closeRow'],
+const VALUE_FLAGS = { '--brief': ['land', 'brief'], '--tip': ['land', 'tip'], '--landed': ['range', 'landed'], '--matrix': ['land', 'matrix'] };
+const REMOVED_FLAGS = {
+  '--checks': 'landing has no test or review step, and the UI proof always runs',
+  '--owner-waive-ui': 'there are no UI waivers: the check plan of the rebased diff decides the UI proof (ui-proof plan)',
 };
-const WAIVER_FLAGS = ['ownerWaiveUi', 'statusFile', 'closeRow']; // given all together or not at all
 const ABSOLUTE_PATH = /^(\/|[A-Za-z]:[\\/])/;
-
-/** The waiver flags as one usage check: all three or none, a full land only, an absolute STATUS.md path. */
-function checkWaiverFlags(options) {
-  const given = WAIVER_FLAGS.filter((key) => options[key] !== null);
-  if (given.length === 0) return;
-  if (given.length !== WAIVER_FLAGS.length) throw new UsageError(`--owner-waive-ui, --status-file and --close-row go together. ${USAGE}`);
-  if (options.rebaseOnly) throw new UsageError(`--owner-waive-ui applies to a full land only (--rebase-only runs no UI proof). ${USAGE}`);
-  if (!ABSOLUTE_PATH.test(options.statusFile)) throw new UsageError(`--status-file must be an absolute path, got ${JSON.stringify(options.statusFile)}`);
-}
 
 function parseArgs(argv) {
   const [command, ...rest] = argv;
   if (!COMMANDS.includes(command)) throw new UsageError(USAGE);
-  const options = { command, branch: null, dir: null, base: null, json: false, apply: false, includeRecent: false, rebaseOnly: false, brief: null, tip: null, landed: null, ownerWaiveUi: null, statusFile: null, closeRow: null };
+  const options = { command, branch: null, dir: null, base: null, json: false, apply: false, includeRecent: false, rebaseOnly: false, brief: null, tip: null, landed: null, matrix: null };
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
     if (arg === '--json') options.json = true;
@@ -86,7 +72,7 @@ function parseArgs(argv) {
     } else if (arg === '--base') {
       if (rest[i + 1] === undefined || rest[i + 1].startsWith('--')) throw new UsageError(`--base needs a branch name. ${USAGE}`);
       options.base = rest[++i];
-    } else if (arg === '--checks') throw new UsageError(`--checks was removed: landing has no test or review step, and the UI proof always runs. ${USAGE}`);
+    } else if (Object.hasOwn(REMOVED_FLAGS, arg)) throw new UsageError(`${arg} was removed: ${REMOVED_FLAGS[arg]}. ${USAGE}`);
     else if (arg.startsWith('--')) throw new UsageError(`unknown flag ${arg} for ${command}. ${USAGE}`);
     else if ((command === 'land' || command === 'range') && options.branch === null) options.branch = arg;
     else if (options.dir === null) options.dir = arg;
@@ -96,7 +82,7 @@ function parseArgs(argv) {
   if (command === 'range' && options.branch === null) throw new UsageError(`range needs the sha to look for. ${USAGE}`);
   if (options.tip !== null && !FULL_SHA.test(options.tip)) throw new UsageError(`--tip needs a full 40-character sha, got ${JSON.stringify(options.tip)}. ${USAGE}`);
   if (command === 'land' && !options.rebaseOnly && options.tip === null) throw new UsageError(`land needs --tip <full sha of the lane's tip>. ${USAGE}`);
-  checkWaiverFlags(options);
+  if (options.matrix !== null && !ABSOLUTE_PATH.test(options.matrix)) throw new UsageError(`--matrix must be an absolute path, got ${JSON.stringify(options.matrix)}`);
   options.dir ??= process.cwd();
   return options;
 }
@@ -107,21 +93,26 @@ function runPrune(repo, options) {
   return options.apply ? pruneExitCode(items) : 0;
 }
 
-// The UI proof belongs to the ui-proof tool next to this one (its one definition of UI files, F7). It is on unless the owner waived it (ownerWaiverOf): when the tool
-// cannot be loaded, every landing is refused with that reason (fail closed), since no one can tell whether UI files changed.
-async function loadUiCheck() {
-  let changedUiFiles;
+/**
+ * The UI step of a full land (lib/ui-plan-check.mjs, which uses the ui-proof tool next to this one): `check(repoDir, baseSha, tip)` gives
+ * null when the check plan is proved, else the reason; `outcome()` is the last check's `{ plan, depth }`: what it proved (`{ depth,
+ * followUps }`, or null for no row pointer) and the depth it printed (null: today's visual-qa check). Always on, no waiver: when the step
+ * cannot be loaded every landing is refused with that reason (fail closed).
+ */
+async function loadUiCheck(options) {
+  let runPlanCheck;
   try {
-    ({ changedUiFiles } = await import('../ui-proof/lib/ui-files.mjs'));
+    ({ runPlanCheck } = await import('./lib/ui-plan-check.mjs'));
   } catch (error) {
-    return () => `the ui-proof tool cannot be loaded (${error.message}), so the UI files cannot be checked`;
+    return { check: () => `the ui-proof tool cannot be loaded (${error.message}), so the UI check plan cannot be proved`, outcome: () => ({ plan: null, depth: null }) };
   }
-  return (repoDir, baseSha, tip) => {
-    if (changedUiFiles(repoDir, baseSha, tip).length === 0) return null;
-    const run = spawnSync(process.execPath, [join(TOOLS_DIR, 'ui-proof', 'ui-proof.mjs'), 'check', '--tip', tip, '--repo', repoDir], { encoding: 'utf8', timeout: UI_PROOF_TIMEOUT_MS });
-    if (run.status === 0) return null;
-    return (run.stdout || run.stderr || `ui-proof check did not finish (${run.error?.message ?? `exit ${run.status}`})`).trim().split('\n')[0];
+  let last = { plan: null, depth: null };
+  const check = (repoDir, baseSha, tip) => {
+    const { why, plan, depth } = runPlanCheck({ repoDir, baseSha, tip, brief: options.brief, matrix: options.matrix });
+    last = { plan, depth };
+    return why;
   };
+  return { check, outcome: () => last };
 }
 
 /** The brief's text (its first MB), or null with no --brief; an unreadable brief is a usage error, never "no brief". */
@@ -140,32 +131,16 @@ function runRange(repo, options) {
   return found ? 0 : EXIT_NOT_FOUND;
 }
 
-/**
- * The owner's ui-proof waiver, checked before anything changes: null without --owner-waive-ui, else the reason when the STATUS.md lies
- * outside the repo, holds the close row and the owner's line for its road. Fails closed: a bad reason, a missing row or line, a STATUS.md
- * inside the repo or a waiver module that cannot be loaded is a UsageError.
- */
-async function ownerWaiverOf(repo, options) {
-  if (options.ownerWaiveUi === null) return null;
-  let waiver;
-  try {
-    waiver = await import('../ui-proof/lib/owner-waiver.mjs');
-  } catch (error) {
-    throw new UsageError(`--owner-waive-ui: the waiver rule cannot be loaded (${error.message}), so the UI proof stays on`);
-  }
-  const problem = waiver.waiverReasonProblem(options.ownerWaiveUi) ?? waiver.ownerWaiverProblem({ statusFile: options.statusFile, closeRow: options.closeRow, repo: repo.dir });
-  if (problem !== null) throw new UsageError(problem);
-  return options.ownerWaiveUi;
-}
-
 async function runLand(repo, options) {
   const briefText = briefTextOf(options.brief);
-  const uiWaived = await ownerWaiverOf(repo, options);
-  // Rebase, ff-only and prune always run; the new-file size rule holds every full landing, the UI proof every one the owner did not waive.
-  const uiCheck = uiWaived === null ? await loadUiCheck() : () => null;
-  const checks = options.rebaseOnly ? {} : { uiCheck, briefText };
+  // Rebase, ff-only and prune always run; the new-file size rule and the UI check plan hold every full landing.
+  const ui = await loadUiCheck(options);
+  const checks = options.rebaseOnly ? {} : { uiCheck: ui.check, briefText };
   const landed = landLane(repo, options.branch, { rebaseOnly: options.rebaseOnly, tip: options.tip, ...checks });
-  const result = uiWaived === null ? landed : { ...landed, uiWaived };
+  // The JSON keys are added only when set, so a lane with no UI file (and a pixel plan) prints what it printed before.
+  const { plan, depth } = ui.outcome();
+  const extra = landed.status === 'landed' && plan !== null ? { uiPlan: plan } : landed.status === 'ui-proof' && depth !== null ? { uiDepth: depth } : {};
+  const result = { ...landed, ...extra };
   console.log(formatLand(result, options.json));
   return landExitCode(result);
 }
