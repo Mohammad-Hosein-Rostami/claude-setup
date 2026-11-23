@@ -9,7 +9,7 @@
 // before the agent starts, closed only at its SubagentStop, never dropped for idleness, so a writer cut off by an exit or a usage-limit
 // stop is still listed in the next session. readOnlyAgents keeps the ids of started read-only launches after their stop, because
 // commit-gate's read-only hold runs on the same SubagentStop as the stop record (hooks of one event run in parallel).
-// Flags (round 9, r9-writer-gate): `isolated` (launched with isolation "worktree", or a brief whose `worktree:` field (WORKTREE_PREFIX)
+// Flags (round 9, r9-writer-gate): `isolated` (launched with isolation "worktree", or a brief whose `worktree:` field (lib/brief-fields.mjs)
 // names a lane worktree laneWorktreeOf accepts and no open record of the session holds, lib/agent-launches.mjs) and `readOnly` (a read-only brief,
 // isReadOnlyBrief). The `worktree:` value is the writer's own text, so it is trusted only after `git worktree list` of that folder lists its real path as a linked worktree that is not the lead's folder; git runs
 // hardened (lib/gated-folder.mjs runGit) within WORKTREE_DEADLINE_MS, and a git that fails, hangs or is missing means not isolated.
@@ -21,6 +21,7 @@ import { readSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { BACKTICK, UNPRINTABLE, isInside } from './agent-brief.mjs';
+import { namedWorktrees, unquoted, worktreeValues } from './brief-fields.mjs';
 import { checkedTempRoot } from './edit-log.mjs';
 import { readLaunchRecord } from './agent-launches.mjs';
 import { runGit } from './gated-folder.mjs';
@@ -35,23 +36,11 @@ const DEFAULT_TYPE = 'general-purpose'; // what an Agent call with no subagent_t
 const READ_ONLY_BRIEF_PREFIXES = ['read-only:', 'scratchpad-only:'];
 const WRITER_TYPES = new Set(['implementer', 'ui-implementer', 'general-purpose', 'claude']);
 const READ_ONLY_TYPES = new Set(['scout', 'runner', 'Explore', 'Plan', 'architect']);
-// A brief field that names the writer's own lane worktree, as `worktree: <absolute path>` (exact case): at the start of a trimmed line,
-// after a Markdown list marker (`- worktree: ...`), or after a header separator (`BASE: <sha> · BRANCH: <name> · worktree: <path>`)
-const WORKTREE_PREFIX = 'worktree:';
-const LIST_MARKER = /^[-*+][ \t]+/;
-const HEADER_SEPARATORS = '·|;,';
-const FIELD_SEPARATORS = '·|'; // always a header separator; `,` and `;` are prose punctuation too, so they count only in a KEY_FIELD header
-const KEY_FIELD = /^\s*[A-Za-z][\w-]*:\s*\S/; // a `KEY: value` header field (`BASE: <sha>`, `BRANCH: <name>`)
-const VALUE_END = /[·|]|[;,](?=\s|$)/; // a value ends at the next · or |, or a ; or , before a blank or the end (a path may hold ; or ,)
-const VALUE_QUOTES = '"\'`'; // a value in these marks is read whole, up to its closing mark (it may hold any separator)
 const NEAR_MISS = /worktree:/i; // a line that meant to name a worktree, quoted (at most MAX_QUOTED_LINE_CHARS) when nothing was taken
 const MAX_QUOTED_LINE_CHARS = 160;
 const MAX_QUOTED_VALUES = 3; // how many of a brief's worktree values the "name one" advice quotes
 // The head of the prompt searched for `worktree:` lines and brief paths: a brief is a few KB, text past this is pasted material
 const MAX_SCAN_CHARS = 32 * 1024;
-// A brief names one lane worktree (it may repeat it); more fields than this are refused as naming many. Only one distinct value is ever
-// looked up, so a launch makes at most one git call
-const MAX_WORKTREE_LINES = 8;
 const MAX_BRIEF_FILES = 3; // brief files a prompt names ("Read <path>.md and follow it"), read for a `worktree:` line
 const BRIEF_FILE_BYTES = 64 * 1024; // the head of a named brief file that is read and searched whole (a brief is a few KB)
 const MAX_PATH_CHARS = 4096; // PATH_MAX on Linux: a longer value is not looked up
@@ -59,8 +48,6 @@ const WORKTREE_GIT_MS = 1000; // one `git worktree list` takes a few ms
 const WORKTREE_DEADLINE_MS = 1500; // all lookups of one launch: with the copy-branch gate's 2 s, well under the hook's 5 s timeout
 const HOME_PREFIX = /^~(?=[\\/])/; // `~/...`; `~user` is left as it is (and is then no absolute path)
 const NETWORK_PATH = /^[\\/]{2}/; // UNC or device path: on Windows a lookup reaches the network or a pipe, so it is never looked up
-const SURROUNDING_MARKS = '`\'"()';
-const TRAILING_PUNCTUATION = ',.;:';
 
 /** The folder of the launch stores (one `<session>.json` each). */
 export function writersDirOf(env) {
@@ -132,80 +119,8 @@ export function isReadOnlyBrief(prompt) {
   return prompt.split(/\r?\n/).some((line) => READ_ONLY_BRIEF_PREFIXES.some((prefix) => line.trim().startsWith(prefix)));
 }
 
-/** The word without quotes, backticks and brackets around it and without trailing sentence punctuation (a loop: linear in its length). */
-function unquoted(word) {
-  let start = 0;
-  let end = word.length;
-  while (start < end && SURROUNDING_MARKS.includes(word[start])) start += 1;
-  while (end > start && (SURROUNDING_MARKS + TRAILING_PUNCTUATION).includes(word[end - 1])) end -= 1;
-  return word.slice(start, end);
-}
-
-/**
- * The value of a field from `rest`, the text after its `worktree:`, and how many characters of `rest` it takes: a value in quote marks
- * whole, up to its closing mark (`"/x/lane|y"`); else up to VALUE_END, without the marks and punctuation around it.
- */
-function fieldValue(rest) {
-  const start = rest.length - rest.trimStart().length;
-  const close = VALUE_QUOTES.includes(rest[start]) ? rest.indexOf(rest[start], start + 1) : -1;
-  if (close !== -1) return { value: rest.slice(start + 1, close).trim(), taken: close + 1 };
-  const end = rest.search(VALUE_END);
-  const taken = end === -1 ? rest.length : end;
-  return { value: unquoted(rest.slice(0, taken).trim()), taken };
-}
-
-/**
- * The `worktree:` values of one trimmed line, at most `limit`, in one walk over its segments (linear in the line). A field opens the line
- * or a segment after `·` or `|`, or after `,` or `;` when every segment before it is a `KEY: value` field: in "Lane A landed, worktree:
- * /a, leave it" the comma is prose. A separator inside a value read belongs to the value.
- */
-function lineFields(body, limit) {
-  const values = [];
-  let header = true; // every segment so far is a KEY_FIELD (or a field read)
-  let readUpTo = 0; // the end of the last value read
-  for (let start = 0, before = ''; start <= body.length && values.length < limit;) {
-    let end = start;
-    while (end < body.length && !HEADER_SEPARATORS.includes(body[end])) end += 1;
-    if (start >= readUpTo) {
-      const segment = body.slice(start, end);
-      const at = start + segment.length - segment.trimStart().length;
-      if (body.startsWith(WORKTREE_PREFIX, at) && (start === 0 || FIELD_SEPARATORS.includes(before) || header)) {
-        const { value, taken } = fieldValue(body.slice(at + WORKTREE_PREFIX.length));
-        values.push(value);
-        readUpTo = at + WORKTREE_PREFIX.length + taken;
-      } else header &&= KEY_FIELD.test(segment);
-    }
-    before = body[end];
-    start = end + 1;
-  }
-  return values;
-}
-
-/** The `worktree:` fields of a text, in order, as { line, value }: at most `limit`, so each value's scan to its end runs a bounded number of times. */
-function worktreeFields(text, limit) {
-  const fields = [];
-  for (const line of text.split(/\r?\n/)) {
-    for (const value of lineFields(line.trim().replace(LIST_MARKER, ''), limit - fields.length)) fields.push({ line, value });
-    if (fields.length >= limit) break;
-  }
-  return fields;
-}
-
-/**
- * The `worktree:` fields of the brief texts (at most one past MAX_WORKTREE_LINES), their distinct values in order, and whether the brief
- * names more than one worktree: two distinct values, or more fields than MAX_WORKTREE_LINES (the rest is unread, so never one picked).
- */
-function namedWorktrees(texts) {
-  const fields = texts.flatMap((text) => worktreeFields(text, MAX_WORKTREE_LINES + 1));
-  const values = [...new Set(fields.map(({ value }) => value))];
-  return { fields, values, many: values.length > 1 || fields.length > MAX_WORKTREE_LINES };
-}
-
-/**
- * The values of a text's `worktree:` fields (WORKTREE_PREFIX), unquoted, in order; pure (nothing is looked up), and the caller bounds the
- * text (MAX_SCAN_CHARS, BRIEF_FILE_BYTES). @param {string} text a brief or its head @returns {string[]} at most MAX_WORKTREE_LINES values
- */
-export const worktreeValues = (text) => worktreeFields(text, MAX_WORKTREE_LINES).map(({ value }) => value);
+// The field reading lives in lib/brief-fields.mjs; worktreeValues stays exported here for its callers
+export { worktreeValues };
 
 /** The absolute `.md` paths a prompt names (`~/` is the home folder), at most MAX_BRIEF_FILES; UNC and device paths are left out. */
 function namedBriefFiles(prompt, env) {
