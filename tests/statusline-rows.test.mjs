@@ -269,3 +269,32 @@ test('the reserved states: late yellow, past the 85 % margin red, a failed check
   const idleReserved = mockupRows(byName['idle-in-repo'], {}, 100).flatMap(colouredTexts).filter(([code]) => ['31', '33', '35'].includes(code));
   assert.deepEqual(idleReserved, [['33', ', empty ~22:32']], 'idle: the only reserved colour is the 5 h pace');
 });
+
+test('R33: an empty 5 h window shows its reset clock, never a pace that has already passed', () => {
+  const view = viewOf(screenshotBoard(), NOW, NO_COLOR_ENV);
+  const resetS = NOW / 1000 + 80 * 60;
+  const sample = (t, used) => ({ t, five_hour: { used_percentage: used, resets_at: resetS } });
+  // The owner's case: two samples whose pace ran out 45 min ago, the live window now at 100 % used.
+  view.limitsFile = { account: 'mine', samples: [sample(NOW - 90 * 60_000, 90), sample(NOW - 60 * 60_000, 95)] };
+  view.input = { ...view.input, rate_limits: { five_hour: { used_percentage: 100, resets_at: resetS } } };
+  const row = sessionRow(view, lookFor(NO_COLOR_ENV, 200));
+  assert.match(row, /5h 0% left, resets 10:20/, row);
+  assert.doesNotMatch(row, /empty ~/, row);
+});
+
+test('R33: a 5 h pace that already passed gives way to the reset clock while the window is not yet empty', () => {
+  const view = viewOf(screenshotBoard(), NOW, NO_COLOR_ENV);
+  const resetS = NOW / 1000 + 80 * 60;
+  const sample = (t, used) => ({ t, five_hour: { used_percentage: used, resets_at: resetS } });
+  view.limitsFile = { account: 'mine', samples: [sample(NOW - 90 * 60_000, 90), sample(NOW - 60 * 60_000, 95)] };
+  view.input = { ...view.input, rate_limits: { five_hour: { used_percentage: 99.5, resets_at: resetS } } };
+  assert.match(sessionRow(view, lookFor(NO_COLOR_ENV, 200)), /5h <1% left, resets 10:20/);
+});
+
+test('R33: with no live 5 h window, an empty last sample shows its reset clock', () => {
+  const view = viewOf(screenshotBoard(), NOW, NO_COLOR_ENV);
+  const resetS = NOW / 1000 + 80 * 60;
+  view.limitsFile = { account: 'mine', samples: [{ t: NOW - 5 * 60_000, five_hour: { used_percentage: 100, resets_at: resetS } }] };
+  view.input = { ...view.input, rate_limits: undefined };
+  assert.match(sessionRow(view, lookFor(NO_COLOR_ENV, 200)), /5h 0% left, 5 min ago, resets 10:20/);
+});

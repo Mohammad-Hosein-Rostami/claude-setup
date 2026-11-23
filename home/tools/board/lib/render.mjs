@@ -16,7 +16,7 @@
 // while `current_usage` is null or all zero (before the first call, after /compact: case 9); a limit shows `<1% left` rather than
 // `0%` while usable, and from 60 % used its reset clock rounded up with the weekday when not today (case 10); with no live 5 h
 // window, the account's last sample with its age, else no 5 h field (spec-tui-2); `$` is not on the line (case 11); the 5 h pace
-// (`, empty ~16:10`) only when it comes before the reset, from two samples of one window, with the age of the newest when older
+// (`, empty ~16:10`) only while still ahead and before the reset (an empty window or a passed pace shows `, resets 14:00`, R33), from two samples of one window, with the age of the newest when older
 // than 5 min; it never notifies. From 150k tokens `/clear` follows the context. The session row drops acct, then 7d, then the 5 h
 // clock.
 // Colour (cells.mjs, RC14): model, effort, context and limit values `session`, clocks `time`, labels dim; yellow from 60 % used,
@@ -99,27 +99,43 @@ function windowPart(label, win, drop) {
   return dimLabel({ text: `${label} ${leftText(win.used_percentage)}`, state: stateOfUsed(win.used_percentage), drop }, label);
 }
 
-/** The 5 h clock after its value: the pace `, empty ~16:10` (yellow) when it comes before the reset, else from 60 % used `, resets 17:40`. */
+/**
+ * The 5 h clock after its value: the pace `, empty ~16:10` (yellow) while it is still ahead and comes before the reset, else
+ * from 60 % used `, resets 17:40`. A window already empty, or a pace already passed, shows the reset (owner R33: the reset
+ * clock stands beside `5h 0% left`, never a past `empty ~` time).
+ */
 function fiveClockPart(limitsFile, win, clock) {
   const pace = paceOf(limitsFile, clock.nowMs);
-  if (pace !== null) {
+  const empty = isNumber(win?.used_percentage) && win.used_percentage >= PERCENT;
+  if (pace !== null && !empty && pace.outMs > clock.nowMs) {
     const age = pace.ageMin > SAMPLE_AGE_SHOWN_MIN ? ` (seen ${pace.ageMin} min ago)` : '';
     return { text: `, empty ~${clockOf(pace.outMs, clock.nowMs, clock.timeZone)}${age}`, state: STATE.warn, join: '', drop: 1 };
   }
-  if (!isNumber(win?.used_percentage) || win.used_percentage < WARN_USED_PCT || !isNumber(win.resets_at)) return null;
-  const at = clockOf(win.resets_at * MS_PER_S, clock.nowMs, clock.timeZone, true);
+  if (!isNumber(win?.used_percentage) || win.used_percentage < WARN_USED_PCT) return null;
+  return resetsPart(win.resets_at, clock);
+}
+
+/** `, resets 17:40` (weekday when not today) for a reset in the future, else null. */
+function resetsPart(resetsAtS, clock) {
+  if (!isNumber(resetsAtS) || resetsAtS * MS_PER_S <= clock.nowMs) return null;
+  const at = clockOf(resetsAtS * MS_PER_S, clock.nowMs, clock.timeZone, true);
   return { text: `, resets ${at}`, spans: [{ text: ', resets ' }, { text: at, state: STATE.time }], join: '', drop: 1 };
 }
 
-/** With no live 5 h window: this account's last sample with its age when its window has not reset since, else null (hidden). */
-function lastSeenFive(limitsFile, nowMs) {
+/**
+ * With no live 5 h window: this account's last sample with its age when its window has not reset since, plus its reset clock
+ * from 60 % used (R33), else null (hidden).
+ */
+function lastSeenFive(limitsFile, clock) {
+  const { nowMs } = clock;
   // The newest sample that had the window: a later sample taken while the input lacked it says nothing about its value.
   const sample = (Array.isArray(limitsFile?.samples) ? limitsFile.samples : []).findLast((s) => isNumber(s?.five_hour?.used_percentage));
   const five = sample?.five_hour;
   const current = isNumber(five?.used_percentage) && isNumber(sample.t) && (!isNumber(five.resets_at) || five.resets_at * MS_PER_S > nowMs);
   if (!current) return null;
   const ago = Math.max(0, Math.round((nowMs - sample.t) / MS_PER_MIN));
-  return { text: `5h ${leftText(five.used_percentage)}, ${ago} min ago`, state: STATE.dim };
+  const reset = five.used_percentage >= WARN_USED_PCT ? resetsPart(five.resets_at, clock)?.text ?? '' : '';
+  return { text: `5h ${leftText(five.used_percentage)}, ${ago} min ago${reset}`, state: STATE.dim };
 }
 
 /** The session row's parts: model and effort, context, the two limit windows with the 5 h clock, the account. */
@@ -131,7 +147,7 @@ function sessionParts({ input, limitsFile, account, env, nowMs, timeZone }, look
   return [
     labelled('session', { text: `${name}${effort}`, state: STATE.session }, look),
     ...contextParts(input.context_window, env),
-    windowPart('5h', five, 0) ?? lastSeenFive(limitsFile, nowMs), // null: the field hides
+    windowPart('5h', five, 0) ?? lastSeenFive(limitsFile, clock), // null: the field hides
     windowPart('5h', five, 0) === null ? null : fiveClockPart(limitsFile, five, clock),
     windowPart('7d', input.rate_limits?.seven_day, 2),
     account ? dimLabel({ text: `acct ${cleanText(account, look).slice(0, MAX_NAME_CHARS)}`, state: STATE.session, drop: 3 }, 'acct')
