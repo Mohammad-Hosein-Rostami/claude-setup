@@ -7,6 +7,9 @@
 //        --write-seed  also write the finished rows and jobs of every table (table hash, size, kind, done, cost; no ids, no text)
 //        --projects    Claude Code's projects folder (default ~/.claude/projects)
 //        --state-dir   the estimate state root whose activity index is used and updated (default ~/.claude/state/estimate)
+//        backtest.mjs --freeze <STATUS.md>=<session-id> ... --out <dir> [--store <STATUS.md>=<table.json>] [--projects <dir>]
+//        --freeze      writes the anonymized frozen tables (<dir>/backtest-data/t<n>.json) and the seed runs of model s1's kind pools
+//                      (<dir>/seed-runs.json) and replays nothing (lib/freeze-files.mjs, lib/freeze-data.mjs)
 // Replay (design 8.2): for every handed-over job, from 10 minutes after its start (not before the previous hand-over) in 20-minute
 // steps until the hand-over, the rows listed are the job's rows added by then (a `close:` row at its start, any other row at the
 // job's start) and not done; the pool is the other tables' rows and jobs plus this table's rows done by then (costs split among
@@ -16,7 +19,8 @@
 // Scores (lib/backtest-scores.mjs): the shown (median) time per job against the work to the hand-over, signed bias, 85% hit rate,
 // a naive baseline and the first estimate apart; printed beside the thresholds, never failing the run.
 // Exit codes: 0 every threshold passes (or there is no handed-over job); 1 a threshold fails; 2 usage or table problem.
-// Invariants: writes nothing but the activity index and, when asked, the seed file; prints no row text or transcript content.
+// Invariants: writes nothing but the activity index and, when asked, the seed file (--freeze: only its frozen files); prints no
+// row text or transcript content.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
@@ -26,6 +30,7 @@ import { activeRuns } from './lib/activity.mjs';
 import { jobSizeClass, scoreLines } from './lib/backtest-scores.mjs';
 import { nextCommitment } from './lib/commitment.mjs';
 import { costedRows, forecastWork, nearestRank, paceOf, referencePool, refusalOf } from './lib/forecast.mjs';
+import { freezeCommand } from './lib/freeze-files.mjs';
 import { UsageError, forecastSeedText, referenceRows, slowRowOf, storedJob } from './lib/from-files.mjs';
 import { parseInstant, parseWorkItems } from './lib/items.mjs';
 import { stateDir, tableId } from './lib/table-store.mjs';
@@ -38,6 +43,7 @@ const MIN_PER_HOUR = 60;
 const FIRST_INSTANT_MIN = 10; // the first forecast of a job is 10 minutes after its start
 const STEP_MIN = 20; // then one every 20 minutes until the hand-over
 const NO_SEED = { rows: [], jobs: [] };
+const FREEZE_FLAG = '--freeze'; // its own command: lib/freeze-files.mjs reads its options
 // Design 8.3: measured on the four frozen tables (3 seeds) and the threshold each number must meet. One threshold differs from the
 // design: instants with a time is >= 58, not >= 60. The design's checker had no 5-row minimum per size (MIN_CLASS_ROWS) and gave a
 // time at 63 of 64; this code keeps the minimum, so with auth left out its open L rows (4 finished L rows elsewhere) get the honest
@@ -235,6 +241,7 @@ function writeSeed(file, tables) {
 }
 
 function main(argv) {
+  if (argv.includes(FREEZE_FLAG)) return freezeCommand(argv);
   const options = readOptions(argv);
   const tables = options.jobs.map((job) => loadTable(job, options));
   if (options.seedFile !== undefined) writeSeed(options.seedFile, tables);
