@@ -1,10 +1,21 @@
-// Purpose: line 4 of the road gate (road-gate.mjs): the UI proof of a step, on the web path or on the terminal path.
-// Exports: uiLine(road, rows, ranges, step, ctx) -> one PASS or FAIL line; TERMINAL_PROOF_SUFFIX; setupReportsFolder().
+// Purpose: line 4 of the road gate (road-gate.mjs): the UI proof of a step, by the landings' check plans, on the web path or on the
+//   terminal path; and whether a step needs its step-start record (`road.mjs next`, the web path's baseline).
+// Exports: uiLine(road, rows, ranges, step, ctx) -> one PASS or FAIL line; stepNeedsBaseline(road, step) -> boolean;
+//   TERMINAL_PROOF_SUFFIX; setupReportsFolder().
+// Plan path (ui-kinds-spec.md section 3): land-lane computes each landing's check plan on the rebased diff and, once `ui-proof check
+//   --plan` proved it, ends the landing row's evidence with ` (ui plan <depth>: proved)` (ui-evidence.mjs planEvidence). When every
+//   landing of the step that changed a UI file ends so with a depth other than pixel, line 4 PASSes as proved by their plan. The suffix
+//   is read only from the landing row land-lane wrote (or its one done correction row, which holds the evidence land-lane printed),
+//   never from a lane report. Zero landings that changed a UI file is never "proved". A pixel landing or a UI landing with no suffix
+//   (older landings included) takes the web path, for the whole step; landings proved by their plan then need no step-start record.
 // Web path (owner standard: pixel-perfect web UI, never weakened): when any landing range of the step (a lane's or a fix row's
 //   `<road>.s<N>.fix-<name>`) changes UI files (`ui-proof changed` exit 1) or a lane has a coverage matrix path,
 //   `ui-proof check --tip <tip> --against-step <road>.s<N>` exit 0 and the step-start record taken at or before every `<from>`, except a
-//   range that ended at or before it from a row that is no UI lane and changed no UI file (landed early: its work is in the record). UI
-//   checks always run (owner decision CR5).
+//   range proved by its plan, or a range that ended at or before it from a row that is no UI lane and changed no UI file (landed early:
+//   its work is in the record). UI checks always run (owner decision CR5).
+// Baseline (`next`): a step needs its step-start record when a lane of it has a coverage matrix with Figma frames (a `figma` section or
+//   a non-empty `frames` list: the pixel chain); a matrix path that cannot be read as JSON counts as one (fail closed). Lanes with UI
+//   files and no such matrix are proved by their plan at land time instead.
 // Terminal path: a step whose UI is text in a terminal (every lane with a matrix says `none: <reason>`, and no landing range of the step
 //   changed a UI file: the status line and board renderers are `.mjs` that print rows) has no web page for visual-qa to check, so its
 //   proof is the owner's yes on a real render: a done STATUS row `<road>.s<N>.terminal-proof` whose evidence is exactly
@@ -14,17 +25,15 @@
 //   AskUserQuestion and records the answer with `status.mjs decision`, so `## Owner decisions` holds the bullet
 //   `- <same date> terminal proof <road>.s<N>: owner yes on <same path> (AskUserQuestion answer)` (status.mjs writes the date; a timeout
 //   default, `UNCONFIRMED ...`, is no such bullet). A step with any UI file changed or any matrix path never takes this path.
-// Owner waiver (owner decision 2026-11-23, web API-integration lanes): before both paths, a step PASSes as "waived by owner decision" when
-//   a landing of it ends its evidence with ` (ui-proof waived: owner decision)` (land-lane --owner-waive-ui), every landing that changed a
-//   UI file does too, and `## Owner decisions` holds the owner's granting `ui-proof waiver for road <road>` line (owner-waiver.mjs). Anything less
-//   leaves the step to the paths above, unchanged.
+// No waiver (owner R28, 2026-11-23: no kinds, no waivers): a landing that ends with the old ` (ui-proof waived: owner decision)` is no
+//   plan proof, so its step takes the web or terminal path.
 // Invariants: every exit other than the expected ones is FAIL (fail closed); `ctx.uiProof(argv)` runs the ui-proof tool and
 //   `ctx.isAncestor(a, b)` git's `merge-base --is-ancestor` exit, both with their timeouts (road-gate.mjs), so tests inject them.
-import { realpathSync, statSync } from 'node:fs';
+import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, sep } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { findSection } from '../../estimate/lib/items.mjs';
-import { UI_WAIVER_EVIDENCE, ownerWaiverLine } from '../../ui-proof/lib/owner-waiver.mjs';
+import { DEPTHS, planEvidence } from '../../ui-proof/lib/ui-evidence.mjs';
 import { correctionRows, isUiLane, landedLine } from './road-state.mjs';
 
 export const TERMINAL_PROOF_SUFFIX = '.terminal-proof';
@@ -34,14 +43,18 @@ const RECORD_AT = /\bat ([0-9a-f]{7,40})\b/;
 const SETUP_REPORTS = ['Desktop', 'claude-setup-reports']; // under HOME: the setup's default reports tree (docs/daily-use.md)
 const OWNER_DECISIONS = 'Owner decisions'; // the STATUS.md section status.mjs `decision` writes to
 const DECISION_BULLET = /^- (\d{4}-\d{2}-\d{2}) terminal proof (\S+): owner yes on (.+) \(AskUserQuestion answer\)$/;
+const PIXEL = 'pixel'; // the full Figma chain: its landings need the web path's visual-qa step proof, whatever their suffix says
 
 const pass = (text) => `PASS ${text}`;
 const fail = (text) => `FAIL ${text}`;
 const day = (ms) => new Date(ms).toISOString().slice(0, 10);
 
-/** True when the step-start record `at` was taken at or before the range's `from`, or the range (no UI lane, no UI file) ended at or before it. */
-function recordCovers(ctx, at, range, uiChanged) {
-  if (ctx.isAncestor(at, range.landed.from) === 0) return true;
+/**
+ * True when the step-start record `at` was taken at or before the range's `from`, the range is proved by its plan, or the range (no UI
+ * lane, no UI file) ended at or before it.
+ */
+function recordCovers(ctx, at, range, { uiChanged, byPlan }) {
+  if (byPlan || ctx.isAncestor(at, range.landed.from) === 0) return true;
   const uiLane = range.entry !== null && isUiLane(range.entry.lane, ctx.isUiPath); // a fix row (no entry) is no lane: its own range counts
   return !uiChanged && !uiLane && ctx.isAncestor(range.landed.to, at) === 0;
 }
@@ -131,17 +144,34 @@ function landingEvidence(rows, id) {
   return found.length === 1 && found[0].done != null ? String(found[0].evidence ?? '') : '';
 }
 
+/** The plan depth the landing's evidence ends with (` (ui plan <depth>: proved)`, written by land-lane), or null when it ends with none. */
+function provedDepth(rows, id) {
+  const evidence = landingEvidence(rows, id).trimEnd();
+  return DEPTHS.find((depth) => evidence.endsWith(planEvidence(depth))) ?? null;
+}
+
+/** True when a matrix file reads as JSON with Figma frames: a `figma` section or a non-empty `frames` list. Unreadable: true (fail closed). */
+function matrixHasFigma(path) {
+  let matrix;
+  try {
+    matrix = JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    return true; // a missing, unreadable or broken matrix cannot show it has no frames, so the step keeps its baseline
+  }
+  const figma = matrix?.figma;
+  return (typeof figma === 'object' && figma !== null) || (Array.isArray(matrix?.frames) && matrix.frames.length > 0);
+}
+
 /**
- * The owner's waiver of the step's UI proof, or null when it does not apply: some landing of the step ends its evidence with
- * UI_WAIVER_EVIDENCE (land-lane --owner-waive-ui), every landing that changed a UI file does, and `## Owner decisions` holds the owner's
- * line for this road (ui-proof/lib/owner-waiver.mjs; an UNCONFIRMED, revoked, negated or commented-out line is none). Otherwise the web or terminal path decides as before.
+ * Whether `road.mjs next` asks the step-start record of a step: a lane of it has a coverage matrix path (not `none: <reason>`) whose
+ * matrix has Figma frames, or cannot be read. A relative matrix path is read from the road's repo.
+ * @param {object} road a checked road
+ * @param {number} step 1-based
+ * @returns {boolean}
  */
-function waiverLine(road, rows, own, changed, ctx) {
-  const waived = own.map((range) => landingEvidence(rows, range.row).trimEnd().endsWith(UI_WAIVER_EVIDENCE));
-  if (!waived.includes(true) || changed.some((result, index) => result.exit === 1 && !waived[index])) return null;
-  if (ownerWaiverLine(ctx.statusText ?? '', road.road) === null) return null;
-  const count = waived.filter(Boolean).length;
-  return pass(`4 ui: waived by owner decision (ui-proof waiver for road ${road.road}): ${count} landing(s) of the step landed with --owner-waive-ui`);
+export function stepNeedsBaseline(road, step) {
+  return road.steps[step - 1].lanes.map((lane) => lane.matrix).filter((matrix) => typeof matrix === 'string' && !matrix.startsWith(NO_MATRIX))
+    .some((matrix) => matrixHasFigma(resolve(road.repo, matrix)));
 }
 
 /**
@@ -163,13 +193,16 @@ export function uiLine(road, rows, ranges, step, ctx) {
   if (changed.some((result) => result.exit !== 0 && result.exit !== 1)) return fail('4 ui: ui-proof changed could not answer');
   const uiChanged = changed.some((result) => result.exit === 1);
   if (matrices.length === 0 && !uiChanged) return pass('4 ui: no UI file changed in the step');
-  const waived = waiverLine(road, rows, own, changed, ctx);
-  if (waived !== null) return waived;
+  const byPlan = own.map((range, index) => changed[index].exit === 1 && ![null, PIXEL].includes(provedDepth(rows, range.row)));
+  const proved = byPlan.filter(Boolean).length;
+  if (proved > 0 && changed.every((result, index) => result.exit !== 1 || byPlan[index])) return pass(`4 ui: ${proved} landing(s) proved by their plan`);
   const label = `${road.road}.s${step}`;
   if (!uiChanged && matrices.every((matrix) => matrix.startsWith(NO_MATRIX))) return terminalProofLine(rows, label, own, ctx);
   const proof = ctx.uiProof(['check', '--tip', ctx.tip, '--against-step', label, '--repo', ctx.repo]);
   if (proof.exit !== 0) return fail(`4 ui: ui-proof check --against-step ${label} exited ${proof.exit}`);
   const at = RECORD_AT.exec(ctx.uiProof(['has', '--step', label, '--repo', ctx.repo]).out)?.[1];
-  if (at === undefined || own.some((range, index) => !recordCovers(ctx, at, range, changed[index].exit === 1))) return fail(`4 ui: the step-start record ${label} was not taken at or before every from`);
-  return pass(`4 ui: visual-qa PASS at ${ctx.tip}, no state worse than ${label}`);
+  const covered = (range, index) => recordCovers(ctx, at, range, { uiChanged: changed[index].exit === 1, byPlan: byPlan[index] });
+  if (at === undefined || !own.every(covered)) return fail(`4 ui: the step-start record ${label} was not taken at or before every from`);
+  const planned = proved === 0 ? '' : `; ${proved} landing(s) proved by their plan`;
+  return pass(`4 ui: visual-qa PASS at ${ctx.tip}, no state worse than ${label}${planned}`);
 }

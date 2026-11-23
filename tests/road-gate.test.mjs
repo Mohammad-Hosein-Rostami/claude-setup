@@ -1,11 +1,17 @@
-// Tests of road-gate.mjs line 2 and the `<close row>.landed` correction row (STATUS row p8-gate-evidence), and line 4's setup reports folder.
-// A fake `run` stands in for git and the tools, so no repo is needed; it records every git argv to show which sha was checked.
+// Tests of road-gate.mjs line 2 and the `<close row>.landed` correction row (STATUS row p8-gate-evidence), line 3's worktrees held by an
+// open writer (road-gate-git.mjs, row r22.gate-open-lanes), and line 4's setup reports folder.
+// A fake `run` stands in for git and the tools, so no repo is needed; it records every git argv to show which sha was checked. The open
+// writer records are written by the guard's own recordAgentLaunch into a temp HOME.
 import assert from 'node:assert/strict';
+import { mkdirSync } from 'node:fs';
 import test from 'node:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { recordAgentLaunch } from '../home/hooks/lib/agent-launches.mjs';
 import { gateStep } from '../home/tools/road/lib/road-gate.mjs';
+import { gitLines, openWriterFolders } from '../home/tools/road/lib/road-gate-git.mjs';
 import { setupReportsFolder } from '../home/tools/road/lib/road-gate-ui.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const START = 'a'.repeat(40);
 const TO = 'b'.repeat(40);
@@ -346,4 +352,58 @@ test('the setup reports tree is ~/Desktop/claude-setup-reports under HOME, and C
     restore('HOME');
     restore('CLAUDE_SETUP_REPORTS');
   }
+});
+
+// ---- line 3: worktrees an open writer holds (row r22.gate-open-lanes) ----
+// The live case of 2026-11-23: five lanes were built on branches the lead named (feat/road-ui-plan-gate, not the road file's
+// feat/road-ui-plan), so no started row matched and git-tidy's merged-branch and merged-worktree findings of the running lanes FAILed.
+
+const tidyOf = (...findings) => ({ exit: 1, out: JSON.stringify({ base: 'main', findings, hints: [] }) });
+const finding = (kind, subject, detail = '') => ({ kind, subject, detail });
+const LANE_ROAD = { ...ROAD, steps: [{ lanes: [{ name: 'a', branch: 'feat/a', files: ['x.mjs'] }] }] };
+
+/** A worktree folder and a temp HOME whose launch store holds one open writer launched in it, and a reader (which holds nothing). */
+function heldWorld() {
+  const home = makeTempDir('road-held-home-');
+  const worktree = join(makeTempDir('road-held-repo-'), 'lane');
+  mkdirSync(worktree);
+  const env = { HOME: home, USERPROFILE: home };
+  assert.equal(recordAgentLaunch('s-1', 'implementer', env, { writer: true, about: { cwd: worktree, description: 'Lane a' } }).state, 'recorded');
+  assert.equal(recordAgentLaunch('s-2', 'scout', env, { about: { cwd: join(worktree, '..') } }).state, 'recorded', 'a reader holds nothing');
+  return { env, worktree };
+}
+
+test('line 3: findings about a worktree an open writer holds, and its branch, are INFO; a lane branch named otherwise still FAILs without it', () => {
+  const { env, worktree } = heldWorld();
+  const held = openWriterFolders(env, Date.now());
+  assert.equal(held.folders.length, 1, 'only the writer\'s folder');
+  const tidy = tidyOf(finding('merged-branch', 'feat/a-gate', '739e088 ancestor'), finding('merged-worktree', worktree, 'branch feat/a-gate'));
+  const lines = gitLines(tidy, LANE_ROAD, [], { held });
+  assert.equal(lines[0], 'PASS 3 one git line: git-tidy check clean but for lanes in flight');
+  assert.equal(lines.filter((line) => line.startsWith(`INFO 3 one git line: in flight (held by an open writer in ${worktree}): `)).length, 2, lines.join('\n'));
+  assert.ok(gitLines(tidy, LANE_ROAD, []).every((line) => line.startsWith('FAIL 3 one git line: ')), 'without the open record: FAIL, as before');
+});
+
+test('line 3: an open writer holds nothing else: another worktree, a merge commit or a dirty base still FAIL', () => {
+  const { env, worktree } = heldWorld();
+  const held = openWriterFolders(env, Date.now());
+  const other = join(worktree, '..');
+  const tidy = tidyOf(finding('merged-worktree', worktree, 'branch feat/a-gate'), finding('merged-worktree', other, 'branch feat/old'),
+    finding('merged-branch', 'feat/old', 'x'), finding('merge-commit', 'abc1234', 'Merge x'));
+  const lines = gitLines(tidy, LANE_ROAD, [], { held });
+  assert.deepEqual(lines.map((line) => line.split(':')[0]), ['INFO 3 one git line', 'FAIL 3 one git line', 'FAIL 3 one git line', 'FAIL 3 one git line']);
+});
+
+test('line 3: the agent branch of an open launch (Claude Code isolation worktree) is held; no store folder holds nothing', () => {
+  const held = { folders: [], branches: ['worktree-agent-abc'] };
+  const lines = gitLines(tidyOf(finding('agent-leftover', 'worktree-agent-abc', 'x')), LANE_ROAD, [], { held });
+  assert.match(lines[1], /^INFO 3 one git line: in flight \(held by an open writer\): agent-leftover worktree-agent-abc/);
+  assert.deepEqual(openWriterFolders({ HOME: makeTempDir('road-held-none-') }, Date.now()), { folders: [], branches: [] });
+});
+
+test('gate: the held option reaches line 3 through gateStep', () => {
+  const { env, worktree } = heldWorld();
+  const run = (file, argv) => (file === 'git-tidy' ? tidyOf(finding('merged-worktree', worktree, 'branch feat/a-gate')) : fakeRun([TO]).run(file, argv));
+  const result = gateStep(LANE_ROAD, [startRow, row('rd.s1.a', landedText(TO))], 1, run, { isUiPath: () => false, held: openWriterFolders(env, Date.now()) });
+  assert.match(result.lines.find((line) => / 3 /.test(line)), /^PASS 3 one git line: git-tidy check clean but for lanes in flight/);
 });

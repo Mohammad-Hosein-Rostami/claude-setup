@@ -1,7 +1,7 @@
 // Tests of the owner's ui-proof waiver rule (home/tools/ui-proof/lib/owner-waiver.mjs) and of road gate line 4 with it (road-gate-ui.mjs
 // uiLine): the waiver holds only with the owner's `ui-proof waiver for road <id>` line under `## Owner decisions` for that exact road (no
 // UNCONFIRMED line, no line outside the section, in a code fence or in an HTML comment, no negated line, and a later revoking line cancels
-// it), and line 4 passes only when the step's UI landings carry the waiver evidence. The ui-proof tool and git are faked (ctx.uiProof,
+// it), and line 4 never passes on the waiver evidence (no waivers, owner R28). The ui-proof tool and git are faked (ctx.uiProof,
 // ctx.isAncestor); the landing side is in land-lane-ui-waiver.test.mjs.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -108,10 +108,12 @@ function line4({ rows = WAIVED_ROWS, status = statusWith(DECISION), changed = [1
   return { line: uiLine(road, new Map(rows.map((one) => [one.id, one])), RANGES, 1, ctx), calls };
 }
 
-test('line 4: UI landings with the waiver evidence and the owner\'s line PASS as waived, and ui-proof check is never asked', () => {
+// Line 4 has no waived path any more (owner R28, 2026-11-23: no waivers; road-plan lane): the waiver evidence is no proof, even with the
+// owner's line, so the web or terminal path decides. The rule's own tests above stay for land-lane until the land-plan lane removes it.
+test('line 4: UI landings with the waiver evidence and the owner\'s line are no proof: ui-proof check decides', () => {
   const { line, calls } = line4();
-  assert.equal(line, 'PASS 4 ui: waived by owner decision (ui-proof waiver for road iceweb): 2 landing(s) of the step landed with --owner-waive-ui');
-  assert.ok(!calls.includes('check'));
+  assert.equal(line, 'FAIL 4 ui: ui-proof check --against-step iceweb.s1 exited 1');
+  assert.ok(calls.includes('check'));
 });
 
 test('line 4: the waiver evidence without the owner\'s line for this road (none, another road, UNCONFIRMED) keeps the web path', () => {
@@ -126,17 +128,17 @@ test('line 4: a UI landing without the waiver evidence keeps the web path, the o
   const middle = [row('iceweb.s1.x', `${landing('b', 'a')}${UI_WAIVER_EVIDENCE} later text`), WAIVED_ROWS[1]];
   assert.equal(line4({ rows: middle, changed: [1, 0] }).line, 'FAIL 4 ui: ui-proof check --against-step iceweb.s1 exited 1', 'the evidence must end with it');
   assert.match(line4({ rows: plain, changed: [0, 1] }).line, /^FAIL 4 ui: ui-proof check/, 'the UI landing is the one without it');
-  assert.match(line4({ rows: plain, changed: [1, 0] }).line, /^PASS 4 ui: waived by owner decision .*: 1 landing\(s\)/, 'only the waived one changed UI');
+  assert.match(line4({ rows: plain, changed: [1, 0] }).line, /^FAIL 4 ui: ui-proof check/, 'only the waived one changed UI: still no proof');
 });
 
-test('line 4: a step of none: matrices with no UI change takes the waiver instead of the terminal proof, only with the owner\'s line', () => {
-  assert.match(line4({ changed: [0, 0] }).line, /^PASS 4 ui: waived by owner decision/);
+test('line 4: a step of none: matrices with no UI change takes the terminal proof, the waiver evidence and the owner\'s line or not', () => {
+  assert.match(line4({ changed: [0, 0] }).line, /^FAIL 4 ui: terminal UI step: no owner-approved terminal proof/);
   assert.match(line4({ changed: [0, 0], status: statusWith() }).line, /^FAIL 4 ui: terminal UI step: no owner-approved terminal proof/);
   const noUi = { ...ROAD, steps: [{ lanes: [{ name: 'x', files: ['src/x.mjs'] }, { name: 'y', files: ['src/y.mjs'] }] }] };
   assert.equal(line4({ changed: [0, 0], road: noUi }).line, 'PASS 4 ui: no UI file changed in the step', 'a step with no UI keeps its own PASS');
 });
 
-test('line 4: the waiver evidence of a done correction row counts like the row\'s own', () => {
+test('line 4: the waiver evidence of a done correction row is no proof either', () => {
   const rows = [row('iceweb.s1.x', 'build done'), row('iceweb.s1.x.landed', `${landing('b', 'a')}${UI_WAIVER_EVIDENCE}`), WAIVED_ROWS[1]];
-  assert.match(line4({ rows }).line, /^PASS 4 ui: waived by owner decision/);
+  assert.match(line4({ rows }).line, /^FAIL 4 ui: ui-proof check --against-step iceweb\.s1 exited 1$/);
 });

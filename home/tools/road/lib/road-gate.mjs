@@ -1,5 +1,5 @@
 // Purpose: the checkpoint between steps (spec-stages section 5): one PASS, FAIL or INFO line per check, a FAIL on any line fails it.
-// Exports: gateStep(road, items, step, run, { isUiPath, otherRoads, statusFile, statusText }) -> { lines, pass }, fullSha(run, repo, text), GIT_TIMEOUT_MS,
+// Exports: gateStep(road, items, step, run, { isUiPath, otherRoads, statusFile, statusText, held }) -> { lines, pass }, fullSha(run, repo, text), GIT_TIMEOUT_MS,
 //   TOOL_TIMEOUT_MS.
 // `run(file, argv, timeoutMs)` -> { exit, out } runs one program with argv (no shell); `file` is one of 'git', 'git-tidy', 'ui-proof'
 //   (the CLI maps them to the tools), so tests inject it. Every git call names shas with fixed flags (P2).
@@ -22,16 +22,18 @@
 //   same per-row checks and count for the cover, the disjointness and the `<from>` rule (otherRanges), so a commit in no road's range
 //   still FAILs;
 //   3 `git-tidy check --json` exit 0; on exit 1 a `merged-branch`, `merged-worktree`, `superseded-copy` or `agent-leftover` finding of a
-//   lane in flight (row started, not landed; this road or `otherRoads`, the road files beside STATUS.md) is INFO, any other finding FAIL
-//   (a leftover branch of a landed lane of this step included); 4 UI: road-gate-ui.mjs uiLine (the web ui-proof path, or the terminal
-//   proof row of a terminal UI step); 5 the measure (INFO). No test, review or audit line: every lane of the step landed, cleanly.
+//   lane in flight (row started, not landed; this road or `otherRoads`, the road files beside STATUS.md) or of a worktree an open writer
+//   holds (`held`) is INFO, any other finding FAIL (a leftover branch of a landed lane of this step included): road-gate-git.mjs gitLines;
+//   4 UI: road-gate-ui.mjs uiLine (the landings' check plans, the web ui-proof path, or the terminal proof row of a terminal UI step);
+//   5 the measure (INFO). No test, review or audit line: every lane of the step landed, cleanly.
 // Invariants: any exit other than the expected ones is FAIL (fail closed, P3); untrusted shas from rows are hex-checked before argv, then
 //   resolved once to the full commit sha (`rev-parse --verify --quiet <sha>^{commit}`; unknown or ambiguous = FAIL naming the row, and so is
 //   an answer that does not start with the row's hex, which is what a branch or tag named like hex gives), and only full shas are compared
 //   or passed on afterwards (a row may hold 7-40 hex, rev-list prints 40).
 import { rowIds } from './road-file.mjs';
+import { gitLines } from './road-gate-git.mjs';
 import { uiLine } from './road-gate-ui.mjs';
-import { correctionRows, inFlightBranches, isReworkRow, isUiLane, landedLine, laneLanded, landingRowId, roadStartTip } from './road-state.mjs';
+import { correctionRows, isReworkRow, isUiLane, landedLine, laneLanded, landingRowId, roadStartTip } from './road-state.mjs';
 
 export const GIT_TIMEOUT_MS = 5_000;
 export const TOOL_TIMEOUT_MS = 30_000;
@@ -237,48 +239,20 @@ function rangeLines(run, ranges, others, ctx) {
   return fails.length === 0 ? [pass(`2 range: ${ranges.length} close rows${theirs}, every commit in one range`)] : fails.map(fail);
 }
 
-// Findings about one branch: a lane in flight has them while it is built (a fresh branch at the base tip reads as merged).
-const BRANCH_FINDINGS = new Set(['merged-branch', 'superseded-copy', 'agent-leftover']);
-const WORKTREE_BRANCH = /^branch (.+)$/;
-
-/** The branch a git-tidy finding is about, or null for a finding about no one branch (a merge commit, a dirty base folder, ...). */
-function findingBranch(finding) {
-  if (BRANCH_FINDINGS.has(finding.kind)) return String(finding.subject);
-  if (finding.kind === 'merged-worktree') return WORKTREE_BRANCH.exec(String(finding.detail))?.[1] ?? null;
-  return null;
-}
-
-// Unreadable output is null: the caller's FAIL names the exit and the first line.
-const findingsOf = (out) => { try { return JSON.parse(out)?.findings ?? null; } catch { return null; } };
-
-/** Line 3: `git-tidy check`; findings about lanes in flight (any road) are INFO, every other finding is a FAIL. */
-function gitLines(run, road, items, otherRoads) {
-  const result = run('git-tidy', ['check', road.repo, '--base', road.base, '--json'], TOOL_TIMEOUT_MS);
-  if (result.exit === 0) return [pass('3 one git line: git-tidy check clean')];
-  const findings = result.exit === 1 ? findingsOf(result.out) : null;
-  if (!Array.isArray(findings)) return [fail(`3 one git line: exit ${result.exit}: ${result.out.split('\n').find(Boolean) ?? ''}`.trim())];
-  const flying = inFlightBranches([road, ...otherRoads], items);
-  const lines = findings.map((finding) => {
-    const text = `${finding?.kind} ${finding?.subject} ${finding?.detail}`;
-    const branch = finding === null || typeof finding !== 'object' ? null : findingBranch(finding);
-    return branch !== null && flying.has(branch) ? `INFO 3 one git line: in flight (${flying.get(branch)} started): ${text}` : fail(`3 one git line: ${text}`);
-  });
-  return lines.some((line) => line.startsWith('FAIL')) ? lines : [pass('3 one git line: git-tidy check clean but for lanes in flight'), ...lines];
-}
-
 /**
  * Runs the gate for one step.
  * @param {object} road a checked road
  * @param {object[]} items parseWorkItems(...).items
  * @param {number} step 1-based
  * @param {(file: string, argv: string[], timeoutMs: number) => { exit: number, out: string }} run
- * @param {{ isUiPath: (path: string) => boolean, otherRoads?: object[], statusFile?: string, statusText?: string }} options the UI file
- *   test; the other checked roads of the same repo and STATUS.md, whose started lanes are in flight for line 3 and whose landing ranges
- *   on the same base count for line 2; the road's STATUS.md path and text, which line 4's terminal proof reads (its folder, its owner
- *   decisions)
+ * @param {{ isUiPath: (path: string) => boolean, otherRoads?: object[], statusFile?: string, statusText?: string,
+ *   held?: { folders: string[], branches: string[] } }} options the UI file test; the other checked roads of the same repo and STATUS.md,
+ *   whose started lanes are in flight for line 3 and whose landing ranges on the same base count for line 2; the road's STATUS.md path
+ *   and text, which line 4's terminal proof reads (its folder, its owner decisions); what open writers hold (road-gate-git.mjs
+ *   openWriterFolders), in flight for line 3
  * @returns {{ lines: string[], pass: boolean }}
  */
-export function gateStep(road, items, step, run, { isUiPath, otherRoads = [], statusFile, statusText = '' }) {
+export function gateStep(road, items, step, run, { isUiPath, otherRoads = [], statusFile, statusText = '', held = undefined }) {
   const rows = new Map(items.map((item) => [item.id.toLowerCase(), item]));
   const start = roadStartTip(road, items);
   const tipRead = git(run, road.repo, ['rev-parse', '--verify', `refs/heads/${road.base}^{commit}`]);
@@ -292,7 +266,7 @@ export function gateStep(road, items, step, run, { isUiPath, otherRoads = [], st
   const lines = [
     ...rowsLine(road, rows, step, isUiPath),
     ...rangeLines(run, ranges, others, ctx),
-    ...gitLines(run, road, items, otherRoads),
+    ...gitLines(run('git-tidy', ['check', road.repo, '--base', road.base, '--json'], TOOL_TIMEOUT_MS), road, items, { otherRoads, held }),
     uiLine(road, rows, ranges, step, uiCtx),
     `INFO 5 measure: ${road.steps[step - 1].measure ?? 'none named'}`,
   ];

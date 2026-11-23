@@ -6,11 +6,10 @@
 //        road.mjs next <road.json> --budget <1-5>
 //        road.mjs gate <road.json> [--step <N>]
 //        road.mjs join <road.json> --road-sha256 <hex> --lane <name> --worktree <abs> --base <40-hex> [--json]
-// Exit: 0 ok / PASS, 1 refused / FAIL (also `next` printing `baseline needed: <road>.s<N>`), 2 usage (also `next` without --budget or
-//   outside 1-5, and a --base sha that is not an ancestor of the base tip or that already holds a landed patch of the road). `join`: 0 joined
-//   clean, 3 joined with findings, 1 refused (also a lane a needed lane of which has not landed on the base in git), 2 usage
-//   (lib/road-join.mjs).
-// Exports: runRoad(argv, { run, isUiPath, now }) -> { code, out }.
+// Exit: 0 ok / PASS, 1 refused / FAIL (also `next` printing `baseline needed: <road>.s<N>`: a lane matrix with Figma frames, no step-start
+//   record; lib/road-gate-ui.mjs stepNeedsBaseline), 2 usage (also `next` without --budget or outside 1-5, and a --base sha that is not an
+//   ancestor of the base tip or already holds a landed patch of the road). `join`: 0 joined clean, 3 joined with findings, 1 refused (also a
+//   lane a needed lane of which has not landed on the base in git), 2 usage (lib/road-join.mjs). Exports: runRoad(argv, deps) -> { code, out }.
 // Rows: one row per lane (lib/road-file.mjs roadRows) and one check row per step; `--fix N name` adds one row `<road>.s<N>.fix-<name>`
 //   (item `rework: <name>`; refused when that id ends in `-land` or is a lane's row). land-lane writes each landing as the done evidence
 //   of that row. An old-form road (lib/road-state.mjs isOldFormRoad: its STATUS.md holds `-land` close rows) keeps its form: `rows` adds
@@ -27,8 +26,9 @@
 //   `writers` = min(lanes + early, budget, 5). It writes nothing and takes no lock.
 // Join and gate: `join` first refuses a lane whose needed lanes have not landed on the base in git (land-lane knows no road, so this is
 //   the road's check before a landing); `gate` reads the other road files `road-*.json` beside STATUS.md of the same repo, so a lane in
-//   flight there is INFO on line 3, not FAIL, and their landings count on line 2; it hands the gate the STATUS.md path and text (line 4's
-//   terminal proof: the job folder and the owner decisions). The main guard compares real paths, so the CLI works through the ~/.claude link.
+//   flight there is INFO on line 3, not FAIL, and their landings count on line 2, and so is a worktree an open writer of any session holds
+//   (lib/road-gate-git.mjs openWriterFolders); it hands the gate the STATUS.md path and text (line 4's terminal proof: the job folder and
+//   the owner decisions). The main guard compares real paths, so the CLI works through the ~/.claude link.
 import { spawnSync } from 'node:child_process';
 import { readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { withSessionLock } from '../../hooks/lib/session-lock.mjs';
@@ -41,7 +41,9 @@ import { runStatus } from '../status/status.mjs';
 import { MAX_ROW_ID_CHARS, LANE_NAME, readRoad, roadClash, roadRows, rowIds, uiMatrixProblems } from './lib/road-file.mjs';
 import { GIT_TIMEOUT_MS, fullSha, gateStep } from './lib/road-gate.mjs';
 import { joinLane } from './lib/road-join.mjs';
-import { earlyLanes, isOldFormRoad, isUiLane, landedLine, needsNotOnBase, roadStartTip, stepState } from './lib/road-state.mjs';
+import { openWriterFolders } from './lib/road-gate-git.mjs';
+import { stepNeedsBaseline } from './lib/road-gate-ui.mjs';
+import { earlyLanes, isOldFormRoad, landedLine, needsNotOnBase, roadStartTip, stepState } from './lib/road-state.mjs';
 
 const USAGE = 'usage: road.mjs check <road.json> | rows <road.json> [--base <sha>] [--fix <N> <name>] | next <road.json> --budget <1-5> | gate <road.json> [--step <N>] | join <road.json> --road-sha256 <hex> --lane <name> --worktree <abs> --base <40-hex> [--json]';
 const TOOLS = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -223,9 +225,7 @@ function next(road, ctx, rest, run, isUiPath) {
   const items = itemsOf(ctx.statusFile);
   if (items.length === 0) return { code: 1, out: `no rows in ${ctx.statusFile}: run rows first` };
   const state = stepState(road, items);
-  const step = road.steps[state.step - 1];
-  // Only the current step's lanes decide the baseline: an early lane is never a UI lane (lib/road-state.mjs earlyLanes).
-  const baseline = step.lanes.some((lane) => isUiLane(lane, isUiPath)) ? 'yes' : 'no';
+  const baseline = stepNeedsBaseline(road, state.step) ? 'yes' : 'no';
   const { early, waiting } = earlyLanes(road, items, state, { budget, isUiPath, isOnBase: onBase(road, run) });
   const result = { road: road.road, step: state.step, of: state.of, state: state.state, form: state.form, held: state.held, carried: state.carried,
     lanes: state.lanes.map(({ lane }) => lane.name), early, waiting, writers: Math.min(state.lanes.length + early.length, budget, MAX_BUDGET), baseline };
@@ -242,7 +242,7 @@ function gate(road, ctx, rest, run, isUiPath) {
   const given = flagValue(rest, '--step');
   const step = given === undefined ? stepState(road, items).step : Number(given);
   if (!Number.isInteger(step) || step < 1 || step > road.steps.length) throw new UsageError(`--step must be 1-${road.steps.length}. ${USAGE}`);
-  const result = gateStep(road, items, step, run, { isUiPath, otherRoads: otherRoads(ctx), statusFile: ctx.statusFile, statusText });
+  const result = gateStep(road, items, step, run, { isUiPath, otherRoads: otherRoads(ctx), statusFile: ctx.statusFile, statusText, held: openWriterFolders(process.env, Date.now()) });
   return { code: result.pass ? 0 : 1, out: [...result.lines, `road ${road.road} step ${step}: ${result.pass ? 'PASS' : 'FAIL'}`].join('\n') };
 }
 
