@@ -30,7 +30,7 @@ The browser binary is found by Playwright itself in its cache (`~/Library/Caches
 | `figma-pull --from-export` | `--from-export DIR --file KEY [--scale 1] [--refresh]` | Cache folders from a local export folder, no network, no token: a nodes.json folder, or Figma's own PNG export (formats below). |
 | `figma-refresh` | `--file KEY --node ID [--scale 1]` | Re-fetches into a temp folder and prints `changed` / `unchanged` / `new` / `gone` per frame; never writes the cache. Exit 0 all unchanged, 1 otherwise. |
 | `figma-frames` | `--file KEY --node ID [--node ID]... --out frames.json` | Needs env `FIGMA_TOKEN`. One REST call per `--node` (nodes endpoint, depth 2); a node id in the URL form `12-40` is sent as `12:40`. A frame is each `FRAME` or `COMPONENT` whose parent is a `--node` or a `SECTION` under it; `width` and `height` are rounded up. Writes `{file, source, frames:[{node, name, page, width, height}]}` (a frame reached from two nodes is listed once; `page` is the name of the `--node` it was found under) and prints the count. This file is the design inventory `ui-coverage` checks the matrix against. Exit 2 without a token or on an API error; the token is never printed. No token: write the same shape by hand from the Figma MCP `get_metadata`. |
-| `compare` | `--url U --root SEL --cache DIR [--map map.json] [--steps steps.json] [--bypass-csp] [--no-autofocus] [--max-diff 0.5] [--strict] [context flags] [--out DIR]` | Viewport = frame size, DSF = scale. Element gate (box +-1px, font size and family, line-height, letter-spacing, colour, background, radius, padding, gap, stroke width and colour by `strokeAlign` (INSIDE = border, OUTSIDE = outline or box-shadow ring, CENTER = outline with offset -weight/2; standards/figma.md), image fills loaded and of the right aspect, and every broken eager image in the root even without a map) then pixel gate (odiff, threshold 0.1, anti-aliasing ignored; size mismatch is reported first and both images are padded) plus the colour metric (any channel > 2 levels, anti-aliasing counted; Figma TEXT boxes left out in a default run), which fails above the same limit: odiff's threshold hides a uniform drift of up to about 26 levels. `--strict` = the strict rule: `--max-diff 0` and the colour metric over every pixel (fail closed until `attribute` classes text anti-aliasing). |
+| `compare` | `--url U --root SEL --cache DIR [--map map.json] [--steps steps.json] [--bypass-csp] [--no-autofocus] [--max-diff 0.5] [--strict] [context flags] [--out DIR]` | Viewport = frame size, DSF = scale. Element gate (box +-1px, font size and family, the font actually drawn (section "Drawn font" below), line-height, letter-spacing, colour, background, radius, padding, gap, stroke width and colour by `strokeAlign` (INSIDE = border, OUTSIDE = outline or box-shadow ring, CENTER = outline with offset -weight/2; standards/figma.md), image fills loaded and of the right aspect, and every broken eager image in the root even without a map) then pixel gate (odiff, threshold 0.1, anti-aliasing ignored; size mismatch is reported first and both images are padded) plus the colour metric (any channel > 2 levels, anti-aliasing counted; Figma TEXT boxes left out in a default run), which fails above the same limit: odiff's threshold hides a uniform drift of up to about 26 levels. `--strict` = the strict rule: `--max-diff 0` and the colour metric over every pixel (fail closed until `attribute` classes text anti-aliasing). |
 | `responsive` | `--url U [--widths 320,...,1920] [--height 900] [--steps steps.json] [--bypass-csp] [--no-autofocus] [--same-in-all-locales "ICE,Google"] [context flags] [--out DIR]` | Per width, the findings in the table below. Screenshots `w<width>.png` stay on disk. |
 | `batch` | `--states file.json [--only surface[,surface]] [--jobs 4] [--resume] [--prev RUN] [--out DIR]` | Many states in one run (below). `compare` for a state with `figma`, `responsive` for a state with widths. Writes `ledger.json` beside `results.json`; `--prev RUN` prints the round table (see `run`). |
 | `run` | `--matrix M [--strict] [--base-url U] [--states S] [--out DIR] [--jobs N] [--only surface,...] [--prev RUN] [--no-worse RUN] [--same RUN] [--self-test] [--step <road>.s<N>]` | The one call of a UI round (section `run` below): `ui-coverage scaffold` + `batch` + `ui-coverage check`. |
@@ -167,6 +167,26 @@ Output in `--out` (default under the OS temp dir): `results.json`, `summary.md` 
 - `focus` steps fail on an element that did not take focus (before: silent pass). Timed-out pointer steps say what covers the target.
 - `responsive` lists the hints `target-size?`, `raw-i18n-key`, `focus-indicator`, `focus-ring-width`, `rtl-physical-align`, `bidi-placeholder?`, `ltr-run-in-rtl?` and `untranslated?` (and `same-as-default?` in `batch`) in a separate section; they never change the verdict or the exit code. `report.json` gains `hints`, a `batch` record gains `hints` (a count), `summary.md` gains a column and a section.
 
+## Drawn font (`compare`, and `batch` through it)
+
+The `font-family` row compares the first family of the computed `font-family` with Figma's. That alone passes a page that asks
+for Inter but never loads it: the browser then draws a fallback (Helvetica on macOS). So for every mapped Figma TEXT node with a
+font family, `compare` also reads the fonts Chromium actually drew for the element's text (its own and its children's), with the
+CDP call `CSS.getPlatformFontsForNode` (`lib/drawn-fonts.mjs`), and the element gate (`lib/elements.mjs`, pure) judges them:
+
+- the family that drew the most glyphs must be Figma's (case aside; a tie with Figma's family passes); otherwise a failing
+  `font-family (drawn)` row, e.g. `is: Helvetica (5 glyphs)`, `should: Inter`, `delta: requested Inter, drawn Helvetica`;
+- a fallback for fewer glyphs than Figma's family drew (a script or emoji the font lacks) passes;
+- a drawn font that could not be read (no CDP session, an element not found, a CDP error) or an element with no glyph drawn is a
+  failing row `not checked (<why>)`, never a pass.
+
+The Font Loading API is not used as a fallback: probed with Playwright 1.62.1 (Chromium 151, macOS), `document.fonts.check()`
+answered `true` for "Roboto", which was neither installed nor loaded while CDP reported Helvetica, so it cannot tell a fallback
+from the real font. ui-check launches Chromium only; an engine without a CDP session would get `not checked` on every drawn-font row. A web font whose file names its
+family differently from the CSS name (for example `Inter Variable`) shows the file's name as drawn and fails until the names agree.
+The check judges the machine it runs on: when a page's web font fails to load but the same family is installed locally,
+Chromium draws the installed one (probed: a failing `@font-face` named Helvetica still drew Helvetica), so the row passes there.
+
 ## Not covered (open)
 
 Mirroring of directional icons in rtl, a child drawn outside its parent's box, and axe-core are not part of this tool. Closed shadow roots and iframes are not entered. `contenteditable` text boxes are not judged for direction. Text in placeholders, `aria-label` and `title` is not read for `untranslated?`. An empty field that is probed gets the browser's "dirty value" flag, so a later change of its `value` ATTRIBUTE from page script no longer shows in it (a reload resets it).
@@ -188,7 +208,7 @@ Tolerances live in `lib/tolerances.mjs` and are documented in `standards/figma.m
 ## Tests
 
 `pnpm test` runs the unit tests. Set `UI_CHECK_PROJECT=/path/to/project-with-playwright` to also run the
-browser smoke test (fixture compare pass/fail and a 500px box at 320), the Chromium checks in `determinism.test.mjs`, and
+browser smoke test (fixture compare pass/fail, the card title drawn in its Inter web font and, with `?font=absent` (a family no machine has), a fallback that fails the drawn-font row, and a 500px box at 320), the Chromium checks in `determinism.test.mjs`, and
 `rendered-browser.test.mjs` (the four hints on local and reviewer fixtures, focus and click step errors), `ltr-values-browser.test.mjs` (empty and filled fields, `bidi-placeholder`, the probe, the text hints, `same-as-default?` in `batch`), `batch-parallel.test.mjs` (`--jobs 4` equals `--jobs 1`, `--resume`) and
 `locale-browser.test.mjs` (bidi-field, `--expect-dir`, storage, locale, cookie, `batch`; it briefly writes a fixture Figma cache under `~/.cache/figma/ui-check-batch-test-<pid>` and removes it).
 

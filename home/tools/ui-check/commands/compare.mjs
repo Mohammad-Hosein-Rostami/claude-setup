@@ -1,7 +1,8 @@
 // Purpose: `compare` - element gate + pixel gate for one Figma frame vs the running page.
 // Exports: options, pageOptions, compareOnce, loadMap, run. Invariants: viewport = frame size, DSF = scale; exit 0 pass / 1 fail; images stay on disk.
 // The pixel gate is odiff plus the colour metric (lib/pixels.mjs); `--strict` is the strict rule (--max-diff 0, every pixel counted);
-// broken eager images in the root are failing rows even without a map. Map skip entries {selector, skip, why} (padding, gap, hug width)
+// broken eager images in the root are failing rows even without a map; each mapped text node's drawn font is read over CDP
+// (lib/drawn-fonts.mjs) and passed to the pure element gate as data. Map skip entries {selector, skip, why} (padding, gap, hug width)
 // show as SKIPPED rows; a render-bounds baseline is captured at the render bounds and its effect region judged on its own.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -9,6 +10,7 @@ import { parse, need, toNumber } from '../lib/args.mjs';
 import { loadChromium, launch, openPage } from '../lib/browser.mjs';
 import { readCache } from '../lib/cache.mjs';
 import { CONTEXT_OPTIONS, readContextFlags } from '../lib/context.mjs';
+import { readDrawnFonts } from '../lib/drawn-fonts.mjs';
 import { applySkips, brokenImageRows, compareElements, SKIP_PROPS } from '../lib/elements.mjs';
 import { readPng } from '../lib/image.mjs';
 import { UsageError } from '../lib/errors.mjs';
@@ -101,12 +103,20 @@ async function capture(page, root, outDir, renderCap) {
   return actualFile;
 }
 
-/** Element rows of the mapped nodes (none without a map) plus a row per broken eager image in the root (G4, always). */
+/** Mapped items whose Figma node is TEXT with a font family: the ones whose drawn font is read. */
+function fontItems(spec, items) {
+  const named = new Set(spec.nodes.filter((n) => n.type === 'TEXT' && n.style.fontFamily !== undefined).map((n) => n.id));
+  return items.filter(({ id }) => named.has(id));
+}
+
+/** Element rows of the mapped nodes (none without a map), with the drawn font of each text node, plus a row per broken eager image in the root (G4, always). */
 async function elementCheck(page, root, spec, map) {
   const items = Object.entries(map ?? {}).map(([id, selector]) => ({ id, selector }));
   const { rootFound, results, brokenImages } = await page.evaluate(measureInPage, { rootSelector: root, items });
   if (!rootFound) throw new UsageError(`root selector matched nothing: ${root}`);
-  return [...(map ? compareElements(spec.nodes, map, results) : []), ...brokenImageRows(brokenImages)];
+  const drawn = await readDrawnFonts(page, root, fontItems(spec, items));
+  const measured = results.map((result) => (Object.hasOwn(drawn, result.id) ? { ...result, drawnFont: drawn[result.id] } : result));
+  return [...(map ? compareElements(spec.nodes, map, measured) : []), ...brokenImageRows(brokenImages)];
 }
 
 /** Figma TEXT boxes in device pixels of the capture (the colour metric leaves them out in a default run). */

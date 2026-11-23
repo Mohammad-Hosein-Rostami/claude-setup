@@ -1,6 +1,7 @@
 // Purpose: compare measured DOM boxes/styles to the flattened Figma spec (the element gate).
 // Exports: compareElements, applySkips, SKIP_PROPS, parseColor, brokenImageRows. Invariants: pure; only props present in the spec are checked (font-family,
-// stroke width and colour by stroke align, image fills: r9-ui-rules G3, G4, M1);
+// stroke width and colour by stroke align, image fills: r9-ui-rules G3, G4, M1); the font Chromium drew (lib/drawn-fonts.mjs, passed in
+// as each measured element's `drawnFont`) must be Figma's family, and a drawn font that was not read is a failing "not checked" row;
 // a missing element is one failing row; a colour in an unknown format is skipped, not failed.
 import { TOLERANCE } from './tolerances.mjs';
 
@@ -39,18 +40,19 @@ function boxRows(label, spec, box) {
   return ['x', 'y', 'w', 'h'].map((k) => numberRow(label, k, box[k], spec[k], TOLERANCE.box));
 }
 
-function textRows(label, style, css) {
+function textRows(label, style, css, drawn) {
+  const fontRows = [fontFamilyRow(label, style, css), drawnFontRow(label, style, css, drawn)];
   const rows = [
     style.fontSize === undefined ? null : numberRow(label, 'font-size', css.fontSize, style.fontSize, TOLERANCE.fontSize),
     style.fontWeight === undefined ? null : numberRow(label, 'font-weight', css.fontWeight, style.fontWeight, 0),
     style.letterSpacing === undefined ? null : numberRow(label, 'letter-spacing', css.letterSpacing, style.letterSpacing, TOLERANCE.letterSpacing),
     style.color === undefined ? null : colorRow(label, 'color', css.color, style.color),
   ];
-  if (style.lineHeightPx === undefined) return [...rows, fontFamilyRow(label, style, css)];
+  if (style.lineHeightPx === undefined) return [...rows, ...fontRows];
   const lineHeight = css.lineHeight === 'normal'
     ? { element: label, prop: 'line-height', is: 'normal', should: fmt(style.lineHeightPx), delta: 'set explicitly' }
     : numberRow(label, 'line-height', css.lineHeight, style.lineHeightPx, TOLERANCE.lineHeight);
-  return [...rows, lineHeight, fontFamilyRow(label, style, css)];
+  return [...rows, lineHeight, ...fontRows];
 }
 
 function radiusRows(label, spec, css) {
@@ -119,6 +121,38 @@ function fontFamilyRow(label, style, css) {
   return is.toLowerCase() === style.fontFamily.toLowerCase() ? null : { element: label, prop: 'font-family', is: is || css.fontFamily, should: style.fontFamily, delta: 'family' };
 }
 
+/** Glyphs drawn per family (lower case), summed over the faces of one family. */
+function glyphsByFamily(fonts) {
+  const totals = new Map();
+  for (const { family, glyphs } of fonts) totals.set(family.toLowerCase(), (totals.get(family.toLowerCase()) ?? 0) + glyphs);
+  return totals;
+}
+
+/**
+ * G3 drawn: the family that drew the most glyphs of the element must be Figma's (case aside; a tie with Figma's passes), so a page that
+ * asks for a font it never loaded fails here even though its computed font-family is right. A fallback for fewer glyphs than Figma's
+ * family drew (a script or emoji the font lacks) passes. Unread, or no glyph drawn, is a failing "not checked (why)" row: never a pass.
+ * @param {string} label row label
+ * @param {{fontFamily?: string}} style Figma text style
+ * @param {{fontFamily: string}} css computed style (the requested list, for the message)
+ * @param {{fonts: {family: string, glyphs: number}[]} | {unknown: string} | undefined} drawn readDrawnFonts entry of this element
+ * @returns {object|null} a failing row, or null
+ */
+function drawnFontRow(label, style, css, drawn) {
+  if (style.fontFamily === undefined) return null;
+  const row = (is, delta) => ({ element: label, prop: 'font-family (drawn)', is, should: style.fontFamily, delta });
+  if (drawn === undefined) return row('not checked (the drawn font was not read)', 'not checked');
+  if ('unknown' in drawn) return row(`not checked (${drawn.unknown})`, 'not checked');
+  if (drawn.fonts.length === 0) return row('not checked (no glyph drawn)', 'not checked');
+  const glyphs = glyphsByFamily(drawn.fonts);
+  const own = glyphs.get(style.fontFamily.toLowerCase()) ?? 0;
+  if (own > 0 && own >= Math.max(...glyphs.values())) return null;
+  const familyGlyphs = (font) => glyphs.get(font.family.toLowerCase());
+  const sorted = [...drawn.fonts].sort((a, b) => familyGlyphs(b) - familyGlyphs(a) || b.glyphs - a.glyphs);
+  const is = sorted.map((font) => `${font.family} (${font.glyphs} glyphs)`).join(', ');
+  return row(is, `requested ${firstFamily(css.fontFamily) || css.fontFamily}, drawn ${sorted[0].family}`);
+}
+
 /**
  * G4: one failing row per broken eager image in the root, mapped or not.
  * @param {string[]} sources measureInPage `brokenImages`
@@ -135,7 +169,7 @@ function boxStyleRows(label, spec, css) {
  * Compare measured elements with the spec.
  * @param {object[]} nodes spec.json nodes
  * @param {Record<string, string>} map figmaId -> CSS selector
- * @param {object[]} measured results of measureInPage
+ * @param {object[]} measured results of measureInPage; a text element also carries `drawnFont` (its readDrawnFonts entry)
  * @returns {{element: string, prop: string, is: string, should: string, delta: string}[]} failing rows only
  */
 export function compareElements(nodes, map, measured) {
@@ -148,7 +182,7 @@ export function compareElements(nodes, map, measured) {
       rows.push({ element: label, prop: 'element', is: 'missing', should: 'present', delta: '-' });
       continue;
     }
-    const style = spec.type === 'TEXT' ? textRows(label, spec.style, m.css) : boxStyleRows(label, spec, m.css);
+    const style = spec.type === 'TEXT' ? textRows(label, spec.style, m.css, m.drawnFont) : boxStyleRows(label, spec, m.css);
     rows.push(...[...boxRows(label, spec, m.box), ...style].filter(Boolean).map((row) => ({ ...row, id: m.id })));
   }
   return rows.filter(Boolean);

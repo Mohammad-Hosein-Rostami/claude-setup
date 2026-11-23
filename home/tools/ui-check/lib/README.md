@@ -9,7 +9,8 @@
 - `cache.mjs` - locate and read the per-node Figma cache (baseline.png, spec.json, meta.json).
 - `click-cover.mjs` - explains a timed-out click: what covers the target, label hint for a hidden input.
 - `context.mjs` - validation of the context flags (`--locale`, `--color-scheme`, `--storage`, `--cookie`, `--expect-dir`) and widths; UsageErrors name the flag or JSON path.
-- `elements.mjs` - compare measured DOM boxes/styles to the flattened Figma spec (the element gate).
+- `drawn-fonts.mjs` - reads the fonts Chromium actually drew for mapped text elements (CDP `CSS.getPlatformFontsForNode`); an unread element gets `{unknown: why}`.
+- `elements.mjs` - compare measured DOM boxes/styles to the flattened Figma spec (the element gate), including the drawn-font row.
 - `errors.mjs` - one error type for usage and setup problems (exit code 2).
 - `focus-audit.mjs` - presses Tab and gathers the focused/unfocused styles behind `focus-indicator`; each stop also carries `ringWidth` (px).
 - `figma-api.mjs` - minimal Figma REST client (node tree + PNG export). Never logs or returns the token.
