@@ -35,6 +35,7 @@ anything runs. `DONE_CHECK_SKIP=all` skips every check (one ledger row); a comma
 - `n unknown`: with no git base, a test failure in a file the change does not hold (another agent's work or an older failure cannot be
   told apart). Its kind shows `FAIL 0 new, n unknown` and the run is `left open` (never `ok`, never reused as green); it does not block.
   A failure in a file the change holds stays `new`. A stop always has a base (below), so only a Scope built by a caller can show it.
+  Also `unknown`: with a base that could not be compared (`base: unavailable`), any failure off the change (the Go section below).
 - `review: needed (classes)`: the change is in a risky class (`risk-rules.json`); the lead runs the reviewer. Security words match a whole word of a folder or file name in any case style (`src/auth/`, `useSession.ts`, `session-store.ts`, `JWTService.ts`), never part of a word (`tokenizer.ts`, `author.ts`). A test by its own name (`*.test.ts`, `*.spec.js`) and plain docs (`.md`, `.txt`) put a change in no class and do not count for `large`; a test folder does not hide code, `.mdx` is code, and the texts that steer every run (agent files, `SKILL.md`, `home/CLAUDE.md`, `home/lead*.md`, `home/rules/`, `settings/*.json`) are `gate`. A file whose changed lines are only comments or blank lines is left out; any doubt (no base, a deleted file, a Vue file) keeps the class.
 - `reused (same change) ok`: the same change key was already checked green; no command ran. A run a label let through is never reused.
 - `n labelled`: new failures that an owner's `false-alarm` label already names. Shown, never blocking (next section).
@@ -86,8 +87,14 @@ compare with the base like the JS checks: the base reruns the same paths (go tes
 too (same changed lines; gofmt joins nearby drift, and drift between repeated lines, into one hunk, so new drift next to old drift blocks with it), a vet finding it has too or a test that fails there too is old and never blocks. A package that build constraints leave empty on this machine (another OS, a tag) is valid Go: go test leaves it out and go vet runs again without it. No go on PATH gives `types`, `lint`
 and `tests` `not run (go: not installed)` (gofmt missing alone: `lint not run (gofmt: not installed)`); a `.go` file in no module is `not-supported`. go and gofmt come
 from PATH (gofmt beside the real go first); `GOFLAGS`, `GOTOOLCHAIN` and Go's own build and test caches are the caller's. Known limits:
-go test output over 8 MiB is not read (`not run (error)`), and the base tree is a new temp folder per run, so a base build of a big
-module may not finish within the 30 s base budget (the failures are then called "may be older").
+go test output over 8 MiB is not read (`not run (error)`). The Go base tree is not a temp folder: it lives in the repo's one stable
+folder, `~/.claude/state/done-check/base-go/<sha256 of the repo's git common dir>/tree` (`lib/base-go-folder.mjs`), emptied and refilled
+for each base, so the package folders in Go's build-cache keys stay the same across lanes, worktrees and rebases and a second base of the
+same sources is a cache hit. One run at a time uses it: its `lock` is refreshed every 5 s and broken only after 60 s without a refresh (a
+killed run), never while its holder lives; a run that finds it held says `base: unavailable` (`base folder busy`). A base that cannot be
+compared never blocks on failures that may be old: only a failure on the change (a changed file, on a changed line when it has one, or the
+package folder of a changed file) blocks, worded "may be older"; the others are `unknown`. Each Go base run removes other repos' folders
+unused for 7 days (under their own lock, never a held one); nothing else removes them (uninstall leaves `~/.claude/state` alone).
 
 ## Files
 
@@ -96,6 +103,7 @@ module may not finish within the 30 s base budget (the failures are then called 
 | `done-check.mjs` | the command line (importing it runs nothing) |
 | `lib/check-change.mjs` | orchestration: plan, reuse, run, verdict, ledger row; the hook imports this only |
 | `lib/base-compare.mjs` | reruns failed typechecks, failing test files and Go checks at the base (caches the answers); reruns new test failures once at head (flaky) |
+| `lib/base-go-folder.mjs` | the stable Go base folder of a repo: its lock (refreshed while held) and the 7-day sweep of other repos' folders |
 | `lib/verdict-text.mjs` | the line and the block reason |
 | `lib/code-lines.mjs` | which lines of a JS or TS text hold code (risk classes skip comment-only edits) |
 | `lib/false-alarms.mjs` | the hashed ids of new failures and which of them a false-alarm label lets through |

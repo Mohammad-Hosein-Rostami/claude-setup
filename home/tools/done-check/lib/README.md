@@ -16,7 +16,8 @@ ledger row, one status line.
 - `related.mjs`: picks the `node:test` files a change can break (changed, importing a changed file, or naming its path).
 - `run-checks.mjs`: runs the planned commands in a small pool under one deadline and turns each output into a result.
 - `parse.mjs`: readers for tsc, eslint json, vitest and jest json, and node:test TAP output.
-- `base-run.mjs`: the base commit's files in a temp folder, and the cache of failures that already exist there.
+- `base-run.mjs`: the base commit's files in a temp folder (for Go in the repo's stable folder), and the cache of failures that already exist there.
+- `base-go-folder.mjs`: the stable Go base folder of one repo, its heartbeat lock, and the sweep of other repos' folders unused for 7 days.
 - `base-compare.mjs`: tells which failures of the change the base has too (old) and which are new.
 - `test-diff.mjs`: the weakened-test scan (deleted, skipped, `.only` or loosened tests; a test deleted with every module it imports, none renamed, is removed with its code, not weakened).
 - `code-lines.mjs`: tells which lines of a JS or TS text hold code, so a comment-only change is not treated as a code change.

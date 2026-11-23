@@ -58,6 +58,7 @@ The bound of each store this setup or Claude Code fills (2026-11-21):
 | `~/.cache/figma` | 30 days idle | disk-clean `figma-pulls` |
 | `~/.claude/recall/index.db` | 2 GiB of live data, oldest transcripts first (`RECALL_MAX_INDEX_MB`) | recall's checkpoint job (`tools/recall/lib/index-bound.mjs`) |
 | `~/.claude/state/commit-gate` | 7 days | the gate itself (`hooks/lib/session-store.mjs`) |
+| `~/.claude/state/done-check/base-go/<repo hash>/` (one Go base tree per repo) | 7 days unused, never while its lock is held | done-check itself, at each Go base run (`tools/done-check/lib/base-go-folder.mjs`) |
 | transcripts, tool results, file history | `cleanupPeriodDays` (default 30; doctor prints it, and the `claude purge --all --dry-run` size) | Claude Code itself: disk-clean adds no rule there |
 | lane worktrees | until landed | `git-tidy prune` only (Claude Code's own cleanup keeps unpushed worktrees) |
 
