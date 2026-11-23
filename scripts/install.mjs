@@ -4,8 +4,8 @@
 // Usage: node scripts/install.mjs [--update [--to <tag>]] [--uninstall] [--dry-run] [--no-plugins] [--no-tools]
 //          [--ps-profile <path>] [--claude-version <x.y.z>]
 //   (no flag) / --update   link home/ into ~/.claude (and remove the links of the retired modes and workflows), make personal/
-//                          from personal.example/ when missing and move untracked notes of home/project-notes into it, link
-//                          ~/.claude/project-notes to personal/project-notes, write ~/.claude/CLAUDE.md (the marker line and
+//                          from personal.example/ when missing; on the layer's first install move the notes of home/project-notes git does not
+//                          track (or deleted in a pull) into it; link ~/.claude/project-notes to personal/project-notes, write ~/.claude/CLAUDE.md (the marker line and
 //                          @ imports of home/CLAUDE.md and personal/CLAUDE.md; scripts/install/personal.mjs), the claude-as
 //                          start-up line, settings.json, plugins, tool dependencies; safe to repeat (a second run changes
 //                          nothing). --update is the same run, by name. A repo path an @ import line cannot carry (a space,

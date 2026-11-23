@@ -8,7 +8,8 @@ find Node and call it. Its flags are in the header of `install.mjs`.
 | `context.mjs` | flags, paths, the dry-run switch (`act`), the run log |
 | `record.mjs` | the install record `~/.claude/.claude-setup-install.json`, backups into `~/.claude-backup-<stamp>/`, the install lock |
 | `links.mjs` | `home/*` into `~/.claude`, removal of the retired mode launcher, `modes` and `workflows` links (a copy or the owner's own file there goes to the backup folder) |
-| `personal.mjs` | the personal layer: `personal/` from `personal.example/`, the owner's untracked notes out of `home/project-notes`, the `~/.claude/project-notes` link, the generated `~/.claude/CLAUDE.md` |
+| `personal.mjs` | the personal layer: runs the `personal/` steps, the `~/.claude/project-notes` link, the generated `~/.claude/CLAUDE.md` (and its removal on `--uninstall`) |
+| `personal-folder.mjs` | `<repo>/personal/`: made from `personal.example/` as its own git repo, the owner's notes moved in from `home/project-notes` (and restored from git history when a pull deleted them), moved back on `--uninstall` |
 | `startup.mjs` | the one `claude-as` start-up line (zsh, bash, PowerShell profile) |
 | `settings.mjs` | `settings.json` from the layers, through `scripts/merge-settings.jq` |
 | `tools.mjs` | plugins and tool dependencies |
@@ -30,16 +31,23 @@ How it behaves:
   record; `--uninstall` puts it back and removes the rest, so the file list is as before the first install.
 - `~/.claude/CLAUDE.md` is a file the installer writes, not a link: a marker line, then `@<repo>/home/CLAUDE.md` (the shared
   core) and, while it exists, `@<repo>/personal/CLAUDE.md` (yours); paths use forward slashes on every OS. A later run or
-  `--uninstall` treats it as the installer's own only while its first line is the marker; an older install's link into
+  `--uninstall` treats it as the installer's own only while its whole text is what the installer last wrote (the sha256 in
+  the record's `written` list; a file that keeps the marker line but has your own lines added is yours: backed up before a
+  re-install replaces it, left in place by `--uninstall`). It is listed apart from `made` because an older uninstaller
+  deletes every `made` entry of a kind it does not know. An older install's link into
   `home/` is replaced without a backup, anything else there is backed up first. A repo path an import line cannot carry (a
   space, `@`, `#`, a quote, a non-ASCII letter) stops the install with exit 1 before anything changes.
 - `personal/` (git-ignored by the core repo) is made from `personal.example/` when missing and made its own git repo with a
   first commit, so `git clean -fdx` in the clone skips it and it has a history to sync; an existing one is never overwritten
   (only `git init` with a first commit, when it is no repo yet, and a missing `project-notes/` folder are added). The
   installer's commits use your git name and email, else `claude-setup install`. `~/.claude/project-notes` links to
-  `personal/project-notes`. Notes in `home/project-notes` that git does not track (the owner's own) are moved there and
-  committed; a name already taken sends the core copy to the backup folder. `--uninstall` moves them back and keeps
-  `personal/`.
+  `personal/project-notes`. On the layer's first install on a machine (`~/.claude/project-notes` not yet linked there), the
+  owner's notes are moved there and committed: those in `home/project-notes` that git does not track, and those a pull
+  deleted there before this install ran (restored first from the newest commit this checkout's HEAD was at that held them:
+  its reflog and `ORIG_HEAD`, so a fresh clone recovers nothing). A name already taken sends the core copy to the backup
+  folder. Later installs move nothing, so a shared note not yet committed in `home/project-notes` stays in core.
+  `--uninstall` moves the moved notes back and keeps `personal/`. A `.personal-*` copy of the template that a stopped
+  install left is removed by the next install once it is older than 30 minutes (a running install's copy is seconds old).
 - New machine (no record, its own `settings.json`, `~/.claude/CLAUDE.md` neither the installer's marker file nor linked into
   this repo): that `settings.json` is kept as the first, lowest layer under `settings/base.json`, `settings/<os>.json` and
   `settings/local.json`.

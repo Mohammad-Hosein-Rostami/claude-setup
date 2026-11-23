@@ -1,17 +1,18 @@
-// Tests for the personal layer of an install (scripts/install/personal.mjs, through scripts/install.mjs): the generated
-// ~/.claude/CLAUDE.md, personal/ made from personal.example/, the owner's untracked notes moved out of home/project-notes, the
+// Tests for the personal layer of an install (scripts/install/personal.mjs and personal-folder.mjs, through scripts/install.mjs): the generated
+// ~/.claude/CLAUDE.md, personal/ made from personal.example/, the owner's notes (untracked, or deleted by a pull) moved out of home/project-notes, the
 // project-notes link, --uninstall, and the callers that follow the new layout (isNewMachine, token-audit's import count, recall).
 // Exports: none (node:test file). Every installer run uses a temp HOME and a copy of the repo in a cs-test- folder (git init'ed,
 // only home/project-notes/README.md tracked there), with --no-plugins --no-tools; it needs jq and git like every install.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CLAUDE_MD_MARKER, checkImportPath, claudeMdText, importPath } from '../scripts/install/personal.mjs';
 import { isNewMachine } from '../scripts/install/settings.mjs';
-import { RECORD_NAME } from '../scripts/install/record.mjs';
+import { INSTALL_LOCK_STALE_MS, RECORD_NAME } from '../scripts/install/record.mjs';
 import { fileWithImports } from '../home/hooks/lib/claude-md-imports.mjs';
 import { discoverFiles } from '../home/tools/recall/lib/indexer.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -110,7 +111,30 @@ test('an existing personal/ (a repo with a commit) is never overwritten; no pers
   writeFileSync(join(personal, 'CLAUDE.md'), '');
   assert.equal(run(repo, home).status, 0);
   assert.equal(readFileSync(claudeMd(home), 'utf8'), expected(repo), 'an empty personal/CLAUDE.md still exists: line 3');
+  assert.deepEqual(backups(home), [], 'the text the installer wrote before is replaced without a backup');
   assert.equal(readFileSync(join(personal, 'CLAUDE.md'), 'utf8'), '');
+});
+
+test('a re-install backs up a CLAUDE.md that starts with the marker but holds the user\'s own lines', { skip }, () => {
+  const repo = checkout();
+  const home = newHome();
+  assert.equal(run(repo, home).status, 0);
+  const edited = `${expected(repo)}- mine\n`;
+  writeFileSync(claudeMd(home), edited);
+  const again = run(repo, home);
+  assert.equal(again.status, 0, again.stderr);
+  assert.equal(readFileSync(claudeMd(home), 'utf8'), expected(repo));
+  const [saved] = backups(home);
+  assert.equal(readFileSync(join(home, saved, '.claude', 'CLAUDE.md'), 'utf8'), edited, 'the edited file is in the backup folder');
+});
+
+test('the record lists CLAUDE.md under written with its sha256, never under made (an older uninstaller deletes made kinds it does not know)', { skip }, () => {
+  const repo = checkout();
+  const home = newHome();
+  assert.equal(run(repo, home).status, 0);
+  const record = JSON.parse(readFileSync(join(home, '.claude', RECORD_NAME), 'utf8'));
+  assert.deepEqual(record.made.filter((entry) => entry.path === claudeMd(home)), []);
+  assert.deepEqual(record.written, [{ path: claudeMd(home), sha256: createHash('sha256').update(expected(repo)).digest('hex') }]);
 });
 
 test('a repo path with whitespace exits 1 naming it, and nothing under HOME changes', { skip }, () => {
@@ -168,18 +192,21 @@ test('a CLAUDE.md the user wrote is backed up first, and --uninstall puts it bac
   assert.ok(existsSync(join(repo, 'personal', 'CLAUDE.md')), 'personal/ stays');
 });
 
-test('--uninstall removes CLAUDE.md only while its first line is the marker', { skip }, () => {
-  const repo = checkout();
-  const home = newHome();
-  assert.equal(run(repo, home).status, 0);
-  writeFileSync(claudeMd(home), '# I changed it\n');
-  const kept = run(repo, home, '--uninstall');
-  assert.equal(kept.status, 0, kept.stderr);
-  assert.match(kept.stderr, /no longer starts with the installer's marker line/);
-  assert.equal(readFileSync(claudeMd(home), 'utf8'), '# I changed it\n');
-  const home2 = newHome();
-  assert.equal(run(repo, home2).status, 0);
-  assert.equal(run(repo, home2, '--uninstall').status, 0);
+test('--uninstall removes CLAUDE.md only while it holds exactly the text the installer wrote', { skip }, () => {
+  for (const edit of [() => '# I changed it\n', (text) => `${text}- mine\n`]) {
+    const repo = checkout();
+    const home = newHome();
+    assert.equal(run(repo, home).status, 0);
+    const edited = edit(readFileSync(claudeMd(home), 'utf8'));
+    writeFileSync(claudeMd(home), edited);
+    const kept = run(repo, home, '--uninstall');
+    assert.equal(kept.status, 0, kept.stderr);
+    assert.ok(kept.stderr.includes(`${claudeMd(home)} changed since the installer wrote it (your lines are in it); left as it is`), kept.stderr);
+    assert.equal(readFileSync(claudeMd(home), 'utf8'), edited, 'the user lines stay, marker line or not');
+  }
+  const [repo2, home2] = [checkout(), newHome()];
+  assert.equal(run(repo2, home2).status, 0);
+  assert.equal(run(repo2, home2, '--uninstall').status, 0);
   assert.deepEqual(readdirSync(home2).filter((name) => name !== '.zshrc' && name !== '.bashrc'), [], 'HOME is as before the install');
 });
 
@@ -205,6 +232,74 @@ test('owner upgrade: untracked notes in home/project-notes move to personal/proj
   assert.equal(run(repo, home, '--uninstall').status, 0);
   assert.equal(readFileSync(join(notes, 'work-app.md'), 'utf8'), 'work app note\n', 'moved back on --uninstall');
   assert.equal(readFileSync(join(notes, 'taken.md'), 'utf8'), 'core copy\n', 'the backup comes back too');
+});
+
+/** Commits the staged files of `repo` with a stand-in identity (the temp HOME has none). */
+const commit = (repo, message) => git(repo, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', message);
+
+test('a pull that deleted tracked notes before the install: they come back from the commits HEAD was at, into personal/', { skip }, () => {
+  const repo = checkout();
+  const notes = join(repo, 'home', 'project-notes');
+  writeFileSync(join(notes, 'alpha-app.md'), 'alpha note\n');
+  writeFileSync(join(notes, 'beta-app.md'), 'beta note, old\n');
+  git(repo, 'add', 'home/project-notes');
+  commit(repo, 'notes tracked in core');
+  writeFileSync(join(notes, 'beta-app.md'), 'beta note, newest\n');
+  git(repo, 'add', 'home/project-notes');
+  commit(repo, 'beta note edited');
+  git(repo, 'rm', '-q', 'home/project-notes/alpha-app.md', 'home/project-notes/beta-app.md');
+  commit(repo, 'notes leave core'); // what a ff pull does to the files: gone from disk and from the index
+  const home = newHome();
+  const result = run(repo, home);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(join(home, '.claude', 'project-notes', 'alpha-app.md'), 'utf8'), 'alpha note\n');
+  assert.equal(readFileSync(join(repo, 'personal', 'project-notes', 'beta-app.md'), 'utf8'), 'beta note, newest\n', 'the newest version');
+  assert.deepEqual(readdirSync(notes), ['README.md']);
+  assert.equal(git(repo, 'status', '--porcelain', '--', 'home/project-notes').stdout, '', 'the core index is untouched');
+  assert.equal(git(join(repo, 'personal'), 'status', '--porcelain').stdout, '', 'the recovered notes are committed in personal/');
+  rmSync(join(repo, 'personal', 'project-notes', 'alpha-app.md'));
+  assert.equal(run(repo, home).status, 0);
+  assert.equal(exists(join(repo, 'personal', 'project-notes', 'alpha-app.md')), false, 'a note deleted from personal/ later is not brought back');
+});
+
+test('a checkout whose own HEAD never held the notes (a fresh clone) recovers none', { skip }, () => {
+  const repo = checkout();
+  writeFileSync(join(repo, 'home', 'project-notes', 'alpha-app.md'), 'alpha note\n');
+  git(repo, 'add', 'home/project-notes');
+  commit(repo, 'notes tracked in core');
+  git(repo, 'rm', '-q', 'home/project-notes/alpha-app.md');
+  commit(repo, 'notes leave core');
+  git(repo, 'reflog', 'expire', '--expire=now', '--all');
+  const result = run(repo, newHome());
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(readdirSync(join(repo, 'personal', 'project-notes')), ['README.md']);
+});
+
+test('after the layer is installed, a new note in home/project-notes not yet committed stays in core', { skip }, () => {
+  const repo = checkout();
+  const home = newHome();
+  assert.equal(run(repo, home).status, 0);
+  writeFileSync(join(repo, 'home', 'project-notes', 'shared-draft.md'), 'a shared note to commit\n');
+  const again = run(repo, home);
+  assert.equal(again.status, 0, again.stderr);
+  assert.equal(readFileSync(join(repo, 'home', 'project-notes', 'shared-draft.md'), 'utf8'), 'a shared note to commit\n');
+  assert.equal(exists(join(repo, 'personal', 'project-notes', 'shared-draft.md')), false);
+});
+
+test('a staging folder a stopped install left is removed once older than a live install; a young one stays', { skip }, () => {
+  const repo = checkout();
+  const old = join(repo, '.personal-AbC123');
+  const young = join(repo, '.personal-XyZ789');
+  for (const dir of [old, young]) {
+    mkdirSync(dir);
+    writeFileSync(join(dir, 'CLAUDE.md'), 'half a copy\n');
+  }
+  const longAgo = new Date(Date.now() - 2 * INSTALL_LOCK_STALE_MS);
+  utimesSync(old, longAgo, longAgo);
+  const result = run(repo, newHome());
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(exists(old), false, 'the stopped install\'s copy is gone');
+  assert.ok(exists(young), 'a copy that may be a running install\'s stays');
 });
 
 test('a personal/ that is a link out of the repo gets nothing written through it: no note moved, no git init', { skip }, () => {

@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { join, resolve, dirname } from 'node:path';
 import { InstallError, act, note, samePath } from './context.mjs';
 import { backup, remember } from './record.mjs';
-import { isOwnFile } from './personal.mjs';
+import { hasInstallMarker } from './personal.mjs';
 
 const JQ_HINT = { macos: 'brew install jq', linux: 'apt install jq (or your package manager)', windows: 'winget install jqlang.jq' };
 const settingsPath = (ctx) => join(ctx.claudeDir, 'settings.json');
@@ -22,7 +22,7 @@ export function isNewMachine(ctx, record) {
   if (!record.fresh || !existsSync(settingsPath(ctx))) return false;
   const claudeMd = join(ctx.claudeDir, 'CLAUDE.md');
   try {
-    if (!lstatSync(claudeMd).isSymbolicLink()) return !isOwnFile(claudeMd);
+    if (!lstatSync(claudeMd).isSymbolicLink()) return !hasInstallMarker(claudeMd);
     return !samePath(resolve(dirname(claudeMd), readlinkSync(claudeMd)), join(ctx.repo, 'home', 'CLAUDE.md'));
   } catch (error) {
     if (error.code === 'ENOENT') return true;
