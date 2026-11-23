@@ -51,6 +51,8 @@ test('AGENTS.md loads natively alone, through our setting beside CLAUDE.md, and 
   const both = project({ 'AGENTS.md': 'x', 'CLAUDE.md': 'no import here: AGENTS.md is mentioned only' });
   assert.equal(scan(both).agentsMdLoads, 'setting');
   assert.equal(scan(both, { ours: { ...OURS, agentsMdSetting: false } }).agentsMdLoads, 'none');
+  const bigClaude = project({ 'AGENTS.md': 'x', 'CLAUDE.md': `@AGENTS.md\n${'y'.repeat(200 * 1024)}` });
+  assert.equal(scan(bigClaude, { ours: { ...OURS, agentsMdSetting: false } }).agentsMdLoads, 'import', 'a CLAUDE.md over 64 KiB is read by its head');
 });
 
 test('settings that change ours: weaker model, our switch, hooks off, permission mode; env values never kept', () => {

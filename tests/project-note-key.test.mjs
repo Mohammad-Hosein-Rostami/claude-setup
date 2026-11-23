@@ -103,7 +103,7 @@ test('repoIdentity: Windows drive paths from git are read with Windows rules; a 
   const fake = (out) => (cwd, args) => (args[0] === 'rev-parse' ? { status: 0, stdout: out } : { status: 1, stdout: '' });
   assert.deepEqual(repoIdentity(dir, { git: fake('C:/repos/My_App/.git\nC:/repos/My_App\n'), home }).keys, ['my-app']);
   assert.deepEqual(repoIdentity(dir, { git: fake('//server/share/app/.git\n//server/share/app\n'), home }), { top: null, keys: [], source: 'none', reason: 'network' });
-  assert.equal(repoIdentity('\\\\server\\share\\app', { git: fake(''), home }).reason, 'network');
+  assert.equal(repoIdentity('//server/share/app', { git: fake(''), home }).reason, 'network');
 });
 
 /** A notes folder with these files (name to text). */

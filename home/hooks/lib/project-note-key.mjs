@@ -140,7 +140,8 @@ function folderIdentity(cwd, home) {
  *   hanging or failing in a repository, or the remote unreadable).
  */
 export function repoIdentity(cwd, { git, home }) {
-  if (typeof cwd !== 'string' || !isAbsolute(cwd) || NETWORK_PATH.test(cwd)) return { ...NONE, reason: 'network' };
+  if (typeof cwd !== 'string' || !isAbsolute(cwd)) return NONE; // no session folder: nothing to say
+  if (NETWORK_PATH.test(cwd)) return { ...NONE, reason: 'network' };
   const identity = gitIdentity(cwd, git) ?? folderIdentity(cwd, home);
   if (identity.top !== null && isInside(home, identity.top)) return { ...NONE, reason: 'home' };
   return identity;

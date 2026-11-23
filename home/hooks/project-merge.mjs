@@ -79,7 +79,7 @@ function effortOf(settings, model) {
 export function ourSetup(home, coreHome = CORE_HOME) {
   let settings = {};
   try {
-    settings = JSON.parse(readPlainFile(join(home, '.claude', 'settings.json'), SETTINGS_MAX_BYTES)) ?? {};
+    settings = JSON.parse(readPlainFile(realpathSync(join(home, '.claude', 'settings.json')), SETTINGS_MAX_BYTES)) ?? {};
   } catch {
     settings = {}; // missing or unreadable: no claim about ours
   }

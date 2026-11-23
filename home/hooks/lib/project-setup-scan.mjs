@@ -18,6 +18,7 @@ import { join, relative, sep } from 'node:path';
 import { isInside } from './agent-brief.mjs';
 import { readAgentFile } from './agent-file-walk.mjs';
 import { frontmatterOf, plainFrontmatter } from './agent-frontmatter.mjs';
+import { readHead } from './gated-folder.mjs';
 import { readPlainFile } from './plain-file.mjs';
 import { shownPath } from './shown-name.mjs';
 
@@ -138,14 +139,8 @@ function readJson(path) {
   }
 }
 
-/** The head of a regular instruction file, '' when it is a link or unreadable (it is still listed). */
-function instructionHead(path) {
-  try {
-    return readPlainFile(path, TEXT_MAX_BYTES);
-  } catch {
-    return '';
-  }
-}
+/** The first TEXT_MAX_BYTES of a regular instruction file (a longer one too), '' when it is a link or unreadable (it is still listed). */
+const instructionHead = (path) => readHead(path, TEXT_MAX_BYTES) ?? '';
 
 /** Instructions: which files exist, whether AGENTS.md loads, whether CLAUDE.local.md imports a project note. */
 function scanInstructions(folders, setup, { ours }) {

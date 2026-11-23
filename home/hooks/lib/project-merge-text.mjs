@@ -139,10 +139,10 @@ const hasAiFiles = (setup) => setup !== null && (setup.instructions.length + set
  * @param {string} agentNote - the project-agents line (project-agents-timed.mjs), '' for none.
  * @param {{ keys: string[], reason?: string }} identity - from repoIdentity: the key shown is the found note's, else the short one.
  * @returns {string} at most LEAD_NOTE_MAX_CHARS; '' when the project has no AI files, no note and no agents line, and its key
- *   was not lost to a git failure (F7: that is said, never left silent).
+ *   was not lost to a git failure or a network path (F6, F7: that is said, never left silent).
  */
 export function leadNote(setup, notes, agentNote, identity) {
-  if (!hasAiFiles(setup) && notes.length === 0 && !agentNote && identity.reason !== 'git-failed') return '';
+  if (!hasAiFiles(setup) && notes.length === 0 && !agentNote && !NOT_CHECKED_KEY[identity.reason]) return '';
   const key = notes[0]?.key ?? identity.keys.at(-1);
   const from = SOURCES[identity.source];
   const header = key && from ? `Project setup of ${key} (key from ${from}; ${DATA_LABEL}):` : `Project setup (${DATA_LABEL}):`;
