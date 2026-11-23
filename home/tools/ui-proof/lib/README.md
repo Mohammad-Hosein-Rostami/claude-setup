@@ -25,7 +25,6 @@ The parts of the `ui-proof` tool, which records whether the UI of a tree was che
   the run matrix), `runFiles` (that run matrix and its states) and `planProofProblem`, whether the records prove a plan. Rules:
   `home/standards/ui-checks.md`.
 - `records.mjs`: the proof records, one JSON file per repository, one record per `ui-check run`, and the finders that look a record up by tree or commit.
-- `owner-waiver.mjs`: the one rule of the owner's ui-proof waiver for a road (the `## Owner decisions` line, the landing row's evidence text), used by `git-tidy land`, `land-lane` and the road gate.
 - `review-html.mjs`: builds the HTML of the owner's review page from the review model (pure; every text is HTML-escaped).
 
 Screens and reach (which screens of a project a change can show on), read at a commit with git plumbing, nothing written in the project:

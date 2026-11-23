@@ -10,7 +10,7 @@
 //   --status-file; a lane whose diff changes the app needs a readable --brief (exit 2 before anything runs); a plan with logic needs done-check
 //   `tests` ok (exit 4); `git-tidy land` proves the plan (exit 6); a proved plan other than pixel ends the row evidence with ` (ui plan <depth>: proved)`
 //   and prints its `follow-up:` lines; a plan that cannot be computed is exit 14.
-//   The removed flags `--audit-base`, `--checks` and `--owner-waive-ui` are refused with exit 2 and a plain message.
+//   The removed flags `--audit-base`, `--checks` and the old UI waiver flag (any `--...waive...`) are refused with exit 2 and a plain message.
 // Output: the first line is `land: <state>`; a landing prints `landed <to> on <base> from <from>` and the `checks:` line of done-check (and a
 //   `review:` line for a risky lane). With --json one object `{ state, exit, to, from, lines }`.
 // Exit: 0 landed clean, 1 landed with `git-tidy check` findings left, 2 usage, 3 conflict, 4 done-check found new failures or an open weakened

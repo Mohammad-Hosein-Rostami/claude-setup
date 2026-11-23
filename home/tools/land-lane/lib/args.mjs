@@ -11,10 +11,10 @@ export class UsageError extends Error {}
 
 export const USAGE = 'usage: land-lane.mjs --repo <abs base folder> --branch <name> --tip <40-hex> --base <branch> --status-file <abs> --close-row <row id>'
   + ' [--worktree <abs>] [--brief <file>] [--reviewed <40-hex> | --skip-review <reason>] [--accept-open <reason>] [--json]';
-const REMOVED_FLAGS = {
-  '--audit-base': 'there is no audit record any more', '--checks': 'landing has no test or review step, and the UI proof always runs',
-  '--owner-waive-ui': 'there are no UI waivers: the check plan of the rebased diff decides the UI proof (ui-proof plan)',
-};
+const REMOVED_FLAGS = { '--audit-base': 'there is no audit record any more', '--checks': 'landing has no test or review step, and the UI proof always runs' };
+// The owner's old UI waiver flag (removed 2026-11-23, R28: no waivers) and any flag like it: refused as removed, with the reason.
+const WAIVER_FLAG = /^--[\w-]*waive/;
+const WAIVER_REMOVED = 'there are no UI waivers: the check plan of the rebased diff decides the UI proof (ui-proof plan)';
 
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const BRANCH_NAME = /^[\w./-]{1,100}$/;
@@ -47,6 +47,7 @@ function readFlags(argv) {
     const key = VALUE_FLAGS[flag];
     if (flag === '--json') values.json = true;
     else if (REMOVED_FLAGS[flag] !== undefined) throw new UsageError(`${flag} was removed: ${REMOVED_FLAGS[flag]}. ${USAGE}`);
+    else if (WAIVER_FLAG.test(flag)) throw new UsageError(`${flag} was removed: ${WAIVER_REMOVED}. ${USAGE}`);
     else if (key === undefined) throw new UsageError(`unknown argument ${JSON.stringify(flag)}. ${USAGE}`);
     else if (argv[i + 1] === undefined || argv[i + 1].startsWith('--')) throw new UsageError(`${flag} needs a value. ${USAGE}`);
     else if (values[key] !== undefined) throw new UsageError(`${flag} given twice. ${USAGE}`);

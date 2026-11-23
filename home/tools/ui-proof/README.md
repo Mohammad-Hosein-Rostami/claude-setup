@@ -35,32 +35,12 @@ blocks (fail closed). Claude Code overrides a Stop gate after 8 blocks in a row 
 on it alone: `git-tidy land` and the road gate are the hard checks. `MATRIX: none:` skips the Figma compare, never the proof:
 visual-qa runs `run` on a matrix without a Figma source.
 
-## Owner waiver of the UI proof
+## No waiver of the UI proof
 
-Why: on 2026-11-23 the owner decided that web API-integration lanes, which change no screen on purpose, land without the visual-qa
-PASS while every other check stays. `lib/owner-waiver.mjs` is the one rule, read by `git-tidy land --owner-waive-ui`, `land-lane
---owner-waive-ui` and the road gate's line 4:
-
-- Only visible lines of the STATUS.md section `## Owner decisions` count (up to the next heading; a line in a code fence and text inside
-  an HTML comment `<!-- ... -->`, also one over several lines, are not read). Of those, the last line that names
-  `ui-proof waiver for road <id>` (any case; the id not followed by another id character, so `ice` is not `iceweb`) decides:
-  - It grants the waiver only in the form `- <YYYY-MM-DD> ui-proof waiver for road <id>` followed by nothing, or by the owner's words
-    (e.g. `: web API lanes land without the screen check (owner, 2026-11-23)`): the bullet, the optional date and then the phrase, exactly
-    as `status.mjs decision "ui-proof waiver for road <id>: <what the owner said> (owner, <date>)"` writes it. The line must not contain
-    `UNCONFIRMED` (a decision taken by a timeout default is no owner decision), and the words after the phrase must not contain a
-    negation word: `no`, `not`, `never`, `revoke`, `revoked`, `denied`, `declined`, `refused`, `withdrawn`, `canceled`, `cancelled`.
-  - Any other line that names it revokes: `- <date> ui-proof waiver for road <id> revoked (owner, <date>)` and
-    `- <date> no ui-proof waiver for road <id>` are the two forms to record a revoke with (`status.mjs decision`). A later granting line
-    grants it again.
-- For a landing (`git-tidy land`, `land-lane`) the STATUS.md must also hold the close row (`--close-row`, a road row
-  `<road>.s<N>.<name>` whose road is `<id>`) in `## Work items`, and lie outside every folder of the repository being landed (the base
-  folder and each of its worktrees, real paths with symlinks resolved, case folded on macOS and Windows). So a STATUS.md written for the
-  occasion, or kept in the repo itself, cannot waive the proof. Otherwise it is exit 2 before anything runs, naming what is missing.
-- A landing under it prints `ui-proof: waived by owner decision (<reason>)`, and land-lane ends the row evidence with
-  ` (ui-proof waived: owner decision)`. Gate line 4 passes a step as `waived by owner decision` when a landing of the step carries that
-  evidence, every landing that changed a UI file carries it, and the owner's line is there; otherwise the step takes the web or terminal
-  path as before.
-- Without the line, or without the flag, nothing changes: the UI proof is on. The stop gate (`hooks/ui-proof-gate.mjs`) is not changed.
+The owner's per-road waiver of the UI proof was removed on 2026-11-23 (owner: no kinds, no waivers; the checks are detected from the
+work). `git-tidy land` and `land-lane` refuse its old flag (exit 2) and prove the check plan of the rebased diff instead (`check --plan`);
+a docs page, tests or dev config need no UI proof at all. The road gate's line 4 reads an old landing row that ends with
+` (ui-proof waived: owner decision)` as no plan proof.
 
 ## review-page
 

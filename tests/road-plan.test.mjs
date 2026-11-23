@@ -16,7 +16,7 @@ import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const sha = (char) => char.repeat(40);
 const START = sha('a');
-const OLD_WAIVER = ' (ui-proof waived: owner decision)'; // the suffix land-lane --owner-waive-ui wrote before the waiver was removed
+const OLD_WAIVER = ' (ui-proof waived: owner decision)'; // the suffix land-lane's old UI waiver flag wrote before the waiver was removed
 
 // ---- next: the baseline ----
 

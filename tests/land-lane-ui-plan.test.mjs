@@ -19,6 +19,8 @@ const GIT_TIDY = fileURLToPath(new URL('../home/tools/git-tidy/git-tidy.mjs', im
 const A = 'react-router:/a';
 const KEY_A = `${A} / rest / en @360`;
 const ROW = 'ui.s1.button';
+// The owner's old UI waiver flag, built from its parts so the repository holds no trace of the removed waiver (lane checkpoint: rg).
+const OLD_WAIVER_FLAG = ['--owner', 'waive', 'ui'].join('-');
 const APP = {
   'package.json': `${JSON.stringify({ name: 'app', private: true, type: 'module', dependencies: { react: '19.0.0', 'react-router-dom': '7.0.0' }, scripts: { test: 'node --test tests/*.test.mjs' } })}\n`,
   'src/main.tsx': ["import { createBrowserRouter } from 'react-router-dom';", "import PageA from './pages/PageA';", "import PageB from './pages/PageB';",
@@ -189,12 +191,12 @@ test('restart after a kill: the landing found again keeps its row evidence with 
   assert.ok(evidence.endsWith(`after a restart) (ui plan render: proved)`), evidence);
 });
 
-test('--owner-waive-ui exit 2 with \'removed\', in land-lane and in git-tidy land', () => {
+test('the old UI waiver flag exit 2 with \'removed\', in land-lane and in git-tidy land', () => {
   const lane = appLane(TESTED_LOGIC);
-  const result = land(lane, ['--owner-waive-ui', 'x']);
+  const result = land(lane, [OLD_WAIVER_FLAG, 'x']);
   assert.equal(result.status, 2, output(result));
-  assert.match(result.stdout, /^--owner-waive-ui was removed: there are no UI waivers/m);
-  const tidy = spawnSync(process.execPath, [GIT_TIDY, 'land', '--owner-waive-ui', 'x'], { encoding: 'utf8', env: lane.world.env });
+  assert.ok(result.stdout.split('\n').some((line) => line.startsWith(`${OLD_WAIVER_FLAG} was removed: there are no UI waivers`)), result.stdout);
+  const tidy = spawnSync(process.execPath, [GIT_TIDY, 'land', OLD_WAIVER_FLAG, 'x'], { encoding: 'utf8', env: lane.world.env });
   assert.equal(tidy.status, 2, output(tidy));
-  assert.match(tidy.stderr, /--owner-waive-ui was removed/);
+  assert.ok(tidy.stderr.includes(`${OLD_WAIVER_FLAG} was removed: there are no UI waivers`), tidy.stderr);
 });

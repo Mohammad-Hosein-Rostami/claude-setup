@@ -16,6 +16,7 @@ The parts of the `git-tidy` tool. `../git-tidy.mjs` is the command; see `../READ
 | `check.mjs` | merge commits and the findings and hints of `check` |
 | `prune.mjs` | the plan and the re-checked removal of `prune` |
 | `report.mjs` | text and JSON output, the exit codes of `prune` and `land` |
+| `ui-plan-check.mjs` | `land`'s UI step: the check plan of the rebased diff and its proof (`ui-proof check --plan`), the row pointer it proved |
 | `lane-slots.mjs` | read the lane folder pool: each `lane-<n>` folder and whether it is free, busy (why) or missing |
 | `lane-pool.mjs` | `lane claim`, `release`, `reclaim` and land's `detachLandedSlot` |
 | `pool-lock.mjs` | the one pool lock per repository (stale when its pid is gone or over 120 s old) |

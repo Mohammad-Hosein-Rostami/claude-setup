@@ -6,7 +6,7 @@
 //        git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] --tip <sha> [--brief <file>] [--matrix <abs lane matrix>] [--json]
 //   --tip is the full sha the caller expects the lane to be at: required for a full land (exit 2 without it), optional with --rebase-only;
 //   a branch that is not at it exits 9 before anything changes; a full land lands only that sha (a rebase that rewrites it is exit 5, the lane
-//   stays rebased: land again with the new tip). The removed flags `--checks` and `--owner-waive-ui` are refused with exit 2.
+//   stays rebased: land again with the new tip). The removed flag `--checks` and the old UI waiver flag (any `--...waive...`) are refused with exit 2.
 //   --brief is the lane's brief: the request the UI check plan reads, and the paths that may add files over the size limit;
 //   --matrix is the lane's coverage matrix (its Figma frames, widths and locales raise the plan; never lower it).
 //        git-tidy.mjs range <sha> [dir] [--base <branch>] [--landed <sha>] [--json]
@@ -50,10 +50,10 @@ const USAGE = 'usage: git-tidy.mjs check [dir] [--base <branch>] [--json]\n     
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const COMMANDS = ['check', 'prune', 'land', 'range'];
 const VALUE_FLAGS = { '--brief': ['land', 'brief'], '--tip': ['land', 'tip'], '--landed': ['range', 'landed'], '--matrix': ['land', 'matrix'] };
-const REMOVED_FLAGS = {
-  '--checks': 'landing has no test or review step, and the UI proof always runs',
-  '--owner-waive-ui': 'there are no UI waivers: the check plan of the rebased diff decides the UI proof (ui-proof plan)',
-};
+const REMOVED_FLAGS = { '--checks': 'landing has no test or review step, and the UI proof always runs' };
+// The owner's old UI waiver flag (removed 2026-11-23, R28: no waivers) and any flag like it: refused as removed, with the reason.
+const WAIVER_FLAG = /^--[\w-]*waive/;
+const WAIVER_REMOVED = 'there are no UI waivers: the check plan of the rebased diff decides the UI proof (ui-proof plan)';
 const ABSOLUTE_PATH = /^(\/|[A-Za-z]:[\\/])/;
 
 function parseArgs(argv) {
@@ -73,6 +73,7 @@ function parseArgs(argv) {
       if (rest[i + 1] === undefined || rest[i + 1].startsWith('--')) throw new UsageError(`--base needs a branch name. ${USAGE}`);
       options.base = rest[++i];
     } else if (Object.hasOwn(REMOVED_FLAGS, arg)) throw new UsageError(`${arg} was removed: ${REMOVED_FLAGS[arg]}. ${USAGE}`);
+    else if (WAIVER_FLAG.test(arg)) throw new UsageError(`${arg} was removed: ${WAIVER_REMOVED}. ${USAGE}`);
     else if (arg.startsWith('--')) throw new UsageError(`unknown flag ${arg} for ${command}. ${USAGE}`);
     else if ((command === 'land' || command === 'range') && options.branch === null) options.branch = arg;
     else if (options.dir === null) options.dir = arg;

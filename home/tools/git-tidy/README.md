@@ -18,7 +18,7 @@ It must be a local branch; when none is found the exit code is 2 and the message
 exits 2, deleting nothing, when the base was not given with `--base` and more than one of `main`, `master`, `develop`
 exists here: a wrong base would call work "merged" that is not on the branch you work against.
 
-`land` has its own codes (0 landed and clean, 1 landed with findings, 2 not ready, no `--tip` or an `--owner-waive-ui` without the owner's line, 3 conflict, 5 base moved, 6 ui-proof, 7 new-file-size, 8 upstream-moved, 9 tip-moved). Land through `land-lane` (`tools/land-lane/README.md`): it adds the disk check and the row close around this command. Landing has no test run and no review record; `--checks` is refused (exit 2).
+`land` has its own codes (0 landed and clean, 1 landed with findings, 2 not ready or no `--tip`, 3 conflict, 5 base moved, 6 ui-proof, 7 new-file-size, 8 upstream-moved, 9 tip-moved). Land through `land-lane` (`tools/land-lane/README.md`): it adds the disk check and the row close around this command. Landing has no test run and no review record; `--checks` and the old UI waiver flag are refused (exit 2).
 
 | Code | `check` | `prune` |
 | ---- | ------- | ------- |
@@ -101,7 +101,7 @@ A failure of one item does not stop the others; the run ends with exit code 1 if
 
 ## land
 
-`git-tidy land <branch> [dir] [--base <branch>] [--rebase-only] --tip <sha> [--brief <file>] [--owner-waive-ui <reason> --status-file <abs> --close-row <road row id>] [--json]`
+`git-tidy land <branch> [dir] [--base <branch>] [--rebase-only] --tip <sha> [--brief <file>] [--matrix <abs lane matrix>] [--json]`
 puts a lane on the base as one straight line:
 
 0. `--tip <full 40-hex sha>` is the sha the caller expects the lane to be at. A full land without it exits 2 (`land needs --tip <full sha of the lane's tip>`),
@@ -119,18 +119,14 @@ puts a lane on the base as one straight line:
    - A file the lane adds (`<base>..<tip>`, renames counted as adds) over the commit gate's `MAX_NEW_FILE_BYTES` (5 MB, imported from
      `hooks/lib/new-file-size.mjs`) whose path the `--brief <file>` text does not name (the commit gate's `namesPath`) stops it: exit 7
      (`new-file-size`). No `--brief` names no path; a file already on the base never counts.
-   - When the UI files (the ui-proof tool's one definition, `ui-proof changed`) differ between the base and the rebased tip, `ui-proof check
-     --tip <tip>` must exit 0 (a visual-qa PASS for that tree), else exit 6 (`ui-proof`). It is always on unless the owner waived it for the road
-     (below); when the ui-proof tool cannot be loaded every landing exits 6 with that reason.
-   - Owner waiver: `--owner-waive-ui "<reason>" --status-file <abs STATUS.md> --close-row <road row id>` (all three together, a full land
-     only) skips this UI proof and nothing else. Why: the owner decided on 2026-11-23 that web API-integration lanes, which change no screen
-     on purpose, land without the visual-qa PASS. It holds only when that STATUS.md lies outside the repository being landed (this folder
-     and every worktree of it, real paths with symlinks resolved), holds the close row `<road>.s<N>.<name>` under `## Work items`, and has
-     the owner's granting line `ui-proof waiver for road <road>` for that exact road under `## Owner decisions` (not revoked, negated,
-     commented out or `UNCONFIRMED`; the forms are in `ui-proof/README.md`, the rule is `ui-proof/lib/owner-waiver.mjs`). So a direct call
-     cannot waive the proof with a STATUS.md of its own inside the repo or one without the road's row. Otherwise, or with a reason that is
-     not 1 to 200 characters without control characters, it is exit 2 before anything changes, naming what is missing. A landing under the waiver prints `ui-proof: waived by owner decision (<reason>)`
-     (JSON `uiWaived`). Rebase, tip, upstream, new-file size, ff-only and cleanup run as always. `land-lane --owner-waive-ui` passes it on.
+   - The UI check plan of the rebased diff must be proved (`lib/ui-plan-check.mjs`): `ui-proof check --plan --base <base> --tip <tip>`
+     with `--request <brief>` and `--matrix <lane matrix>` recomputes the plan (rules: `home/standards/ui-checks.md`) and checks its proof
+     on the records: none needs nothing, same and render need runner or visual-qa runs at both ends, visual and pixel a visual-qa PASS for
+     the tree (today's check, its line word for word). Not proved: exit 6 (`ui-proof`) with the failing states and the reason. A plan other
+     than none with no `--brief` is exit 6 too (the request would be unread). Always on, no waiver; when the ui-proof tool cannot be loaded
+     every landing exits 6 with that reason. A proved plan other than pixel prints `ui plan <depth>: proved` and its `follow-up:` lines
+     (JSON `uiPlan: { depth, followUps }`); none does so only when a UI file changed (a docs page), so a lane with no UI file prints what
+     it printed before. The old UI waiver flag was removed (exit 2, owner 2026-11-23: no waivers).
 4. The base moves with `git merge --ff-only <the rebased tip sha>` run in the base folder (the sha, not the lane's branch, so a commit added to the lane after the checks is never landed unchecked and stays on the lane). When the base moved since the rebase: exit 5, rerun the landing.
    The base tip read right before the merge is printed as `from <sha>` (JSON `from`); when the base's reflog entry before the new tip is
    another commit (another process moved it in between), the reflog's value is printed, so that commit falls in no landed range.

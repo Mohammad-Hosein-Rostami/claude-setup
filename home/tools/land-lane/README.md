@@ -2,13 +2,13 @@
 
 Puts one lane on the base branch with one command: disk check, tip check, rebase check, tip-object and union-row checks, the done-check of the rebased tip, `git-tidy land`,
 the STATUS.md row of the lane. Landing needs no workflow and no agent. The code checks are `done-check`'s (run, or reused when the same change was already
-checked green); a risky lane needs the one review answered; the UI proof of `git-tidy land` is always on unless the owner waived it for the road
-(`--owner-waive-ui`).
+checked green); a risky lane needs the one review answered; the UI check plan of the rebased diff decides the UI proof, which `git-tidy land`
+always runs (no waiver).
 
 ```
 node ~/.claude/tools/land-lane/land-lane.mjs --repo <abs base folder> --branch <name> --tip <40-hex> --base <branch> \
   --status-file <abs STATUS.md> --close-row <row id> [--worktree <abs>] [--brief <file>] \
-  [--reviewed <40-hex> | --skip-review "<reason>"] [--accept-open "<reason>"] [--owner-waive-ui "<reason>"] [--json]
+  [--reviewed <40-hex> | --skip-review "<reason>"] [--accept-open "<reason>"] [--json]
 ```
 
 - `--tip` is the full sha the lane must be at. The branch must be there; `git-tidy land` checks it again itself (`--tip`, exit 9).
@@ -18,17 +18,29 @@ node ~/.claude/tools/land-lane/land-lane.mjs --repo <abs base folder> --branch <
   `--skip-review "<reason>"` lands a risky lane without the review (1 to 200 characters, no control character). Give one or the other, not both.
 - `--accept-open "<reason>"` lands a lane whose only open failure is a weakened-test item (an edited test script, a deleted test, an added skip).
   New type, lint or test failures cannot be accepted: fix them. Same reason rules.
-- `--owner-waive-ui "<reason>"` lands a lane without the UI proof (visual-qa PASS) of `git-tidy land`, and skips nothing else (disk, tip,
-  rebase, done-check with typecheck, lint, tests and the weakened-test scan, new-file size, row close all run). Why: the owner decided on
-  2026-11-23 that web API-integration lanes, which change no screen on purpose, land without the screen check. Rule
-  (`ui-proof/lib/owner-waiver.mjs`, forms in `ui-proof/README.md`): `--close-row` must be a road row `<road>.s<N>.<name>`, and the
-  `--status-file` must hold that row, lie outside the repository being landed (the base folder and every worktree, real paths), and have
-  the owner's granting line `ui-proof waiver for road <road>` for that exact road as the last line naming it under `## Owner decisions`
-  (not revoked, not negated, not in an HTML comment, no `UNCONFIRMED`: a timeout default is no owner decision). Otherwise exit 2 before
-  anything runs, naming what is missing; `git-tidy land` checks the same rule again. Same reason rules. The output prints `ui-proof: waived by owner decision (<reason>)` and the row evidence ends
-  with ` (ui-proof waived: owner decision)`, which the road gate's line 4 reads. Without the flag nothing changes.
-- `--brief` is the lane's brief file: paths it names may add files over the size limit (`git-tidy land --brief`).
-- `--audit-base` and `--checks` were removed: either one exits 2 with a message saying so (an old caller is told, never ignored).
+- `--brief` is the lane's brief file: the request the UI check plan reads (the lead quotes the owner's request in it; a design word, a
+  no-change request or a `UI-PLAN: <depth>` floor only raise the plan), and paths it names may add files over the size limit
+  (`git-tidy land --brief`). A lane whose own diff changes the app (its plan is not none) needs it: without it, or with a brief that cannot
+  be read, exit 2 before anything runs.
+- `--audit-base`, `--checks` and the old UI waiver flag (any `--...waive...` flag) were removed: each exits 2 with a message saying so (an old caller is told, never ignored).
+  There are no UI waivers (owner, 2026-11-23): the check plan decides what a lane must prove.
+
+## UI check plan
+
+`lib/ui-plan-step.mjs` computes it with `ui-proof plan --json` (rules: `home/standards/ui-checks.md`) from the rebased diff, the brief and the
+lane's coverage matrix. The matrix comes from the road beside the `--status-file`: the `road-*.json` whose road id, step and lane match the
+`--close-row` (`<road>.s<N>.<lane>`, an old-form `-land` row or a `fix-` row); a matrix that says `none: <reason>` is none. STATUS rule and
+decision lines are no request text. Nothing a lane writes about itself feeds the plan.
+
+- A docs page, tests or dev config only: plan none, no UI proof, no popup (a lane with no UI file at all lands with the output it had before).
+- A plan with logic needs done-check `tests` ok: `none related` or `not run` is exit 4, `the change has logic: a test must run it`.
+- `git-tidy land` proves the plan on its own recomputation (`ui-proof check --plan`, exit 6 with the failing states and the reason): runner or
+  visual-qa records for same and render, a visual-qa PASS for visual and pixel (today's chain and today's output, word for word).
+- A proved plan other than pixel prints `ui plan <depth>: proved` and its `follow-up:` lines (old problems on the base and the tip: the lead
+  adds follow-up rows) and ends the row evidence with ` (ui plan <depth>: proved)`, the pointer the road gate's line 4 checks again.
+- A plan that cannot be computed (the tool fails, evidence git cannot read, a road file beside the STATUS.md that cannot be read for that
+  road, roads that give the lane two matrices) is exit 14. After a moved base the plan is computed again for the new rebased tip; a landing
+  found again after a restart proves the plan of its landed range again, so its row keeps the pointer.
 - Every value is checked first (exit 2, nothing run): shas are 40 lower-case hex, paths are absolute (`/x`, `C:\x`, `C:/x`; not `\\server\x`) with no
   control characters, branch names pass `git check-ref-format --branch` and do not start with `-`, the row id is what `status.mjs` takes.
 
@@ -47,7 +59,7 @@ node ~/.claude/tools/land-lane/land-lane.mjs --repo <abs base folder> --branch <
    (first cell, trimmed, CRLF or LF alike, indented tables too; an empty first cell is no key) that appears twice in one table. Union merge keeps both
    sides' lines, so two lanes that each add the row `dup` rebase "cleanly" into two; that is exit 12 `duplicate-rows`, the keys named (capped at 60
    characters, 5 per file; keys, file names and git's text control-free), nothing landed, the lane stays rebased. A file git cannot read is exit 14.
-6. `done-check run --where land --base <base tip>` on the lane at the rebased tip, then `git-tidy land --tip <rebased>`. The check is reused (no command
+6. The UI check plan of the rebased tip, `done-check run --where land --base <base tip>` on the lane at the rebased tip, then `git-tidy land --tip <rebased>`. The check is reused (no command
    runs) when a green run of the same change, base and commands is in the ledger, else it runs (at most 240 s plus 30 s for the base side) and prints
    its `checks:` line. New failures or an open weakened item: exit 4 (the lane stays, rebased). A risk class (security, data, money, concurrency, gate,
    large) with no `--reviewed` or `--skip-review`: exit 10 and `review: suggested (<classes>)`. A done-check that cannot run, times out or answers
@@ -72,8 +84,8 @@ with `--json` one object `{ state, exit, to, from, lines }`.
 ## Layout
 
 `land-lane.mjs` holds the steps and the exit codes; `lib/args.mjs` reads and checks the command line; `lib/checks-step.mjs` is the done-check step
-(lane folder, verdict, exits 4, 10, 14); `lib/union-rows.mjs` is the tip-object and union-row step (exit 12); `lib/stop.mjs` is the refusal; `lib/tools.mjs` runs git and the sibling tools as
+(lane folder, verdict, exits 4, 10, 14); `lib/ui-plan-step.mjs` is the UI check plan (the road matrix, the brief rule, exits 2, 14); `lib/union-rows.mjs` is the tip-object and union-row step (exit 12); `lib/stop.mjs` is the refusal; `lib/tools.mjs` runs git and the sibling tools as
 subprocesses with no shell and a timeout (a tool that cannot start is `status: null`, never a pass).
 Tests: `tests/land-lane.test.mjs` (real tools on temp repos), `tests/land-lane-done-check.test.mjs` (the done-check step: reuse, exit 4, exit 10), `tests/land-lane-union-rows.test.mjs` (exit 12, missing objects),
-`tests/land-lane-units.test.mjs` (arguments, base-moved loop), `tests/git-tidy-land.test.mjs` (`--tip`), `tests/land-lane-ui-waiver.test.mjs`
-(`--owner-waive-ui` here and in `git-tidy land`), `tests/owner-ui-waiver.test.mjs` (the waiver rule and gate line 4).
+`tests/land-lane-units.test.mjs` (arguments, base-moved loop), `tests/git-tidy-land.test.mjs` (`--tip`), `tests/land-lane-ui-plan.test.mjs`
+(the UI check plan: none, render with follow-ups, exit 4 for untested logic, exit 6, the brief rule, restart, the removed waiver flag).
