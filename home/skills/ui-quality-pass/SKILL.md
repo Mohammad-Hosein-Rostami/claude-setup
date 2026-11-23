@@ -3,7 +3,9 @@ name: ui-quality-pass
 description: Use before saying any UI component, page, screen, step or dialog is done or fixed, including small tweaks and work a subagent did - tokens, semantics, keyboard, contrast, responsive, async states, copy.
 ---
 
-Runs on every UI change, with no switch: before saying a UI piece is done.
+Runs with no switch before saying a UI piece is done, at the depth the check plan asks (`ui-proof plan`, `standards/ui-checks.md`):
+render, visual and pixel run the whole list on what changed; same (no visual change) runs it as a review and lists its findings as
+`follow-up:` lines, since a fix would change the renders; none (only tests, docs pages or dev config) needs no pass.
 
 Rules: F7-F9, U1-U12 (`rules/ui.md`; examples in `standards/ui-a11y.md`). Build-time detail lives in `accessibility-build`, `responsive-ui`, `async-ui-states`, `forms-validation`.
 

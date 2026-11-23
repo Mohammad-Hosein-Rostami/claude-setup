@@ -3,7 +3,9 @@ name: ui-coverage
 description: Use for any UI task with more than one component, any Figma or pixel-perfect work, any "all screens / all forms / everywhere" request, and any i18n or RTL work - build a coverage matrix of surfaces x states x locales, gate it with ui-coverage check, hand over a live page.
 ---
 
-The matrix, `ui-coverage check` and every compare run on every UI change, with no switch.
+Where the check plan (`ui-proof plan`, `standards/ui-checks.md`) is visual or pixel, the matrix, `ui-coverage check` and every compare
+run with no switch. A render or same plan is proved on the plan's own run matrix (`ui-proof plan --write-run`); a text change there
+still gets step 4 in every locale and direction.
 
 Rules: U13, U14, U1, U2. Tool: `node ~/.claude/tools/ui-coverage/ui-coverage.mjs <init|expand|scaffold|check|states>` (README beside it has the matrix.json format; `init matrix.json --locales en:ltr,fa:rtl --widths 320,768,1280 --surfaces a,b` writes the skeleton). The matrix is one file per task; done = `check` exits 0. Before the first UI lane, `init` the matrix (with `--frames frames.json` when there is Figma) and put the line `MATRIX: <path>` in every `ui-implementer` and `visual-qa` brief (`MATRIX: none: <reason>` only for a one-file tweak with no Figma and one locale); a brief without one is sent back once.
 

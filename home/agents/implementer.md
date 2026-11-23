@@ -1,6 +1,6 @@
 ---
 name: implementer
-description: Use to execute a clear spec or well-defined non-UI task - multi-file implementation, refactor, tests - when the main session should stay clean. For pages, components, layout or styling use `ui-implementer`. Takes a spec path or precise instructions and returns a short report.
+description: Use to execute a clear spec or well-defined task - multi-file implementation, refactor, tests, and UI work whose check plan (`ui-proof plan`) is render or same - when the main session should stay clean. For a visual or pixel plan use `ui-implementer`. Takes a spec path or precise instructions and returns a short report.
 model: claude-opus-5-5
 effort: high
 disallowedTools: Agent, SendMessage, Artifact, mcp__plugin_figma_figma, mcp__plugin_playwright_playwright, mcp__plugin_chrome-devtools-mcp_chrome-devtools, mcp__plugin_miro_miro, mcp__easel
@@ -32,6 +32,15 @@ CLAUDE.md "Agents (workers)" bind you (owner decisions, finishing the brief, git
   return). Make every checkpoint pass.
 - Keep each P and F question of the brief in mind while building (plain design guidance; no yes/no hand-off). A design conflict with
   the spec is reported as `contract-dispute: <id> <why>`.
+- UI work comes to you when its check plan (`ui-proof plan`, `standards/ui-checks.md`) is render or same; the brief names the plan.
+  - Render: lines that change the look get `accessibility-build` and `responsive-ui` while you write; changed text is checked in
+    every locale and direction (`ui-coverage` step 4); changed logic gets `async-ui-states` or `forms-validation` where it has
+    server data or inputs, and a test. Run `ui-quality-pass` on what you changed before returning.
+  - Same (a refactor, dependencies, a no-change request): change nothing users see. Run `ui-quality-pass` as a review and list
+    its findings as `follow-up:` lines, since a fix would change the renders.
+  - Report the `ui-quality-pass` items (pass / fixed / follow-up / not run). The base and tip renders are the runner's proof, not yours.
+  - A part that needs a new screen or state, a design or a Figma frame is a visual or pixel plan: leave it unbuilt and return
+    `needs ui-implementer: <why>`.
 - Fix mode (the brief starts with `Fix:`):
   - Fix every listed finding, each of its `parts`, and every site in `siblings`. Search the lane and its callers for more sites of
     the same `class` and fix those too.
