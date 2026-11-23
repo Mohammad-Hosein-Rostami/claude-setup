@@ -11,6 +11,8 @@
 // Rules: an agent is done when its transcript's last answer ended the turn with no call after it. Done agents stay DONE_KEEP_MS (counted
 // as "done last 10 min"), running ones until their transcript has been silent LIVE_MS. `quiet N min` from QUIET_MS of silence with no
 // call waiting for its result.
+// An entry's `name` is the shown label (the description cut to MAX_LABEL_CHARS); `description` is the whole description for the
+// estimate's row matching, or null when it is over MAX_DESCRIPTION_CHARS (never shown).
 // Invariants: never throws; reads only plain files, capped; every name kept is stripped of control characters and cut.
 import { lstatSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -27,12 +29,20 @@ const MAX_AGENTS = 40;
 const META_BYTES = 4096;
 const MAX_NAME_CHARS = 24;
 const MAX_LABEL_CHARS = 60; // the description whole enough for the render to cut it at a word (cells.mjs cutWords), not mid-word here
+// The estimate matches an agent to its row by every lane its description names (estimate/lib/row-agents.mjs, F1), so it needs the
+// description whole: longer ones (the Agent tool asks for a few words) give null, never a cut text that hides a second lane.
+const MAX_DESCRIPTION_CHARS = 200;
 const TRANSCRIPT = /^agent-([A-Za-z0-9]{1,40})\.jsonl$/;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
 
 const clean = (text, max) => String(text ?? '').replace(CONTROL_CHARS, ' ').trim().slice(0, max);
 const namesIn = (folder) => { try { return readdirSync(folder); } catch { return []; } };
 const minutes = (ms) => Math.max(0, Math.floor(ms / MS_PER_MIN));
+/** @returns {string | null} the description cleaned and whole, or null when there is none or it is over MAX_DESCRIPTION_CHARS */
+function wholeDescription(meta) {
+  const text = clean(meta.description, Infinity);
+  return text !== '' && text.length <= MAX_DESCRIPTION_CHARS ? text : null;
+}
 const tenths = (value) => (value === null ? null : Math.round(value * 10) / 10); // board bytes: 0.1 min is finer than any row shows
 
 function metaOf(file) {
@@ -66,7 +76,7 @@ function agentEntry({ id, cursor, meta, launches, pools, env, nowMs }) {
   const state = done ? 'done' : silentMs >= QUIET_MS && !cursor.pending ? 'quiet' : 'run';
   return {
     entry: {
-      id, name: clean(meta.description, MAX_LABEL_CHARS) || type, type,
+      id, name: clean(meta.description, MAX_LABEL_CHARS) || type, description: wholeDescription(meta), type,
       places: { worktree: typeof meta.worktreePath === 'string' ? meta.worktreePath : (launches.get(id)?.cwd ?? null),
         isolated: typeof meta.worktreePath === 'string', changed: cursor.changedDirs ?? [], cwd: cursor.cwd },
       row: launches.get(id)?.row ?? null, state, writer,

@@ -1,15 +1,18 @@
 // Which subagent works on which open row (R13), how many active minutes it has given the row, and which rows went quiet (R5).
 // Exports: rowAgents(items, agents, intervalsOf) -> Map, quietRows(items, byRow, context) -> quiet rows, QUIET_MIN, STALL_FLOOR_MIN.
 // Inputs: parser items (items.mjs: { id, kind, started, done, evidence }, epoch-ms stamps); the board's agents of THIS session only
-// (board/lib/agents.mjs sessionAgents: { id, name: its description, row: the row of its writer launch record or null, startMs });
+// (board/lib/agents.mjs sessionAgents: { id, name: the shown label, description: the whole description or null, row: the row of
+// its writer launch record or null, startMs });
 // intervalsOf(agentId) -> the agent's own active-minute runs [[startMin, endMin)] (transcript-facts.mjs over its transcript) or null.
 // Rules:
 // - Only an open, started row counts: not done, not a deliver row, not `parked:` or `waiting:` (R3, R4); a row of a paused road
 //   that never started gets no agent, so another plan's rows never borrow this session's agents.
-// - Match (R13, F1): the launch record's row is the tool's own fact and wins (a record naming a row that is not open maps to none).
-//   Else the description must name one row: by its id, or by `Lane <lane>` (with `road <id>` when given) where the lane is the
-//   part after `<road>.s<N>.`. A description naming two lanes, two roads, two row ids, a road the row is not of, or a lane that
-//   is open in two roads maps to no row: a wrong row would be worse than none (the row then takes the 95th-percentile rule).
+// - Match (R13, F1): the launch record's row is the tool's own fact and wins (a record naming a row that is not open maps to none;
+//   one naming no row of the table, e.g. cut by the board, falls to the description). Else the whole description (the board's
+//   `description`; null when too long to be whole) must name one row: by its id, or by `Lane <lane>` (with `road <id>` when
+//   given) where the lane is the part after `<road>.s<N>.`. A description naming two lanes, two roads, two row ids, a road the
+//   row is not of, or a bare lane that any other road also has (in any state) maps to no row: a wrong row would be worse than
+//   none (the row then takes the 95th-percentile rule).
 // - A row's active minutes: its agents' runs (several agents on one row, e.g. a restart after a stop, are joined) clipped to the
 //   row's start, joined over silences of at most IDLE_GAP_MIN (worked.mjs, so they compare with the kind pools); its last
 //   activity is the end of the last active minute; its agent id is the one active last.
@@ -61,27 +64,48 @@ function namesIn(description, idsByLower) {
   return { ids, lanes, roads };
 }
 
+/**
+ * What the matching needs of the table: the open rows, every id (lower case), and per lane name the roads that have a row of it
+ * in any state (R1: a lane is only unique when no other road has it, started or not, done or not).
+ */
+function tableOf(items) {
+  const rows = items.filter((item) => typeof item?.id === 'string');
+  const roadsOfLane = new Map();
+  for (const item of rows) {
+    const road = laneOf(item.id);
+    if (road === null) continue;
+    const lane = road[3].toLowerCase();
+    roadsOfLane.set(lane, new Set([...(roadsOfLane.get(lane) ?? []), road[1].toLowerCase()]));
+  }
+  return { openRows: items.filter(isOpenStarted), idsByLower: new Set(rows.map((item) => item.id.toLowerCase())), roadsOfLane };
+}
+
 /** The one open row a description names, or null (none, or more than one). */
-function rowOfDescription(description, openRows, idsByLower) {
-  const { ids, lanes, roads } = namesIn(description, idsByLower);
+function rowOfDescription(description, table) {
+  const { ids, lanes, roads } = namesIn(description, table.idsByLower);
   if (ids.size > 1 || lanes.size > 1 || roads.size > 1) return null;
+  const [lane] = lanes;
+  // A bare `Lane <lane>` must not borrow another plan's row of the same name, even when this road's row is not started yet.
+  if (ids.size === 0 && roads.size === 0 && (table.roadsOfLane.get(lane)?.size ?? 0) > 1) return null;
   const fits = (item) => {
     const road = laneOf(item.id);
-    if (lanes.size === 1 && road?.[3].toLowerCase() !== [...lanes][0]) return false;
+    if (lanes.size === 1 && road?.[3].toLowerCase() !== lane) return false;
     return roads.size === 0 || road?.[1].toLowerCase() === [...roads][0];
   };
-  const named = ids.size === 1 ? openRows.filter((item) => ids.has(item.id.toLowerCase())) : lanes.size === 1 ? openRows : [];
+  const named = ids.size === 1 ? table.openRows.filter((item) => ids.has(item.id.toLowerCase())) : lanes.size === 1 ? table.openRows : [];
   const found = named.filter(fits);
   return found.length === 1 ? found[0] : null;
 }
 
-/** The open row an agent works on: its launch record's row when it has one, else the row its description names. */
-function rowOfAgent(agent, openRows, idsByLower) {
-  if (typeof agent.row === 'string' && agent.row.trim() !== '') {
-    const wanted = agent.row.trim().toLowerCase();
-    return openRows.find((item) => item.id.toLowerCase() === wanted) ?? null;
-  }
-  return rowOfDescription(agent.name, openRows, idsByLower);
+/**
+ * The open row an agent works on: its launch record's row when that names a row of this table (open or not), else the row its
+ * whole description names. A record row naming no row of the table (the board cuts it to 24 characters, R4) tells nothing.
+ * The description is the board's whole `description` (null when too long: no row); an entry without that field gives `name`.
+ */
+function rowOfAgent(agent, table) {
+  const recorded = typeof agent.row === 'string' ? agent.row.trim().toLowerCase() : '';
+  if (recorded !== '' && table.idsByLower.has(recorded)) return table.openRows.find((item) => item.id.toLowerCase() === recorded) ?? null;
+  return rowOfDescription(Object.hasOwn(agent, 'description') ? agent.description : agent.name, table);
 }
 
 /** Sorted, merged copies of runs. */
@@ -113,12 +137,11 @@ function entryOf(claims) {
  *   row started, and the end of its last active minute (epoch ms); rows with no agent found are absent
  */
 export function rowAgents(items, agents, intervalsOf) {
-  const openRows = items.filter(isOpenStarted);
-  const idsByLower = new Set(items.filter((item) => typeof item?.id === 'string').map((item) => item.id.toLowerCase()));
+  const table = tableOf(items);
   const claimsByRow = new Map();
   for (const agent of agents) {
     if (agent === null || typeof agent !== 'object' || !AGENT_ID.test(String(agent.id))) continue;
-    const row = rowOfAgent(agent, openRows, idsByLower);
+    const row = rowOfAgent(agent, table);
     const runs = row === null ? null : intervalsOf(agent.id);
     if (!Array.isArray(runs) || !runs.every(isRun)) continue;
     const startMin = Math.floor(toMin(row.started));

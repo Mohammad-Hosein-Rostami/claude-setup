@@ -6,6 +6,7 @@ import { appendFileSync, linkSync, mkdirSync, openSync, rmSync, symlinkSync, wri
 import { join } from 'node:path';
 import { QUIET_MIN, STALL_FLOOR_MIN, quietRows, rowAgents } from '../home/tools/estimate/lib/row-agents.mjs';
 import { readTranscriptFacts } from '../home/tools/estimate/lib/transcript-facts.mjs';
+import { sessionAgents } from '../home/tools/board/lib/agents.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const BASE_MS = Date.UTC(2026, 10, 23, 6, 0, 0);
@@ -26,8 +27,9 @@ const ROWS = [
 ];
 
 test('a description naming one lane maps to that open row, with its active minutes and last activity', () => {
-  const byRow = rowAgents(ROWS, [agent('a1', { name: 'Lane cart: fix the cart' })], always(runs([0, 20])));
-  assert.deepEqual([...byRow], [['polish.s3.cart', { agentId: 'a1', activeMin: 20, lastActiveMs: at(20) }]]);
+  // `menu` is in no other road of ROWS (`cart` is also uifix's: R1 below)
+  const byRow = rowAgents(ROWS, [agent('a1', { name: 'Lane menu: fix the menu' })], always(runs([0, 20])));
+  assert.deepEqual([...byRow], [['polish.s3.menu', { agentId: 'a1', activeMin: 20, lastActiveMs: at(20) }]]);
 });
 
 test('a description naming the row id maps to it; a plain id works too', () => {
@@ -58,6 +60,52 @@ test('F1: a description naming two lanes, two ids, another road or a lane open i
   assert.deepEqual([...rowAgents(twoRoads, [agent('a1', { name: 'Lane cart road vm' })], always(runs([0, 5]))).keys()], ['vm.s1.cart']);
 });
 
+test('R1: a bare lane another road also has (any state) maps to no row; naming the road picks it', () => {
+  const lane = 'Lane cart: build the cart';
+  const notStamped = [item('polish.s3.cart', { started: null }), item('uifix.s1.cart')];
+  const done = [item('polish.s3.cart', { done: at(30), evidence: 'abc1234' }), item('uifix.s1.cart')];
+  for (const items of [notStamped, done]) assert.equal(rowAgents(items, [agent('a1', { name: lane })], always(runs([0, 5]))).size, 0);
+  const named = rowAgents(notStamped, [agent('a1', { name: 'Lane cart road uifix' })], always(runs([0, 5])));
+  assert.deepEqual([...named.keys()], ['uifix.s1.cart']);
+  const sameRoad = [item('polish.s2.cart', { done: at(30), evidence: 'abc1234' }), item('polish.s3.cart')];
+  assert.deepEqual([...rowAgents(sameRoad, [agent('a1', { name: lane })], always(runs([0, 5]))).keys()], ['polish.s3.cart'], 'an earlier step of the same road is no other plan');
+});
+
+test('R2: the whole description decides, not the shown label; a description too long to be whole maps to none', () => {
+  const rows = [item('polish.s3.cart'), item('polish.s3.menu')];
+  const twoLanes = agent('a1', { name: 'Lane cart: build the shopping cart totals and the coupon box', description: 'Lane cart: build the shopping cart totals and the coupon box, then Lane menu' });
+  const tooLong = agent('a2', { name: 'Lane cart', description: null });
+  assert.equal(rowAgents(rows, [twoLanes, tooLong], always(runs([0, 5]))).size, 0);
+});
+
+test('R2: sessionAgents keeps the shown label and gives the estimate the whole description', (t) => {
+  const root = makeTempDir('est-row-agents-feed-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const folder = join(root, 'session');
+  mkdirSync(join(folder, 'subagents'), { recursive: true });
+  const nowMs = at(10);
+  const described = { a1: 'Lane cart: build the shopping cart totals and the coupon box, then Lane menu', a2: `Lane menu ${'x'.repeat(200)}` };
+  for (const [id, description] of Object.entries(described)) {
+    writeFileSync(join(folder, 'subagents', `agent-${id}.meta.json`), JSON.stringify({ agentType: 'implementer', description }));
+    writeFileSync(join(folder, 'subagents', `agent-${id}.jsonl`), entry(5) + entry(9));
+  }
+  const env = { HOME: root, USERPROFILE: root };
+  const { agents } = sessionAgents({ session: 'probe-1111', sessionFolder: folder, cursors: {}, pools: null, env, nowMs });
+  const byId = Object.fromEntries(agents.map((one) => [one.id, one]));
+  assert.equal(byId.a1.name, described.a1.slice(0, 60), 'the shown label is unchanged');
+  assert.equal(byId.a1.description, described.a1);
+  assert.equal(byId.a2.description, null);
+  const rows = [item('polish.s3.cart'), item('polish.s3.menu')];
+  assert.equal(rowAgents(rows, agents, always(runs([5, 10]))).size, 0);
+});
+
+test('R4: a launch record row naming no row of the table (cut by the board) falls back to the description', () => {
+  const longLane = 'a-very-long-lane-name-xy';
+  const rows = [item(`polish.s3.${longLane}`)];
+  const cut = agent('a1', { row: `polish.s3.${longLane}`.slice(0, 24), description: `Lane ${longLane}` });
+  assert.deepEqual([...rowAgents(rows, [cut], always(runs([0, 5]))).keys()], [`polish.s3.${longLane}`]);
+});
+
 test('only open, started, on-clock rows get an agent: not started, done, parked, waiting and deliver rows never do', () => {
   const items = [
     item('polish.s3.cart', { evidence: 'parked: owner later phase' }),
@@ -78,9 +126,9 @@ test('active minutes start at the row start and bridge silences up to 10 min, no
 
 test('two agents on one row (a restart) are joined; the agent active last is the row agent', () => {
   const runsOf = { a1: runs([0, 20]), a2: runs([18, 30]) };
-  const agents = [agent('a2', { name: 'Lane cart' }), agent('a1', { name: 'Lane cart' })];
+  const agents = [agent('a2', { name: 'Lane menu' }), agent('a1', { name: 'Lane menu' })];
   const byRow = rowAgents(ROWS, agents, (id) => runsOf[id]);
-  assert.deepEqual(byRow.get('polish.s3.cart'), { agentId: 'a2', activeMin: 30, lastActiveMs: at(30) });
+  assert.deepEqual(byRow.get('polish.s3.menu'), { agentId: 'a2', activeMin: 30, lastActiveMs: at(30) });
 });
 
 test('unknown or malformed runs and malformed agents give no entry (the row falls to the fallback rule)', () => {
@@ -130,7 +178,7 @@ test('an agent transcript gives its active-minute runs; each read takes only the
   const second = readTranscriptFacts(file, first);
   assert.deepEqual(second.runs, runs([0, 2], [5, 7], [30, 31]));
   // [0,7) with the 3-min silence bridged, then [30,31) after a 23-min silence: 8 active minutes
-  assert.equal(rowAgents(ROWS, [agent('a1', { name: 'Lane cart' })], always(second.runs)).get('polish.s3.cart').activeMin, 8);
+  assert.equal(rowAgents(ROWS, [agent('a1', { name: 'Lane menu' })], always(second.runs)).get('polish.s3.menu').activeMin, 8);
 });
 
 test('a line over 1 MiB gives its timestamp, across read pieces, and a half-written last line waits for the next read', (t) => {
