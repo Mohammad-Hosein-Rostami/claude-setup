@@ -19,7 +19,7 @@
 // case-insensitive disk `status.md` is another file) and be a regular file whose real path is inside the project; only its first
 // MAX_STATUS_BYTES are read.
 // Exports: withBriefLines(toolInput, cwd) -> input | null, readFileHead(path, maxBytes, flags?) -> text | undefined (the UI brief gate
-// reads its matrix with it too), UNPRINTABLE, MAX_EXCLUDE_BYTES, and for agent-folders.mjs (which finds the same git root) isInside,
+// reads its matrix with it too), UNPRINTABLE, BACKTICK, quotedValue(value) (a value as a deny text quotes it), MAX_EXCLUDE_BYTES, and for agent-folders.mjs (which finds the same git root) isInside,
 // nearestGitEntry, gitDirOf, sharedGitDir, MAX_PARENT_LEVELS. Invariants: withBriefLines never throws (any failure: null, the brief
 // stays as it is); bounded work (at most MAX_PARENT_LEVELS + 1 folders looked at, two folder listings, four reads of capped size).
 import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync, statSync } from 'node:fs';
@@ -44,6 +44,9 @@ const DESIGN_LISTS = 'Your spec must include "Reuse inventory" (the existing com
   + 'and "Contract facts" (every default, fallback, limit and enum the API schema states, and what the design does about each); '
   + 'list product facts the repo does not state under "Unconfirmed".';
 export const UNPRINTABLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu; // control and format characters (bidi marks included) and line separators
+export const BACKTICK = /`/g; // what would close a Markdown code span a deny text quotes a value in
+const MAX_QUOTED_CHARS = 200; // how much of a value a deny text quotes
+const MAX_QUOTED_SOURCE_CHARS = 4096; // PATH_MAX on Linux: only this much of a value is cleaned, so a huge one costs little
 const READ_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0); // a FIFO swapped in after a stat never blocks (POSIX only)
 const NO_FOLLOW = constants.O_NOFOLLOW ?? 0; // POSIX only; on Windows the lstat check before the open stands alone
 
@@ -51,6 +54,18 @@ const NO_FOLLOW = constants.O_NOFOLLOW ?? 0; // POSIX only; on Windows the lstat
 const isAnalysisBrief = (prompt) => (prompt.split(/\r?\n/).find((line) => line.trim() !== '') ?? '').trim().startsWith(ANALYSIS_BRIEF_PREFIX);
 
 const rulesLine = (path) => `Read "## Standing rules" in ${path.replace(UNPRINTABLE, '')} first; where they differ from this brief, follow them.`;
+
+/**
+ * A value from a brief or a record as a deny text quotes it, mostly inside a Markdown code span: without control, format and separator
+ * characters, every backtick turned into `'` (a backtick would close the span and put the value's own words in the reason as prose),
+ * cut to MAX_QUOTED_CHARS (then "...").
+ * @param {string} value the untrusted text (a MATRIX path, an agent type or id); only its first MAX_QUOTED_SOURCE_CHARS are cleaned
+ * @returns {string} the quotable text
+ */
+export function quotedValue(value) {
+  const printable = value.slice(0, MAX_QUOTED_SOURCE_CHARS).replace(UNPRINTABLE, '').replace(BACKTICK, "'");
+  return printable.length > MAX_QUOTED_CHARS ? `${printable.slice(0, MAX_QUOTED_CHARS)}...` : printable;
+}
 
 /**
  * The start of a regular file, read through a handle that is checked again after the open.

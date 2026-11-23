@@ -295,7 +295,7 @@ test('other types get no design line', () => {
     const call = { prompt: PROMPT, subagent_type: type };
     assert.deepEqual(s.send(call), allowed({ ...call, model: 'sonnet' }), `${type}: the model only, as before`);
   }
-  assert.equal(s.send({ prompt: 'MATRIX: none: one-file tweak, no Figma, one locale', subagent_type: 'visual-qa' }), null);
+  assert.equal(s.send({ prompt: 'MATRIX: none: logic-only fix, no visual change', subagent_type: 'visual-qa' }), null);
 });
 
 test('with the model rewrite: Explore gets sonnet and the rules line; Plan in ultra-high gets opus and both lines', () => {
