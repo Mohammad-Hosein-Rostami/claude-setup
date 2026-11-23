@@ -1,3 +1,7 @@
 settings/local.json
 .DS_Store
 node_modules/
+# Each person's own layer, its own git repo made by scripts/install.sh from personal.example/ (never shared through this repo),
+# and the folder an install copies the template into before it renames it to personal/ (no trailing slash: a link is ignored too).
+/personal
+/.personal-*

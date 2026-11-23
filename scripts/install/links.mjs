@@ -1,6 +1,7 @@
-// Purpose: the links of an install: each home/ item into ~/.claude, the removal of links an older install made for the retired
-//   session modes (the launcher and the modes folder) and the workflows (the ~/.claude/workflows link).
-// Exports: linkHomeItems, removeRetiredLinks, removeLink.
+// Purpose: the links of an install: each home/ item into ~/.claude (linkOne makes one link to any target), the removal of links
+//   an older install made for the retired session modes (the launcher and the modes folder) and the workflows (the
+//   ~/.claude/workflows link).
+// Exports: linkHomeItems, linkOne, removeRetiredLinks, removeLink.
 // Invariants: a link that already points at the right place is left as it is (a second run changes nothing); a link or copy
 //   the installer made, or an older install's link into this repo, is replaced without a backup; anything else is moved to the
 //   backup folder first. On Windows a folder becomes a junction (no Developer Mode needed); a file link that is not allowed
@@ -60,7 +61,7 @@ function makeLink(ctx, record, src, dst, label) {
  * @param {string} dst where the link goes
  * @param {string} label the name shown in the log
  */
-function linkOne(ctx, record, src, dst, label) {
+export function linkOne(ctx, record, src, dst, label) {
   const stat = lstatOrNull(dst);
   if (stat?.isSymbolicLink() && samePath(resolve(dirname(dst), readlinkSync(dst)), src)) {
     remember(record, { kind: 'link', path: dst });

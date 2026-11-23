@@ -17,6 +17,9 @@ BAD=0
 INSTALL_RECORD="$CLAUDE_DIR/.claude-setup-install.json"
 LINK_ROOT="$(jq -r '.root // empty' "$INSTALL_RECORD" 2>/dev/null || true)"
 LINK_ROOT="${LINK_ROOT:-$REPO}"
+# The clone that holds personal/ (never a tag worktree): the record's repo, else this one.
+INSTALL_REPO="$(jq -r '.repo // empty' "$INSTALL_RECORD" 2>/dev/null || true)"
+INSTALL_REPO="${INSTALL_REPO:-$REPO}"
 FIRST_LAYER="$(jq -r '.firstLayer // empty' "$INSTALL_RECORD" 2>/dev/null || true)"
 ok() { echo "ok    $1"; }
 bad() { echo "FAIL  $1"; BAD=1; }
@@ -56,15 +59,52 @@ for group in setup machine; do
   if [ -f "$REPO/scripts/doctor/checks-$group.sh" ]; then source "$REPO/scripts/doctor/checks-$group.sh"; else MISSING_GROUPS="$MISSING_GROUPS checks-$group.sh"; fi
 done
 
+# A path as an @ import line in ~/.claude/CLAUDE.md writes it: forward slashes, and on Git Bash the drive letter (C:/...).
+import_path() {
+  if is_windows && command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1" | tr '\\' '/'; fi
+}
+
+# ~/.claude/CLAUDE.md as the installer writes it (scripts/install/personal.mjs claudeMdText): the marker line, the core import,
+# and the personal import while <repo>/personal/CLAUDE.md exists.
+expected_claude_md() {
+  local core own
+  core="$(import_path "$LINK_ROOT")/home/CLAUDE.md"
+  own="$(import_path "$INSTALL_REPO")/personal/CLAUDE.md"
+  printf '%s\n' "<!-- claude-setup: written by scripts/install.sh; edit $core (shared) or $own (yours) -->" "@$core"
+  if [ -f "$INSTALL_REPO/personal/CLAUDE.md" ]; then printf '%s\n' "@$own"; fi
+}
+
+check_claude_md() {
+  local file="$CLAUDE_DIR/CLAUDE.md"
+  if [ -L "$file" ] || [ ! -f "$file" ]; then bad "CLAUDE.md is not the installer's file (re-run scripts/install.sh)"
+  elif [ "$(cat "$file")" = "$(expected_claude_md)" ]; then ok "CLAUDE.md imports home/CLAUDE.md$([ -f "$INSTALL_REPO/personal/CLAUDE.md" ] && echo ' and personal/CLAUDE.md')"
+  else bad "CLAUDE.md differs from what the install writes, or misses the personal/CLAUDE.md import (re-run scripts/install.sh)"; fi
+}
+
+# personal/ must be its own git repo, so `git clean -fdx` in the clone skips it.
+check_personal() {
+  local dir="$INSTALL_REPO/personal"
+  if [ ! -d "$dir" ]; then bad "personal/ is missing at $dir (re-run scripts/install.sh)"
+  elif [ -e "$dir/.git" ]; then ok "personal/ is its own git repo"
+  else warn "personal/ is not a git repo: git clean -fdx in the clone would delete it (re-run scripts/install.sh)"; fi
+}
+
 # On Git Bash install.sh may have copied instead of linking (no symlink permission): a present copy is a warning, not a FAIL.
+# CLAUDE.md is a written file, not a link; project-notes links to personal/project-notes (scripts/install/personal.mjs).
 check_links() {
-  local name target
+  local name target want
   for name in CLAUDE.md lead.md rules skills agents standards hooks tools project-notes lead-rules.md statusline.mjs; do
     target="$CLAUDE_DIR/$name"
-    if [ -L "$target" ] && [ "$(readlink "$target")" = "$LINK_ROOT/home/$name" ]; then ok "link $name"
+    case "$name" in
+      CLAUDE.md) check_claude_md; continue ;;
+      project-notes) want="$INSTALL_REPO/personal/project-notes" ;;
+      *) want="$LINK_ROOT/home/$name" ;;
+    esac
+    if [ -L "$target" ] && [ "$(readlink "$target")" = "$want" ]; then ok "link $name"
     elif is_windows && [ -e "$target" ] && [ ! -L "$target" ]; then ok "copy $name (not live-linked; re-run install.sh after repo changes)"
     else bad "link $name (re-run scripts/install.sh)"; fi
   done
+  check_personal
 }
 
 # True when version $1 (X.Y.Z) is $2 or later. The parts are compared as numbers: 2.1.99 is older than 2.1.295.

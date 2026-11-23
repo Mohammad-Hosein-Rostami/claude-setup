@@ -8,6 +8,7 @@ find Node and call it. Its flags are in the header of `install.mjs`.
 | `context.mjs` | flags, paths, the dry-run switch (`act`), the run log |
 | `record.mjs` | the install record `~/.claude/.claude-setup-install.json`, backups into `~/.claude-backup-<stamp>/`, the install lock |
 | `links.mjs` | `home/*` into `~/.claude`, removal of the retired mode launcher, `modes` and `workflows` links (a copy or the owner's own file there goes to the backup folder) |
+| `personal.mjs` | the personal layer: `personal/` from `personal.example/`, the owner's untracked notes out of `home/project-notes`, the `~/.claude/project-notes` link, the generated `~/.claude/CLAUDE.md` |
 | `startup.mjs` | the one `claude-as` start-up line (zsh, bash, PowerShell profile) |
 | `settings.mjs` | `settings.json` from the layers, through `scripts/merge-settings.jq` |
 | `tools.mjs` | plugins and tool dependencies |
@@ -27,8 +28,19 @@ How it behaves:
   lock file by hand when the pid is not an install).
 - Nothing is deleted that the installer did not make. A file in the way is moved to the backup folder and named in the
   record; `--uninstall` puts it back and removes the rest, so the file list is as before the first install.
-- New machine (no record, its own `settings.json`, `~/.claude/CLAUDE.md` not linked into this repo): that `settings.json`
-  is kept as the first, lowest layer under `settings/base.json`, `settings/<os>.json` and `settings/local.json`.
+- `~/.claude/CLAUDE.md` is a file the installer writes, not a link: a marker line, then `@<repo>/home/CLAUDE.md` (the shared
+  core) and, while it exists, `@<repo>/personal/CLAUDE.md` (yours); paths use forward slashes on every OS. A later run or
+  `--uninstall` treats it as the installer's own only while its first line is the marker; an older install's link into
+  `home/` is replaced without a backup, anything else there is backed up first. A repo path an import line cannot carry (a
+  space, `@`, `#`, a quote, a non-ASCII letter) stops the install with exit 1 before anything changes.
+- `personal/` (git-ignored by the core repo) is made from `personal.example/` when missing and made its own git repo, so
+  `git clean -fdx` in the clone skips it; an existing one is never overwritten (only `git init` and a missing
+  `project-notes/` folder are added). `~/.claude/project-notes` links to `personal/project-notes`. Notes in
+  `home/project-notes` that git does not track (the owner's own) are moved there; a name already taken sends the core copy to
+  the backup folder. `--uninstall` moves them back and keeps `personal/`.
+- New machine (no record, its own `settings.json`, `~/.claude/CLAUDE.md` neither the installer's marker file nor linked into
+  this repo): that `settings.json` is kept as the first, lowest layer under `settings/base.json`, `settings/<os>.json` and
+  `settings/local.json`.
 - Rollback: `--update --to <tag>` moves only the links (to the tag's worktree); the checkout and main stay as they are,
   and every running session reads the tag's `home/` from its next file read. A plain `--update` points them back.
 - `settings/local.json` (git-ignored; `settings/local.json.example`) holds the machine's own values; its `claudeSetup`

@@ -1,0 +1,3 @@
+# Words that must never appear in a commit of the shared core repo: your name, employer, clients, project and machine names.
+# One word or phrase per line, matched as a whole word; a line starting with # is a comment. The commit check refuses a core
+# commit that holds one of them (scripts/share-check.mjs). This file stays in personal/ and is never shared.

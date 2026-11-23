@@ -1,9 +1,11 @@
 // Purpose: `install --uninstall`: undo exactly what the install record names, newest first, and put the backed-up files back.
 // Exports: uninstall.
 // Invariants: only recorded things are removed (a link only while it is still a link, a line only where it is still the same
-//   line, a folder only when empty); a backup goes back only to a free path (else it stays and is named); the installer's own
-//   earlier outputs in the backup folder are deleted, not restored; with every step done the file list is as before the first
-//   install. Plugins and tool dependencies stay (they belong to Claude Code and to the repo).
+//   line, a generated file only while its first line is still the installer's marker, a folder only when empty); a note the
+//   install moved into personal/project-notes goes back to home/project-notes only to a free path; a backup goes back only to a
+//   free path (else it stays and is named); the installer's own earlier outputs in the backup folder are deleted, not restored;
+//   with every step done the file list is as before the first install. Plugins, tool dependencies and personal/ stay (they
+//   belong to Claude Code, to the repo and to the user).
 import { existsSync, lstatSync, mkdirSync, readdirSync, renameSync, rmdirSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname } from 'node:path';
@@ -11,6 +13,7 @@ import { act, note, warn } from './context.mjs';
 import { recordPath, loadRecord } from './record.mjs';
 import { removeLine } from './startup.mjs';
 import { removeLink } from './links.mjs';
+import { isOwnFile, restoreMovedNotes } from './personal.mjs';
 
 const exists = (path) => {
   try {
@@ -25,6 +28,10 @@ function removeMade(ctx, entry) {
   if (!exists(entry.path)) return;
   if (entry.kind === 'link' && !lstatSync(entry.path).isSymbolicLink()) {
     warn(`${entry.path} is no longer the link the installer made; left as it is`);
+    return;
+  }
+  if (entry.kind === 'generated' && !isOwnFile(entry.path, entry.marker)) {
+    warn(`${entry.path} no longer starts with the installer's marker line (edited or replaced since); left as it is`);
     return;
   }
   act(ctx, `remove ${entry.kind} ${entry.path}`, () => {
@@ -93,6 +100,7 @@ export function uninstall(ctx, release = () => {}) {
   }
   const made = [...record.made].reverse();
   for (const entry of made.filter((item) => item.kind !== 'dir')) removeMade(ctx, entry);
+  restoreMovedNotes(ctx, record);
   for (const entry of [...record.backups].reverse()) restoreBackup(ctx, entry);
   act(ctx, 'remove the empty backup folders and the install record', () => {
     for (const entry of record.backups) if (existsSync(dirname(entry.backup))) removeEmpty(dirname(entry.backup), entry.backupRoot);

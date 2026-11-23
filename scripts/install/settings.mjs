@@ -8,19 +8,21 @@ import { spawnSync } from 'node:child_process';
 import { join, resolve, dirname } from 'node:path';
 import { InstallError, act, note, samePath } from './context.mjs';
 import { backup, remember } from './record.mjs';
+import { isOwnFile } from './personal.mjs';
 
 const JQ_HINT = { macos: 'brew install jq', linux: 'apt install jq (or your package manager)', windows: 'winget install jqlang.jq' };
 const settingsPath = (ctx) => join(ctx.claudeDir, 'settings.json');
 
 /**
- * True on a machine this setup was never installed on: no record, a settings.json of its own, and ~/.claude/CLAUDE.md not a
- * link into this repo (an install before the record left that link). Read before the links are made.
+ * True on a machine this setup was never installed on: no record, a settings.json of its own, and ~/.claude/CLAUDE.md neither
+ * the installer's generated file (its marker line: an install whose record was lost) nor a link into this repo (an install
+ * before the record left that link). Read before the links are made.
  */
 export function isNewMachine(ctx, record) {
   if (!record.fresh || !existsSync(settingsPath(ctx))) return false;
   const claudeMd = join(ctx.claudeDir, 'CLAUDE.md');
   try {
-    if (!lstatSync(claudeMd).isSymbolicLink()) return true;
+    if (!lstatSync(claudeMd).isSymbolicLink()) return !isOwnFile(claudeMd);
     return !samePath(resolve(dirname(claudeMd), readlinkSync(claudeMd)), join(ctx.repo, 'home', 'CLAUDE.md'));
   } catch (error) {
     if (error.code === 'ENOENT') return true;

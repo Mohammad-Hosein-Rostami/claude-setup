@@ -24,6 +24,7 @@ test('--dry-run prints the hooksPath it would set and the settings layers, and c
   assert.ok(run.stdout.includes(HOOKS_LINE), run.stdout);
   assert.match(run.stdout, new RegExp(`settings layers: settings/base\\.json \\+ settings/${OS_NAME}\\.json(?: \\+ settings/local\\.json)?\\n`));
   assert.ok(run.stdout.includes('(dry-run: nothing changed)'));
+  assert.ok(run.stdout.includes(`write ${join(home, '.claude', 'CLAUDE.md')}: @${join(REPO, 'home', 'CLAUDE.md')}`), 'the generated CLAUDE.md is named, not made');
   assert.deepEqual(readdirSync(home), [], 'no file or folder under HOME: no ~/.claude, no backup, no lock, no start-up line');
   assert.equal(hooksPath(), before, 'git config core.hooksPath is as it was');
 });

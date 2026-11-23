@@ -3,15 +3,21 @@
 //   only find Node and call this file.
 // Usage: node scripts/install.mjs [--update [--to <tag>]] [--uninstall] [--dry-run] [--no-plugins] [--no-tools]
 //          [--ps-profile <path>] [--claude-version <x.y.z>]
-//   (no flag) / --update   link home/ into ~/.claude (and remove the links of the retired modes and workflows), the claude-as start-up line, settings.json, plugins, tool
-//                          dependencies; safe to repeat (a second run changes nothing). --update is the same run, by name.
+//   (no flag) / --update   link home/ into ~/.claude (and remove the links of the retired modes and workflows), make personal/
+//                          from personal.example/ when missing and move untracked notes of home/project-notes into it, link
+//                          ~/.claude/project-notes to personal/project-notes, write ~/.claude/CLAUDE.md (the marker line and
+//                          @ imports of home/CLAUDE.md and personal/CLAUDE.md; scripts/install/personal.mjs), the claude-as
+//                          start-up line, settings.json, plugins, tool dependencies; safe to repeat (a second run changes
+//                          nothing). --update is the same run, by name. A repo path an @ import line cannot carry (a space,
+//                          @, #, a quote, a non-ASCII letter) stops it with exit 1 before anything changes.
 //   --update --to <tag>    the same, with the links on a worktree of a phase tag (rollback; scripts/install/pin.mjs); a plain
 //                          --update points them back at this checkout.
 //   --claude-version <v>   install Claude Code <v> (the phase pin, 2.1.326 or newer) and prove it answers, else put the old
 //                          binary back (scripts/install/cli.mjs)
 //   --dry-run              print each change instead of making it, plus the git hooksPath it would set and the settings layers it
 //                          would merge; changes nothing (no file, no git config, no lock).
-//   --uninstall            remove what the install record names and put the backed-up files back (scripts/install/uninstall.mjs).
+//   --uninstall            remove what the install record names, move the moved notes back and put the backed-up files back
+//                          (scripts/install/uninstall.mjs); personal/ stays.
 // Exports: LINKS, TOOLS_WITH_DEPS, main.
 // Invariants: never deletes a file it did not make: anything replaced goes to ~/.claude-backup-<stamp>/ and is named in the
 //   install record (~/.claude/.claude-setup-install.json, saved even when a step fails); settings are written after the plugin
@@ -26,6 +32,7 @@ import { fileURLToPath } from 'node:url';
 import { InstallError, makeContext, note, parseArgs, samePath } from './install/context.mjs';
 import { ensureDir, loadRecord, lockInstall, saveRecord } from './install/record.mjs';
 import { linkHomeItems, removeRetiredLinks } from './install/links.mjs';
+import { PERSONAL_ITEMS, checkImportPath, installPersonal } from './install/personal.mjs';
 import { addStartupLines } from './install/startup.mjs';
 import { buildSettings, isNewMachine } from './install/settings.mjs';
 import { tagRoot } from './install/pin.mjs';
@@ -34,7 +41,10 @@ import { requireGitBash } from './install/windows.mjs';
 import { installClaude } from './install/cli.mjs';
 import * as tools from './install/tools.mjs';
 
-/** The home/ items linked into ~/.claude (doctor.sh checks the same list). */
+/**
+ * The items the install makes in ~/.claude (doctor.sh checks the same list): links to home/<name>, except PERSONAL_ITEMS:
+ * CLAUDE.md is a written file and project-notes links to personal/project-notes (scripts/install/personal.mjs).
+ */
 export const LINKS = ['CLAUDE.md', 'lead.md', 'rules', 'skills', 'agents', 'standards', 'hooks', 'tools', 'project-notes', 'lead-rules.md', 'statusline.mjs'];
 // Tools with npm dependencies: ui-check (odiff-bin, pngjs) and env-names (yaml). scripts/lane-new.sh reads this line.
 export const TOOLS_WITH_DEPS = ['ui-check', 'env-names'];
@@ -55,8 +65,10 @@ function install(ctx, record) {
   ctx.newMachine = isNewMachine(ctx, record);
   ensureDir(ctx, record, ctx.claudeDir);
   ctx.root = ctx.to ? tagRoot(ctx, record) : ctx.repo;
+  checkImportPath(ctx.root); // a tag worktree lies under HOME, whose path may hold a space: refused before any link moves
   Object.assign(record, { repo: ctx.repo, root: ctx.root, tag: ctx.to ?? null });
-  linkHomeItems(ctx, record, LINKS);
+  linkHomeItems(ctx, record, LINKS.filter((name) => !PERSONAL_ITEMS.includes(name)));
+  installPersonal(ctx, record);
   removeRetiredLinks(ctx, record, LINKS);
   addStartupLines(ctx, record);
   enableGitHooks(ctx);
@@ -126,6 +138,7 @@ export function main(argv, env = process.env) {
       release = lockForUninstall(ctx);
       uninstall(ctx, release);
     } else {
+      checkImportPath(ctx.repo); // before the lock and ~/.claude are made: a refused path changes nothing
       ({ record, release } = lockAndLoad(ctx));
       install(ctx, record);
     }
