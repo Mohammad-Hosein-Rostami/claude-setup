@@ -20,13 +20,13 @@ const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.m
 const PROJECT = resolve('/work/proj');
 const ctx = { cwd: PROJECT, project: PROJECT };
 const SECRET_VALUE = 'i6IWfakefilekey0123';
-const SECRET_COMMAND = `KEY='${SECRET_VALUE}' ./fetch-figma.sh`;
+// a literal secret is no reason (owner G1): this command is bounced for its variable command word, with the secret in its text
+const SECRET_COMMAND = `KEY='${SECRET_VALUE}' $CMD ./fetch-figma.sh`;
+const RUNTIME_COMMAND = 'read X; git $X';
+const RUNTIME_REWRITE = /only known when the command runs .*: write the words or numbers out/;
 const VARIABLE_COMMAND = '$CMD --version';
 const HIDDEN_RM = `node -e "require('child_process').execSync('rm -rf /x')"`;
 const RISKY_REWRITE = /run the rm \/ push in its own call, without `\$\(\.\.\.\)` or a heredoc/;
-
-const SECRET_REPORT = 'In your final report, tell the owner that a secret was typed into a command (a key, token, secret or password assigned in '
-  + 'the command; never its value): the transcript now holds it, so they may want to rotate it.';
 
 // One command per bounce class, the rewrite its bounce must name, and the class its log line holds.
 const BOUNCE_CASES = [
@@ -34,7 +34,8 @@ const BOUNCE_CASES = [
   ['EDITOR="code --wait"; $EDITOR notes.md', /several words is run as the command: write the command out/, 'variable holding several words as the command'],
   [`python3 -c "import os; os.system('git push -f origin main')"`, RISKY_REWRITE, 'risky word in shell expansion'],
   [HIDDEN_RM, RISKY_REWRITE, 'risky word in shell expansion'],
-  [SECRET_COMMAND, /literal password\/token \(.+\): pass it through an environment variable or a file the tool reads/, 'secret'],
+  [RUNTIME_COMMAND, RUNTIME_REWRITE, 'word or arithmetic known only at run time'],
+  ['echo $(( $(cat n) + 1 ))', RUNTIME_REWRITE, 'word or arithmetic known only at run time'],
 ];
 
 // Asks of every other kind keep today's path from the first send.
@@ -96,26 +97,30 @@ test("each bounce class is denied once with its rewrite and the retry line; the 
     assert.equal(first.decision, 'deny', command);
     assert.match(first.reason, rewrite, command);
     const lines = first.reason.split('\n');
-    if (command === SECRET_COMMAND) assert.deepEqual([lines.at(-2), lines.at(-1)], [RETRY_LINE, SECRET_REPORT], 'a secret ends with the report line');
-    else assert.equal(lines.at(-1), RETRY_LINE, command);
+    assert.equal(lines.at(-1), RETRY_LINE, command);
     const logged = s.log().at(-1);
-    assert.deepEqual([logged.decision, logged.outcome, logged.class, logged.command, logged.reason], ['deny', 'bounce', bounceClass, '', ''], command);
+    const expected = ['deny', 'bounce', bounceClass, command, decide(command, ctx).reason.slice(0, 200)]; // X11: like an ask row (masked, cut)
+    assert.deepEqual([logged.decision, logged.outcome, logged.class, logged.command, logged.reason], expected, command);
     assert.deepEqual(s.run(command), { decision: 'ask', reason: decide(command, ctx).reason }, command);
   }
 });
 
-test('a secret bounce: neither the deny text nor the log line holds any part, the length or a hash of the secret', () => {
+test('a bounce of a command holding a secret: neither the deny text nor any log line holds any part, the length or a hash of the secret', () => {
   const s = guardSession();
   const { reason } = s.run(SECRET_COMMAND);
-  const { ts, ...logged } = s.log().at(-1);
+  const lines = s.log();
+  const { ts, ...logged } = lines.at(-1);
   assert.match(ts, /^\d{4}-/);
   const sha256 = (text) => createHash('sha256').update(text).digest('hex');
   const parts = Array.from({ length: SECRET_VALUE.length - 5 }, (_, at) => SECRET_VALUE.slice(at, at + 6)); // 6 characters: shorter ones are words ("file")
   const traces = [...parts, String(SECRET_VALUE.length), sha256(SECRET_VALUE).slice(0, 8), sha256(JSON.stringify([PROJECT, SECRET_COMMAND])).slice(0, 8)];
-  for (const [name, text] of [['deny text', reason], ['log line', JSON.stringify(logged)]]) {
+  const logText = JSON.stringify(lines.map(({ ts: time, ...line }) => line));
+  for (const [name, text] of [['deny text', reason], ['log lines', logText]]) {
     assert.deepEqual(traces.filter((trace) => text.includes(trace)), [], name);
   }
-  assert.equal(logged.class, 'secret');
+  assert.deepEqual([logged.outcome, logged.class], ['bounce', 'variable command word']);
+  assert.match(logged.command, /^KEY=.*\[masked\].* \$CMD \.\/fetch-figma\.sh$/, 'the bounce row holds the masked command (X11)');
+  assert.deepEqual(lines.slice(0, -1).map((line) => [line.outcome, line.command]), [['secret', '']], 'the secret itself: one kind-only line (G1)');
 });
 
 test('after a bounce, another command, directory or session is judged fresh; the match is exact, so a trailing blank is a new command', () => {
@@ -138,7 +143,8 @@ test("every other ask keeps today's path from the first send: push, rm outside, 
 
 const MIXED = [
   ['$CMD; git push -f origin main', /^DESTRUCTIVE: force push/, 'force push'],
-  [`KEY='${SECRET_VALUE}' git push origin main`, /git push publishes/, 'git push'],
+  [`KEY='${SECRET_VALUE}' $CMD; git push origin main`, /git push publishes/, 'git push'],
+  ['read X; git $X; git push origin main', /git push publishes/, 'git push'],
   ['$CMD; rm -rf /etc/hidden-name', /rm -r outside the project/, 'rm -r outside the project'],
 ];
 
@@ -275,10 +281,12 @@ test('bounceText: a header, one rewrite line per bounce class, the retry line la
   assert.match(lines[1], /^- The command word is a variable or substitution/);
   assert.equal(lines[2], RETRY_LINE);
   assert.equal(bounceText(reasonsOf(VARIABLE_COMMAND).map((reason) => `${reason}${BACKSTOP_MARK}`)), variable, 'a backstop-only reason counts the same');
-  const mixed = [...reasonsOf(VARIABLE_COMMAND), ...reasonsOf(SECRET_COMMAND), ...reasonsOf(HIDDEN_RM), ...reasonsOf('git push origin main')];
+  const mixed = [...reasonsOf(VARIABLE_COMMAND), ...reasonsOf(RUNTIME_COMMAND), ...reasonsOf(HIDDEN_RM), ...reasonsOf('git push origin main')];
   const mixedLines = bounceText(mixed).split('\n');
-  assert.equal(mixedLines.length, 7, 'header, three rewrite lines, the push still asks, retry, the secret report');
-  assert.deepEqual(mixedLines.slice(4), ['The rewritten command will still ask the owner for: git push.', RETRY_LINE, SECRET_REPORT]);
+  assert.equal(mixedLines.length, 6, 'header, three rewrite lines, the push still asks, retry');
+  assert.match(mixedLines[2], RUNTIME_REWRITE);
+  assert.deepEqual(mixedLines.slice(4), ['The rewritten command will still ask the owner for: git push.', RETRY_LINE]);
+  assert.equal(decide(`KEY='${SECRET_VALUE}' ./fetch-figma.sh`, ctx).reasons, undefined, 'a secret alone gives no reason to bounce (G1)');
   for (const command of OTHER_ASKS) assert.equal(bounceText(reasonsOf(command)), undefined, command.slice(0, 40));
   for (const reasons of [[GUARD_ERROR_REASON], [], [`alias defines a command that asks: ${reasonsOf(VARIABLE_COMMAND)[0]}`]]) assert.equal(bounceText(reasons), undefined, String(reasons));
 });
