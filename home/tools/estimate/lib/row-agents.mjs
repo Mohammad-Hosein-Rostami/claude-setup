@@ -1,5 +1,6 @@
 // Which subagent works on which open row (R13), how many active minutes it has given the row, and which rows went quiet (R5).
-// Exports: rowAgents(items, agents, intervalsOf) -> Map, quietRows(items, byRow, context) -> quiet rows, QUIET_MIN, STALL_FLOOR_MIN.
+// Exports: rowAgents(items, agents, intervalsOf) -> Map, quietRows(items, byRow, context) -> quiet rows, isQuietAt(row, atMs) (the
+// one stall rule; slots.mjs uses it too), QUIET_MIN, STALL_FLOOR_MIN.
 // Inputs: parser items (items.mjs: { id, kind, started, done, evidence }, epoch-ms stamps); the board's agents of THIS session only
 // (board/lib/agents.mjs sessionAgents: { id, name: the shown label, description: the whole description or null, row: the row of
 // its writer launch record or null, startMs });
@@ -20,6 +21,7 @@
 //   max(its pool's 95th percentile, STALL_FLOOR_MIN) working minutes (F2: old sessions and other machines have no board agents).
 // Invariants: pure (no I/O, no clock); malformed agents, runs or items are skipped, so they fall to the stricter fallback rule.
 import { nearestRank } from './forecast.mjs';
+import { rowState } from './kinds.mjs';
 import { ROAD_ROW } from './road-steps.mjs';
 import { workedMinutes, workingIntervals } from './worked.mjs';
 
@@ -29,7 +31,6 @@ export const QUIET_MIN = 15;
 export const STALL_FLOOR_MIN = 90;
 const STALL_SHARE = 0.95;
 const MS_PER_MIN = 60_000;
-const OUT_OF_CLOCK = /^(parked|waiting):/i; // R3 and R4 evidence prefixes on an open row
 const AGENT_ID = /^[A-Za-z0-9]{1,40}$/; // the board's transcript name rule (agents.mjs TRANSCRIPT)
 const LANE_NAME = /^[a-z0-9][a-z0-9-]{0,23}$/; // road-file.mjs LANE_NAME
 const ROAD_NAME = /^[a-z][a-z0-9-]{0,7}$/; // road-file.mjs road id
@@ -43,7 +44,7 @@ const laneOf = (id) => ROAD_ROW.exec(id);
 /** True for an open, started work row that is on the clock (not parked, not waiting). */
 function isOpenStarted(item) {
   return item !== null && typeof item === 'object' && typeof item.id === 'string' && item.kind !== 'deliver'
-    && Number.isFinite(item.started) && item.done === null && !OUT_OF_CLOCK.test(String(item.evidence ?? '').trim());
+    && Number.isFinite(item.started) && item.done === null && rowState(item) === 'open'; // kinds.mjs: the one hold grammar (R3, R4)
 }
 
 /** The rows, lanes and roads a description names (F1 reads every one of them, not the first). */
@@ -163,16 +164,25 @@ export function rowAgents(items, agents, intervalsOf) {
  *   row's start when no agent was found
  */
 export function quietRows(items, byRow, { poolOf, intervals, nowMs }) {
-  const nowMin = toMin(nowMs);
   return items.filter(isOpenStarted).flatMap((item) => {
     const agent = byRow.get(item.id);
-    if (agent !== undefined) {
-      const silentMin = workedMinutes(intervals, toMin(agent.lastActiveMs), nowMin);
-      return silentMin >= QUIET_MIN ? [{ id: item.id, agentId: agent.agentId, sinceMs: agent.lastActiveMs }] : [];
-    }
-    const pool = poolOf(item);
-    const usualLongest = Array.isArray(pool) && pool.length > 0 ? nearestRank(pool, STALL_SHARE) : 0;
-    const openMin = workedMinutes(intervals, toMin(item.started), nowMin);
-    return openMin > Math.max(usualLongest, STALL_FLOOR_MIN) ? [{ id: item.id, agentId: null, sinceMs: item.started }] : [];
+    if (!isQuietAt({ startedMs: item.started, agent, pool: poolOf(item), intervals }, nowMs)) return [];
+    return [agent === undefined ? { id: item.id, agentId: null, sinceMs: item.started } : { id: item.id, agentId: agent.agentId, sinceMs: agent.lastActiveMs }];
   });
+}
+
+/**
+ * The one stall rule (R5; slots.mjs uses it for its slots and draws, quietRows for the Check lines): a started open row whose
+ * agent has had no transcript entry for QUIET_MIN working minutes by atMs, or, with no agent, that has been open longer than
+ * max(its pool's 95th percentile, STALL_FLOOR_MIN) working minutes by atMs.
+ * @param {{ startedMs: number, agent?: { lastActiveMs: number } | null, pool: number[] | null, intervals: [number, number][] }} row
+ *   startedMs the row's start; agent its rowAgents entry (none: the open-time rule); pool its kind's sorted minutes; intervals
+ *   the job's working intervals (worked.mjs)
+ * @param {number} atMs the instant judged, epoch ms
+ * @returns {boolean} true when the row counts as stalled at atMs
+ */
+export function isQuietAt({ startedMs, agent, pool, intervals }, atMs) {
+  if (agent !== undefined && agent !== null) return workedMinutes(intervals, toMin(agent.lastActiveMs), toMin(atMs)) >= QUIET_MIN;
+  const usualLongest = Array.isArray(pool) && pool.length > 0 ? nearestRank(pool, STALL_SHARE) : 0;
+  return workedMinutes(intervals, toMin(startedMs), toMin(atMs)) > Math.max(usualLongest, STALL_FLOOR_MIN);
 }

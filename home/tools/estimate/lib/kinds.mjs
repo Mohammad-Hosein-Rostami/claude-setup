@@ -1,6 +1,8 @@
 // What a table row is to the estimate (model s1, estimate-spec R1, R2, R3, R4, R14): its kind, its state, and the pools of
 // working minutes per kind that finished rows took.
-// Exports: AGENT_KINDS, LEAD_KINDS, MIN_RUN_MIN, MAX_RUN_MIN, kindOf(item), holdsOf(evidence), rowState(item), kindPools(rows).
+// Exports: AGENT_KINDS, LEAD_KINDS, HOLD_KINDS, MIN_RUN_MIN, MAX_RUN_MIN, kindOf(item), splitHolds(evidence), holdsOf(evidence),
+// startsWithHold(text), rowState(item), kindPools(rows). The hold grammar here is the one copy: status.mjs (status-table.mjs) writes
+// and clears holds with it, and the estimate reads them with it.
 // Why kind and not size: on the held-out Desap day a per-size pool missed the step by 39 min and the job by 578, a per-kind pool
 // by 21 and 254 (spec section 3). Lead kinds (gate, land, deliver) are the lead's own bookkeeping: they take no agent slot and
 // draw no build minutes (the 11 old-form `-land` M rows of the PC job drew about 3 h under the size model, spec section 14).
@@ -33,9 +35,11 @@ const REVIEW_REST = /^review$/i;
 const FOLLOWUP_ID = /^(?:F\d+|[A-Za-z0-9][\w-]*\.f\d+\..+|fu\..+)$/i;
 const PLAN_ID = /^P\d+$/i;
 const FIX_PREFIXES = ['fix', 'close', 'rework'];
-// A hold (status.mjs park/wait, home/tools/status/status-table.mjs HOLD_AT_HEAD, the writer): `parked: <why>` or
-// `waiting: <question>`, any case, at the head of an open row's evidence, each ended by `;`; several may follow one another.
-const HOLD_AT_HEAD = /^\s*(parked|waiting):([^;]*)(?:;|$)/i;
+/** The two holds, as the evidence prefix names them: `status.mjs park` writes `parked:`, `status.mjs wait` writes `waiting:`. */
+export const HOLD_KINDS = Object.freeze(['parked', 'waiting']);
+// A hold (status.mjs park/wait, the writer): `parked: <why>` or `waiting: <question>`, any case, at the head of an open row's
+// evidence, each ended by `;` and the spaces after it; several may follow one another.
+const HOLD_AT_HEAD = new RegExp(`^\\s*(${HOLD_KINDS.join('|')}):([^;]*)(?:;\\s*|$)`, 'i');
 
 /** The lowercase `word:` prefix of the item cell, else of the id cell (the parser reads `close:5` the same way), or ''. */
 function prefixOf(item) {
@@ -78,19 +82,30 @@ export function kindOf(item) {
 }
 
 /**
- * The holds at the head of an evidence cell, in order (the newest first, as status.mjs writes them).
+ * The holds at the head of an evidence cell, in order (the newest first, as status.mjs writes them), and the evidence after them.
  * @param {string} evidence the evidence cell
- * @returns {{ kind: 'parked'|'waiting', text: string }[]} text trimmed, without its `parked:`/`waiting:` mark
+ * @returns {{ holds: { kind: 'parked'|'waiting', text: string, cell: string }[], rest: string }} text trimmed, without its mark;
+ *   cell the hold as written (`Waiting: q1`, mark and text, ends trimmed); rest the evidence after the last hold
  */
-export function holdsOf(evidence) {
+export function splitHolds(evidence) {
   const holds = [];
   let rest = String(evidence ?? '');
   for (let match = HOLD_AT_HEAD.exec(rest); match !== null && match[0] !== ''; match = HOLD_AT_HEAD.exec(rest)) {
-    holds.push({ kind: match[1].toLowerCase(), text: match[2].trim() });
+    holds.push({ kind: match[1].toLowerCase(), text: match[2].trim(), cell: `${match[1]}:${match[2]}`.trim() });
     rest = rest.slice(match[0].length);
   }
-  return holds;
+  return { holds, rest };
 }
+
+/**
+ * The holds at the head of an evidence cell, in order (see splitHolds).
+ * @param {string} evidence the evidence cell
+ * @returns {{ kind: 'parked'|'waiting', text: string }[]} text trimmed, without its `parked:`/`waiting:` mark
+ */
+export const holdsOf = (evidence) => splitHolds(evidence).holds.map(({ kind, text }) => ({ kind, text }));
+
+/** @returns {boolean} true when the text starts with a hold mark (`parked:` or `waiting:`, any case, after any spaces) */
+export const startsWithHold = (text) => HOLD_AT_HEAD.test(String(text ?? ''));
 
 /**
  * The row's state for the clock (R3, R4): a done row is done; an open row with a `parked:` hold at the head of its evidence is

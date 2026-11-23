@@ -8,6 +8,7 @@
 // `waiting:` question and other evidence kept after `; `: no new column, so a reader that knows no holds still reads the row as
 // an open row with evidence.
 import { findSection, isTableRow, rowCells } from '../estimate/lib/items.mjs';
+import { HOLD_KINDS, splitHolds, startsWithHold } from '../estimate/lib/kinds.mjs';
 import { roadStepOf } from '../estimate/lib/road-steps.mjs';
 
 const COLUMNS = ['id', 'item', 'size', 'started', 'done', 'evidence'];
@@ -111,29 +112,14 @@ export const DEFECT_TABLE = {
   },
 };
 
-/** The two holds, as the evidence prefix names them: `park` writes `parked:`, `wait` writes `waiting:`. */
-export const HOLD_KINDS = ['parked', 'waiting'];
-// The hold at the head of an evidence cell: its kind, its text up to the evidence separator `;`, then the separator.
-const HOLD_AT_HEAD = new RegExp(`^(${HOLD_KINDS.join('|')}):[^;]*(?:;\\s*|$)`, 'i');
+// The hold grammar (HOLD_KINDS, the hold at the head of an evidence cell, startsWithHold) is the estimator's one copy in
+// estimate/lib/kinds.mjs, so what `park` and `wait` write is exactly what the estimate reads.
+export { HOLD_KINDS, startsWithHold };
 const CONTROL_CHARS = /\p{Cc}/gu; // a bell or escape in a cell would reach every terminal that prints the row
 const EVIDENCE_SEPARATOR = /;/g; // `;` ends the hold text, so one inside it would cut the hold short
 
 /** The hold's text: one line, no control character, `;` written `,` (see EVIDENCE_SEPARATOR); '' when nothing is left. */
 export const holdText = (text) => oneLine(text.replace(CONTROL_CHARS, ' ')).replace(EVIDENCE_SEPARATOR, ',');
-
-/** @returns {boolean} true when the text starts with a hold mark (`parked:` or `waiting:`, any case) */
-export const startsWithHold = (text) => HOLD_AT_HEAD.test(text);
-
-/** The holds at the head of an evidence cell, in order ({ kind, text }), and the evidence after them. */
-function splitHolds(evidence) {
-  const holds = [];
-  let rest = evidence;
-  for (let match = HOLD_AT_HEAD.exec(rest); match !== null; match = HOLD_AT_HEAD.exec(rest)) {
-    holds.push({ kind: match[1].toLowerCase(), text: match[0].replace(/;\s*$/, '').trimEnd() });
-    rest = rest.slice(match[0].length);
-  }
-  return { holds, rest };
-}
 
 /**
  * @param {string} evidence an evidence cell as rowCells gives it
@@ -152,7 +138,7 @@ export function withoutHold(evidence) {
  */
 export function withHold(evidence, hold) {
   const { holds, rest } = splitHolds(evidence);
-  const questions = holds.filter((old) => old.kind === 'waiting' && old.text !== hold).map((old) => old.text);
+  const questions = holds.filter((old) => old.kind === 'waiting' && old.cell !== hold).map((old) => old.cell);
   return [hold, ...questions, ...(isEmpty(rest) ? [] : [rest])].join('; ');
 }
 
