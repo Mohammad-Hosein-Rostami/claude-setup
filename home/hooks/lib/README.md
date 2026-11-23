@@ -116,7 +116,7 @@ Other hooks:
 - `gate-routes.mjs`: the prompt patterns and lines of the skill router's gate routes (bug, done, restructure, git history, repeated report); used by `skill-router.mjs`.
 - `skill-router-text.mjs`: the texts `skill-router.mjs` adds to a prompt or after an edit: the pixel texts (full, short, follow-up; they name the proof step, for design evidence only), the one check-plan line for any other UI request, and one edit reminder per line class (look, logic, text); split out to keep that hook under 300 lines.
 - `skill-router-routes.mjs`: the skill router's routes: the skills a prompt's own words name, read with ui-proof's request evidence (`ui-evidence.mjs`: design words, UI nouns, talk and negated clauses route nothing; owner words over 64 KiB are cut and route the full UI set), and the reminder classes of an edit's old and new text (`classifyFile`, at most 128 KiB per side).
-- `reply-cap.mjs`: reads a reply-size cap from a prompt; used by `agent-budget.mjs` and `final-reply-cap.mjs`.
+- `reply-cap.mjs`: reads a reply-size cap from a prompt and, for an agent report, the body the cap counts (`reportBody`: the Constraints, Not run and Caveats sections left out); used by `agent-budget.mjs` and `final-reply-cap.mjs`.
 - `claude-md-imports.mjs`: the files a CLAUDE.md pulls in by whole-line `@path` imports (4 hops, each once), so `token-audit.mjs`
   counts what the installer's `~/.claude/CLAUDE.md` imports and not only its marker line.
 - `transcript.mjs`: reads the session transcript (context size, STATUS file, the model and effort of the newest reply) through `plain-file.mjs`, so a FIFO or link at the path never holds a hook.

@@ -1,7 +1,8 @@
 // PostToolUse (all tools), PreToolUse Bash, SubagentStart and SubagentStop: enforces the budgets the prompt only asked for.
 //   PostToolUse in a subagent -> counts its tool calls; the first call that sees 80 or more injects "commit what is green"
-//                   once (a marker file next to the counter), once at 120 it injects "commit, write the
-//                   hand-over note, then report unfinished" (one nudge, not repeated: frequent harness text after tool results reads as
+//                   once, and the first that sees 120 or more injects the checkpoint "commit, update the hand-over note, go on"
+//                   (owner rule R22-B1: a checkpoint, never a stop; each once, by a marker file next to the counter, so parallel
+//                   calls that step past the number neither skip nor repeat it; frequent harness text after tool results reads as
 //                   possible injection). Advisory: it never blocks a call.
 //   PostToolUse Read in the lead -> warns when the result is over ~20k chars (use scout / a small range; lead rules: no Read > ~20k).
 //   PostToolUse Bash in the lead -> every 15 Bash calls since the last Agent/Task call, a nudge to delegate that states the
@@ -12,8 +13,9 @@
 //                   adviceOnce with a store of its own, ~/.claude/state/budget-denied: the identical retry runs; the guard's bounce store
 //                   is never touched, so the guard's own bounce of that call still comes) and the ignored count starts over, so it never loops. Subagents are
 //                   never blocked; an unknown context size never denies.
-//   SubagentStop -> blocks once when the final report is over the cap the spawn prompt states (first user message of the
-//                   agent transcript); no stated cap means no check, so agents that return data are never sent back.
+//   SubagentStop -> blocks once when the final report's body is over the cap the spawn prompt states (first user message of the
+//                   agent transcript); the Constraints, Not run and Caveats sections are not counted (lib/reply-cap.mjs reportBody);
+//                   no stated cap means no check, so agents that return data are never sent back.
 //                   A stop it lets through also ends the agent's launch; SubagentStart marks it started (lib/agent-launches.mjs: the agent cap, the writer gate).
 // Verified against Claude Code 2.1.323: hook input has `agent_id` only inside a subagent (agent_type alongside it);
 // PostToolUse accepts hookSpecificOutput.additionalContext; SubagentStop gets agent_id, agent_type, agent_transcript_path,
@@ -27,7 +29,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { checkedTempRoot } from './lib/edit-log.mjs';
-import { overCap, parseCap } from './lib/reply-cap.mjs';
+import { overCap, parseCap, reportBody } from './lib/reply-cap.mjs';
 import { isReadOnlyCommand } from './lib/read-only-command.mjs';
 import { contextTokens } from './lib/transcript.mjs';
 import { readPlainFileWith } from './lib/plain-file.mjs';
@@ -36,6 +38,7 @@ import { recordAgentStart, recordAgentStop } from './lib/agent-launches.mjs';
 import { callCounterPath } from './lib/writer-agents.mjs';
 
 // The agent files (implementer, ui-implementer) and the lead rules say "about 120 tool calls"; a test keeps them equal.
+// Since R22-B1 it is the checkpoint call, not a limit: the name stays so that text test and its callers hold.
 export const CALL_CAP = 120;
 export const EARLY_NOTICE_AT = 80;
 export const READ_WARN_CHARS = 20_000;
@@ -45,6 +48,7 @@ const IGNORED_NUDGES_TO_DENY = 2;
 const IGNORED_SUFFIX = '.ignored'; // next to the lead Bash count: nudges the lead went on past
 const TOKENS_PER_K = 1000;
 const NOTICE_SUFFIX = '.notice'; // marker next to the counter file: the early notice was given
+const CHECKPOINT_SUFFIX = '.checkpoint'; // marker next to the counter file: the 120-call checkpoint was given
 const SPAWN_PROMPT_BYTES = 512 * 1024;
 const SAFE_ID = /^[\w-]{1,128}$/;
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']); // Windows can run the PowerShell tool; both count as shell calls
@@ -65,15 +69,16 @@ export function countCall(path) {
 }
 
 /**
- * Claims the one early notice of an agent: the first caller creates the marker file, every later caller finds it.
- * Exclusive create is atomic, so parallel calls that all see a count past 80 still give the notice exactly once.
+ * Claims one notice of an agent (the early notice or the checkpoint): the first caller creates the marker file, every later
+ * caller finds it. Exclusive create is atomic, so parallel calls that all see a count past the number give it exactly once.
  * @param {string | null} path counter file (null for unsafe ids)
+ * @param {string} suffix the notice's marker suffix (NOTICE_SUFFIX or CHECKPOINT_SUFFIX)
  * @returns {boolean} true for the one caller that may print the notice
  */
-function claimEarlyNotice(path) {
+function claimNotice(path, suffix) {
   if (!path) return false;
   try {
-    closeSync(openSync(`${path}${NOTICE_SUFFIX}`, 'wx'));
+    closeSync(openSync(`${path}${suffix}`, 'wx'));
     return true;
   } catch (error) {
     if (error.code === 'EEXIST') return false;
@@ -179,11 +184,12 @@ export async function postToolUseContext(input) {
     const path = budgetPath(input.session_id, input.agent_id);
     const calls = countCall(path);
     // "80 or more", not "exactly 80": parallel calls can step the count past 80 without any call seeing 80.
-    if (calls >= EARLY_NOTICE_AT && calls < CALL_CAP && claimEarlyNotice(path)) {
-      return `Budget: ${EARLY_NOTICE_AT} tool calls used. Commit what is green now. If the brief will not be finished by about ${CALL_CAP} calls, pick the stopping point and write down the exact next step.`;
+    if (calls >= EARLY_NOTICE_AT && calls < CALL_CAP && claimNotice(path, NOTICE_SUFFIX)) {
+      return `Budget: ${EARLY_NOTICE_AT} tool calls used. Commit what is green now. At ${CALL_CAP} calls comes a checkpoint, not a stop: commit, update the hand-over note, then go on.`;
     }
-    return calls === CALL_CAP
-      ? `Budget: ${calls} tool calls used (limit ${CALL_CAP}). Commit what is green, write the hand-over note (the file your brief names, else HANDOFF.md in your worktree, not committed): done, left, next step, don't redo. Then return your report marked "unfinished" with the exact next step; the next agent starts from your commit and that note.`
+    // Owner rule R22-B1: a checkpoint, never a stop, so a lane is not cut in half; the commit and the note make a dropped connection lose nothing.
+    return calls >= CALL_CAP && claimNotice(path, CHECKPOINT_SUFFIX)
+      ? `Budget: ${calls} tool calls used (checkpoint at ${CALL_CAP}, not a stop). Commit what is green and update the hand-over note (the file your brief names, else HANDOFF.md in your worktree, not committed): done, left, next step, don't redo. Then go on with the brief while it progresses; stop only at the 2nd compaction or when blocked, and the next agent starts from your commit and that note.`
       : null;
   }
   if (SHELL_TOOLS.has(input.tool_name) || DELEGATING_TOOLS.has(input.tool_name)) return leadBashNudge(input);
@@ -226,7 +232,8 @@ export function spawnCap(transcriptPath) {
 /**
  * Why a subagent may not stop yet, or null.
  * @param {object} input SubagentStop hook JSON
- * @returns {string | null} message for the subagent when its report is over the cap its spawn prompt states
+ * @returns {string | null} message for the subagent when its report body (reportBody: the three required sections left out)
+ *   is over the cap its spawn prompt states
  */
 export function subagentStopReason(input) {
   if (input.stop_hook_active === true || !input.agent_id || typeof input.last_assistant_message !== 'string') return null;
@@ -237,9 +244,11 @@ export function subagentStopReason(input) {
     // transcript unreadable: no stated cap, so no check
   }
   if (!cap) return null;
-  const { over, size } = overCap(input.last_assistant_message, cap);
+  const { over, size } = overCap(reportBody(input.last_assistant_message), cap);
   return over
-    ? `Your final report is ${size} ${cap.unit}; the cap is ${cap.limit} ${cap.unit}. Rewrite it within the cap: verdict first, put detail in a file and give its path.`
+    ? `Your report body is ${size} ${cap.unit}; the cap is ${cap.limit} ${cap.unit}. The Constraints, Not run and Caveats sections are not counted `
+      + 'when they come last, each under its own heading (## Name, **Name** or Name:) and no heading of another name after them. '
+      + 'Rewrite the body within the cap: verdict first, put detail in a file and give its path; keep the three sections whole.'
     : null;
 }
 
@@ -272,9 +281,10 @@ function subagentStop(input) {
   recordAgentStop(input.session_id, input.agent_id, input.agent_type, process.env); // agent-model-guard's cap and writer gate: it finished
   const path = budgetPath(input.session_id, input.agent_id);
   if (path) {
-    // the agent is ending: its counter and notice marker are done
+    // the agent is ending: its counter and notice markers are done
     rmSync(path, { force: true });
     rmSync(`${path}${NOTICE_SUFFIX}`, { force: true });
+    rmSync(`${path}${CHECKPOINT_SUFFIX}`, { force: true });
   }
   return false;
 }

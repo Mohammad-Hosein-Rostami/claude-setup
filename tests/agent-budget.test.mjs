@@ -1,5 +1,5 @@
-// Tests for home/hooks/agent-budget.mjs (call counter, Read-size warning, SubagentStop word cap),
-// home/hooks/final-reply-cap.mjs (Stop line cap) and home/hooks/lib/reply-cap.mjs (cap parser).
+// Tests for home/hooks/agent-budget.mjs (call counter and its 120-call checkpoint, Read-size warning, SubagentStop word cap on
+// the report body), home/hooks/final-reply-cap.mjs (Stop line cap) and home/hooks/lib/reply-cap.mjs (cap parser, reportBody).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { CALL_CAP, EARLY_NOTICE_AT, READ_WARN_CHARS, readChars } from '../home/hooks/agent-budget.mjs';
 import { tempRoot } from '../home/hooks/lib/edit-log.mjs';
 import { isReadOnlyCommand } from '../home/hooks/lib/read-only-command.mjs';
-import { measure, overCap, parseCap } from '../home/hooks/lib/reply-cap.mjs';
+import { measure, overCap, parseCap, reportBody } from '../home/hooks/lib/reply-cap.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const BUDGET = fileURLToPath(new URL('../home/hooks/agent-budget.mjs', import.meta.url));
@@ -67,8 +67,8 @@ test('readChars uses file content, a string, or the serialized response', () => 
   assert.equal(readChars({ x: 1 }), '{"x":1}'.length);
 });
 
-const NOTICE_80 = 'Budget: 80 tool calls used. Commit what is green now. If the brief will not be finished by about 120 calls, pick the stopping point and write down the exact next step.';
-const limitText = (calls) => `Budget: ${calls} tool calls used (limit 120). Commit what is green, write the hand-over note (the file your brief names, else HANDOFF.md in your worktree, not committed): done, left, next step, don't redo. Then return your report marked "unfinished" with the exact next step; the next agent starts from your commit and that note.`;
+const NOTICE_80 = 'Budget: 80 tool calls used. Commit what is green now. At 120 calls comes a checkpoint, not a stop: commit, update the hand-over note, then go on.';
+const limitText = (calls) => `Budget: ${calls} tool calls used (checkpoint at 120, not a stop). Commit what is green and update the hand-over note (the file your brief names, else HANDOFF.md in your worktree, not committed): done, left, next step, don't redo. Then go on with the brief while it progresses; stop only at the 2nd compaction or when blocked, and the next agent starts from your commit and that note.`;
 
 // Runs one subagent for `calls` tool calls and returns what the hook printed for each call ('' when silent).
 async function budgetOutputs(calls) {
@@ -96,6 +96,27 @@ test('a subagent gets the limit text once at call 120 and no reminder after it (
   const outputs = await budgetOutputs(CALL_CAP + 20);
   assert.equal(contextOf(outputs[CALL_CAP - 1]), limitText(120));
   assert.ok(outputs.slice(CALL_CAP, CALL_CAP + 20).every((o) => o === ''), 'no reminder after the one nudge');
+});
+
+test('owner rule R22-B1: at 120 calls the text is a checkpoint (commit, hand-over note, go on), never "return your report"', async () => {
+  const text = contextOf((await budgetOutputs(CALL_CAP)).at(-1));
+  for (const clause of ['Commit what is green', 'update the hand-over note', 'Then go on with the brief while it progresses',
+    'stop only at the 2nd compaction or when blocked']) assert.ok(text.includes(clause), clause);
+  assert.doesNotMatch(text, /return your report|marked "unfinished"|\(limit /);
+  assert.doesNotMatch(NOTICE_80, /stopping point/, 'the 80 notice no longer plans a stop at 120');
+});
+
+test('the checkpoint survives a count that jumps past 120 (parallel calls): one checkpoint, not skipped, not repeated', async () => {
+  const dir = await home();
+  const ids = { session_id: uid('s'), agent_id: uid('a') };
+  const counter = join(tempRoot(), 'budget', `${ids.session_id}--${ids.agent_id}`);
+  await mkdir(dirname(counter), { recursive: true });
+  await writeFile(counter, '.'.repeat(CALL_CAP)); // call 120 was handled by a racing process that saw 121
+  const input = { hook_event_name: 'PostToolUse', ...ids, tool_name: 'Bash' };
+  assert.equal(contextOf(run(BUDGET, dir, input).stdout), limitText(121), 'the call that sees 121 gives the checkpoint');
+  assert.equal(run(BUDGET, dir, input).stdout, '', 'the call that sees 122 gives none');
+  run(BUDGET, dir, { hook_event_name: 'SubagentStop', ...ids, agent_type: 'implementer', last_assistant_message: 'done' });
+  assert.ok(!existsSync(counter) && !existsSync(`${counter}.checkpoint`), 'counter and checkpoint marker removed at the stop');
 });
 
 test('the early notice survives a count that jumps past 80 (parallel calls): one notice, not skipped, not repeated', async () => {
@@ -186,6 +207,43 @@ test('SubagentStop uses the cap named in the spawn prompt (words or lines)', asy
   assert.equal(run(BUDGET, dir, { ...base, last_assistant_message: 'a\nb\nc' }).status, 0);
 });
 
+test('reportBody finds the three sections as #, ** or plain headings, in any order; no sections means the whole report', () => {
+  const sections = [
+    'body\n## Constraints\nc\n## Not run\nn\n## Caveats\nv',
+    'body\n**Caveats**\nv\n**Constraints:** none\n### Not run (why)\nn',
+    'body\nNot run: none\nConstraints:\n- kept\nCaveats\n- v',
+    'body\n# not run\nn\n## CAVEATS\nv\nCommits: abc', // case-insensitive; a "Label: text" line is no heading
+  ];
+  for (const report of sections) assert.equal(reportBody(report), 'body', report);
+  assert.equal(reportBody('just a body\nCommits: abc'), 'just a body\nCommits: abc');
+  assert.equal(reportBody('body\n```\n# Constraints\n```\nmore'), 'body\n```\n# Constraints\n```\nmore', 'a fenced # line is no heading');
+  assert.equal(reportBody('body\nNot running: x'), 'body\nNot running: x', 'only the whole name counts');
+  assert.equal(reportBody(undefined), '');
+});
+
+test('reportBody counts the whole report when a heading of another name follows the sections (body moved under Caveats)', () => {
+  for (const report of [
+    'ok\n## Caveats\nv\n## Details\nthe real body',
+    'ok\n**Constraints**\nc\n**Findings**\nthe real body',
+    'ok\nCaveats: v\nDetails:\nthe real body',
+  ]) assert.equal(reportBody(report), report, report);
+});
+
+test('SubagentStop counts the body only: long sections pass, a long body is sent back naming the exemption', async () => {
+  const dir = await home();
+  const transcript = join(dir, 'agent.jsonl');
+  await writeFile(transcript, `${userLine('Do the work. Report <= 50 words.')}\n`);
+  const base = { hook_event_name: 'SubagentStop', session_id: uid('s'), agent_id: uid('a'), agent_type: 'implementer', agent_transcript_path: transcript };
+  const sections = `\n## Constraints\n${words(40)}\n## Not run\n${words(40)}\n## Caveats\n${words(40)}`;
+  assert.equal(run(BUDGET, dir, { ...base, last_assistant_message: `${words(50)}${sections}` }).status, 0, 'body within cap + long sections');
+  const over = run(BUDGET, dir, { ...base, last_assistant_message: `${words(51)}${sections}` });
+  assert.equal(over.status, 2, 'body over the cap');
+  assert.match(over.stderr, /report body is 51 words; the cap is 50 words\. The Constraints, Not run and Caveats sections are not counted/);
+  const moved = run(BUDGET, dir, { ...base, last_assistant_message: `done\n## Caveats\n${words(10)}\n## Details\n${words(60)}` });
+  assert.equal(moved.status, 2, 'a body under its own heading after Caveats is counted');
+  assert.match(moved.stderr, /report body is 75 words/);
+});
+
 const bash = (sid) => ({ hook_event_name: 'PostToolUse', session_id: sid, tool_name: 'Bash' });
 
 test('the lead gets one delegate nudge after 15 Bash calls, silent before and after', async () => {
@@ -256,14 +314,15 @@ test('after 2 ignored nudges at 150k+ context the next lead Bash call that is no
 
 // Audit of db40977 (S2): both hooks run on the same Bash call. The budget's deny-once shared the guard's bounce store, so after the budget
 // denied a command with a literal secret the guard found that command "already bounced" and asked instead: the rewrite advice and the
-// "tell the owner, rotate it" line were never given.
+// "tell the owner, rotate it" line were never given. Since owner rule G1 (0823e7b8) a literal secret is only noted, never bounced, so
+// the case uses a command the guard still sends back once with advice: a hand-edited lockfile.
 const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
-test('the budget deny keeps its own store: the guard still bounces the same command with its secret advice', async () => {
+test('the budget deny keeps its own store: the guard still bounces the same command with its own advice', async () => {
   const dir = await home();
   const sid = uid('s');
   const transcript = await transcriptAt(dir, CONTEXT_TOKENS);
   for (let i = 0; i < 31; i += 1) run(BUDGET, dir, leadBash(sid, transcript));
-  const command = `DB_${['PASS', 'WORD'].join('')}=${['Xk9pQ2vL', 'm3Nq8Rt5'].join('')} ./migrate.sh`;
+  const command = 'echo y > yarn.lock';
   assert.match(preDecision(dir, preBash(sid, transcript, command)), /delegate to runner\/implementer/);
   const guard = spawnSync(process.execPath, [GUARD], {
     input: JSON.stringify({ hook_event_name: 'PreToolUse', session_id: sid, cwd: '/work', tool_name: 'Bash', tool_input: { command } }),
@@ -271,7 +330,7 @@ test('the budget deny keeps its own store: the guard still bounces the same comm
   });
   const out = JSON.parse(guard.stdout).hookSpecificOutput;
   assert.equal(out.permissionDecision, 'deny', guard.stdout);
-  assert.match(out.permissionDecisionReason, /may want to rotate it/);
+  assert.match(out.permissionDecisionReason, /yarn\.lock is generated: let the package manager write it/);
 });
 
 test('isReadOnlyCommand: git and reading commands only, with no writing option and no output sent to a file', () => {
