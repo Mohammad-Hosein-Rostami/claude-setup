@@ -1,10 +1,12 @@
 // Purpose: the UI proof records (F7, P8): one JSON file per repository under ~/.claude/state/ui-proof (override:
-// UI_PROOF_STATE_DIR), one record per `ui-check run`, whatever its verdict. Exports: MAX_RECORDS, PROOF_AGENT, storeFile,
-// readRecords, appendRecord, buildRecord, findPass, findLabelled, findAtCommit, newestForTree.
+// UI_PROOF_STATE_DIR), one record per `ui-check run`, whatever its verdict. Exports: MAX_RECORDS, PROOF_AGENT, RENDER_PROOF_AGENTS,
+// storeFile, readRecords, appendRecord, buildRecord, findPass, findLabelled, findAtCommit, newestForTree.
 // A record: {id, createdAt, head, uiTree, verdict, rule, conditions, matrixHash, agentType, step, widths, frames, results,
-// reference: {comparator, renderer, states: [{key, sha256, pixels, drift, rows, scale, status}]}}. The agent type comes from the hook
-// input only (never from the command line); a record without one is nobody's (it never counts as visual-qa's: fail closed).
-// Diagnostic records never enter `reference` (ui-check's ledger already leaves them out).
+// reference: {comparator, renderer, states: [{key, sha256, pixels, drift, rows, scale, status}]}, ledgerSha256, same, captures}.
+// ledgerSha256 is the sha256 of the run's ledger.json as read (a later run's `--same` names its base by it); same is the ledger's
+// `same` section (null without `--same`); captures are the ledger's responsive captures without their file paths ([] in an older
+// ledger). The agent type comes from the hook input only (never from the command line); a record without one is nobody's (it never
+// counts as visual-qa's or a runner's: fail closed). Diagnostic records never enter `reference` (ui-check's ledger leaves them out).
 // Invariants: the file is replaced atomically (temp name unique to this process) with mode 0600; a missing file reads as no records, an
 // unreadable or malformed one throws (callers fail closed); the newest MAX_RECORDS records are kept.
 import crypto from 'node:crypto';
@@ -15,6 +17,8 @@ import { git } from './ui-files.mjs';
 
 export const MAX_RECORDS = 200;
 export const PROOF_AGENT = 'visual-qa'; // only its PASS on the tree that lands is the final gate
+// The non-writers whose runs prove a `same` or `render` plan (ui-plan.mjs), at the base and at the tip alike (P14).
+export const RENDER_PROOF_AGENTS = Object.freeze(['runner', PROOF_AGENT]);
 const FILE_MODE = 0o600;
 const NAME_HASH_CHARS = 16;
 
@@ -47,12 +51,22 @@ export function appendRecord(file, record) {
   fs.renameSync(temp, file);
 }
 
+/** The ledger's `same` section as a record keeps it, or null when the run had no `--same` base. */
+function sameOf(same) {
+  if (!same || typeof same !== 'object' || !Array.isArray(same.rows)) return null;
+  return { ref: same.ref ?? null, mismatch: same.mismatch ?? null, refused: same.refused ?? null, rows: same.rows };
+}
+
+/** The ledger's capture rows without the file path (a path names a folder that may move; the sha256 names the bytes). */
+const capturesOf = (captures) => (Array.isArray(captures) ? captures : []).map(({ key, sha256, findings, pageErrors }) => ({ key, sha256, findings, pageErrors }));
+
 /**
  * Build the record of one `ui-check run`.
- * @param {{ledger: object, results: object[], verdict: 'PASS'|'FAIL', agentType: string|null, matrixHash: string|null, resultsPath: string, uiTree: string}} run
+ * @param {{ledger: object, results: object[], verdict: 'PASS'|'FAIL', agentType: string|null, matrixHash: string|null, resultsPath: string,
+ *   uiTree: string, ledgerSha256?: string|null}} run ledgerSha256: the sha256 of the ledger.json bytes the ledger was parsed from
  * @returns {object} the record (see the header)
  */
-export function buildRecord({ ledger, results, verdict, agentType, matrixHash, resultsPath, uiTree }) {
+export function buildRecord({ ledger, results, verdict, agentType, matrixHash, resultsPath, uiTree, ledgerSha256 = null }) {
   const gate = results.filter((r) => !r.diagnostic);
   return {
     id: crypto.randomUUID(),
@@ -69,6 +83,9 @@ export function buildRecord({ ledger, results, verdict, agentType, matrixHash, r
     frames: ledger.states.map((row) => row.key),
     results: resultsPath,
     reference: { comparator: ledger.comparator, renderer: ledger.renderer, states: ledger.states },
+    ledgerSha256,
+    same: sameOf(ledger.same),
+    captures: capturesOf(ledger.captures),
   };
 }
 

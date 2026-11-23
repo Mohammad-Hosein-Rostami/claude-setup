@@ -2,7 +2,9 @@
 //   PostToolUse Bash -> after every `ui-check run` (whatever its verdict) writes a proof record (home/tools/ui-proof/lib/records.mjs):
 //                   the UI tree hash, the verdict, rule, conditions, matrix hash, `--step` label, HEAD, and the batch reference from the
 //                   run's ledger.json. The agent type comes from the hook input (`agent_type`, set inside a subagent), never from the
-//                   command line; the lead's own runs carry none and never count as visual-qa's.
+//                   command line; the lead's own runs carry none and never count as visual-qa's. The UI tree is the one of the
+//                   ledger's `root` (the folder the run started in) when that is a worktree of the same repository as the hook's
+//                   cwd, else of cwd; the record also keeps the ledger's sha256, its `same` section and its captures (ui-plan proofs).
 //   Stop (the lead) -> when the working tree's UI files differ from the merge base with the default branch (or are uncommitted) and no
 //                   visual-qa PASS matches the tree, or a newer run on the same tree is worse than that PASS's reference, blocks once
 //                   per state. SubagentStop -> the same for ui-implementer and visual-qa only; an agent's own PASS counts for its own stop.
@@ -59,12 +61,36 @@ export async function recordRun(input) {
   if (!line) return false;
   const cwd = input.cwd ?? process.cwd();
   const resultsPath = path.resolve(cwd, line[2].trim());
-  const ledger = JSON.parse(readRunFile(path.join(path.dirname(resultsPath), 'ledger.json')));
+  const ledgerText = readRunFile(path.join(path.dirname(resultsPath), 'ledger.json'));
+  const ledger = JSON.parse(ledgerText);
   const results = JSON.parse(readRunFile(resultsPath));
-  const [{ appendRecord, buildRecord, storeFile }, { workingUiTree }] = await proofLib();
-  const record = buildRecord({ ledger, results, verdict: line[1], agentType: input.agent_type ?? null, matrixHash: matrixHash(command, cwd), resultsPath, uiTree: workingUiTree(cwd) });
+  const [{ appendRecord, buildRecord, storeFile }, files] = await proofLib();
+  const ledgerSha256 = crypto.createHash('sha256').update(ledgerText).digest('hex');
+  const matrix = matrixHash(command, cwd); // read before git runs: a FIFO matrix is refused even outside a repository
+  const uiTree = files.workingUiTree(treeFolder(ledger.root, cwd, files.git));
+  const record = buildRecord({ ledger, results, verdict: line[1], agentType: input.agent_type ?? null, matrixHash: matrix, resultsPath, uiTree, ledgerSha256 });
   appendRecord(storeFile(cwd), record);
   return true;
+}
+
+/** The real path of a repository's common git folder, or null when `dir` is not inside one (git throws there). */
+function commonGitDir(dir, git) {
+  try {
+    return fs.realpathSync.native(git(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir']).trim());
+  } catch {
+    return null; // not a repository, or gone: the caller falls back to the hook's own folder
+  }
+}
+
+/**
+ * The folder whose UI files the run rendered: the ledger's `root` (the git top-level `ui-check run` started in, so `cd <worktree> &&
+ * ui-check run` names that worktree) when it is a folder of the same repository as the hook's `cwd` (one common git folder), else
+ * `cwd` as before (a root in another repository, a missing or relative root, or an older ledger without one).
+ */
+function treeFolder(root, cwd, git) {
+  if (typeof root !== 'string' || !path.isAbsolute(root) || !fs.existsSync(root)) return cwd;
+  const own = commonGitDir(cwd, git);
+  return own !== null && commonGitDir(root, git) === own ? root : cwd;
 }
 
 /** The UI tree at the merge base of HEAD with the first default branch that exists (HEAD itself when none). */
