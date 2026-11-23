@@ -12,14 +12,18 @@
 // - What a claim adds (the worktree, its `cs-lane-pool <branch>` lock, the branch) land or release removes: land detaches the folder and
 //   prune deletes the landed branch; release detaches, unlocks and deletes a landed branch. The folder stays a plain detached worktree
 //   that `git-tidy prune` keeps and `reclaimLanes` (or `git worktree remove`) removes. No `--force` and no reset anywhere.
-// - A branch name passes `git check-ref-format --branch` unchanged, does not start with `-` or `refs/`, before anything is written.
+// - A branch name passes `git check-ref-format --branch` unchanged, does not start with `-` or `refs/` and is no base branch (the base,
+//   main, master, develop), before anything is written; release never detaches or deletes a base branch.
+// - The clean is `git clean -fdx` (one -f): a git repository inside an ignored folder stays. Reclaim removes a folder only when its HEAD
+//   reflog holds no commit found nowhere else (prune's rule) and no ignored folder holds a git repository; a stale entry is removed
+//   only when its HEAD is on the base and its reflog holds nothing found nowhere else (lane-slots.mjs removalLossWhy, staleEntryLossWhy).
 // - Every claim and every removal by reclaim writes a job-made record (disk-free/lib/job-made.mjs) when a session id is known.
 import { gitFlag, gitText, runGit, UsageError } from './git.mjs';
 import { deleteBranch } from './prune.mjs';
 import { reflogOnlyCommits } from './reflog.mjs';
 import { listWorktrees } from './repo.mjs';
 import { withPoolLock } from './pool-lock.mjs';
-import { commonDirOf, contentBusyWhy, isPoolSlot, lastUsedMs, LOCK_REASON_PREFIX, poolFolderOf, poolSlots, readSlot, slotKey } from './lane-slots.mjs';
+import { commonDirOf, contentBusyWhy, isPoolSlot, lastUsedMs, LOCK_REASON_PREFIX, poolFolderOf, poolSlots, readSlot, removalLossWhy, slotKey, staleEntryLossWhy } from './lane-slots.mjs';
 import { recordJobMade } from '../../disk-free/lib/job-made.mjs';
 import { join } from 'node:path';
 
@@ -48,6 +52,14 @@ function checkBranchName(repo, branch) {
 function checkBase(repo, base) {
   if (!FULL_SHA.test(base ?? '')) throw new UsageError(`--base needs a full 40-character sha, got ${JSON.stringify(base)}`);
   if (runGit(repo.dir, ['cat-file', '-e', `${base}^{commit}`]).status !== 0) throw new UsageError(`--base ${base} is not a commit in this repository`);
+}
+
+/** The base branch and every other base candidate that exists here (main, master, develop): none of them is ever a lane. */
+const baseNames = (repo) => new Set([repo.base, ...repo.knownBases]);
+
+/** Refuses the base branch as a lane: its commits would go to the base and release would delete it. */
+function refuseBaseBranch(repo, branch) {
+  if (baseNames(repo).has(branch)) throw new UsageError(`${branch} is a base branch of this repository, never a lane: claim a lane branch of its own (feat/..., fix/...)`);
 }
 
 const branchTip = (repo, branch) => {
@@ -104,7 +116,8 @@ function takeFreeSlot(repo, slot, lane) {
   const keep = lockfilesSame(repo, oldHead, lane.target).filter(({ same }) => same).map(({ folder }) => folder);
   const kept = presentDependencyFolders(slot.folder, keep);
   switchTo(slot.folder, lane.branch, lane.base, lane.exists); // ends by reading HEAD again, right before the clean
-  gitText(slot.folder, ['clean', '-ffdxq', ...keep.flatMap((name) => ['-e', name])]);
+  // one -f: git clean keeps a git repository inside an ignored folder (-ff would delete it with its commits)
+  gitText(slot.folder, ['clean', '-fdxq', ...keep.flatMap((name) => ['-e', name])]);
   lockSlot(repo, slot.folder, lane.branch);
   return { folder: slot.folder, slot: slot.slot, created: false, kept };
 }
@@ -136,7 +149,8 @@ function claimUnderLock(repo, branch, base) {
     if (fresh.state === 'free') return takeFreeSlot(repo, fresh, lane);
   }
   const stale = slots.find((slot) => slot.state === 'missing');
-  if (stale !== undefined && readSlot(repo, stale.folder).state === 'missing') return createSlot(repo, stale.folder, stale.slot, lane, true);
+  const staleSafe = stale !== undefined && readSlot(repo, stale.folder).state === 'missing' && staleEntryLossWhy(repo, stale.folder) === null;
+  if (staleSafe) return createSlot(repo, stale.folder, stale.slot, lane, true); // else its entry stays and a new number is used
   const number = lowestUnused(new Set(slots.map((slot) => slot.number)));
   return createSlot(repo, join(poolFolderOf(repo), `lane-${number}`), `lane-${number}`, lane, false);
 }
@@ -151,6 +165,7 @@ function claimUnderLock(repo, branch, base) {
  */
 export function claimLane(repo, { branch, base, env = process.env }) {
   checkBranchName(repo, branch);
+  refuseBaseBranch(repo, branch);
   checkBase(repo, base);
   const claimed = withPoolLock(commonDirOf(repo), `claim ${branch}`, () => claimUnderLock(repo, branch, base));
   return { ...claimed, branch, base, record: recordFolder(env, claimed.folder, 'made', 'git-tidy lane claim') };
@@ -158,6 +173,7 @@ export function claimLane(repo, { branch, base, env = process.env }) {
 
 /** Why the lane in `tree` may not be released (unfinished work, branch not landed), or null. */
 function releaseRefusal(repo, tree) {
+  if (tree.branch !== null && baseNames(repo).has(tree.branch)) return `it holds the base branch ${tree.branch}, which is never a lane (never released or deleted)`;
   if (tree.locked && !(tree.lockReason ?? '').startsWith(LOCK_REASON_PREFIX)) return `locked by someone else (${tree.lockReason || 'no reason'})`;
   if (tree.branch === null && !tree.detached) return 'its HEAD is neither a branch nor detached';
   const why = contentBusyWhy(repo, tree); // HEAD is the branch tip: "commits not on the base" is "not landed"
@@ -232,6 +248,8 @@ function reclaimVerdict(slot, keepNumber, now, idleMs) {
 function removeSlot(repo, slot, env) {
   const fresh = readSlot(repo, slot.folder);
   if (fresh.state !== 'free') return { slot: slot.slot, folder: slot.folder, action: 'kept', why: fresh.why };
+  const loss = removalLossWhy(repo, slot.folder); // read right before the removal: what `git worktree remove` would destroy
+  if (loss !== null) return { slot: slot.slot, folder: slot.folder, action: 'kept', why: loss };
   const removed = runGit(repo.dir, ['worktree', 'remove', '--', slot.folder]);
   if (removed.status !== 0) return { slot: slot.slot, folder: slot.folder, action: 'failed', why: removed.stderr.split('\n')[0] };
   return { slot: slot.slot, folder: slot.folder, action: 'removed', why: `idle, landed, clean`, record: recordFolder(env, slot.folder, 'gone', 'git-tidy lane reclaim') };

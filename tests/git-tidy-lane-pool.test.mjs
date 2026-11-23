@@ -120,7 +120,10 @@ test('re-done lane: an existing branch is switched to as it is (no reset); one c
   const again = claim(repo, 'redo', base, env);
   assert.equal(again.status, 2);
   assert.ok(again.stderr.includes(`checked out in ${poolPath(repo, 1)}`), again.stderr);
-  assert.ok(claim(repo, 'main', base, env).stderr.includes(`checked out in ${realpathSync(repo)}`));
+  git(repo, 'switch', '-q', '-c', 'side'); // a lane branch the main folder holds (the base itself is refused earlier: never a lane)
+  const inMain = claim(repo, 'side', base, env);
+  assert.equal(inMain.status, 2);
+  assert.ok(inMain.stderr.includes(`checked out in ${realpathSync(repo)}`), inMain.stderr);
 });
 
 test('a reused folder keeps node_modules while the lockfiles are equal, loses it when one changed; dist/ and .env always go', () => {

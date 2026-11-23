@@ -193,23 +193,25 @@ node_modules) stay warm, and no folder is left behind:
 
 - `lane claim --repo <abs> --branch <name> --base <40-hex sha> [--json]` takes the pool lock, then hands out the lowest free
   `<main worktree>/.claude/worktrees/lane-<n>`: it switches the folder to the branch (a new branch at `--base`; an existing one as
-  it is, never reset), runs `git clean -ffdx` but keeps `node_modules` (any depth) when none of `pnpm-lock.yaml`, `yarn.lock`,
+  it is, never reset), runs `git clean -fdx` (one -f: a git repository inside an ignored folder stays) but keeps `node_modules` (any depth) when none of `pnpm-lock.yaml`, `yarn.lock`,
   `package-lock.json`, `bun.lock`, `bun.lockb`, `package.json` differ between the folder's old HEAD and the new tip (`.venv` the
   same for `uv.lock`, `poetry.lock`, `Pipfile.lock`, `requirements*.txt`, `pyproject.toml`), and locks the worktree with
   `cs-lane-pool <branch>`. When every folder is busy it adds the lowest unused `lane-<n>` (no cap); a stale entry whose folder is
-  gone is removed and made again. Then it installs what the tip needs (`lib/lane-prep.mjs`, below). Output: `lane: <folder>`,
+  gone is removed and made again, unless its HEAD is off the base or its reflog holds commits found nowhere else (then it stays
+  and a new number is used). Then it installs what the tip needs (`lib/lane-prep.mjs`, below). Output: `lane: <folder>`,
   `kept: node_modules` or `kept: none`, `installed: <command> in <folder>, ...` or `installed: none`. Exit 0 ready, 1 an install
   failed (`lane not ready: ...`, the worktree, `to finish:` and `to release:` lines on stderr; the folder stays claimed and is not
   handed out), 2 usage (a short or unknown sha, a branch name `git check-ref-format --branch` refuses or that starts with `-` or
-  `refs/`, a branch already checked out in another folder: named), 4 the pool lock stayed held by another live claim for 60 s,
+  `refs/`, a base branch (the base, main, master or develop: never a lane), a branch already checked out in another folder: named), 4 the pool lock stayed held by another live claim for 60 s,
   14 a git command failed. `--json` prints `{ folder, slot, created, kept, branch, base, record, ready, installs }`.
 - `lane list --repo <abs> [--json]`: one line per folder, `lane-<n> free|busy|missing <why>`.
 - `lane release --repo <abs> --folder <abs> [--json]`: frees a folder whose branch is landed and whose tree is clean: detach,
   remove its `cs-lane-pool` lock, delete the branch (prune's compare-and-delete; kept when its reflog holds commits found nowhere
-  else). Exit 0 released, 3 refused with why (not a pool folder, someone else's lock, unfinished work, not landed).
+  else). Exit 0 released, 3 refused with why (not a pool folder, a base branch, someone else's lock, unfinished work, not landed).
 - `lane reclaim --repo <abs> [--json]`: removes, with `git worktree remove` (never `--force`), each free folder unused for 24 hours
   (`RECLAIM_IDLE_MS`; use = its HEAD reflog, HEAD or index changed). When the repository was used in that time (a folder holds a
-  branch, or a free one was used), its lowest free folder stays. Exit 0, 1 when a removal failed.
+  branch, or a free one was used), its lowest free folder stays. A folder whose HEAD reflog holds commits found nowhere else
+  (prune's rule), or with a git repository inside an ignored folder, is kept. Exit 0, 1 when a removal failed.
 - `land` detaches the landed lane's pool folder at the landed sha right after the fast-forward (and unlocks it), so its cleanup
   deletes the branch and keeps the folder (`lane folder <path> detached at <sha> (kept for the next lane)`, JSON `detached`).
 

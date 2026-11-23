@@ -1,15 +1,20 @@
 // Purpose: read a repository's lane folder pool: the folders `<main worktree>/.claude/worktrees/lane-<n>` and, for each, whether it is
 //   free for the next lane, busy (with why) or missing (a worktree entry whose folder is gone).
-// Exports: POOL_FOLDER, LOCK_REASON_PREFIX, poolFolderOf, commonDirOf, slotKey, isPoolSlot, contentBusyWhy, poolSlots, readSlot, lastUsedMs.
+// Exports: POOL_FOLDER, LOCK_REASON_PREFIX, poolFolderOf, commonDirOf, slotKey, isPoolSlot, contentBusyWhy, poolSlots, readSlot, lastUsedMs,
+//   removalLossWhy, staleEntryLossWhy.
 // Invariants: reads only. Every fact comes from git through runGit (no shell, `-z` lists, full shas) or lstat, and a fact that cannot
 //   be read makes the folder busy, never free (fail closed). Slot paths are compared as real paths (realpathSync.native), case-folded on
 //   win32 and darwin. A folder at a slot path that is not a worktree of this repository is busy and is never touched by any caller.
 //   Free means: a linked worktree of this repository, unlocked, HEAD detached at a commit on the base, no unfinished operation, no git
 //   lock file, `git status` (untracked files included) empty. Ignored files (node_modules, dist/, a local .env) do not make it busy.
+//   Removing a folder (reclaim) or a stale entry (claim) needs more: removalLossWhy and staleEntryLossWhy name what the removal would
+//   destroy (a HEAD reflog holding commits found nowhere else: prune's rule, reflog.mjs; a git repository inside an ignored folder).
 import { existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { UsageError, gitText, runGit } from './git.mjs';
+import { reflogOnlyCommits } from './reflog.mjs';
 import { changedFileCount, inProgressOperation, listWorktrees } from './repo.mjs';
+import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
 
 export const POOL_FOLDER = join('.claude', 'worktrees');
 /** `git worktree lock --reason "cs-lane-pool <branch>"`: the lock a claim puts on the folder it hands out. */
@@ -149,4 +154,75 @@ export function lastUsedMs(folder) {
   if (admin === null) return null;
   const times = USE_FILES.map((name) => lstatSync(join(admin, name), { throwIfNoEntry: false })?.mtimeMs).filter((time) => time !== undefined);
   return times.length === 0 ? null : Math.max(...times);
+}
+
+// No branch goes with a pool folder's removal; `HEAD` can never be a branch name, so reflogOnlyCommits excludes no real branch.
+const NO_BRANCH_REMOVED = 'HEAD';
+const MAX_GITDIR_FILE_BYTES = 4096;
+const SHOWN_PATHS = 5;
+
+/** Why a reflog forbids the removal (prune's rule: commits on no ref, not on the base, not landed), or null. */
+function reflogLossWhy(repo, reflog) {
+  const found = reflogOnlyCommits(repo, [reflog], NO_BRANCH_REMOVED);
+  if (found.unreadable) return 'its HEAD reflog cannot be read';
+  if (found.truncated) return 'its HEAD reflog has more than 200 entries, not checked';
+  return found.count > 0 ? `its HEAD reflog holds ${found.count} commits found nowhere else` : null;
+}
+
+/** The paths `git clean <args> -n` would remove in `folder`, or null when git fails. */
+function wouldRemove(folder, args) {
+  const result = runGit(folder, ['clean', ...args, '-n']);
+  if (result.status !== 0) return null;
+  const prefix = 'Would remove ';
+  return new Set(result.stdout.split('\n').filter((line) => line.startsWith(prefix)).map((line) => line.slice(prefix.length)));
+}
+
+/** Why a git repository inside an ignored folder forbids removing `folder` (`-ffdx` would take it, `-fdx` keeps it), or null. */
+function nestedRepositoryWhy(folder) {
+  const all = wouldRemove(folder, ['-ffdx']);
+  const kept = wouldRemove(folder, ['-fdx']);
+  if (all === null || kept === null) return 'git clean cannot list its ignored files';
+  const holders = [...all].filter((path) => !kept.has(path));
+  return holders.length === 0 ? null : `a git repository inside an ignored folder (${holders.slice(0, SHOWN_PATHS).join(', ')})`;
+}
+
+/**
+ * What removing the present, free folder (git worktree remove) would destroy beyond what freeness already rules out.
+ * @param {object} repo openRepo's result
+ * @param {string} folder the slot folder
+ * @returns {string|null} why it must stay, or null
+ */
+export function removalLossWhy(repo, folder) {
+  return reflogLossWhy(repo, { cwd: folder, ref: 'HEAD' }) ?? nestedRepositoryWhy(folder);
+}
+
+/** The id of the worktree entry (`<common dir>/worktrees/<id>`) whose gitdir file points into `folder`, or null. */
+function entryIdOf(repo, folder) {
+  const entries = join(commonDirOf(repo), 'worktrees');
+  const key = slotKey(folder);
+  const ids = existsSync(entries) ? readdirSync(entries) : [];
+  return ids.find((id) => {
+    try {
+      return slotKey(dirname(readPlainFile(join(entries, id, 'gitdir'), MAX_GITDIR_FILE_BYTES).trim())) === key;
+    } catch {
+      return false; // a missing, linked or big gitdir file is not this entry
+    }
+  }) ?? null;
+}
+
+/**
+ * What removing the stale entry of a slot whose folder is gone would destroy: its admin folder keeps the HEAD reflog.
+ * @param {object} repo openRepo's result
+ * @param {string} folder the missing slot folder
+ * @returns {string|null} why the entry must stay, or null
+ */
+export function staleEntryLossWhy(repo, folder) {
+  const id = entryIdOf(repo, folder);
+  if (id === null) return 'its worktree entry cannot be found';
+  const ref = `worktrees/${id}/HEAD`;
+  // `rev-list --all` counts the entry's own HEAD as reachable, so its HEAD must itself be on the base
+  const head = runGit(repo.dir, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+  if (head.status !== 0) return 'its HEAD cannot be read';
+  if (runGit(repo.dir, ['merge-base', '--is-ancestor', head.stdout.trim(), repo.baseRef]).status !== 0) return `its HEAD has commits that are not on ${repo.base}`;
+  return reflogLossWhy(repo, { cwd: repo.dir, ref });
 }

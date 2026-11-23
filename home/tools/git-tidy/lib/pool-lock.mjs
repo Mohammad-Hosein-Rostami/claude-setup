@@ -8,7 +8,8 @@
 // - A lock is stale only when its pid is dead or the file is over STALE_POOL_LOCK_MS old (a live pid on an older lock is a reused pid
 //   or a hung holder). One breaker at a time removes a stale lock: it first creates `<lock>.break-<inode>-<mtime>` with O_EXCL, looks
 //   again and unlinks the lock only if it is still the very file it judged (same inode and mtime), so a fresh lock someone else took
-//   in between is never removed. A breaker file left by a crashed breaker is removed once it is stale by age.
+//   in between is never removed. A breaker file left by a crashed breaker is removed once it is stale by age; until then a waiter
+//   treats the lock as held: it pauses between tries and gives up at its deadline like any other wait.
 // - A link, FIFO or folder at the lock path is never followed or waited on: the call fails at once (Error), never treated as free.
 // - The caller waits at most `waitMs` for a live holder, then PoolBusy (the CLI exits 4); it never waits forever.
 import { randomBytes } from 'node:crypto';
@@ -96,17 +97,22 @@ function removeIfThere(path) {
   }
 }
 
-/** Removes the stale lock `seen` when this call is its only breaker and it is still that file. */
+/**
+ * Removes the stale lock `seen` when this call is its only breaker and it is still that file.
+ * @returns {boolean} true when this call removed it or found it gone or replaced (try to create the lock again at once); false when
+ *   another breaker holds the breaker file (the caller pauses and checks its deadline, so a crashed breaker never makes it spin)
+ */
 function breakStale(path, seen, nowMs) {
   const claim = `${path}.break-${seen.ino}-${Math.trunc(seen.mtimeMs)}`;
   if (!createLock(claim, `${process.pid}`)) {
     const claimStats = lstatSync(claim, { throwIfNoEntry: false });
     if (claimStats !== undefined && nowMs - claimStats.mtimeMs > STALE_POOL_LOCK_MS) removeIfThere(claim); // its breaker crashed
-    return;
+    return false;
   }
   try {
     const now = lstatSync(path, { throwIfNoEntry: false });
     if (now !== undefined && now.ino === seen.ino && now.mtimeMs === seen.mtimeMs) removeIfThere(path);
+    return true;
   } finally {
     removeIfThere(claim);
   }
@@ -136,12 +142,12 @@ export function withPoolLock(commonDir, label, work, { waitMs = POOL_LOCK_WAIT_M
   const deadline = now() + waitMs;
   while (!createLock(path, text)) {
     const seen = readLock(path);
-    if (seen === null) continue; // released between the two calls
-    if (staleWhy(seen, now()) !== null) {
-      breakStale(path, seen, now());
-      continue;
-    }
-    if (now() >= deadline) throw new PoolBusy(`the lane pool lock ${path} is held (${seen.text.trim() || 'no holder text yet'}); try again when that claim ends`);
+    if (seen === null) continue; // released between the two calls: try to create it again at once
+    const stale = staleWhy(seen, now());
+    if (stale !== null && breakStale(path, seen, now())) continue; // gone now: try to create it again at once
+    // a live holder, or a stale lock another breaker (maybe a crashed one) is working on: wait, but never past the deadline
+    const holder = stale === null ? seen.text.trim() || 'no holder text yet' : `stale: ${stale}, another breaker is removing it`;
+    if (now() >= deadline) throw new PoolBusy(`the lane pool lock ${path} is held (${holder}); try again when that claim ends`);
     Atomics.wait(PAUSE, 0, 0, RETRY_PAUSE_MS);
   }
   try {
