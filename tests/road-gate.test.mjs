@@ -328,19 +328,22 @@ test('spaces around the evidence of a within row do not hide it', () => {
   assert.match(rangeLine(gate(fixWithin(`  ${within('rd.s1.a-land')}  `)).result), /^PASS 2 range: 2 close rows/);
 });
 
-// Line 4's setup reports tree (lane share-scrub, F7): CLAUDE_SETUP_REPORTS names it; unset, empty or relative, the HOME default stays.
-test('the setup reports tree is CLAUDE_SETUP_REPORTS when absolute, else ~/Desktop/claude-setup-reports under HOME', () => {
-  const saved = process.env.HOME;
+// Line 4's setup reports tree (lane share-scrub, F7 and review R5): always ~/Desktop/claude-setup-reports under HOME. No environment
+// value moves it, since a project's settings can set env for the session and would widen the accepted folders to a planted one.
+test('the setup reports tree is ~/Desktop/claude-setup-reports under HOME, and CLAUDE_SETUP_REPORTS never moves it', () => {
+  const saved = { HOME: process.env.HOME, CLAUDE_SETUP_REPORTS: process.env.CLAUDE_SETUP_REPORTS };
   const home = join(tmpdir(), 'cs-test-road-home');
+  const restore = (name) => (saved[name] === undefined ? delete process.env[name] : (process.env[name] = saved[name]));
   try {
     process.env.HOME = home;
     const fallback = { folder: join(home, 'Desktop', 'claude-setup-reports'), shown: join('~', 'Desktop', 'claude-setup-reports') };
-    assert.deepEqual(setupReportsFolder({}), fallback);
-    assert.deepEqual(setupReportsFolder({ CLAUDE_SETUP_REPORTS: '' }), fallback);
-    assert.deepEqual(setupReportsFolder({ CLAUDE_SETUP_REPORTS: 'reports' }), fallback, 'a relative value is never resolved against a cwd');
-    const chosen = join(tmpdir(), 'cs-test-team-reports');
-    assert.deepEqual(setupReportsFolder({ CLAUDE_SETUP_REPORTS: chosen }), { folder: chosen, shown: chosen });
+    delete process.env.CLAUDE_SETUP_REPORTS;
+    assert.deepEqual(setupReportsFolder(), fallback);
+    process.env.CLAUDE_SETUP_REPORTS = tmpdir(); // a planted folder that would hold a fake proof
+    assert.deepEqual(setupReportsFolder(), fallback, 'the process environment is not read');
+    assert.deepEqual(setupReportsFolder({ CLAUDE_SETUP_REPORTS: tmpdir() }), fallback, 'an env object passed in is not read either');
   } finally {
-    if (saved === undefined) delete process.env.HOME; else process.env.HOME = saved;
+    restore('HOME');
+    restore('CLAUDE_SETUP_REPORTS');
   }
 });

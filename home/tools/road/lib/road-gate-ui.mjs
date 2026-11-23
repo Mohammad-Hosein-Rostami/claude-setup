@@ -1,5 +1,5 @@
 // Purpose: line 4 of the road gate (road-gate.mjs): the UI proof of a step, on the web path or on the terminal path.
-// Exports: uiLine(road, rows, ranges, step, ctx) -> one PASS or FAIL line; TERMINAL_PROOF_SUFFIX; setupReportsFolder(env).
+// Exports: uiLine(road, rows, ranges, step, ctx) -> one PASS or FAIL line; TERMINAL_PROOF_SUFFIX; setupReportsFolder().
 // Web path (owner standard: pixel-perfect web UI, never weakened): when any landing range of the step (a lane's or a fix row's
 //   `<road>.s<N>.fix-<name>`) changes UI files (`ui-proof changed` exit 1) or a lane has a coverage matrix path,
 //   `ui-proof check --tip <tip> --against-step <road>.s<N>` exit 0 and the step-start record taken at or before every `<from>`, except a
@@ -9,7 +9,7 @@
 //   changed a UI file: the status line and board renderers are `.mjs` that print rows) has no web page for visual-qa to check, so its
 //   proof is the owner's yes on a real render: a done STATUS row `<road>.s<N>.terminal-proof` whose evidence is exactly
 //   `terminal proof: <absolute path of the real-render file> (owner yes <YYYY-MM-DD>)`, where the file (real path) lies in the job's folder
-//   (beside STATUS.md) or the setup reports tree (`$CLAUDE_SETUP_REPORTS`, else `~/Desktop/claude-setup-reports/`), is a non-empty file written at or after the start of
+//   (beside STATUS.md) or the setup reports tree `~/Desktop/claude-setup-reports/` (no environment override), is a non-empty file written at or after the start of
 //   the step's first landing row, the date is a real day not after today (UTC), and the owner's yes is on record: the lead asks it with
 //   AskUserQuestion and records the answer with `status.mjs decision`, so `## Owner decisions` holds the bullet
 //   `- <same date> terminal proof <road>.s<N>: owner yes on <same path> (AskUserQuestion answer)` (status.mjs writes the date; a timeout
@@ -32,7 +32,6 @@ const NO_MATRIX = 'none:'; // road-file.mjs: a lane with no coverage matrix says
 const TERMINAL_PROOF = /^terminal proof: (.+) \(owner yes (\d{4}-\d{2}-\d{2})\)$/;
 const RECORD_AT = /\bat ([0-9a-f]{7,40})\b/;
 const SETUP_REPORTS = ['Desktop', 'claude-setup-reports']; // under HOME: the setup's default reports tree (docs/daily-use.md)
-const REPORTS_VARIABLE = 'CLAUDE_SETUP_REPORTS'; // an absolute folder that replaces the default (a teammate keeps reports elsewhere)
 const OWNER_DECISIONS = 'Owner decisions'; // the STATUS.md section status.mjs `decision` writes to
 const DECISION_BULLET = /^- (\d{4}-\d{2}-\d{2}) terminal proof (\S+): owner yes on (.+) \(AskUserQuestion answer\)$/;
 
@@ -48,14 +47,13 @@ function recordCovers(ctx, at, range, uiChanged) {
 }
 
 /**
- * The setup reports tree a terminal proof may lie in: `$CLAUDE_SETUP_REPORTS` when it is an absolute path, else
- * `~/Desktop/claude-setup-reports` (a relative or empty value is not used, so the gate never resolves it against a cwd).
- * @param {NodeJS.ProcessEnv} [env] the environment to read
+ * The setup reports tree a terminal proof may lie in: always `~/Desktop/claude-setup-reports` under HOME. No environment variable
+ * moves it: a project's `.claude/settings.json` can set env for the whole session, so an override would let a project widen the
+ * folders the gate accepts to one holding a planted proof. A person who keeps reports elsewhere puts the proof in the job's folder
+ * (beside STATUS.md), which the gate always accepts.
  * @returns {{folder: string, shown: string}} the folder, and how a FAIL line names it
  */
-export function setupReportsFolder(env = process.env) {
-  const chosen = env[REPORTS_VARIABLE];
-  if (typeof chosen === 'string' && isAbsolute(chosen)) return { folder: chosen, shown: chosen };
+export function setupReportsFolder() {
   return { folder: join(homedir(), ...SETUP_REPORTS), shown: join('~', ...SETUP_REPORTS) };
 }
 
