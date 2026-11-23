@@ -80,10 +80,12 @@ export function readBlobs(repoDir, blobs) {
     let at = 0;
     while (at < out.length) {
       const eol = out.indexOf(10, at);
+      if (eol < 0) throw new Error('git cat-file gave a header without an end of line');
       const [blob, type, size] = out.subarray(at, eol).toString('utf8').split(' ');
       at = eol + 1;
-      if (type !== 'blob') continue;
-      texts.set(blob, out.subarray(at, at + Number(size)).toString('utf8'));
+      if (type === 'missing') continue; // `<id> missing`: no content follows
+      if (!/^\d+$/.test(size ?? '')) throw new Error(`git cat-file gave a bad header for ${blob}`);
+      if (type === 'blob') texts.set(blob, out.subarray(at, at + Number(size)).toString('utf8'));
       at += Number(size) + 1;
     }
   }
