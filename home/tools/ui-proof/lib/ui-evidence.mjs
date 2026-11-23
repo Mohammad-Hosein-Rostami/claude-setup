@@ -2,8 +2,10 @@
 // and of its changed lines, and the design and no-change evidence in a request text. The check plan and the skill router both import
 // it, so they read one definition. Exports: DEPTHS, stricterDepth, planEvidence, FILE_CLASSES, classifyFile, requestEvidence,
 // uiClauses, FIGMA_LINK, DESIGN_WORDS, UI_WORDS.
-// Invariants: pure (imports nothing, no I/O, so the router imports it without a cycle). Request text is untrusted: capped at 1 MB,
-// only tested with regexes that run in linear time, never evaluated, and only short matched phrases are returned. An app line that
+// Invariants: pure (imports nothing, no I/O, so the router imports it without a cycle). Request text is untrusted: capped at 1 MB
+// (text past the cap is reported as `partial`, which the caller plans as full checks), only tested with regexes that run in linear
+// time, never evaluated, and only short matched phrases are returned. A change is "no change" only when its lines are re-spaced in
+// place (same trimmed lines, each pair in one hunk); a moved line is a change. An app line that
 // fits no class counts as look, never as nothing; a file type we do not know counts as look. A Figma link is design evidence in any
 // clause, and nothing here lowers a depth: noChange and design are both returned and the plan takes the stricter.
 
@@ -276,12 +278,21 @@ const UI_ALL = globalOf(UI_WORDS);
 const FIGMA_LINK_ALL = globalOf(FIGMA_LINK);
 const FA_NEGATOR_ALL = globalOf(FA_NEGATOR);
 
-/** The request as lower-case text, capped at 1 MB, FA letters unified, spaces collapsed. @throws {TypeError} on a non-string */
+/**
+ * The request as lower-case text, capped at 1 MB, FA letters unified, spaces collapsed; `partial` when text past the cap was not read.
+ * @throws {TypeError} on a non-string
+ */
 function requestText(text) {
-  if (text === null || text === undefined) return '';
+  if (text === null || text === undefined) return { text: '', partial: false };
   if (typeof text !== 'string') throw new TypeError('request text must be a string');
-  const bytes = new TextEncoder().encode(text.slice(0, MAX_REQUEST_BYTES)).subarray(0, MAX_REQUEST_BYTES);
-  return new TextDecoder().decode(bytes).toLowerCase().replace(/[’‘]/g, "'").replace(/ي/g, 'ی').replace(/ك/g, 'ک').replace(/[ \t\f\v ]+/g, ' ');
+  const encoded = new TextEncoder().encode(text.slice(0, MAX_REQUEST_BYTES));
+  const partial = text.length > MAX_REQUEST_BYTES || encoded.length > MAX_REQUEST_BYTES;
+  return { text: unifiedText(new TextDecoder().decode(encoded.subarray(0, MAX_REQUEST_BYTES))), partial };
+}
+
+/** Lower case, typographic apostrophes as `'`, Arabic yeh and kaf as Persian, runs of spaces as one. */
+function unifiedText(read) {
+  return read.toLowerCase().replace(/[’‘]/g, "'").replace(/ي/g, 'ی').replace(/ك/g, 'ک').replace(/[ \t\f\v ]+/g, ' ');
 }
 
 /**
@@ -309,32 +320,35 @@ const evidenceClauses = (text, breaks) =>
 
 const phrases = (found) => [...new Set(found.map((phrase) => phrase.trim().slice(0, MAX_PHRASE_CHARS)))].slice(0, MAX_PHRASES);
 
-function evidenceOf(text) {
+function evidenceOf({ text, partial }) {
   const design = [...text.matchAll(FIGMA_LINK_ALL)].map((match) => match[0]);
   const noChange = [];
   for (const clause of evidenceClauses(text, PART_BREAK)) {
     design.push(...unnegatedMatches(clause, DESIGN_ALL));
     noChange.push(...unnegatedMatches(clause, NO_CHANGE_ALL));
   }
-  return { design: phrases(design), noChange: phrases(noChange) };
+  return { design: phrases(design), noChange: phrases(noChange), partial };
 }
 
 /**
  * Design and no-change evidence in a request (the brief, STATUS rules and decisions). Talk clauses and negated phrases give nothing,
  * except a Figma link, which counts anywhere.
  * @param {string|null|undefined} text untrusted request text (only the first 1 MB is read)
- * @returns {{ design: string[], noChange: string[] }} the matched phrases (short, lower-case, at most 20 each)
+ * @returns {{ design: string[], noChange: string[], partial: boolean }} the matched phrases (short, lower-case, at most 20 each);
+ *   partial: the text was over 1 MB and its rest was not read, so the caller must plan the full checks (pixel)
  * @throws {TypeError} when text is neither a string nor null/undefined
  */
 export const requestEvidence = (text) => evidenceOf(requestText(text));
 
 /**
  * For the skill router: does the request ask for design work, and does it ask for UI work at all? Talk and negated clauses are removed.
+ * A prompt over 1 MB is not read whole, so it counts as both (the full route).
  * @param {string|null|undefined} text untrusted prompt text
  * @returns {{ design: boolean, ui: boolean }} design: as requestEvidence; ui: design, or a UI noun in a clause that is neither talk nor negated
  */
 export function uiClauses(text) {
   const request = requestText(text);
+  if (request.partial) return { design: true, ui: true };
   const design = evidenceOf(request).design.length > 0;
-  return { design, ui: design || evidenceClauses(request, CLAUSE_BREAK).some((clause) => unnegatedMatches(clause, UI_ALL).length > 0) };
+  return { design, ui: design || evidenceClauses(request.text, CLAUSE_BREAK).some((clause) => unnegatedMatches(clause, UI_ALL).length > 0) };
 }

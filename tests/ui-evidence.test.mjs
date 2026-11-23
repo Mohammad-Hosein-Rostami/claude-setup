@@ -356,7 +356,12 @@ test('requestEvidence: noChange in EN and FA; it never removes design evidence',
 
 test('requestEvidence: untrusted text is capped at 1 MB and only short phrases come back (P14)', HANG_GUARD, () => {
   const late = `${'a '.repeat(600000)} make it pixel perfect`; // the design words sit past the first 1 MB
-  assert.deepEqual(requestEvidence(late).design, []);
+  assert.equal(requestEvidence(late).partial, true, 'text past the cap is reported, never dropped silently (R6)');
+  assert.deepEqual(uiClauses(late), { design: true, ui: true }, 'the router takes the full route for a partly read prompt');
+  const persian = 'پ'.repeat(600000); // 600k characters, 1.2 MB: over the cap in bytes, under it in characters
+  assert.equal(requestEvidence(persian).partial, true, 'the cap is in bytes');
+  assert.equal(requestEvidence('a'.repeat(1 << 20)).partial, false, 'exactly 1 MB is read whole');
+  assert.equal(requestEvidence('make it pixel perfect').partial, false);
   const many = requestEvidence('make it pixel perfect '.repeat(60000));
   assert.deepEqual(many.design, ['pixel perfect'], 'deduplicated');
   const spaced = requestEvidence(`pixel${' '.repeat(500000)}perfect`);
@@ -368,7 +373,7 @@ test('requestEvidence: untrusted text is capped at 1 MB and only short phrases c
 });
 
 test('requestEvidence: empty and missing text give nothing; a non-string throws', () => {
-  for (const empty of ['', '   ', '\n\n', null, undefined]) assert.deepEqual(requestEvidence(empty), { design: [], noChange: [] });
+  for (const empty of ['', '   ', '\n\n', null, undefined]) assert.deepEqual(requestEvidence(empty), { design: [], noChange: [], partial: false });
   for (const bad of [42, {}, ['make it pixel perfect']]) assert.throws(() => requestEvidence(bad), TypeError);
 });
 
