@@ -16,3 +16,13 @@ The parts of the `ui-proof` tool, which records whether the UI of a tree was che
 - `records.mjs`: the proof records, one JSON file per repository, one record per `ui-check run`, and the finders that look a record up by tree or commit.
 - `owner-waiver.mjs`: the one rule of the owner's ui-proof waiver for a road (the `## Owner decisions` line, the landing row's evidence text), used by `git-tidy land`, `land-lane` and the road gate.
 - `review-html.mjs`: builds the HTML of the owner's review page from the review model (pure; every text is HTML-escaped).
+
+Screens and reach (which screens of a project a change can show on), read at a commit with git plumbing, nothing written in the project:
+
+- `screens.mjs`: `inferScreens`, the screens of a project at a commit with their urls and the lines that say what could not be inferred; picks the files to read and keeps the cache.
+- `screen-sources.mjs`: the sources of screens: router files and the files they link (React Router, Vue Router, Angular), Next `app/` and `pages/`, stories, ui-coverage matrices, e2e urls.
+- `route-parse.mjs`: the route declarations in the text of one router file (a tokenizer, route objects, `<Route>` elements, router calls, the names a file binds).
+- `screens-cache.mjs`: the cache file of inferred screens under `~/.claude/state/ui-screens` (one per repository).
+- `reach.mjs`: `reachedScreens`, the screens a set of changed files reaches by a full import walk, or every screen with one reason line.
+- `resolve.mjs`: the module resolver of one tree (relative paths, tsconfig `paths`, Vite/webpack aliases, workspace packages).
+- `git-read.mjs`: the read-only git calls (`ls-tree`, `cat-file --batch`) both use.
