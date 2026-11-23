@@ -138,6 +138,33 @@ test('R4: only this session\'s own folder is free: another session, any other te
   }
 });
 
+test('F1: a path not there yet is its deepest existing folder plus plain names; a `..` below a missing folder asks', () => {
+  [`${RM} -rf ${S}/new/deeper/x`, `${RM} -rf /tmp/cs-test-not-there-q1/a/b`, `${RM} -rf ${S}/new/*`].forEach(quiet);
+  [`${RM} -rf ${S}/new/../x`, `${RM} -rf ${S}/new/a/../../x`, `${RM} -rf ${TEMP}/cs-test-new-q2/../../x`,
+    `mv ${LINKS}/l ${S}/new && ${RM} -rf ${S}/new/x`].forEach(asksDelete);
+});
+
+test('F2: D=$(mktemp -d <template>) in a scratch area is the folder the line made; elsewhere, reassigned or in a loop it asks', () => {
+  [`D=$(mktemp -d /tmp/cs-test-XXXX); ${RM} -rf $D`, `D="$(mktemp -d ${S}/cs-test-base-XXXX)"; git archive x | tar -x -C $D; cd /; ${RM} -rf "$D"`,
+    `D=$(mktemp -d ${S}/XXXX) && ${RM} -rf $D/x`, `export D=$(mktemp -d ${LINKS}/sub-XXXX); node x.mjs; ${RM} -rf $D`].forEach(quiet);
+  [`D=$(mktemp -d /etc/x-XXXX); ${RM} -rf $D`, `D=$(mktemp -d /tmp/not-there-q3/cs-test-XXXX); ${RM} -rf $D`,
+    `D=$(mktemp -d /tmp/cs-test-XXXX) cmd; ${RM} -rf $D/x`, `x | D=$(mktemp -d /tmp/cs-test-XXXX); ${RM} -rf $D/x`,
+    `for i in 1 2; do D=$(mktemp -d /tmp/cs-test-XXXX); done; ${RM} -rf $D`, `D=$(mktemp -d /tmp/cs-test-XXXX); D=/etc; ${RM} -rf $D`,
+    `D=$(mktemp -d /tmp/cs-test-XXXX); mv ${LINKS}/l $D/m; ${RM} -rf $D/m/x`, `D=$(mktemp -d /tmp/cs-test-XXXX); ${RM} -rf $D/..`,
+    `${RM} -rf $D; D=$(mktemp -d /tmp/cs-test-XXXX)`].forEach(asksDelete);
+});
+
+test('F2: on a line with a loop or a function a variable written twice is unknown (a later pass may see the later value)', () => {
+  [`D=${S}/x; for i in 1 2; do ${RM} -rf $D; D=/etc; done`, `D=build; while true; do ${RM} -rf $D; D=/etc; done`,
+    `D=${S}/x; f() { ${RM} -rf $D; }; D=/etc; f`].forEach(asksDelete);
+  [`D=${S}/x; for i in 1 2; do ${RM} -rf $D/$i; done`, `D=${S}/x; ${RM} -rf $D; D=${S}/y; ${RM} -rf $D`].forEach(quiet);
+});
+
+test('a cs-test folder right below claude-<uid> or a project folder is scratch; the project folder itself still asks', () => {
+  [`${RM} -rf ${TEMP}/claude-501/cs-test-basecheck`, `${RM} -rf ${TEMP}/claude-501/-Users-owner-proj/cs-test-x/y`].forEach(quiet);
+  [`${RM} -rf ${TEMP}/claude-501/-Users-owner-proj`, `${RM} -rf ${TEMP}/claude-501/cs-test-x/../-Users-owner-proj`].forEach(asksDelete);
+});
+
 const RUNNER = fileURLToPath(new URL('./win32-decide.mjs', import.meta.url));
 const skip = typeof nodeModule.registerHooks === 'function' ? false : 'node:module registerHooks is missing in this Node (added in 22.15)';
 
