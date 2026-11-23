@@ -71,13 +71,16 @@ check_effort_env() {
 
 # Projects (scripts/doctor-projects.mjs): a plugin the setup turns off that a project's settings.local.json turns on (WARN; the
 # committed settings.json is listed and kept), and a project skill with a personal skill's name (WARN: the personal one wins, the
-# project copy never loads). The projects are the folders Claude Code's global config lists, plus this one.
+# project copy never loads). The projects are the folders Claude Code's global config lists, plus this one. Also per project:
+# settings that switch off or weaken our checks, guards and hooks (WARN), and INFO rows (a team switch ignored, a CLAUDE.local.md
+# note import that is automatic now, a note no known project's key matches, listed folders that are gone).
 check_projects() {
   local out line rc=0
   out="$(node "$REPO/scripts/doctor-projects.mjs" "$HOME/.claude.json" "$CLAUDE_DIR" "$REPO" "${DOCTOR_PROJECT:-$PWD}" 2>/dev/null)" || rc=$?
   while IFS= read -r line; do
     case "$line" in
       "WARN  "*) warn "${line#WARN  }" ;;
+      "INFO  "*) echo "$line" ;;
       "ok    "*) ok "${line#ok    }" ;;
     esac
   done <<<"$out"
