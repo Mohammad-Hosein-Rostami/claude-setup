@@ -182,6 +182,31 @@ test('evidence rows: talk and negated prompts route nothing, design rows keep th
   }
 });
 
+// Real pixel requests with an earlier negator or a talk word (review round R3): BASE routed each; the pixel route must stay.
+const PIXEL_WITH_NEGATOR_OR_TALK = [
+  'make sure nothing on the settings screen differs from the figma frame',
+  'never ship the login screen unless it is pixel perfect',
+  'implement the figma frame for the profile screen with full ui checks',
+  'I cannot accept anything less than pixel perfect here',
+  'صفحه را بدون هیچ اختلافی مطابق فیگما بساز',
+];
+
+test('R3: a positive pixel or Figma request routes figma-pixel-perfect whatever negator or talk word comes earlier', () => {
+  for (const text of PIXEL_WITH_NEGATOR_OR_TALK) assert.ok(skillsForPrompt(text).includes('figma-pixel-perfect'), text);
+  const link = 'https://www.figma.com/design/AbC123/app?node-id=1-2';
+  for (const text of [`don't touch ${link}`, `the router and the ui checks are heavy ${link}`]) assert.ok(skillsForPrompt(text).includes('figma-pixel-perfect'), text);
+});
+
+test('P1/P3: owner words over 64 KiB are cut and route the full UI set, pixel included; 64 KiB of plain words route nothing', () => {
+  const plain = 'fix the parser case. '.repeat(3000); // 63 000 bytes, read whole
+  assert.deepEqual(skillsForPrompt(plain), []);
+  const cut = `${plain}${'and the handler too. '.repeat(200)}`; // 67 200 bytes: the rest past 64 KiB is not read
+  const skills = skillsForPrompt(cut);
+  for (const skill of ['figma-pixel-perfect', 'responsive-ui', 'forms-validation', 'async-ui-states', 'accessibility-build', 'ui-coverage', 'ui-quality-pass']) {
+    assert.ok(skills.includes(skill), skill);
+  }
+});
+
 test('F2/F3: gate routes are unchanged for a prompt the talk filter silences; a Figma link inside a pasted block still routes pixel', () => {
   const { prompt } = hookSession();
   const silenced = prompt('no dont do anything on pixel perfect or ui change, just fix the crash in checkout', 'gates');

@@ -4,6 +4,8 @@
 // Invariants: pure (no I/O). The request evidence is ui-proof's (ui-evidence.mjs): design words, UI nouns and the talk and negation
 // rules are one definition for the router and the check plan, so a clause that talks about the checks ("the ui check chain is too
 // heavy") or refuses ("don't touch the pixel perfect part") routes no UI skill, and a Figma link routes pixel anywhere, pasted too.
+// A positive pixel request routes pixel whatever negator or talk word sits elsewhere in its clause (ui-request.mjs "Design scope").
+// The owner's words are read up to WORDS_MAX_BYTES; longer words are partial and route the full UI set (P1 speed, P3 fail closed).
 // An edit is classed by ui-evidence's classifyFile from at most EDIT_MAX_BYTES of its old and of its new text (P1: 256 KiB in all);
 // a cut edit also gets the classes its path alone gives (app source: look and logic, since its unread rest could be either).
 import { classifyFile, FIGMA_LINK, ownClauseMatches, uiClauses, UI_WORDS } from '../../tools/ui-proof/lib/ui-evidence.mjs';
@@ -37,6 +39,9 @@ const WEAK_UI =
 // "continue" / "finish it" after a UI prompt: the same UI job goes on, so it gets the follow-up line (only in a UI session).
 const JOB_FOLLOW_UP = /\b(continue|carry on|keep going|go on|resume|proceed|finish)\b|ادامه|تمامش|تمومش|تمام کن|تموم کن/i;
 const OWN_PATTERNS = [...SKILL_ROUTES.map((route) => route.test), WEAK_UI, JOB_FOLLOW_UP];
+// The owner's words read per prompt (P1: the hook stays fast on a huge prompt). Longer words are cut and count as partial, which
+// routes the full UI set, pixel included (P3: an unread rest could ask for anything). Typed words are a few KiB; 64 KiB reads in a few ms.
+const WORDS_MAX_BYTES = 64 * 1024;
 
 /**
  * The routes of a prompt's own words.
@@ -46,8 +51,8 @@ const OWN_PATTERNS = [...SKILL_ROUTES.map((route) => route.test), WEAK_UI, JOB_F
  *   skills: the skills named, without duplicates, design ones first; weak / followUp: a weak UI word or a "continue" outside talk and negation
  */
 export function promptRoutes(words, pasted) {
-  const design = uiClauses(words).design || FIGMA_LINK.test(pasted);
-  const hits = ownClauseMatches(words, OWN_PATTERNS);
+  const design = uiClauses(words, WORDS_MAX_BYTES).design || FIGMA_LINK.test(pasted);
+  const hits = ownClauseMatches(words, OWN_PATTERNS, WORDS_MAX_BYTES);
   const named = SKILL_ROUTES.filter((_, index) => hits[index]).flatMap((route) => route.skills);
   const skills = [...new Set([...(design ? FIGMA_SKILLS : []), ...named])];
   return { design, skills, weak: hits[SKILL_ROUTES.length], followUp: hits[SKILL_ROUTES.length + 1] };

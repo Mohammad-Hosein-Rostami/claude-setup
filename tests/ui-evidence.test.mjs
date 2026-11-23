@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
-  DEPTHS, FILE_CLASSES, FIGMA_LINK, DESIGN_WORDS, UI_WORDS, classifyFile, planEvidence, requestEvidence, stricterDepth, uiClauses,
+  DEPTHS, FILE_CLASSES, FIGMA_LINK, DESIGN_WORDS, UI_WORDS, classifyFile, ownClauseMatches, planEvidence, requestEvidence, stricterDepth, uiClauses,
 } from '../home/tools/ui-proof/lib/ui-evidence.mjs';
 
 const MODULE = new URL('../home/tools/ui-proof/lib/ui-evidence.mjs', import.meta.url);
@@ -331,6 +331,34 @@ test('requestEvidence: a negator counts only in its own clause and only when it 
     'نمی‌خوام پیکسل پرفکت باشه', 'update the design system docs', 'follow the design doc for naming'];
   for (const text of none) assert.deepEqual(requestEvidence(text).design, [], text);
   assert.deepEqual(uiClauses('No shortcuts: make the settings screen pixel perfect'), { design: true, ui: true });
+});
+
+test('requestEvidence: a negator refuses a design phrase only when it governs it directly; a talk clause keeps a requested design (R3)', () => {
+  // Real pixel requests with an earlier negator or a talk word (review round R3 probe): each must stay design evidence.
+  const design = [
+    'make sure nothing on the settings screen differs from the figma frame',
+    'never ship the login screen unless it is pixel perfect',
+    'implement the figma frame for the profile screen with full ui checks',
+    'I cannot accept anything less than pixel perfect here',
+    'صفحه را بدون هیچ اختلافی مطابق فیگما بساز',
+    'use the figma frame the router named',
+  ];
+  for (const text of design) {
+    assert.ok(requestEvidence(text).design.length > 0, text);
+    assert.equal(uiClauses(text).design, true, text);
+  }
+  // A negator across light words still refuses; a talk clause with no request verb still gives nothing.
+  const none = ['do not make it pixel perfect', 'never use the figma frame here', 'not every ui work is a full pixel-perfect job',
+    'make the pixel checks faster', 'the router says pixel perfect too often', 'پیکسل پرفکت را کامل نکن', 'بدون فیگما'];
+  for (const text of none) assert.deepEqual(requestEvidence(text).design, [], text);
+});
+
+test('uiClauses and ownClauseMatches: a cut text is partial and counts as everything (the router reads less than 1 MB)', () => {
+  const words = `${'fix the parser case. '.repeat(4000)}`; // 84 000 bytes of words with no UI word
+  assert.deepEqual(uiClauses(words), { design: false, ui: false }, 'read whole at the default cap');
+  assert.deepEqual(uiClauses(words, 64 * 1024), { design: true, ui: true }, 'cut: the full route');
+  assert.deepEqual(ownClauseMatches(words, [/responsive/i], 64 * 1024), [true]);
+  assert.deepEqual(ownClauseMatches(words, [/responsive/i]), [false]);
 });
 
 test('requestEvidence: a Figma link counts in any clause, even negated or talk (pixel cannot be gamed down)', () => {

@@ -13,9 +13,12 @@ The parts of the `ui-proof` tool, which records whether the UI of a tree was che
   `classifyFile(file, removed, added, hunks?)`: pass the hunk of each line (`hunks: { removed, added }`, one number per `@@` header)
   so a re-indent in place counts as no change; without it, or when a line moves to another hunk, the change is classed.
 - `ui-request.mjs`: the design and no-change phrases in a request in English and Persian (pure, imports nothing; talk about the
-  checks and negated clauses give none; a Figma link always counts), and the router's UI words. `requestEvidence` returns
-  `partial: true` for a request over 1 MB (the rest is not read): plan the full checks for it. `ownClauseMatches(text, patterns)`
-  tells the skill router which of its own route patterns match outside talk and negated clauses (the same clause rules).
+  checks and negated clauses give none; a Figma link always counts), and the router's UI words. A negator refuses a design phrase
+  only when it governs it directly (only light words between: "don't make it pixel perfect", not "never ship it unless it is pixel
+  perfect"); in a talk clause a design phrase counts when a request verb asks for it ("implement the figma frame ... with full ui
+  checks"). `requestEvidence` returns `partial: true` for a request over 1 MB (the rest is not read): plan the full checks for it.
+  `uiClauses(text, maxBytes?)` and `ownClauseMatches(text, patterns, maxBytes?)` tell the skill router whether design and UI work are
+  asked for and which of its own route patterns match outside talk and negated clauses; a text over `maxBytes` counts as everything.
 - `ui-plan.mjs`: `planChecks`, the check plan of a change (a set of needs of none, same, render, visual and pixel per reached surface;
   `same` stays beside any raised need) from the request, the diff and the reached screens, and `briefFloor` (the `UI-PLAN:` line,
   which only adds); `ui-plan-proof.mjs`: `renderMap` (the widths, locales and states a same or render proof covers, and the sha256 of
