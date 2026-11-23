@@ -103,6 +103,7 @@ review, test or audit record: a `reviewed <sha> clean` line or a `.reviewed` row
 | `road.mjs rows <road.json> --fix <N> <name>` | adds the audit-fix row `<road>.s<N>.fix-<name>` of step N (an old-form road: with its `-land` row); refused once step N's check row is done | 0, 1, 2 a fix id that would end in `-land` or equal a lane's row |
 | `road.mjs next <road.json> --budget <1-5>` | JSON `{ road, step, of, state: build\|gate\|done, form, held, carried, lanes, early, waiting, writers, baseline }`: the lowest step with an open check row, landed lanes skipped, held lanes named, carried lanes first, at most 5; `early` the later-step lanes that can start now (below), `waiting` `{ name, why }` for every other later lane not landed; `writers` = the smallest of lanes plus early, the budget and 5. It writes nothing and takes no lock | 0, 1 `baseline needed: <road>.s<N>` (a lane matrix of the step has Figma frames and no `ui-proof` step-start record is taken, below "Check plan") or no rows yet, 2 no or bad `--budget` |
 | `road.mjs join <road.json> --road-sha256 <hex> --lane <name> --worktree <abs> --base <40-hex> [--json]` | judges the scope of one built lane (below): prints `joined <sha>`, `finding <id>: <text>`, `ui-files: <n>` and its `ui-file` lines; first refuses a lane whose needed lanes (its `needs`, omitted = every earlier lane) have not landed on the base in git | 0 joined clean, 3 joined with findings, 1 refused, 2 usage |
+| `road.mjs land <road.json> --road-sha256 <hex> --lane <name> --worktree <abs> --base <40-hex> --tip <40-hex> [--brief <file>] [--reviewed <40-hex> \| --skip-review <reason>] [--accept-open <reason>] [--budget <1-5>] [--json]` | lands one lane in one call (below, "Land"): `join`, then `land-lane` with the road's values and the answer flags as given, then `next --budget <n>` (default 5) | the first failing step's: join's 1, 2 or 3; land-lane's exit unchanged (14 also when land-lane gave no report: killed or crashed); next's; else 0. Usage 2 and refusals 1 come before any subprocess |
 | `road.mjs gate <road.json> [--step <N>]` | one line per check (spec-stages section 5): 1 rows (every lane of the step landed), 2 landing ranges, 3 `git-tidy check` (a finding about the branch or worktree of a lane in flight is INFO: a started row not landed of this road or of another road file `road-*.json` beside STATUS.md, matched by the road file's branch, or a worktree an open writer holds, matched by its folder, with the branch checked out there, only when the STATUS row the writer's brief named (`row: <id>`) is started and not done in this STATUS.md, its session is live in Claude Code's session store (`~/.claude/sessions/<pid>.json` naming it, the pid alive) and the branch has commits not on the base or none yet; any other finding, a leftover of a landed lane or one a stale or planted record names included, FAILs), 4 UI proof (always runs, when a UI file changed or a lane has a matrix: the landings' check plans, `ui-proof check` on the web path, the terminal proof row on a terminal UI step, below), 5 the measure (INFO). No line runs or asks for a test, a review or an audit | 0 PASS, 1 any FAIL |
 
 Every subprocess runs without a shell and with its own timeout. The UI-file rule is the ui-proof tool's (`ui-proof changed`); without that
@@ -128,6 +129,26 @@ exit before accepting the lane), `keepGreen` or `principles`. The old flags `--t
 One join runs at a time per lane worktree: an atomic `road-join.lock` folder in the worktree's git dir holds the pid; a second join
 exits 1 at once, and the lock of a process that is gone is removed. A worktree with a cherry-pick, merge, revert or rebase running, or
 uncommitted changes to tracked files, is refused at the start, and a HEAD that is not the one the join read when it finishes is refused too.
+
+## Land
+
+`land` is join, land-lane and next in one call (`lib/road-land.mjs`). land-lane stays the only landing route: `land` never merges or
+moves a branch itself.
+
+1. Before any subprocess: the flags (an unknown one, `--repo` or `--close-row` included, is usage 2: the road gives those), the road
+   file's sha256, the lane, its landing row in STATUS.md and the step rows. Refused (exit 1): an unknown lane, no landing row (run
+   `rows`), a STATUS.md table with any problem, a step whose check row is done, and two steps open (a check row done after an earlier
+   open one).
+2. git reads the lane branch. At `--tip`, `join` runs; its exit 1, 2 or 3 is the exit and land-lane does not run. A join that read
+   another HEAD than `--tip` is refused. A branch that is gone or at another commit is a re-run after a landing that stopped: the join
+   is skipped and land-lane's own restart path decides (it records a landing already made, or refuses with 9 or 14).
+3. `land-lane --repo <road repo> --branch <lane branch> --tip <tip> --base <road base> --status-file <STATUS.md beside the road>
+   --close-row <landing row> --worktree <abs>`, then the answer flags as given, and `--json`. Its exit passes through unchanged, and
+   counts only when its JSON report says the same exit; no such report (killed, crashed, timed out after 2 h) is exit 14, and the
+   same call again takes land-lane's restart path.
+4. After land-lane exit 0 or 1: a `leftover:` line when the lane branch still exists (known: STATUS row `fu.prune-rebased-reflog`),
+   then `next:` and the `next --budget <n>` JSON. The last line is `road land: exit <n>`; `--json` prints one object
+   `{ exit, join, joinSkipped, land, leftover, next }`.
 
 ## Early lanes (fill to 5)
 
@@ -245,4 +266,5 @@ Every step is walked with plain agents:
    owner; exit 3 gives the findings back to the writer; exit 0 goes on.
 4. Land the lanes one at a time: `land-lane --close-row <road>.s<N>.<name>` writes the lane row's `landed <to> on <base> from <from>`
    evidence (an old-form road: its `-land` row).
+   `road.mjs land` runs steps 3 and 4 and then `next` in one call (above, "Land").
 5. `road.mjs gate <road> --step <N>` when every lane landed.

@@ -17,3 +17,5 @@ The parts of the `road` tool, which walks a big job as fixed steps of 1 to 5 lan
   owner-approved terminal proof row of a terminal UI step (render in the job folder or the reports tree, dated, on record under
   `## Owner decisions`).
 - `road-join.mjs`: judges one built lane's scope for `road.mjs join`: files outside the lane and the count of its UI files.
+- `road-land.mjs`: `road.mjs land`: join, then `land-lane` (the only landing route; its exit passes through), then `next`, in one call;
+  also the join with its needs check that `road.mjs join` runs.
