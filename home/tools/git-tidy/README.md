@@ -101,7 +101,7 @@ A failure of one item does not stop the others; the run ends with exit code 1 if
 
 ## land
 
-`git-tidy land <branch> [dir] [--base <branch>] [--rebase-only] --tip <sha> [--brief <file>] [--owner-waive-ui <reason> --status-file <abs> --road <id>] [--json]`
+`git-tidy land <branch> [dir] [--base <branch>] [--rebase-only] --tip <sha> [--brief <file>] [--owner-waive-ui <reason> --status-file <abs> --close-row <road row id>] [--json]`
 puts a lane on the base as one straight line:
 
 0. `--tip <full 40-hex sha>` is the sha the caller expects the lane to be at. A full land without it exits 2 (`land needs --tip <full sha of the lane's tip>`),
@@ -122,12 +122,14 @@ puts a lane on the base as one straight line:
    - When the UI files (the ui-proof tool's one definition, `ui-proof changed`) differ between the base and the rebased tip, `ui-proof check
      --tip <tip>` must exit 0 (a visual-qa PASS for that tree), else exit 6 (`ui-proof`). It is always on unless the owner waived it for the road
      (below); when the ui-proof tool cannot be loaded every landing exits 6 with that reason.
-   - Owner waiver: `--owner-waive-ui "<reason>" --status-file <abs STATUS.md> --road <road id>` (all three together, a full land only) skips
-     this UI proof and nothing else. Why: the owner decided on 2026-11-23 that web API-integration lanes, which change no screen on purpose,
-     land without the visual-qa PASS. It holds only when `## Owner decisions` in that STATUS.md has a line containing
-     `ui-proof waiver for road <road id>` for that exact road and without `UNCONFIRMED` (a timeout default is no owner decision; the rule is
-     `ui-proof/lib/owner-waiver.mjs`). Otherwise, or with a reason that is not 1 to 200 characters without control characters, it is exit 2
-     before anything changes, naming the missing line. A landing under the waiver prints `ui-proof: waived by owner decision (<reason>)`
+   - Owner waiver: `--owner-waive-ui "<reason>" --status-file <abs STATUS.md> --close-row <road row id>` (all three together, a full land
+     only) skips this UI proof and nothing else. Why: the owner decided on 2026-11-23 that web API-integration lanes, which change no screen
+     on purpose, land without the visual-qa PASS. It holds only when that STATUS.md lies outside the repository being landed (this folder
+     and every worktree of it, real paths with symlinks resolved), holds the close row `<road>.s<N>.<name>` under `## Work items`, and has
+     the owner's granting line `ui-proof waiver for road <road>` for that exact road under `## Owner decisions` (not revoked, negated,
+     commented out or `UNCONFIRMED`; the forms are in `ui-proof/README.md`, the rule is `ui-proof/lib/owner-waiver.mjs`). So a direct call
+     cannot waive the proof with a STATUS.md of its own inside the repo or one without the road's row. Otherwise, or with a reason that is
+     not 1 to 200 characters without control characters, it is exit 2 before anything changes, naming what is missing. A landing under the waiver prints `ui-proof: waived by owner decision (<reason>)`
      (JSON `uiWaived`). Rebase, tip, upstream, new-file size, ff-only and cleanup run as always. `land-lane --owner-waive-ui` passes it on.
 4. The base moves with `git merge --ff-only <the rebased tip sha>` run in the base folder (the sha, not the lane's branch, so a commit added to the lane after the checks is never landed unchecked and stays on the lane). When the base moved since the rebase: exit 5, rerun the landing.
    The base tip read right before the merge is printed as `from <sha>` (JSON `from`); when the base's reflog entry before the new tip is

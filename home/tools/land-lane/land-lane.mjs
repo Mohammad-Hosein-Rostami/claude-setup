@@ -7,9 +7,10 @@
 //        [--owner-waive-ui <reason>] [--json]
 //   `--reviewed` is the tip the one review read (the --tip or an ancestor of it, else exit 2); `--skip-review` is a reason of 1 to 200 characters;
 //   `--accept-open` lands a lane whose only open failure is a weakened-test item, with a reason (1 to 200 characters). The answers go into the row.
-//   `--owner-waive-ui <reason>` (same reason rules; --close-row a road row) skips only the UI proof of `git-tidy land`, and only when STATUS.md
-//   holds the owner's line `ui-proof waiver for road <road>` (ui-proof/lib/owner-waiver.mjs); else exit 2 before anything runs. The output
-//   prints `ui-proof: waived by owner decision (<reason>)` and the row evidence ends with ` (ui-proof waived: owner decision)`.
+//   `--owner-waive-ui <reason>` (same reason rules; --close-row a road row) skips only the UI proof of `git-tidy land`, and only when the
+//   --status-file holds that row and the owner's line `ui-proof waiver for road <road>` and lies outside the repo (ui-proof/lib/owner-waiver.mjs);
+//   else exit 2 before anything runs. The output prints `ui-proof: waived by owner decision (<reason>)` and the row evidence ends with
+//   ` (ui-proof waived: owner decision)`.
 //   The removed flags `--audit-base` and `--checks` are refused with exit 2 and a plain message.
 // Output: the first line is `land: <state>`; a landing prints `landed <to> on <base> from <from>` and the `checks:` line of done-check (and a
 //   `review:` line for a risky lane). With --json one object `{ state, exit, to, from, lines }`.
@@ -28,7 +29,7 @@ import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { parseWorkItems } from '../estimate/lib/items.mjs';
 import { readStatusFile } from '../status/status-file.mjs';
-import { UI_WAIVER_EVIDENCE, ownerWaiverProblem, roadOfRow } from '../ui-proof/lib/owner-waiver.mjs';
+import { UI_WAIVER_EVIDENCE, ownerWaiverProblem } from '../ui-proof/lib/owner-waiver.mjs';
 import { UsageError, parseArgs } from './lib/args.mjs';
 import { assertReviewedIsAncestor, checkRebasedTip } from './lib/checks-step.mjs';
 import { Stop, stop } from './lib/stop.mjs';
@@ -156,7 +157,7 @@ function rebaseStep(options, expected) {
 
 /** Step 5: `git-tidy land` at the rebased tip. `{ moved: true, tip }` when the base moved, else what landed. */
 function landStep(options, rebased) {
-  const waiver = waivesUi(options) ? ['--owner-waive-ui', options.ownerWaiveUi, '--status-file', options.statusFile, '--road', roadOfRow(options.closeRow)] : [];
+  const waiver = waivesUi(options) ? ['--owner-waive-ui', options.ownerWaiveUi, '--status-file', options.statusFile, '--close-row', options.closeRow] : [];
   const optional = [...(options.brief === null ? [] : ['--brief', options.brief]), ...waiver];
   const run = tidy(['land', options.branch, options.repo, '--base', options.base, '--tip', rebased, ...optional, '--json']);
   const result = parseJson(run.out);
@@ -207,8 +208,9 @@ export function landLoop(options, steps) {
 /** Steps 1-6; the result is `{ code, state, lines, to, from }`; a refusal is a thrown Stop. */
 function land(options) {
   assertReviewedIsAncestor(options);
-  // The owner's waiver is checked before anything runs; git-tidy land checks the same line again right before it lands.
-  const waiverProblem = waivesUi(options) ? ownerWaiverProblem(options.statusFile, roadOfRow(options.closeRow)) : null;
+  // The owner's waiver is read only from the STATUS.md that holds the close row (outside the repo), checked before anything runs;
+  // git-tidy land checks the same rule again right before it lands.
+  const waiverProblem = waivesUi(options) ? ownerWaiverProblem({ statusFile: options.statusFile, closeRow: options.closeRow, repo: options.repo }) : null;
   if (waiverProblem !== null) throw new UsageError(waiverProblem);
   checkDisk();
   const current = refTip(options);

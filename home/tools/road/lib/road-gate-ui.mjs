@@ -16,7 +16,7 @@
 //   default, `UNCONFIRMED ...`, is no such bullet). A step with any UI file changed or any matrix path never takes this path.
 // Owner waiver (owner decision 2026-11-23, web API-integration lanes): before both paths, a step PASSes as "waived by owner decision" when
 //   a landing of it ends its evidence with ` (ui-proof waived: owner decision)` (land-lane --owner-waive-ui), every landing that changed a
-//   UI file does too, and `## Owner decisions` holds the owner's `ui-proof waiver for road <road>` line (no UNCONFIRMED). Anything less
+//   UI file does too, and `## Owner decisions` holds the owner's granting `ui-proof waiver for road <road>` line (owner-waiver.mjs). Anything less
 //   leaves the step to the paths above, unchanged.
 // Invariants: every exit other than the expected ones is FAIL (fail closed); `ctx.uiProof(argv)` runs the ui-proof tool and
 //   `ctx.isAncestor(a, b)` git's `merge-base --is-ancestor` exit, both with their timeouts (road-gate.mjs), so tests inject them.
@@ -122,7 +122,7 @@ function landingEvidence(rows, id) {
 /**
  * The owner's waiver of the step's UI proof, or null when it does not apply: some landing of the step ends its evidence with
  * UI_WAIVER_EVIDENCE (land-lane --owner-waive-ui), every landing that changed a UI file does, and `## Owner decisions` holds the owner's
- * line for this road (ui-proof/lib/owner-waiver.mjs; an UNCONFIRMED line is none). Otherwise the web or terminal path decides as before.
+ * line for this road (ui-proof/lib/owner-waiver.mjs; an UNCONFIRMED, revoked, negated or commented-out line is none). Otherwise the web or terminal path decides as before.
  */
 function waiverLine(road, rows, own, changed, ctx) {
   const waived = own.map((range) => landingEvidence(rows, range.row).trimEnd().endsWith(UI_WAIVER_EVIDENCE));

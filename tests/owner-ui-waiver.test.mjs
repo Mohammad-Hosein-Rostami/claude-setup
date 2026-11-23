@@ -1,11 +1,13 @@
 // Tests of the owner's ui-proof waiver rule (home/tools/ui-proof/lib/owner-waiver.mjs) and of road gate line 4 with it (road-gate-ui.mjs
 // uiLine): the waiver holds only with the owner's `ui-proof waiver for road <id>` line under `## Owner decisions` for that exact road (no
-// UNCONFIRMED line, no line outside the section or in a code fence), and line 4 passes only when the step's UI landings carry the waiver
-// evidence. The ui-proof tool and git are faked (ctx.uiProof, ctx.isAncestor); the landing side is in land-lane-ui-waiver.test.mjs.
+// UNCONFIRMED line, no line outside the section, in a code fence or in an HTML comment, no negated line, and a later revoking line cancels
+// it), and line 4 passes only when the step's UI landings carry the waiver evidence. The ui-proof tool and git are faked (ctx.uiProof,
+// ctx.isAncestor); the landing side is in land-lane-ui-waiver.test.mjs.
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
+import { makeRepo } from './git-tidy-helpers.mjs';
 import { uiLine } from '../home/tools/road/lib/road-gate-ui.mjs';
 import { UI_WAIVER_EVIDENCE, ownerWaiverLine, ownerWaiverProblem, roadOfRow, waiverReasonProblem } from '../home/tools/ui-proof/lib/owner-waiver.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -36,14 +38,46 @@ test('ownerWaiverLine: a timeout default (UNCONFIRMED), a line outside the secti
   assert.equal(ownerWaiverLine(`# STATUS\n\n${DECISION}\n`, 'iceweb'), null, 'no section at all');
 });
 
-test('ownerWaiverProblem: null with the line; a message naming the missing line otherwise; an unreadable file never passes', () => {
-  const folder = makeTempDir('owner-waiver-');
-  const file = join(folder, 'STATUS.md');
-  writeFileSync(file, statusWith(DECISION));
-  assert.equal(ownerWaiverProblem(file, 'iceweb'), null);
-  assert.match(ownerWaiverProblem(file, 'iceplat'), /needs a line with "ui-proof waiver for road iceplat"/);
-  assert.match(ownerWaiverProblem(join(folder, 'missing.md'), 'iceweb'), /cannot be read/);
-  assert.match(ownerWaiverProblem(file, 'Ice Web'), /is not a road id/);
+test('ownerWaiverLine: a line in an HTML comment, a negated line or a later revoking line cancels the waiver; a later grant holds again', () => {
+  const REVOKED = '- 2026-11-24 ui-proof waiver for road iceweb revoked (owner, 2026-11-24)';
+  const NEGATED = '- 2026-11-24 no ui-proof waiver for road iceweb';
+  const REGRANT = '- 2026-11-25 ui-proof waiver for road iceweb: owner yes again';
+  assert.equal(ownerWaiverLine(statusWith(`<!-- ${DECISION} -->`), 'iceweb'), null, 'one-line HTML comment');
+  assert.equal(ownerWaiverLine(statusWith('<!--', DECISION, '-->'), 'iceweb'), null, 'HTML comment over several lines');
+  assert.equal(ownerWaiverLine(statusWith(`<!-- note --> ${DECISION}`), 'iceweb'), DECISION, 'the visible part after a closed comment counts');
+  assert.equal(ownerWaiverLine(statusWith(NEGATED), 'iceweb'), null, 'negated');
+  assert.equal(ownerWaiverLine(statusWith(DECISION, REVOKED), 'iceweb'), null, 'revoked later');
+  assert.equal(ownerWaiverLine(statusWith(DECISION, NEGATED.toUpperCase()), 'iceweb'), null, 'any case revokes');
+  assert.equal(ownerWaiverLine(statusWith(DECISION, `<!-- ${REVOKED} -->`), 'iceweb'), DECISION, 'a commented-out revoke is no revoke');
+  assert.equal(ownerWaiverLine(statusWith(DECISION, REVOKED.replace('iceweb', 'iceplat')), 'iceweb'), DECISION, 'another road\'s revoke');
+  assert.equal(ownerWaiverLine(statusWith(DECISION, REVOKED, REGRANT), 'iceweb'), REGRANT);
+  for (const line of [`${DECISION}: owner said no`, '- 2026-11-23 owner: ui-proof waiver for road iceweb', '* 2026-11-23 ui-proof waiver for road iceweb']) {
+    assert.equal(ownerWaiverLine(statusWith(line), 'iceweb'), null, line);
+    assert.equal(ownerWaiverLine(statusWith(DECISION, line), 'iceweb'), null, `${line} after a grant`);
+  }
+});
+
+/** A git repo (the repo being landed) and, outside it, a STATUS.md with the road row and `decisions`. */
+function waiverWorld(...decisions) {
+  const repo = makeRepo();
+  const file = join(makeTempDir('owner-waiver-'), 'STATUS.md');
+  const table = '| id | item | size | started | done | evidence |\n| -- | ---- | ---- | ------- | ---- | -------- |\n| iceweb.s1.fe | build: fe | S | - | - | - |';
+  writeFileSync(file, statusWith(...decisions).replace('## Work items\n', `## Work items\n\n${table}\n`));
+  return { repo, file };
+}
+
+test('ownerWaiverProblem: null with the row and the line; a message naming what is missing otherwise; an unreadable file never passes', () => {
+  const { repo, file } = waiverWorld(DECISION);
+  assert.equal(ownerWaiverProblem({ statusFile: file, closeRow: 'iceweb.s1.fe', repo }), null);
+  assert.match(ownerWaiverProblem({ statusFile: file, closeRow: 'iceweb.s1.other', repo }), /does not hold the row iceweb\.s1\.other/);
+  assert.match(ownerWaiverProblem({ statusFile: file, closeRow: 'close:1', repo }), /is not a road lane row/);
+  assert.match(ownerWaiverProblem({ statusFile: join(dirname(file), 'missing.md'), closeRow: 'iceweb.s1.fe', repo }), /cannot be read/);
+  const other = waiverWorld(DECISION.replace('iceweb', 'iceplat'));
+  assert.match(ownerWaiverProblem({ statusFile: other.file, closeRow: 'iceweb.s1.fe', repo }), /needs a line with "ui-proof waiver for road iceweb"/);
+  const inside = join(repo, 'STATUS.md');
+  writeFileSync(inside, readFileSync(file, 'utf8'));
+  assert.match(ownerWaiverProblem({ statusFile: inside, closeRow: 'iceweb.s1.fe', repo }), /inside .*the repository being landed/);
+  assert.match(ownerWaiverProblem({ statusFile: file, closeRow: 'iceweb.s1.fe', repo: dirname(file) }), /cannot list the worktrees/);
 });
 
 test('waiverReasonProblem: 1 to 200 characters, no control character', () => {

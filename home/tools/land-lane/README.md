@@ -21,10 +21,11 @@ node ~/.claude/tools/land-lane/land-lane.mjs --repo <abs base folder> --branch <
 - `--owner-waive-ui "<reason>"` lands a lane without the UI proof (visual-qa PASS) of `git-tidy land`, and skips nothing else (disk, tip,
   rebase, done-check with typecheck, lint, tests and the weakened-test scan, new-file size, row close all run). Why: the owner decided on
   2026-11-23 that web API-integration lanes, which change no screen on purpose, land without the screen check. Rule
-  (`ui-proof/lib/owner-waiver.mjs`): `--close-row` must be a road row `<road>.s<N>.<name>`, and `## Owner decisions` in `--status-file`
-  (up to the next heading) must hold a line containing `ui-proof waiver for road <road>` for that exact road and not containing
-  `UNCONFIRMED` (a timeout default is no owner decision). Otherwise exit 2 before anything runs, naming the missing line; `git-tidy land`
-  checks the line again. Same reason rules. The output prints `ui-proof: waived by owner decision (<reason>)` and the row evidence ends
+  (`ui-proof/lib/owner-waiver.mjs`, forms in `ui-proof/README.md`): `--close-row` must be a road row `<road>.s<N>.<name>`, and the
+  `--status-file` must hold that row, lie outside the repository being landed (the base folder and every worktree, real paths), and have
+  the owner's granting line `ui-proof waiver for road <road>` for that exact road as the last line naming it under `## Owner decisions`
+  (not revoked, not negated, not in an HTML comment, no `UNCONFIRMED`: a timeout default is no owner decision). Otherwise exit 2 before
+  anything runs, naming what is missing; `git-tidy land` checks the same rule again. Same reason rules. The output prints `ui-proof: waived by owner decision (<reason>)` and the row evidence ends
   with ` (ui-proof waived: owner decision)`, which the road gate's line 4 reads. Without the flag nothing changes.
 - `--brief` is the lane's brief file: paths it names may add files over the size limit (`git-tidy land --brief`).
 - `--audit-base` and `--checks` were removed: either one exits 2 with a message saying so (an old caller is told, never ignored).

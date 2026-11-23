@@ -36,10 +36,21 @@ Why: on 2026-11-23 the owner decided that web API-integration lanes, which chang
 PASS while every other check stays. `lib/owner-waiver.mjs` is the one rule, read by `git-tidy land --owner-waive-ui`, `land-lane
 --owner-waive-ui` and the road gate's line 4:
 
-- The waiver holds for road `<id>` only when the STATUS.md section `## Owner decisions` (up to the next heading; lines in a code fence do
-  not count) has a line containing `ui-proof waiver for road <id>`, the id not followed by another id character, and the line does not
-  contain `UNCONFIRMED` (a decision taken by a timeout default is no owner decision). The lead records the owner's answer with
-  `status.mjs decision "ui-proof waiver for road <id>: <what the owner said> (owner, <date>)"`.
+- Only visible lines of the STATUS.md section `## Owner decisions` count (up to the next heading; a line in a code fence and text inside
+  an HTML comment `<!-- ... -->`, also one over several lines, are not read). Of those, the last line that names
+  `ui-proof waiver for road <id>` (any case; the id not followed by another id character, so `ice` is not `iceweb`) decides:
+  - It grants the waiver only in the form `- <YYYY-MM-DD> ui-proof waiver for road <id>` followed by nothing, or by the owner's words
+    (e.g. `: web API lanes land without the screen check (owner, 2026-11-23)`): the bullet, the optional date and then the phrase, exactly
+    as `status.mjs decision "ui-proof waiver for road <id>: <what the owner said> (owner, <date>)"` writes it. The line must not contain
+    `UNCONFIRMED` (a decision taken by a timeout default is no owner decision), and the words after the phrase must not contain a
+    negation word: `no`, `not`, `never`, `revoke`, `revoked`, `denied`, `declined`, `refused`, `withdrawn`, `canceled`, `cancelled`.
+  - Any other line that names it revokes: `- <date> ui-proof waiver for road <id> revoked (owner, <date>)` and
+    `- <date> no ui-proof waiver for road <id>` are the two forms to record a revoke with (`status.mjs decision`). A later granting line
+    grants it again.
+- For a landing (`git-tidy land`, `land-lane`) the STATUS.md must also hold the close row (`--close-row`, a road row
+  `<road>.s<N>.<name>` whose road is `<id>`) in `## Work items`, and lie outside every folder of the repository being landed (the base
+  folder and each of its worktrees, real paths with symlinks resolved, case folded on macOS and Windows). So a STATUS.md written for the
+  occasion, or kept in the repo itself, cannot waive the proof. Otherwise it is exit 2 before anything runs, naming what is missing.
 - A landing under it prints `ui-proof: waived by owner decision (<reason>)`, and land-lane ends the row evidence with
   ` (ui-proof waived: owner decision)`. Gate line 4 passes a step as `waived by owner decision` when a landing of the step carries that
   evidence, every landing that changed a UI file carries it, and the owner's line is there; otherwise the step takes the web or terminal
