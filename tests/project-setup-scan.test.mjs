@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { globMatches, scanProjectSetup, teamSetEnv } from '../home/hooks/lib/project-setup-scan.mjs';
+import { git } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const POSIX = process.platform !== 'win32';
@@ -142,14 +143,16 @@ test('MCP server names come from .mcp.json', () => {
   assert.deepEqual(scan(project({ '.mcp.json': JSON.stringify({ mcpServers: { figma: {}, playwright: {} } }) })).mcp, ['figma', 'playwright']);
 });
 
-test('teamSetEnv: env keys the committed settings set and the local file does not', () => {
+test('teamSetEnv: env keys the committed settings set and the untracked local file does not; a local file git cannot vouch for is a team file', () => {
   const { top } = project({
     ...settings({ env: { DONE_CHECK_SKIP: '1', CLAUDE_SKILL_ROUTER: 'off' } }),
     '.claude/settings.local.json': JSON.stringify({ env: { CLAUDE_SKILL_ROUTER: 'off' } }),
   });
-  assert.deepEqual(teamSetEnv(top), { keys: new Set(['DONE_CHECK_SKIP']), readable: true });
+  assert.deepEqual(teamSetEnv(top), { keys: new Set(['DONE_CHECK_SKIP', 'CLAUDE_SKILL_ROUTER']), readable: true, trackedLocal: new Set(['CLAUDE_SKILL_ROUTER']) }, 'no repository: fail closed');
+  git(top, 'init', '-q'); // the local file is now untracked: the owner's own
+  assert.deepEqual(teamSetEnv(top), { keys: new Set(['DONE_CHECK_SKIP']), readable: true, trackedLocal: new Set() });
   const broken = project({ '.claude/settings.json': '{ not json' });
-  assert.deepEqual(teamSetEnv(broken.top), { keys: new Set(), readable: false });
+  assert.deepEqual(teamSetEnv(broken.top), { keys: new Set(), readable: false, trackedLocal: new Set() });
 });
 
 test('review R2: every linked folder or file the walk does not follow is named, never skipped silently', { skip: !POSIX && 'needs symlinks' }, () => {

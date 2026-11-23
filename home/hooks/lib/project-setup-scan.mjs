@@ -1,5 +1,6 @@
 // What a project's own AI setup brings, read from its files for the project-merge note (project-merge.mjs).
-// Exports: OUR_SWITCHES, SHOWN_VALUE_KEYS, scanProjectSetup(top, cwd, options), teamSetEnv(top), globMatches(pattern, path).
+// Exports: OUR_SWITCHES, SHOWN_VALUE_KEYS, scanProjectSetup(top, cwd, options), teamSetEnv(top, platform), envName(key, platform),
+// globMatches(pattern, path).
 // Read: in every folder from the repository root `top` down to the session folder (at most MAX_FOLDER_LEVELS): CLAUDE.md,
 // .claude/CLAUDE.md, CLAUDE.local.md, AGENTS.md, .claude/rules (counted), .claude/skills, .claude/agents, .claude/settings.json,
 // .claude/settings.local.json and .mcp.json.
@@ -12,13 +13,15 @@
 // TEXT_MAX_BYTES (instructions) or SETTINGS_MAX_BYTES (settings, .mcp.json: a bigger file is "not checked"). One deadline
 // (`budgetMs`) is checked before each part; a part it stops is named in `notChecked`, never skipped silently. claudeMdExcludes
 // globs are matched by globMatches (linear in the pattern times the path squared, no regex built from repository text).
+// teamSetEnv asks git one thing (whether settings.local.json is tracked: hardened `ls-files`, bounded by GIT_TIMEOUT_MS), only
+// when that file sets an env key; a failure counts as tracked (fail closed).
 // Invariants: read-only; never throws; the same files give the same answer (listings are sorted), so parallel sessions agree.
 import { lstatSync, opendirSync, readdirSync, realpathSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { isInside } from './agent-brief.mjs';
 import { readAgentFile } from './agent-file-walk.mjs';
 import { frontmatterOf, plainFrontmatter } from './agent-frontmatter.mjs';
-import { readHead } from './gated-folder.mjs';
+import { readHead, runGit } from './gated-folder.mjs';
 import { readPlainFile } from './plain-file.mjs';
 import { quotedPath, shownPath } from './shown-name.mjs';
 
@@ -43,6 +46,7 @@ const MAX_GLOB_CHARS = 300; // a longer pattern, or a path, is not matched: it c
 const TEXT_MAX_BYTES = 64 * 1024; // the head of an instruction file searched for an @import
 const SETTINGS_MAX_BYTES = 256 * 1024; // a real settings file is a few KiB; a 5 MB one is "not checked"
 const DEFAULT_BUDGET_MS = 1000;
+const GIT_TIMEOUT_MS = 3000; // one `ls-files` of one path; it normally takes a few ms (gated-folder.mjs uses the same bound to find a worktree)
 const MD_FILE = /\.md$/i;
 const AGENTS_IMPORT = /(?:^|\s)@(?:\.\/)?AGENTS\.md(?=\s|$)/m;
 const NOTE_IMPORTS = /(?:^|\s)@(\S*project-notes\/[^\s/]+\.md)(?=\s|$)/gm; // the path of each project-notes import
@@ -239,7 +243,7 @@ const strengthEffect = (value, ours, list) => {
 
 /** What one project env variable does to ours, or undefined when it does not touch our setup. */
 function envEffect(key, value, ours) {
-  if (OUR_SWITCHES.includes(key)) return 'our-switch';
+  if (OUR_SWITCHES.includes(envName(key))) return 'our-switch';
   if (key === 'ANTHROPIC_MODEL') return strengthEffect(value, ours.model, MODEL_FAMILIES);
   if (key === 'CLAUDE_CODE_SUBAGENT_MODEL') return strengthEffect(value, ours.subagentModel, MODEL_FAMILIES);
   if (key === 'CLAUDE_CODE_EFFORT_LEVEL') return strengthEffect(value, ours.effortLevel, EFFORT_LEVELS);
@@ -366,19 +370,45 @@ export function scanProjectSetup(top, cwd, { personalSkillsDir, budgetMs = DEFAU
 }
 
 /**
- * The env variables the committed project settings set and the local file does not (for our skip switches: team-set ones are ignored).
+ * Whether git says it does not track `top`'s .claude/settings.local.json: only git's own "no such tracked file" answer (exit 1 of
+ * `ls-files --error-unmatch`) counts. A tracked file, a folder outside any repository, a timeout or any other failure is false: the
+ * file may have come from the team (a commit, or an unpacked copy), so it cannot switch a check off (fail closed). Hardened git
+ * (gated-folder.mjs runGit: no repository program runs, no optional locks), literal pathspec, killed after GIT_TIMEOUT_MS.
+ */
+function localUntracked(top) {
+  return runGit(top, ['--literal-pathspecs', 'ls-files', '-z', '--error-unmatch', '--', LOCAL_SETTINGS], GIT_TIMEOUT_MS).status === 1;
+}
+
+/**
+ * The env variables the committed project settings set and the owner's own local file does not (for our skip switches: team-set
+ * ones are ignored). A settings.local.json that git tracks, or that git cannot vouch for (localUntracked), is a team file too.
+ * On Windows env names ignore case, so every key is compared in upper case there (`Done_Check_Skip` is DONE_CHECK_SKIP).
  * @param {string} top - the project root.
+ * @param {string} [platform] - process.platform by default (a parameter so the Windows rule is tested on any system).
  * Every env key is read, not the first MAX_KEYS the note shows: a team file with many keys cannot hide a switch past the cap (the
  * file itself is capped at SETTINGS_MAX_BYTES, so the list stays small).
- * @returns {{ keys: ReadonlySet<string>, readable: boolean }} `readable` false when either file is there but cannot be read as JSON.
+ * @returns {{ keys: ReadonlySet<string>, readable: boolean, trackedLocal: ReadonlySet<string> }} keys: the team-set env names (upper
+ *   case on Windows); trackedLocal: those of them set by a settings.local.json that counts as a team file; `readable` false when
+ *   either file is there but cannot be read as JSON.
  */
-export function teamSetEnv(top) {
+export function teamSetEnv(top, platform = process.platform) {
   const team = readJson(join(top, TEAM_SETTINGS));
   const local = readJson(join(top, LOCAL_SETTINGS));
-  const allKeys = (value) => (isObject(value) ? Object.keys(value) : []);
+  const allKeys = (value) => (isObject(value) ? Object.keys(value).map((key) => envName(key, platform)) : []);
   const localKeys = new Set(allKeys(local.value?.env));
-  return { keys: new Set(allKeys(team.value?.env).filter((key) => !localKeys.has(key))), readable: !team.problem && !local.problem };
+  const localIsTeam = localKeys.size > 0 && !localUntracked(top);
+  const trackedLocal = new Set(localIsTeam ? localKeys : []);
+  const keys = new Set([...allKeys(team.value?.env).filter((key) => localIsTeam || !localKeys.has(key)), ...trackedLocal]);
+  return { keys, readable: !team.problem && !local.problem, trackedLocal };
 }
+
+/**
+ * An env variable name as the system compares it: upper case on Windows (its env names ignore case), as it is elsewhere.
+ * @param {string} key - the name.
+ * @param {string} [platform] - process.platform by default.
+ * @returns {string}
+ */
+export const envName = (key, platform = process.platform) => (platform === 'win32' ? key.toUpperCase() : key);
 
 /** @typedef {{ instructions: string[], agentsMdLoads: 'native'|'setting'|'import'|'none', rules: number, skills: string[],
  *  hiddenSkills: {name: string, path: string}[], agents: {name: string, mark: string}[], hooks: {event: string, count: number}[],
