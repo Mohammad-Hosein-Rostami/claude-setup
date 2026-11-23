@@ -15,15 +15,19 @@
 // - Two sessions write two files (F1); two writers of one session take turns under the session lock, so no line is lost or mixed.
 // - Torn line (a writer killed mid-append): the next append starts on a new line; a reader skips the broken part and counts it.
 // - Old reader: a line of a newer version or an unknown kind is skipped and counted, never guessed at; extra fields are dropped.
-// - A key is stored only as a JSON string (a path with a newline, `../` or a docker name with spaces stays one value); this module
-//   never passes a key to a shell or a command (F2). Path kinds need an absolute path; docker kinds take any text.
+// - A key is stored only as a JSON string (a path with a newline or a docker name with spaces stays one value); this module
+//   never passes a key to a shell or a command (F2). Docker kinds take any text. A path kind needs an absolute path with no `..` part
+//   (after a linked folder `..` is not lexical, so it is refused, never resolved); it is written and compared without `.` parts,
+//   doubled or trailing separators, so `/r/./lane-1/` and `/r/lane-1` are one key.
+// - A hard-linked record file (nlink > 1: another name of the same file, maybe one of the owner's) is neither appended to nor read.
+// - Clock step: within one session the later line in the file wins whatever its time; across sessions the newer `at` wins.
 // - Stale record: a session whose newest line is over STALE_AFTER_MS old reads as `stale`; the writer never deletes or trims a
 //   record file, the sweep drops stale ones (F3, P15).
 // - Nothing here throws: a writer that cannot write returns 'unwritable', a reader that cannot read says why.
-import { readdirSync, readSync } from 'node:fs';
+import { fstatSync, readdirSync, readSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
-import { appendPlainFile, readPlainFile, readPlainFileWith } from '../../../hooks/lib/plain-file.mjs';
+import { isAbsolute, join, normalize, parse, sep } from 'node:path';
+import { appendPlainFile, NOT_PLAIN_FILE, readPlainFileWith } from '../../../hooks/lib/plain-file.mjs';
 import { withSessionLock } from '../../../hooks/lib/session-lock.mjs';
 import { isPrivateFile, isSessionId, lstatOrNull, privateFolder } from '../../../hooks/lib/session-store.mjs';
 
@@ -41,20 +45,32 @@ const TAIL_BYTES = 256; // read from the end to find a torn last line or the ful
 const MAX_KEY_CHARS = 2048;
 const MAX_BY_CHARS = 100;
 const RECORD_FILE = /^([A-Za-z0-9_-]{1,100})\.jsonl$/; // the session ids isSessionId accepts, plus the extension
+const PATH_PARTS = sep === '\\' ? /[\\/]/ : /\//; // Windows takes both separators; on POSIX a backslash is part of a name
+const PARENT_PART = '..';
 
 /** @returns {string} the record folder under the HOME of env (USERPROFILE on Windows) */
 export const jobMadeFolder = (env) => join(env.HOME || env.USERPROFILE || homedir(), '.claude', 'state', 'job-made');
 
 const textWithin = (value, maxChars) => typeof value === 'string' && value.length > 0 && value.length <= maxChars;
 
-/** True when key may name a thing of this kind: a path kind needs an absolute path. */
-const keyFits = (kind, key) => textWithin(key, MAX_KEY_CHARS) && (!PATH_KINDS.has(kind) || isAbsolute(key));
+/**
+ * The form a key is written and compared in, or null when it cannot name a thing of this kind. A docker key stays as given; a path
+ * key must be absolute with no `..` part and loses its `.` parts, doubled and trailing separators (the root keeps its own).
+ */
+function storedKey(kind, key) {
+  if (!textWithin(key, MAX_KEY_CHARS)) return null;
+  if (!PATH_KINDS.has(kind)) return key;
+  if (!isAbsolute(key) || key.split(PATH_PARTS).includes(PARENT_PART)) return null;
+  const normal = normalize(key);
+  return normal.endsWith(sep) && normal !== parse(normal).root ? normal.slice(0, -sep.length) : normal;
+}
 
 /** The JSON line of one event, or null when the entry is not a record this version writes. */
 function recordLine({ kind, key, by, op = 'made' }, now) {
-  const valid = JOB_MADE_KINDS.includes(kind) && RECORD_OPS.has(op) && keyFits(kind, key) && textWithin(by, MAX_BY_CHARS);
+  const stored = JOB_MADE_KINDS.includes(kind) ? storedKey(kind, key) : null;
+  const valid = stored !== null && RECORD_OPS.has(op) && textWithin(by, MAX_BY_CHARS);
   if (!valid || !Number.isFinite(now)) return null;
-  const line = `${JSON.stringify({ v: RECORD_VERSION, op, at: now, kind, key, by })}\n`;
+  const line = `${JSON.stringify({ v: RECORD_VERSION, op, at: now, kind, key: stored, by })}\n`;
   return Buffer.byteLength(line) <= MAX_RECORD_LINE_BYTES ? line : null;
 }
 
@@ -120,9 +136,9 @@ function parseLine(text) {
   }
   if (value === null || typeof value !== 'object' || value.v !== RECORD_VERSION || !Number.isFinite(value.at)) return null;
   if (value.op === FULL_OP) return { op: FULL_OP, at: value.at };
-  const known = RECORD_OPS.has(value.op) && JOB_MADE_KINDS.includes(value.kind) && keyFits(value.kind, value.key);
-  if (!known || !textWithin(value.by, MAX_BY_CHARS)) return null;
-  return { op: value.op, at: value.at, kind: value.kind, key: value.key, by: value.by };
+  const key = RECORD_OPS.has(value.op) && JOB_MADE_KINDS.includes(value.kind) ? storedKey(value.kind, value.key) : null;
+  if (key === null || !textWithin(value.by, MAX_BY_CHARS)) return null;
+  return { op: value.op, at: value.at, kind: value.kind, key, by: value.by };
 }
 
 /** The events of a record file's text, how many parts were skipped, and whether the full line is there. */
@@ -140,13 +156,27 @@ function parseRecordText(text) {
   return { events, skipped, full };
 }
 
-/** The record of one session file; `usable: false` with why when it is not a private plain file within the cap. */
+/** True for this user's regular file with no second hard link (a planted `ln` of one of the owner's files has two). */
+const isSingleLinkPrivateFile = (stats) => isPrivateFile(stats) && stats.nlink === 1;
+
+/** A record file's text, read through one open checked again: a hard link or a big file swapped in after the lstat is refused. */
+function readRecordText(path) {
+  return readPlainFileWith(path, (fd, size) => {
+    if (!isSingleLinkPrivateFile(fstatSync(fd)) || size > MAX_RECORD_FILE_BYTES) {
+      throw Object.assign(new Error(`${path}: not a single-link file of this user within ${MAX_RECORD_FILE_BYTES} bytes`), { code: NOT_PLAIN_FILE });
+    }
+    const buffer = Buffer.alloc(size);
+    return buffer.toString('utf8', 0, readSync(fd, buffer, 0, size, 0));
+  });
+}
+
+/** The record of one session file; `usable: false` with why when it is not a private single-link plain file within the cap. */
 function readSessionRecord(dir, session, now) {
   const path = join(dir, `${session}.jsonl`);
   try {
     const stats = lstatOrNull(path);
-    if (stats === null || !isPrivateFile(stats)) return { session, usable: false, why: 'not a plain file of this user' };
-    const { events, skipped, full } = parseRecordText(readPlainFile(path, MAX_RECORD_FILE_BYTES));
+    if (stats === null || !isSingleLinkPrivateFile(stats)) return { session, usable: false, why: 'not a single-link plain file of this user' };
+    const { events, skipped, full } = parseRecordText(readRecordText(path));
     const lastAt = events.length === 0 ? stats.mtimeMs : Math.max(...events.map((event) => event.at));
     return { session, usable: true, events, skipped, full, lastAt, stale: now - lastAt > STALE_AFTER_MS };
   } catch (error) {
@@ -182,15 +212,15 @@ export function readJobMade(env, { now = Date.now() } = {}) {
 
 /**
  * What the records say is still there: per kind and key, the newest event over all given sessions, kept when it is 'made'.
- * A 'made' and a 'gone' at the same ms count as gone (the safe side: the sweep leaves it alone).
+ * Within one session the later line in its file wins whatever its `at` (the clock may step back, the append order may not); across
+ * sessions the larger `at` wins, and a 'made' and a 'gone' at the same ms count as gone (the safe side: the sweep leaves it alone).
  * @param {ReturnType<typeof readJobMade>['sessions']} sessions as readJobMade returns them (pass only the fresh ones to leave stale out)
  * @returns {Array<{kind: string, key: string, by: string, at: number, session: string}>} sorted by kind, then key
  */
 export function stillMade(sessions) {
   const newest = new Map();
   for (const record of sessions.filter((one) => one.usable)) {
-    for (const event of record.events) {
-      const id = JSON.stringify([event.kind, event.key]);
+    for (const [id, event] of lastLinePerKey(record.events)) {
       const before = newest.get(id);
       const newer = before === undefined || event.at > before.at || (event.at === before.at && event.op === 'gone');
       if (newer) newest.set(id, { ...event, session: record.session });
@@ -201,6 +231,9 @@ export function stillMade(sessions) {
     .map(({ kind, key, by, at, session }) => ({ kind, key, by, at, session }))
     .sort((a, b) => compareText(a.kind, b.kind) || compareText(a.key, b.key));
 }
+
+/** Per kind and key, the last of a session's events in file order (a later entry of one id replaces the earlier one). */
+const lastLinePerKey = (events) => new Map(events.map((event) => [JSON.stringify([event.kind, event.key]), event]));
 
 /** Code-unit order, the same on every machine (localeCompare is not). */
 const compareText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);

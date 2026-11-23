@@ -1,11 +1,12 @@
 // Tests for home/tools/disk-free/lib/job-made.mjs, the job-made record the job-leftover sweep reads: round trip and modes, hostile
 // keys kept as one JSON string, a torn line, two writers at once (two sessions and one session), an old reader meeting newer lines,
-// a stale record, the shared byte cap (full said once, nothing cut), gone events, and a planted link at the store.
+// a stale record, the shared byte cap (full said once, nothing cut), gone events, a planted symlink or hard link at the store, a clock
+// stepped back within a session, and path keys normalized (`..` refused).
 // Every test runs under its own temp HOME (P8); no line asserts elapsed time.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { lstatSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { linkSync, lstatSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   jobMadeFolder, MAX_RECORD_FILE_BYTES, readJobMade, recordJobMade, STALE_AFTER_MS, stillMade,
@@ -58,11 +59,11 @@ test('a missing store reads as usable and empty, and reading creates nothing', (
   assert.throws(() => lstatSync(jobMadeFolder(env)), { code: 'ENOENT' });
 });
 
-test('hostile keys stay one JSON string each: a newline, ../ and spaces round-trip exactly (F2)', () => {
+test('hostile keys stay one JSON string each: a newline, dots inside a name and spaces round-trip exactly (F2)', () => {
   const { env } = homeEnv();
   const keys = [
     ['download', '/tmp/cs-test-x/evil\nname.zip'],
-    ['artefacts', '/tmp/cs-test-x/../../etc'],
+    ['artefacts', '/tmp/cs-test-x/..evil../etc'],
     ['volume', 'cs-test vol; rm -rf ~'],
     ['image', 'cs-test/img:"quoted"\u0000tag'],
   ];
@@ -76,6 +77,8 @@ test('bad entries and session ids are refused and write nothing', () => {
   const refused = [
     [SESSION, { kind: 'log', key: 'relative/path.log', by: BY }],
     [SESSION, { kind: 'log', key: '../up.log', by: BY }],
+    [SESSION, { kind: 'artefacts', key: '/tmp/cs-test-x/../../etc', by: BY }],
+    [SESSION, { kind: 'lane-folder', key: '/tmp/r/lane-1/..', by: BY }],
     [SESSION, { kind: 'vm', key: 'x', by: BY }],
     [SESSION, { kind: 'container', key: '', by: BY }],
     [SESSION, { kind: 'container', key: 'x', by: '' }],
@@ -212,8 +215,9 @@ test('stillMade: the newest event per kind and key wins across sessions; a made 
   const lane = { kind: 'lane-folder', key: '/repo/.claude/worktrees/lane-2', by: BY };
   recordJobMade(env, SESSION, lane, { now: 1000 });
   recordJobMade(env, OTHER, { ...lane, op: 'gone', by: 'git-tidy lane reclaim' }, { now: 2000 });
-  recordJobMade(env, OTHER, { kind: 'container', key: 'cs-test-a', by: BY }, { now: 3000 });
-  recordJobMade(env, SESSION, { kind: 'container', key: 'cs-test-a', by: BY, op: 'gone' }, { now: 3000 });
+  // the tie: the made is in SESSION, which readJobMade gives first (sorted by id), so only the same-ms rule lets the later gone win
+  recordJobMade(env, SESSION, { kind: 'container', key: 'cs-test-a', by: BY }, { now: 3000 });
+  recordJobMade(env, OTHER, { kind: 'container', key: 'cs-test-a', by: BY, op: 'gone' }, { now: 3000 });
   recordJobMade(env, SESSION, { kind: 'volume', key: 'cs-test-v', by: BY }, { now: 4000 });
   recordJobMade(env, OTHER, { kind: 'artefacts', key: '/tmp/cs-test-ui', by: 'ui-check' }, { now: 5000 });
   assert.deepEqual(stillMade(readJobMade(env).sessions), [
@@ -238,4 +242,45 @@ test('a planted link at the folder or at a session file: nothing written through
   assert.equal(recordJobMade(second.env, SESSION, { kind: 'container', key: 'x', by: BY }), 'unwritable');
   assert.equal(readFileSync(target, 'utf8'), 'keep');
   assert.deepEqual(readJobMade(second.env).sessions.map(({ usable }) => usable), [false]);
+});
+
+test('a hard link planted at a session file: the owner file is neither appended to nor read as a record (R1)', posix, () => {
+  const { home, env } = homeEnv();
+  const owner = join(home, 'owner.txt');
+  const ownerText = `${JSON.stringify({ v: 1, op: 'made', at: 1, kind: 'log', key: '/home/owner/keep.log', by: BY })}\n`;
+  writeFileSync(owner, ownerText, { mode: 0o640 });
+  mkdirSync(jobMadeFolder(env), { recursive: true, mode: 0o700 });
+  linkSync(owner, recordPath(env));
+  assert.equal(recordJobMade(env, SESSION, { kind: 'log', key: '/tmp/x.log', by: BY }), 'unwritable');
+  assert.equal(readFileSync(owner, 'utf8'), ownerText);
+  assert.equal(statSync(owner).mode & 0o777, 0o640, 'the mode is not set either');
+  assert.deepEqual(readJobMade(env).sessions.map(({ usable }) => usable), [false], 'a record line in a linked file is not trusted');
+});
+
+test('within one session the later line wins even when the clock stepped back (R3)', () => {
+  const { env } = homeEnv();
+  const log = { kind: 'log', key: '/tmp/cs-test-r3/a.log', by: BY };
+  recordJobMade(env, SESSION, log, { now: 5000 });
+  recordJobMade(env, SESSION, { ...log, op: 'gone' }, { now: 4000 });
+  assert.equal(stillMade(readJobMade(env).sessions).length, 0);
+  const shot = { kind: 'screenshot', key: '/tmp/cs-test-r3/b.png', by: BY };
+  recordJobMade(env, OTHER, { ...shot, op: 'gone' }, { now: 5000 });
+  recordJobMade(env, OTHER, shot, { now: 4000 });
+  assert.deepEqual(stillMade(readJobMade(env).sessions).map(({ key }) => key), [shot.key], 'a made written after the gone stands');
+});
+
+test('path keys are normalized when written and read: `.`, doubled and trailing separators name one key (R4)', posix, () => {
+  const { env } = homeEnv();
+  writeRecordFile(env, OTHER, [
+    { v: 1, op: 'made', at: 1000, kind: 'lane-folder', key: '/tmp/r/./lane-3/', by: BY },
+    { v: 1, op: 'made', at: 1000, kind: 'lane-folder', key: '/tmp/r/../etc', by: BY },
+  ].map((line) => `${JSON.stringify(line)}\n`).join(''));
+  recordJobMade(env, SESSION, { kind: 'lane-folder', key: '/tmp/r/lane-1', by: BY }, { now: 1000 });
+  recordJobMade(env, SESSION, { kind: 'lane-folder', key: '/tmp/r/./lane-1/', by: BY, op: 'gone' }, { now: 2000 });
+  recordJobMade(env, SESSION, { kind: 'lane-folder', key: '/tmp//r/lane-2/', by: BY }, { now: 2000 });
+  recordJobMade(env, SESSION, { kind: 'lane-folder', key: '/tmp/r/lane-3', by: BY, op: 'gone' }, { now: 2000 });
+  assert.ok(lines(env).every((line) => !line.includes('/./') && !line.includes('//') && !line.includes('/"')), 'stored normalized');
+  const read = readJobMade(env);
+  assert.equal(read.sessions.find((one) => one.session === OTHER).skipped, 1, 'a `..` key in the file is skipped, never resolved');
+  assert.deepEqual(stillMade(read.sessions).map(({ key }) => key), ['/tmp/r/lane-2']);
 });

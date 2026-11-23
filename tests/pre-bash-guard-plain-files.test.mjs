@@ -7,7 +7,7 @@
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { linkSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -110,6 +110,17 @@ test('readPlainFile and appendPlainFile refuse everything but a regular file wit
   assert.throws(() => readPlainFile(link, 1024), (error) => error.code !== NOT_PLAIN_FILE && error.code !== 'ENOENT');
   assert.throws(() => appendPlainFile(link, 'x'));
   assert.equal(readPlainFile(file, 1024), 'one\n');
+});
+
+test('appendPlainFile refuses a file with a second hard link: neither its text nor its mode changes', { skip: noFifo }, () => {
+  const dir = makeTempDir('plain-file-hardlink-');
+  const owner = join(dir, 'owner.txt');
+  writeFileSync(owner, 'owner\n', { mode: 0o640 });
+  const planted = join(dir, 'log.jsonl');
+  linkSync(owner, planted);
+  assert.equal(appendPlainFile(planted, 'line\n'), false);
+  assert.equal(readPlainFile(owner, 1024), 'owner\n');
+  assert.equal(statSync(owner).mode & 0o777, 0o640);
 });
 
 test('readPlainFileTail gives the last bytes of a regular file and refuses a FIFO, a folder and a link without waiting', { skip: noFifo }, () => {

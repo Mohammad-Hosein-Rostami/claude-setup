@@ -10,8 +10,9 @@
 // Rotation: once the log reaches GUARD_LOG_MAX_BYTES it becomes guard.1.jsonl (replacing the one before: one old file is kept) and a new empty
 // guard.jsonl takes its place in one rename, so the path never goes missing. It runs under withSessionLock (lib/session-lock.mjs) in the log's
 // folder, and the size is checked again under the lock, so two writers that both see a full log rotate it once. Lost-line case: a writer
-// that opened the old file before the swap appends to it, which is then guard.1.jsonl. Old-reader case: a reader that follows guard.jsonl
-// (watch's tail) sees a new file and reads it from its start; the lines written after its last read and before the swap are in guard.1.jsonl.
+// that opened the old file before the swap appends to it, which is then guard.1.jsonl; one that opens it between the link and the
+// last rename finds two names on one file and writes nothing (lib/plain-file.mjs refuses a hard-linked file). Old-reader case: a
+// reader that follows guard.jsonl (watch's tail) sees a new file and reads it from its start; the lines written after its last read and before the swap are in guard.1.jsonl.
 // Crash case: the two temp names (`guard.1.jsonl.part`, `guard.jsonl.new`) a rotation killed half-way leaves are removed by the next one,
 // and a log left full is rotated by the next write.
 import { chmodSync, linkSync, lstatSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';

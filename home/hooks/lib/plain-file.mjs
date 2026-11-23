@@ -5,7 +5,10 @@
 // A hook must answer before its timeout, so no open here waits and none follows a link: the file is opened with O_NONBLOCK and O_NOFOLLOW,
 // and only what fstat calls a regular file is read or written. A link fails to open (ELOOP); a FIFO nobody reads fails to open for
 // writing (ENXIO) and is refused after fstat for reading; a device or a folder is refused the same way. A size cap bounds every read.
-// Invariants: never blocks, never follows a link at the last path part, never reads more than its cap (maxBytes or tailBytes), closes what it opens.
+// An append also refuses a file with a second hard link (fstat nlink > 1, as tools/ask/lib/store.mjs does): O_NOFOLLOW stops only a
+// symlink, and a hard link planted at the path (`ln ~/owner-file <log>`) would send the line into one of the owner's own files.
+// Invariants: never blocks, never follows a link at the last path part, never appends to a file with more than one hard link, never
+// reads more than its cap (maxBytes or tailBytes), closes what it opens.
 // O_NOFOLLOW and O_NONBLOCK are POSIX only (Windows has neither, and no FIFO to block on).
 import { closeSync, constants, fchmodSync, fstatSync, openSync, readSync, writeFileSync } from 'node:fs';
 
@@ -80,14 +83,15 @@ export function readPlainFileTail(path, tailBytes) {
  * @param {string} text what to append
  * @param {{mode?: number, maxBytes?: number}} [limits] file mode (owner only by default; the mode given to open applies only when the
  *   file is created, so it is set again), and the size the file may reach (no cap by default)
- * @returns {boolean} false when nothing was written: the path is a FIFO, device or folder, or the text would pass maxBytes
+ * @returns {boolean} false when nothing was written (neither text nor mode): the path is a FIFO, device or folder, a file with more
+ *   than one hard link, or the text would pass maxBytes
  * @throws {Error} the open error (`ELOOP` for a link, `ENXIO` for a FIFO nobody reads, `EACCES` ...)
  */
 export function appendPlainFile(path, text, { mode = OWNER_ONLY_MODE, maxBytes = Infinity } = {}) {
   const fd = openSync(path, APPEND_FLAGS, mode);
   try {
     const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.size + Buffer.byteLength(text) > maxBytes) return false;
+    if (!stat.isFile() || stat.nlink > 1 || stat.size + Buffer.byteLength(text) > maxBytes) return false;
     writeFileSync(fd, text);
     fchmodSync(fd, mode);
     return true;
