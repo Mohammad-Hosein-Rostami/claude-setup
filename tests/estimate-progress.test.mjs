@@ -85,7 +85,8 @@ async function setup(doc = OPEN_DOC, seed = [...S_COSTS.flatMap((cost) => seedRo
   await writeFile(statusPath, doc);
   writeTranscript(projectsDir, SESSION, 0, 1);
   writeSeed(seedFile, seed);
-  const options = { stateDir, projectsDir, sessionId: SESSION, record: true, seedFile };
+  // The limits folder and HOME are the test's own: no real usage-limit record, asking marker or launch record is read.
+  const options = { stateDir, projectsDir, sessionId: SESSION, record: true, seedFile, limitsDir: join(root, 'limits'), env: { HOME: root } };
   const run = async (hours, nextDoc, extra = {}) => {
     if (nextDoc !== undefined) await writeFile(statusPath, nextDoc);
     return estimateFile(statusPath, { ...options, ...extra, now: iso(hours) });

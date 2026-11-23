@@ -31,7 +31,7 @@ function estimate(rows, { cli = false } = {}) {
   writeFileSync(seedRunsFile, JSON.stringify({ v: 2, rows: [10, 20, 30, 40, 50, 60, 70, 80, 90, 100].flatMap((runMin, k) => ['task', 'lane'].map((kind) => ({ t: 't1', k: kind, runMin, doneMin: k }))) }));
   writeSeed(seedFile, seedRows('S', 5, 30));
   writeTranscript(join(root, 'projects'), SESSION, 0, 1);
-  const options = { stateDir: join(root, 'state'), projectsDir: join(root, 'projects'), sessionId: SESSION, record: true, seedFile, seedRunsFile, account: undefined, env: { HOME: root } };
+  const options = { stateDir: join(root, 'state'), projectsDir: join(root, 'projects'), sessionId: SESSION, record: true, seedFile, seedRunsFile, account: undefined, limitsDir: join(root, 'limits'), env: { HOME: root } };
   return estimateFile(statusPath, cli ? { ...options, cli: true } : { ...options, now: iso(1) }).result;
 }
 

@@ -162,7 +162,8 @@ export function estimateFile(path, { now, stateDir = null, projectsDir = join(ho
   const run = () => {
     if (!items.some(isWorkRow)) return noTimeResult(items, facts, options);
     if (!scope.items.some((item) => ['open', 'waiting'].includes(rowState(item)))) return closedResult(items, scope, facts, options);
-    const inputs = jobInputs({ items: scope.items, sessions: facts.sessions, sessionId: isSessionId(sessionId) ? sessionId : undefined, projectsDir, stateDir, account, limitsDir, env, nowMs: facts.nowMs, realClock: options.realClock });
+    // A scratch table keeps nothing in the owner's store: its transcript cursors are not kept either (every run reads whole).
+    const inputs = jobInputs({ items: scope.items, sessions: facts.sessions, sessionId: isSessionId(sessionId) ? sessionId : undefined, projectsDir, stateDir: scratch ? null : stateDir, account, limitsDir, env, nowMs: facts.nowMs, realClock: options.realClock });
     return finishResult(items, scope, { ...facts, ...inputs }, options);
   };
   const { result, recorded } = run();

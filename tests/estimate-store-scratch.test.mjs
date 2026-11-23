@@ -93,6 +93,7 @@ test('estimateFile of a scratch STATUS.md stores nothing in the owner\'s store a
   const { result, inputs } = estimateFile(statusPath, { now: iso(1), stateDir: stateDir(), projectsDir: join(root, 'projects'), sessionId: SESSION, record: true, seedFile });
   assert.equal(result.state, 'finish');
   assert.deepEqual(tableFiles(), filesBefore);
+  assert.equal(existsSync(join(stateDir(), 'facts', `m-${SESSION}.json`)), false, 'no transcript cursor of a scratch table in the owner\'s store');
   assert.deepEqual([inputs.recorded, inputs.busy], [true, false], 'counts as recorded (the status-line cache may still be written), never as busy');
   assert.equal(homedir(), privateHome);
 });
