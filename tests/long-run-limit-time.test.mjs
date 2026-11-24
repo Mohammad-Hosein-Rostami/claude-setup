@@ -29,7 +29,7 @@ test('DST: a reset at 3:00am on the spring-forward day is 03:00 local that day; 
   const now = local(2026, 2, 8, 1, 30);
   const at = parseResetTime('resets 3:00am', now);
   assert.deepEqual(parts(at), [2026, 2, 8, 3, 0]);
-  const { until, source } = limitWaitUntil('resets 3:00am', { now, account: 'a', limitsDir: makeTempDir('limits-') });
+  const { until, source } = limitWaitUntil('resets 3:00am', { now, account: 'acct-a', limitsDir: makeTempDir('limits-') });
   assert.equal(source, 'text');
   assert.equal(until.getTime() - at.getTime(), RESUME_MARGIN_MS);
 });
@@ -39,7 +39,7 @@ test('no readable time: the newest stored sample (a full window) is used, else o
   const sample = { five_hour: { used_percentage: 100, resets_at: now.getTime() / 1000 + 600 }, seven_day: { used_percentage: 40, resets_at: now.getTime() / 1000 + 9000 } };
   assert.equal(resetFromSamples(sample, now).getTime(), now.getTime() + 600000);
   assert.equal(resetFromSamples(null, now), null);
-  const { until, source } = limitWaitUntil('usage limit reached', { now, account: 'a', limitsDir: makeTempDir('limits-') });
+  const { until, source } = limitWaitUntil('usage limit reached', { now, account: 'acct-a', limitsDir: makeTempDir('limits-') });
   assert.deepEqual([source, until.getTime() - now.getTime()], ['fallback', FALLBACK_WAIT_MS]);
   assert.ok(LIMIT_TEXT.test("You've hit your session limit · resets 3:45pm") && LIMIT_TEXT.test("You've hit your weekly limit · resets Mon 12:00am"));
   assert.ok(!LIMIT_TEXT.test('the rate limiter module is broken'));

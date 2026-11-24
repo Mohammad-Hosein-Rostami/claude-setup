@@ -93,3 +93,21 @@ test('reload: unfinished prompt changes are listed; a finished step that changed
   const moved = loadJob(write(dir, base(dir, [{ id: 'two', prompt: 'Two.' }, { id: 'one', prompt: 'One.' }]))).job;
   assert.throws(() => reloadChanges(old, moved, new Set(['one'])), /step one is finished/);
 });
+
+test('a folder written ~/... is the same folder under the home folder; ~user is not expanded', () => {
+  const dir = jobDir();
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = dir;
+  process.env.USERPROFILE = dir;
+  try {
+    const { job } = loadJob(write(dir, { name: 'job', cwd: '~/repo', steps: [{ id: 'one', prompt: 'x', cwd: '~' }] }));
+    assert.equal(job.cwd, join(dir, 'repo'));
+    assert.equal(job.steps[0].cwd, dir);
+    assert.match(problems(() => loadJob(write(dir, { name: 'job', cwd: '~other/repo', steps: [{ id: 'one', prompt: 'x' }] }))), /cwd must be an absolute path/);
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});

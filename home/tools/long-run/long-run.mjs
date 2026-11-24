@@ -31,6 +31,7 @@ const WAIT_NEXT_DEFAULT_SECONDS = 2 * 60 * 60;
 const SECOND_MS = 1000;
 const HELP = `long-run <command>
   check <job.json>                      validate a job and print its plan (spends nothing)
+  check --deps                          load LangGraph and the SQLite module only; prints ok (doctor)
   start <job.json> [--foreground]       start a run (the driver runs detached)
   status [<run>] [--json]               all runs, or one run's steps and boss sessions
   watch <run> [<step>]                  follow the live log (Ctrl-C ends the watching only)

@@ -50,8 +50,8 @@ test('schedule (macOS): StartCalendarInterval of Hour and Minute (daily), plus M
   const box = makeSandbox();
   const { calls, runner } = recorder();
   const options = { env: box.env, platform: 'darwin', runner, uid: 501 };
-  addSchedule({ root: box.root, name: 'nightly', jobPath: '/jobs/nightly.json', account: 'a', at: '02:30', on: null }, options);
-  addSchedule({ root: box.root, name: 'once', jobPath: '/jobs/once.json', account: 'a', at: '23:05', on: '2026-12-01' }, options);
+  addSchedule({ root: box.root, name: 'nightly', jobPath: '/jobs/nightly.json', account: 'acct-a', at: '02:30', on: null }, options);
+  addSchedule({ root: box.root, name: 'once', jobPath: '/jobs/once.json', account: 'acct-a', at: '23:05', on: '2026-12-01' }, options);
   const agents = join(box.folders.home, 'Library', 'LaunchAgents');
   const nightly = readFileSync(join(agents, `${SCHEDULE_LABEL_PREFIX}nightly.plist`), 'utf8');
   assert.match(nightly, /<key>StartCalendarInterval<\/key><dict><key>Hour<\/key><integer>2<\/integer><key>Minute<\/key><integer>30<\/integer><\/dict>/);
@@ -59,19 +59,19 @@ test('schedule (macOS): StartCalendarInterval of Hour and Minute (daily), plus M
   assert.match(nightly, /<key>RunAtLoad<\/key><false\/>/);
   const once = readFileSync(join(agents, `${SCHEDULE_LABEL_PREFIX}once.plist`), 'utf8');
   assert.match(once, /<dict><key>Month<\/key><integer>12<\/integer><key>Day<\/key><integer>1<\/integer><key>Hour<\/key><integer>23<\/integer><key>Minute<\/key><integer>5<\/integer><\/dict>/);
-  assert.deepEqual(listSchedules(box.root).map((one) => [one.name, one.account, one.on]).sort(), [['nightly', 'a', null], ['once', 'a', '2026-12-01']]);
+  assert.deepEqual(listSchedules(box.root).map((one) => [one.name, one.account, one.on]).sort(), [['nightly', 'acct-a', null], ['once', 'acct-a', '2026-12-01']]);
   assert.ok(removeSchedule(box.root, 'once', options));
   assert.ok(!existsSync(join(agents, `${SCHEDULE_LABEL_PREFIX}once.plist`)));
   assert.deepEqual(calls.at(-1), ['launchctl', 'bootout', `gui/501/${SCHEDULE_LABEL_PREFIX}once`]);
-  assert.throws(() => addSchedule({ root: box.root, name: 'bad', jobPath: '/j.json', account: 'a', at: '25:00', on: null }, options), /HH:MM/);
+  assert.throws(() => addSchedule({ root: box.root, name: 'bad', jobPath: '/j.json', account: 'acct-a', at: '25:00', on: null }, options), /HH:MM/);
 });
 
 test('schedule (Windows): schtasks DAILY /ST, or ONCE /ST /SD for one date', () => {
   const box = makeSandbox();
   const { calls, runner } = recorder();
   const options = { env: box.env, platform: 'win32', runner };
-  addSchedule({ root: box.root, name: 'nightly', jobPath: 'C:\\jobs\\n.json', account: 'a', at: '02:30', on: null }, options);
-  addSchedule({ root: box.root, name: 'once', jobPath: 'C:\\jobs\\o.json', account: 'a', at: '23:05', on: '2026-12-01' }, options);
+  addSchedule({ root: box.root, name: 'nightly', jobPath: 'C:\\jobs\\n.json', account: 'acct-a', at: '02:30', on: null }, options);
+  addSchedule({ root: box.root, name: 'once', jobPath: 'C:\\jobs\\o.json', account: 'acct-a', at: '23:05', on: '2026-12-01' }, options);
   assert.deepEqual(calls[0].slice(0, 8), ['schtasks', '/Create', '/TN', 'claude-setup\\long-run-nightly', '/SC', 'DAILY', '/ST', '02:30']);
   assert.deepEqual(calls[1].slice(0, 10), ['schtasks', '/Create', '/TN', 'claude-setup\\long-run-once', '/SC', 'ONCE', '/ST', '23:05', '/SD', '12/01/2026']);
   assert.match(calls[1][11], /"start" "C:\\jobs\\o\.json" "--schedule" "once"$/);

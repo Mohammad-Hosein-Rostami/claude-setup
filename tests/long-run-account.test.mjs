@@ -19,28 +19,28 @@ function filesUnder(dir) {
 
 const holding = (dirs, text) => dirs.flatMap(filesUnder).filter((path) => readFileSync(path).includes(text));
 
-test('the account selected at start is recorded; a resume from a terminal on account b still runs with the token of a', async () => {
+test('the account selected at start is recorded; a resume from a terminal on account acct-b still runs with the token of acct-a', async () => {
   const box = makeSandbox();
   box.script({ one: ['blocked', 'done'] });
   const started = cli(box, ['start', oneStep(box), '--foreground']);
   assert.equal(started.status, 0, started.stderr);
   const runId = /^started (\S+)/m.exec(started.stdout)[1];
-  assert.equal(readJson(join(box.root, runId, 'run.json')).account, 'a');
-  const resumed = cli(box, ['resume', runId, '--retry', '--foreground'], { env: { ...box.env, CLAUDE_ACCOUNT: 'b' } });
+  assert.equal(readJson(join(box.root, runId, 'run.json')).account, 'acct-a');
+  const resumed = cli(box, ['resume', runId, '--retry', '--foreground'], { env: { ...box.env, CLAUDE_ACCOUNT: 'acct-b' } });
   assert.equal(resumed.status, 0, resumed.stderr);
   const calls = readCalls(box);
   assert.equal(calls.length, 2);
-  for (const call of calls) assert.deepEqual([call.account, call.tokenHash], ['a', hash(TOKEN_A)]);
+  for (const call of calls) assert.deepEqual([call.account, call.tokenHash], ['acct-a', hash(TOKEN_A)]);
 });
 
 test('refusals exit 1 and name the fix: a one-time token, an unknown name, no account and no default, credits not recorded off', () => {
-  const box = makeSandbox({ creditsOff: { a: true, b: false } });
+  const box = makeSandbox({ creditsOff: { 'acct-a': true, 'acct-b': false } });
   const job = oneStep(box);
   const cases = [
     [{ CLAUDE_ACCOUNT: '-' }, /one-time token .* claude-as <name>/],
     [{ CLAUDE_ACCOUNT: 'zed' }, /account zed is gone from the store .* claude-as zed/],
     [{ CLAUDE_ACCOUNT: '' }, /no account selected and no default: pick an account first: claude-as <name>/],
-    [{ CLAUDE_ACCOUNT: 'b' }, /record that usage credits are off for this account first: claude-account credits-off b/],
+    [{ CLAUDE_ACCOUNT: 'acct-b' }, /record that usage credits are off for this account first: claude-account credits-off acct-b/],
   ];
   for (const [env, message] of cases) {
     for (const command of ['check', 'start']) {
@@ -53,10 +53,10 @@ test('refusals exit 1 and name the fix: a one-time token, an unknown name, no ac
 });
 
 test('a run whose account lost "credits off" is held at its next start, never spent', async () => {
-  const box = makeSandbox({ creditsOff: { a: false, b: true } });
+  const box = makeSandbox({ creditsOff: { 'acct-a': false, 'acct-b': true } });
   const paths = createRun(box, { name: 'lost', cwd: box.work('repo'), steps: [{ id: 'one', prompt: 'One.' }] });
   assert.equal(await driveRun(box, paths), 'held');
-  assert.match(readJson(paths.driver).hold.reason, /claude-account credits-off a/);
+  assert.match(readJson(paths.driver).hold.reason, /claude-account credits-off acct-a/);
   assert.deepEqual(readCalls(box), []);
 });
 

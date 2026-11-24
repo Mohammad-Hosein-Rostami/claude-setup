@@ -7,7 +7,8 @@
 //   inlined, so a run never rereads the owner's files; the normalized job always has every default filled in.
 import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { homedir } from 'node:os';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
 
 /** The shape version of a frozen job.json; a run of any other version is refused with the version named. */
@@ -82,6 +83,9 @@ export function folderKey(folder, platform = process.platform) {
   return platform === 'darwin' || platform === 'win32' ? real.toLowerCase() : real;
 }
 
+/** A folder written `~/...` (or `~\\...`) means the same path under the home folder, so a shared job file holds no home path. */
+const expandHome = (folder) => (typeof folder === 'string' && /^~(?:[\\/]|$)/.test(folder) ? join(homedir(), folder.slice(1)) : folder);
+
 function checkFolder(folder, where, platform, problems) {
   if (!isAbsolute(folder)) return problems.push(`${where}: cwd must be an absolute path`);
   if (platform === 'win32' && WIN32_FOLDER_META.test(folder)) return problems.push(`${where}: cwd may not hold " % ^ & | < > on Windows`);
@@ -118,14 +122,14 @@ function promptOf(entry, jobDir, where, problems) {
 
 function normalizeItem(raw, group, context) {
   const where = `step ${group.id} item ${raw.id}`;
-  const cwd = raw.cwd ?? context.cwd;
+  const cwd = expandHome(raw.cwd) ?? context.cwd;
   checkFolder(cwd, where, context.platform, context.problems);
   return { id: raw.id, prompt: promptOf(raw, context.jobDir, where, context.problems), cwd, model: raw.model ?? context.model, effort: raw.effort ?? context.effort };
 }
 
 function normalizeStep(raw, context) {
   const where = `step ${raw.id}`;
-  const cwd = raw.cwd ?? context.cwd;
+  const cwd = expandHome(raw.cwd) ?? context.cwd;
   checkFolder(cwd, where, context.platform, context.problems);
   const common = {
     id: raw.id, cwd, model: raw.model ?? context.model, effort: raw.effort ?? context.effort, next: raw.next ?? {},
@@ -158,10 +162,11 @@ function checkCrossRules(job, problems, platform) {
 
 function normalize(raw, jobDir, platform) {
   const problems = [];
-  const context = { cwd: raw.cwd, model: raw.model ?? DEFAULT_MODEL, effort: raw.effort ?? null, jobDir, platform, problems };
-  checkFolder(raw.cwd, 'job', platform, problems);
+  const jobCwd = expandHome(raw.cwd);
+  const context = { cwd: jobCwd, model: raw.model ?? DEFAULT_MODEL, effort: raw.effort ?? null, jobDir, platform, problems };
+  checkFolder(jobCwd, 'job', platform, problems);
   const job = {
-    name: raw.name, model: context.model, effort: context.effort, cwd: raw.cwd,
+    name: raw.name, model: context.model, effort: context.effort, cwd: jobCwd,
     loopGuards: { ...DEFAULTS.loopGuards, ...raw.loopGuards }, retry: { ...DEFAULTS.retry, ...raw.retry },
     stepTimeoutMinutes: raw.stepTimeoutMinutes ?? null, maxParallel: raw.maxParallel ?? DEFAULTS.maxParallel,
     steps: raw.steps.map((entry) => normalizeStep(entry, context)),

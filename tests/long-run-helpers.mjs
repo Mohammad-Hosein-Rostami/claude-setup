@@ -22,10 +22,10 @@ const SESSION_VARIABLES = /^(?:CLAUDECODE|CLAUDE_CODE_.*|CLAUDE_ACCOUNT.*|CLAUDE
 const WAIT_SLICE_MS = 50;
 
 /**
- * A sandbox: accounts `a` and `b` (tokens TOKEN_A, TOKEN_B), usage credits off unless `creditsOff` says otherwise.
+ * A sandbox: accounts `acct-a` and `acct-b` (tokens TOKEN_A, TOKEN_B), usage credits off unless `creditsOff` says otherwise.
  * @param {{creditsOff?: Record<string, boolean>, account?: string | null}} options `account`: CLAUDE_ACCOUNT of `env`.
  */
-export function makeSandbox({ creditsOff = { a: true, b: true }, account = 'a' } = {}) {
+export function makeSandbox({ creditsOff = { 'acct-a': true, 'acct-b': true }, account = 'acct-a' } = {}) {
   const dir = makeTempDir('long-run-');
   const folders = Object.fromEntries(['bin', 'home', 'state', 'accounts', 'account-state', 'config', 'fake', 'work'].map((name) => [name, join(dir, name)]));
   for (const folder of Object.values(folders)) mkdirSync(folder, { recursive: true, mode: 0o700 });
@@ -36,7 +36,7 @@ export function makeSandbox({ creditsOff = { a: true, b: true }, account = 'a' }
     CLAUDE_ACCOUNT_DIR: folders.accounts, CLAUDE_ACCOUNT_STORE: 'file', ACCOUNT_STATE_DIR: folders['account-state'],
     CLAUDE_CONFIG_DIR: folders.config, FAKE_LR_DIR: folders.fake,
   });
-  for (const [name, token] of [['a', TOKEN_A], ['b', TOKEN_B]]) {
+  for (const [name, token] of [['acct-a', TOKEN_A], ['acct-b', TOKEN_B]]) {
     addAccount(name, token, { env });
     if (creditsOff[name]) setCreditsOff(name, { env });
   }
@@ -81,7 +81,7 @@ export function fakeClock(startIso = '2026-11-24T10:00:00.000Z') {
 }
 
 /** Makes a run of `job` (an object) as `start` does, without starting a driver. @returns {Record<string, string>} its paths. */
-export function createRun(box, job, { account = 'a', now = new Date() } = {}) {
+export function createRun(box, job, { account = 'acct-a', now = new Date() } = {}) {
   const loaded = loadJob(box.writeJob(job));
   const paths = runPaths(box.root, newRunId(box.root, loaded.job.name, now));
   ensureRunDirs(paths);

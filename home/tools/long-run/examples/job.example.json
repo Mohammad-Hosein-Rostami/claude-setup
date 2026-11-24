@@ -2,7 +2,7 @@
   "name": "docs-cleanup",
   "model": "claude-opus-5-5",
   "effort": "high",
-  "cwd": "/Users/you/Desktop/some-repo",
+  "cwd": "~/code/some-repo",
   "loopGuards": { "maxAttempts": 3, "maxStarts": 10 },
   "retry": { "firstDelaySeconds": 60, "factor": 4, "maxDelaySeconds": 1800 },
   "maxParallel": 3,

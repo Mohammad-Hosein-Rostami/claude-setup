@@ -46,12 +46,12 @@ test('pause <run>: the child ends on SIGINT, status paused with its session list
   const paths = await startRunning(box, { name: 'pause', cwd: box.work('repo'), steps: [{ id: 'one', prompt: 'One.' }] }, 'one');
   const running = cli(box, ['status', paths.runId]).stdout;
   const sessionId = journalOf(paths, 'one').sessionId;
-  assert.match(running, new RegExp(`session one running account=a id=${sessionId} .*log=${paths.logs}/one\\.1\\.jsonl`));
+  assert.match(running, new RegExp(`session one running account=acct-a id=${sessionId} .*log=${paths.logs}/one\\.1\\.jsonl`));
   assert.equal(cli(box, ['pause', paths.runId]).status, 0);
   await waitFor(() => readJson(paths.driver).status === 'paused' && driverGone(paths)(), 30000, 'paused');
   assert.equal(readCalls(box)[0].ended, 'SIGINT');
   assert.match(cli(box, ['status']).stdout, new RegExp(`^${paths.runId} paused `, 'm'));
-  assert.match(cli(box, ['status', paths.runId]).stdout, new RegExp(`session one paused account=a id=${sessionId}`));
+  assert.match(cli(box, ['status', paths.runId]).stdout, new RegExp(`session one paused account=acct-a id=${sessionId}`));
   const resumed = cli(box, ['resume', paths.runId, '--foreground']);
   assert.equal(resumed.status, 0, resumed.stderr);
   const calls = readCalls(box);
@@ -97,11 +97,11 @@ test('takeover prints the zsh lines with the account, the quoted folder and the 
   assert.equal(result.status, 0, result.stderr);
   const sessionId = journalOf(paths, 'one').sessionId;
   const lines = result.stdout.split('\n');
-  const at = lines.indexOf('claude-as a');
+  const at = lines.indexOf('claude-as acct-a');
   assert.ok(at > 0, result.stdout);
-  assert.deepEqual(lines.slice(at, at + 3), ['claude-as a', `cd '${folder.replace(/'/g, "'\\''")}'`, `claude --resume ${sessionId} --model claude-opus-5-5`]);
+  assert.deepEqual(lines.slice(at, at + 3), ['claude-as acct-a', `cd '${folder.replace(/'/g, "'\\''")}'`, `claude --resume ${sessionId} --model claude-opus-5-5`]);
   await waitFor(driverGone(paths), 10000, 'driver ended');
-  assert.match(cli(box, ['status', paths.runId]).stdout, new RegExp(`session one taken-over account=a id=${sessionId}`));
+  assert.match(cli(box, ['status', paths.runId]).stdout, new RegExp(`session one taken-over account=acct-a id=${sessionId}`));
   const refused = cli(box, ['resume', paths.runId]);
   assert.equal(refused.status, 1);
   assert.match(refused.stderr, /looks open \(its transcript changed in the last 60 s\); quit it in its terminal first, or resume --force/);
@@ -113,8 +113,8 @@ test('takeover prints the zsh lines with the account, the quoted folder and the 
 });
 
 test('takeover under platform=win32 prints one PowerShell line with the folder quoted for PowerShell', () => {
-  const lines = takeoverLines({ account: 'a', folder: "C:\\Users\\me\\my 'odd' dir", sessionId: 'abc', model: 'sonnet', platform: 'win32' });
-  assert.deepEqual(lines, ["claude-as a; Set-Location -LiteralPath 'C:\\Users\\me\\my ''odd'' dir'; claude --resume abc --model sonnet"]);
+  const lines = takeoverLines({ account: 'acct-a', folder: "D:\\work\\my 'odd' dir", sessionId: 'abc', model: 'sonnet', platform: 'win32' });
+  assert.deepEqual(lines, ["claude-as acct-a; Set-Location -LiteralPath 'D:\\work\\my ''odd'' dir'; claude --resume abc --model sonnet"]);
 });
 
 test('watch prints the new lines of a growing log and ends on SIGINT with exit 0', async () => {

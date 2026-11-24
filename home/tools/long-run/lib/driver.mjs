@@ -36,7 +36,8 @@ export function assertNativeModule() {
   } catch (error) {
     const native = ['ERR_DLOPEN_FAILED', 'MODULE_NOT_FOUND'].includes(error.code) || /NODE_MODULE_VERSION/.test(error.message);
     if (!native) throw error;
-    throw new Error(`the SQLite module does not load on Node ${process.versions.node} (${error.code ?? 'NODE_MODULE_VERSION'}): run scripts/install.sh in the setup repo`);
+    const abi = /NODE_MODULE_VERSION/.test(error.message) ? `built for another Node ABI, this Node ${process.versions.node} needs ${process.versions.modules}` : error.code;
+    throw new Error(`the SQLite module does not load (${abi}): run scripts/install.sh in the setup repo (Windows: scripts/install.ps1)`);
   }
 }
 

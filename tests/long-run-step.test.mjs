@@ -125,13 +125,13 @@ test('--skip goes on with the next step; --abandon ends the run abandoned', asyn
   assert.equal(readCalls(other).length, 1);
 });
 
-test('auth: held with "login missing or refused for a", no retry', async () => {
+test('auth: held with "login missing or refused for acct-a", no retry', async () => {
   const box = makeSandbox();
   box.script({ one: ['auth'] });
   const paths = createRun(box, steps3(box));
   assert.equal(await driveRun(box, paths), 'held');
   assert.equal(readCalls(box).length, 1);
-  assert.equal(readJson(paths.driver).hold.reason, 'login missing or refused for a');
+  assert.equal(readJson(paths.driver).hold.reason, 'login missing or refused for acct-a');
 });
 
 test('check-failed: the session is resumed with the check command, its exit code and its output', async () => {

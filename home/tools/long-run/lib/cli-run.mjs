@@ -39,8 +39,23 @@ function loadChecked(jobPath, env) {
   return { loaded, account };
 }
 
-/** `check <job.json>`: validate, resolve account and models, load the SQLite module; prints the plan, spends nothing. */
-export function checkCommand({ positional, env, write }) {
+/**
+ * `check <job.json>`: validate, resolve account and models, load the SQLite module; prints the plan, spends nothing.
+ * `check --deps` (doctor, spec 21): only loads better-sqlite3, opens an in-memory database and imports LangGraph; prints `ok`.
+ * @throws {Refusal} with the one-line fix when a dependency does not load.
+ */
+export async function checkCommand({ positional, flags, env, write }) {
+  if (flags.deps) {
+    try {
+      assertNativeModule();
+      await import('@langchain/langgraph');
+    } catch (error) {
+      const first = error.message.split('\n')[0];
+      throw new Refusal(`long-run deps: ${first}${first.includes('install.sh') ? '' : ' (run scripts/install.sh; Windows: scripts/install.ps1)'}`);
+    }
+    write('ok');
+    return;
+  }
   const { loaded, account } = loadChecked(positional[0], env);
   for (const line of planLines(loaded.job, account)) write(line);
 }
