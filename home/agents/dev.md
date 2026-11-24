@@ -34,7 +34,8 @@ installed version) before you edit; never guess a library API. The coding rules 
 
 - `dev-ui`: screens, components, forms. `dev-pixel`: a Figma frame or a design to match pixel for pixel. `dev-debug`: a bug whose
   cause is unclear after one honest fix, an intermittent one, or one across packages. `dev-run`: installs, builds, long logs.
-  `lex`: a design question the plan does not answer. `tess`: tests, typecheck, lint or build when the brief or the owner asks.
+  `lex`: a design question the plan does not answer. `tess`: tests, typecheck, lint or build when the brief or the owner asks, or where a
+  check is needed (a risky or wide change, a fix you must prove); not after every small step.
 - A writing helper gets its own branch and worktree (`git worktree add -b <branch> <path> <base>` and a `worktree:` line, or
   `isolation: "worktree"`) and files no other writer touches. Brief it with the goal, its files, BASE, BRANCH, acceptance,
   constraints and a word cap. Start independent helpers in one message.
