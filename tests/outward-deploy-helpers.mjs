@@ -52,6 +52,20 @@ export function isolatedEnv(extra = {}) {
   return { ...env, ...extra };
 }
 
+let dialogDir; // one fake tool per test process: the first run of a new executable pays the OS scan once (tests/warm-exec.mjs)
+/** The folder holding the fake dialog tool, written on first use. */
+function fakeDialogDir() {
+  if (dialogDir !== undefined) return dialogDir;
+  dialogDir = makeTempDir('od-dialog-');
+  const script = join(dialogDir, 'fake.cjs');
+  writeFileSync(script, FAKE_SCRIPT);
+  const bin = join(dialogDir, dialogExecutable(process.platform) + (process.platform === 'win32' ? '.cmd' : ''));
+  writeFileSync(bin, process.platform === 'win32' ? `@"${process.execPath}" "${script}" %*\r\n` : `#!/bin/sh\n[ -n "$FAKE_WARM" ] && exit 0\nexec "${process.execPath}" "${script}" "$@"\n`);
+  chmodSync(bin, 0o755);
+  if (process.platform !== 'win32') warmExec(bin);
+  return dialogDir;
+}
+
 /**
  * A fake dialog tool first on PATH and the isolated env that makes the hooks use it.
  * @param {'allow' | 'deny' | 'timeout' | 'fail' | 'kill'} result what the fake dialog answers
@@ -59,16 +73,9 @@ export function isolatedEnv(extra = {}) {
  * @returns {{env: Record<string, string>, opened: () => boolean, shown: () => {args: string[], text?: string}, log: () => object[]}}
  */
 export function fakeDialog(result, extra = {}) {
-  const dir = makeTempDir('od-dialog-');
-  const script = join(dir, 'fake.cjs');
-  writeFileSync(script, FAKE_SCRIPT);
-  const bin = join(dir, dialogExecutable(process.platform) + (process.platform === 'win32' ? '.cmd' : ''));
-  writeFileSync(bin, process.platform === 'win32' ? `@"${process.execPath}" "${script}" %*\r\n` : `#!/bin/sh\n[ -n "$FAKE_WARM" ] && exit 0\nexec "${process.execPath}" "${script}" "$@"\n`);
-  chmodSync(bin, 0o755);
-  if (process.platform !== 'win32') warmExec(bin);
-  const out = join(dir, 'asked.json');
+  const out = join(makeTempDir('od-asked-'), 'asked.json');
   const env = isolatedEnv({ DISPLAY: ':0', FAKE_DIALOG_RESULT: result, FAKE_DIALOG_OUT: out, ...extra });
-  env.PATH = `${dir}${delimiter}${process.env.PATH}`;
+  env.PATH = `${fakeDialogDir()}${delimiter}${process.env.PATH}`;
   const opened = () => {
     try {
       readFileSync(out);
