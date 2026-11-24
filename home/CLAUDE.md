@@ -13,8 +13,12 @@ the brief come first; these lines hold for everyone.
 - The boss starts only `lex`, `dev` and `tess`, never a helper directly (the guard denies it); research goes through `lex`,
   which starts `lex-web` or `lex-scout`.
 - At most 6 main agents (lex, dev, tess started by the boss) run at once; the helpers they start are not counted.
-- Tests and reviews (`tess`, `tess-review`) run mostly when the owner asks; other agents may start `tess` where a check is
-  needed, never after every small step. The compare loop of `dev-pixel` is part of its job.
+- Only the boss starts `lex`, `dev` and `tess` (the guard denies it from any other agent); an agent asks for one with
+  `needs: <agent> to <task>, blocks: <what>`, sent to `main` by SendMessage from a background run, else in its report.
+- A `needs:` line arrives: the boss starts that agent, keeps track of who is on what, and sends the result to the asking agent by
+  its id (SendMessage).
+- Tests and reviews (`tess`, `tess-review`) run mostly when the owner asks, or when an agent's `needs:` asks for a check,
+  never after every small step. The compare loop of `dev-pixel` is part of its job.
 - The final answer says what changed and what was not run.
   A command the owner must run is given with the machine and the folder it runs in.
 

@@ -16,11 +16,13 @@
 // Store: ~/.claude/state/main-agents/<session>.json through lib/session-store.mjs under lib/session-lock.mjs (0600, at most
 // MAX_STORE_BYTES for writer and reader): {"launches": [{"key", "type", "at", "agent"?}], "stopped": [agent ids]}. A corrupt file
 // reads as empty; an unusable store or a lock that stays taken is `unusable`, and the guard denies (the owner's cap fails closed).
-// Main-agent route (mainRouteReason, the guard's first gate): the boss starts only lex, dev and tess, and they start their helpers.
+// Main-agent route (mainRouteReason, the guard's first gate): only the boss starts lex, dev and tess, and they start their helpers.
 // A main-session call of any other type is denied every time with the route to take. Default for Claude Code's built-ins: an
 // omitted subagent_type (general-purpose), general-purpose, Explore, Plan, claude, fork and any plugin or unknown type are denied
 // from the main session too; only claude-code-guide and statusline-setup (Claude Code's own help and config agents) are let
-// through. A call from inside a subagent (`agent_id`) is never routed: helpers are free.
+// through. A call from inside a subagent (`agent_id`) that starts lex, dev or tess is denied every time (owner rule: the boss
+// knows who is on what, and the cap counts only its starts); the agent asks the boss with a `needs:` line instead. Any other
+// type from inside a subagent is free: which helper each agent starts is set by its agent file, not here.
 // Exports: MAX_MAIN_AGENTS, PENDING_MS, STALE_MS, MAIN_AGENT_TYPES, mainRouteReason, claimMainSlot, releaseMainSlot, mainCapReason,
 // recordMainStart, recordMainStop.
 // Invariants: never throws; the hook's own events fail open (exit 0, no output); output is fixed text, types and the store path.
@@ -57,13 +59,19 @@ const HELPER_OWNERS = {
 };
 
 /**
- * The deny reason for an Agent or Task call of the main session that starts anything but a main agent (see the header).
+ * The deny reason for an Agent or Task call on the wrong route (see the header): the main session starting anything but a main
+ * agent, or a subagent starting a main agent.
  * @param {unknown} input the PreToolUse hook input: agent_id (set inside a subagent), tool_input.subagent_type
- * @returns {string} one line naming the route, or '' when the call may go on (a helper's call, a main agent, an allowed built-in)
+ * @returns {string} one line naming the route, or '' when the call may go on (a subagent's helper, the boss's main agent, an
+ *   allowed built-in)
  */
 export function mainRouteReason(input) {
-  if (input?.agent_id) return '';
   const type = agentTypeOf(input?.tool_input?.subagent_type);
+  if (input?.agent_id) {
+    if (!MAIN_AGENT_TYPES.includes(type)) return '';
+    return `agent route: only the boss starts lex, dev and tess; ask it with the line 'needs: ${type} to <task>, blocks: <what>' `
+      + '(SendMessage to main from a background run, else in your report) and go on with what does not depend on it';
+  }
   if (MAIN_AGENT_TYPES.includes(type) || BOSS_BUILT_INS.includes(type)) return '';
   const shown = quotedValue(type);
   const owner = Object.hasOwn(HELPER_OWNERS, type) ? HELPER_OWNERS[type] : undefined;
@@ -178,7 +186,7 @@ export function mainCapReason({ state, running, storePath }) {
   if (state === 'unusable') return `agent cap: the main-agent record ${storePath ?? mainAgentsDir(process.env)} cannot be read or stays locked; fix or delete it, then launch again`;
   if (state !== 'full') return '';
   const types = running.map(({ type }) => quotedValue(type)).join(', ');
-  return `agent cap: ${MAX_MAIN_AGENTS} main agents of this session run (${types}); wait for one to return, or let a running agent start this one as its helper (store: ${storePath})`;
+  return `agent cap: ${MAX_MAIN_AGENTS} main agents of this session run (${types}); wait for one to return (store: ${storePath})`;
 }
 
 /**

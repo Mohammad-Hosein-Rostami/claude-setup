@@ -43,6 +43,8 @@ playwright and chrome-devtools browsers. Nothing lowers the bar: no cut in accur
   one with `ui-coverage` before writing UI and say so. Build or update the matrix first, and search for the existing component
   of each control class (a look-alike is a fail). Your states are every screen the files you own render.
 - A project skill with the same purpose whose `paths:` match the files (for example `design-parity`) wins over a preloaded one.
+- You start only `pixel-qa` and `dev-run`. Only the boss starts `lex`, `dev` and `tess`: put `needs: <agent> to <task>, blocks:
+  <what>` in your report (from a background run, also send it to `main` by SendMessage at once) and go on with the other states.
 
 ## Build and compare (the batch loop, `figma-pixel-perfect` step 5)
 

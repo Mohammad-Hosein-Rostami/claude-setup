@@ -7,6 +7,7 @@ import { copyFileSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'nod
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { guardedAgentInput } from '../home/hooks/agent-model-guard.mjs';
+import { FROM_AGENT, originOf } from './agent-call-origin.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/agent-model-guard.mjs', import.meta.url));
@@ -43,9 +44,8 @@ test('guardedAgentInput: forks, the repo agents (they pin their own model) and o
   for (const bad of [undefined, null, 'Explore', 42]) assert.equal(guardedAgentInput(bad), null);
 });
 
-// The hook calls come from inside a subagent (agent_id), so the main-agent route gate (agent-budget.mjs) lets every type through;
-// that gate is tested in agent-budget.test.mjs.
-const FROM_AGENT = { agent_id: 'agent-dev-1', agent_type: 'dev' };
+// The hook calls of lex, dev and tess come from the boss, every other type from inside a subagent (agent_id, originOf), so the
+// main-agent route gate (agent-budget.mjs) lets each through; that gate is tested in agent-budget.test.mjs.
 
 // The hook runs in a temp HOME with the session's mode file and no agent files.
 function run(mode, stdin) {
@@ -111,7 +111,7 @@ function runWithAgents(toolInput, prepare = () => {}) {
   const env = { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CODE_SUBAGENT_MODEL: 'claude-sonnet-5-5' };
   delete env.CLAUDE_CONFIG_DIR; // the personal folder is the temp HOME's
   delete env.CLAUDE_CODE_SUBAGENT_EFFORT;
-  return spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ ...FROM_AGENT, tool_input: toolInput }), encoding: 'utf8', env, cwd: home });
+  return spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ ...originOf(toolInput.subagent_type), tool_input: toolInput }), encoding: 'utf8', env, cwd: home });
 }
 
 test('hook: a per-call model or effort below the agent file pin is left out; an equal, unknown or unpinned value passes', () => {

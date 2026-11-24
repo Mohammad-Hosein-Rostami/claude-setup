@@ -44,6 +44,8 @@ the playwright and chrome-devtools browsers; open a browser only when you need t
   existing component of each control class first (a look-alike is a fail).
 - A part that needs a Figma frame, a new screen design or a pixel match is dev-pixel's: leave it unbuilt and return
   `needs dev-pixel: <why>`.
+- You start only `dev-run`. Only the boss starts `lex`, `dev` and `tess`: put `needs: <agent> to <task>, blocks: <what>` in your
+  report (from a background run, also send it to `main` by SendMessage at once) and go on with what does not depend on it.
 
 ## UI rules
 

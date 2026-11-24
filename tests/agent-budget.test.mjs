@@ -2,7 +2,8 @@
 // most MAX_MAIN_AGENTS (6) agents launched from the main session run at once, helpers (a call with agent_id) never count, a launch
 // another gate denies holds no slot, pending launches expire, a started one runs until its SubagentStop (or STALE_MS idle), a
 // resumed main agent counts again, and an unusable record denies (fail closed). The route gate: the boss (no agent_id) starts only
-// lex, dev, tess, claude-code-guide and statusline-setup; any other type is denied with the route, and helpers are free. The budget
+// lex, dev, tess, claude-code-guide and statusline-setup; any other type is denied with the route; a subagent starting lex, dev or
+// tess is denied with the needs: route, and its own helpers are free. The budget
 // hook itself prints nothing.
 // Each test has a private HOME (the records) and its own session id; call counters live in a private TMPDIR.
 import assert from 'node:assert/strict';
@@ -93,8 +94,8 @@ test('the guard runs 6 main agents and denies the 7th every time, naming the run
   const s = newSession();
   const types = ['lex', 'dev', 'tess', 'lex', 'dev', 'tess'];
   types.forEach((type, n) => assert.ok(!denied(guard(s, mainCall(n, type))), `launch ${n + 1}`));
-  const expected = `agent cap: 6 main agents of this session run (${types.join(', ')}); wait for one to return, or let a running agent start `
-    + `this one as its helper (store: ${storeOf(s)})`;
+  const expected = `agent cap: 6 main agents of this session run (${types.join(', ')}); wait for one to return `
+    + `(store: ${storeOf(s)})`;
   assert.equal(guard(s, mainCall(7)).permissionDecisionReason, expected);
   assert.ok(denied(guard(s, mainCall(7))), 'the identical call sent again is denied too');
   assert.equal(budgetEvent(s, 'SubagentStart', 'agent-lex-1', 'lex'), '');
@@ -163,6 +164,39 @@ test('a call from inside a subagent (agent_id) starts lex-web or any other type:
   for (const type of ['lex-web', 'lex-scout', 'general-purpose', 'Explore']) {
     assert.ok(!denied(guard(s, mainCall(type, type), { agent_id: 'agent-lex-1', agent_type: 'lex' })), type);
   }
+});
+
+const subagentRoute = (type) => `agent route: only the boss starts lex, dev and tess; ask it with the line 'needs: ${type} to <task>, `
+  + 'blocks: <what>\' (SendMessage to main from a background run, else in your report) and go on with what does not depend on it';
+// Each main agent and helper of the plan (lex-dev-tess plan, "Helpers it may start") with the helpers it starts
+const OWN_HELPERS = {
+  lex: ['lex-scout', 'lex-web'], dev: ['dev-ui', 'dev-pixel', 'dev-debug', 'dev-run'], tess: ['tess-review'],
+  'dev-pixel': ['pixel-qa', 'dev-run'], 'dev-ui': ['dev-run'], 'dev-debug': ['lex-scout'],
+};
+
+test('a subagent starting lex, dev or tess is denied every time with the needs: route; nothing is recorded', () => {
+  const s = newSession();
+  for (const from of Object.keys(OWN_HELPERS)) {
+    for (const type of ['lex', 'dev', 'tess']) {
+      for (let send = 0; send < 2; send += 1) {
+        const out = guard(s, mainCall(`${from}-${send}`, type), { agent_id: `agent-${from}-1`, agent_type: from });
+        assert.equal(out?.permissionDecisionReason, subagentRoute(type), `${from} -> ${type}, send ${send}`);
+      }
+    }
+  }
+  assert.equal(existsSync(storeOf(s)), false, 'a route deny takes no main-agent slot');
+});
+
+test('each agent starts its own helpers from inside its run; the boss starts lex', () => {
+  const s = newSession();
+  for (const [from, helpers] of Object.entries(OWN_HELPERS)) {
+    for (const type of helpers) {
+      const call = { ...mainCall(type, type), prompt: 'job\nMATRIX: none: a route test, no screen' }; // the MATRIX line keeps the UI gate quiet
+      assert.ok(!denied(guard(s, call, { agent_id: `agent-${from}-1`, agent_type: from })), `${from} -> ${type}`);
+    }
+  }
+  assert.ok(!denied(guard(s, mainCall('boss', 'lex'))), 'the boss starts lex');
+  assert.equal(readStore(s).launches.length, 1, 'only the boss\'s start takes a main-agent slot');
 });
 
 test('a hook input with no usable session id is not capped (no store can be named)', () => {

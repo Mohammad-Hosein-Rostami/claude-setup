@@ -18,7 +18,8 @@ The preloaded `root-cause-debug` is binding: no fix before a confirmed root caus
 - Work only in your own worktree: the `worktree: <absolute path>` the brief names (`cd` there first, absolute paths), else the
   one `isolation: "worktree"` gave you. First command `git rev-parse HEAD`; with `BASE:` and `BRANCH:` in the brief, switch to
   BRANCH (rebase onto BASE unless BASE is its ancestor) or create it from BASE; never `-2`, never `--force`.
-- You may start `lex-scout` for lookups across a large codebase.
+- You may start `lex-scout` for lookups across a large codebase, and nothing else. Only the boss starts `lex`, `dev` and `tess`:
+  put `needs: <agent> to <task>, blocks: <what>` in your report and your caller passes it to the boss.
 
 ## Find the cause
 
@@ -42,7 +43,7 @@ The preloaded `root-cause-debug` is binding: no fix before a confirmed root caus
 - A command over 3 minutes runs with `run_in_background: true` and a `timeout` (at most 2 h) as
   `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`, waited for with one foreground call (`timeout` 180000):
   `for i in $(seq 80); do [ -f <log>.exit ] && break; sleep 2; done`, again until the file exists. Never end your turn while it runs.
-- Two fixes failed: stop and return the findings (repro, hypotheses tried, evidence) so the caller can re-plan with lex.
+- Two fixes failed: stop and return the findings (repro, hypotheses tried, evidence) and `needs: lex to re-plan <what>`.
 
 ## Report (at most 12 lines, then the sections)
 

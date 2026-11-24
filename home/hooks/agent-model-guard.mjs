@@ -8,7 +8,9 @@
 // Gates, in order (the first deny wins; each deny-once gate lets the identical call through when it is sent again):
 //   R. Main-agent route (agent-budget.mjs mainRouteReason): the main session starts only lex, dev and tess (and Claude Code's
 //      claude-code-guide and statusline-setup); any other type from the main session is denied every time with the route to take.
-//      A call from inside a subagent (a helper) is never routed. First, so a wrong route spends no deny-once gate.
+//      A call from inside a subagent (`agent_id`) that starts lex, dev or tess is denied every time too: only the boss starts them,
+//      and the agent asks for one with a `needs:` line; its other calls (its helpers) are not routed. First, so a wrong route spends
+//      no deny-once gate.
 //   0. No Fable (owner rule: Fable is chosen by hand only, never for an agent): a call whose `model` is Fable (the alias or any id),
 //      or with no `model` and an agent file that pins Fable, is denied every time with a one-line reason (fableReason).
 //   1. Copy-branch brief (lib/copy-branch-brief.mjs): a writer brief that creates `<lane>-2` instead of continuing `<lane>` (deny once).

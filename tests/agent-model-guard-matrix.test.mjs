@@ -14,14 +14,15 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { MAX_MATRIX_BYTES, matrixLines, matrixPathToken, uiBriefDeny } from '../home/hooks/lib/ui-brief-gate.mjs';
 import { adviceOnce } from '../home/hooks/lib/bounce-once.mjs';
+import { originOf } from './agent-call-origin.mjs';
 import { hookEnv } from './hook-env.mjs';
 import { fastestMs } from './timing.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/agent-model-guard.mjs', import.meta.url));
 const SESSION = 'sess1';
-// dev-pixel and pixel-qa are helpers: dev starts them from inside its run (agent_id); the boss's route gate is tested in agent-budget.test.mjs
-const FROM_AGENT = { agent_id: 'agent-dev-1', agent_type: 'dev' };
+// dev-pixel and pixel-qa are helpers: dev starts them from inside its run (agent_id); lex, dev and tess come from the boss (originOf).
+// The route gate is tested in agent-budget.test.mjs
 const UI_TYPES = ['dev-pixel', 'pixel-qa'];
 const HOOK_TIMEOUT_MS = 5000; // settings/base.json gives the hook 5 s
 const PROMPT = 'Build the sign-in screen.';
@@ -61,7 +62,7 @@ function gateSession(mode = 'medium') {
   const env = hookEnv({ HOME: home, USERPROFILE: home });
   delete env.CLAUDE_MODE;
   const inputOf = (toolInput, options) => ({
-    ...FROM_AGENT, session_id: 'session' in options ? options.session : SESSION, cwd: 'cwd' in options ? options.cwd : project, tool_name: 'Agent', tool_input: toolInput,
+    ...originOf(toolInput?.subagent_type), session_id: 'session' in options ? options.session : SESSION, cwd: 'cwd' in options ? options.cwd : project, tool_name: 'Agent', tool_input: toolInput,
   });
   return {
     home,

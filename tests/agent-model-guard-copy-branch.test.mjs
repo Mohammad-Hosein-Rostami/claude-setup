@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { copyBranchBriefDeny } from '../home/hooks/agent-model-guard.mjs';
 import { git, makeRepo } from './git-tidy-helpers.mjs';
+import { FROM_AGENT, FROM_BOSS, originOf } from './agent-call-origin.mjs';
 import { hookEnv } from './hook-env.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -16,10 +17,8 @@ const SEND_AGAIN = 'Send the same call again unchanged and it runs.';
 const GUARD = fileURLToPath(new URL('../home/hooks/agent-model-guard.mjs', import.meta.url));
 const SKILLS = ['quick'];
 let counter = 0;
-// send() calls come from inside a subagent (agent_id) unless a test sets agent_id: undefined (the boss): the boss starts only lex, dev
-// and tess (the route gate, tested in agent-budget.test.mjs), while a main agent may start any helper
-const FROM_AGENT = { agent_id: 'agent-dev-1', agent_type: 'dev' };
-const FROM_BOSS = { agent_id: undefined, agent_type: undefined };
+// send() calls of lex, dev and tess come from the boss, any other type from inside a subagent (agent_id), unless a test passes its own
+// origin: only the boss starts lex, dev and tess (the route gate, tested in agent-budget.test.mjs); a main agent starts its helpers
 const GIT_TIMEOUT_FOR_TESTS_MS = 60_000; // the suite runs beside other work; the hook's 1 s default would silently skip the advice
 
 /** A private HOME holding the named skills; send(toolInput, extra) runs the hook once and returns the parsed hookSpecificOutput or null. */
@@ -35,7 +34,7 @@ function session({ skills = SKILLS, envExtra = {}, settings } = {}) {
   const sessionId = `copy-brief-${process.pid}-${counter++}`;
   const log = () => readFileSync(env.CLAUDE_GUARD_LOG, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
   const send = (toolInput, extra = {}) => {
-    const input = { hook_event_name: 'PreToolUse', session_id: sessionId, cwd: project, tool_name: 'Agent', tool_input: toolInput, ...FROM_AGENT, ...extra };
+    const input = { hook_event_name: 'PreToolUse', session_id: sessionId, cwd: project, tool_name: 'Agent', tool_input: toolInput, ...originOf(toolInput.subagent_type), ...extra };
     const { status, stdout, stderr } = spawnSync(process.execPath, [GUARD], { input: JSON.stringify(input), encoding: 'utf8', env });
     assert.equal(status, 0, stderr);
     return stdout === '' ? null : JSON.parse(stdout).hookSpecificOutput;
@@ -46,13 +45,16 @@ const denied = (out) => out?.permissionDecision === 'deny';
 // isolation: "worktree" keeps the writer isolation gate (another gate of the same hook) out of these tests
 const call = (type, prompt = 'do the job', extra = {}) => ({ description: 'job', prompt, subagent_type: type, model: 'sonnet', isolation: 'worktree', ...extra });
 
-test('no gate but the route redirects a plain Agent call: a main agent starts every type, the boss lex, dev and tess', () => {
-  const types = ['dev', 'dev-ui', 'dev-pixel', 'dev-debug', 'dev-run', 'lex', 'lex-scout', 'lex-web', 'tess', 'tess-review', 'pixel-qa', 'test-writer', 'security-auditor', 'Explore', 'general-purpose'];
+test('no gate but the route redirects a plain Agent call: a main agent starts every other type, only the boss lex, dev and tess', () => {
+  const types = ['dev-ui', 'dev-pixel', 'dev-debug', 'dev-run', 'lex-scout', 'lex-web', 'tess-review', 'pixel-qa', 'test-writer', 'security-auditor', 'Explore', 'general-purpose'];
   const brief = 'do the job\nMATRIX: none: not a screen, a hook test'; // the MATRIX line keeps the UI gate quiet
   // one session per call: the main-agent cap (6 at once per session) is not what this test is about
-  for (const type of types) assert.equal(denied(session().send(call(type, brief))), false, type);
-  assert.equal(denied(session().send(call('general-purpose', 'research the best queue for this'))), false, 'a research question too');
-  for (const type of ['lex', 'dev', 'tess']) assert.equal(denied(session().send(call(type, brief), FROM_BOSS)), false, `the boss starts ${type}`);
+  for (const type of types) assert.equal(denied(session().send(call(type, brief), FROM_AGENT)), false, type);
+  assert.equal(denied(session().send(call('general-purpose', 'research the best queue for this'), FROM_AGENT)), false, 'a research question too');
+  for (const type of ['lex', 'dev', 'tess']) {
+    assert.equal(denied(session().send(call(type, brief), FROM_BOSS)), false, `the boss starts ${type}`);
+    assert.match(session().send(call(type, brief), FROM_AGENT).permissionDecisionReason, /^agent route: only the boss starts lex, dev and tess/, `a main agent never starts ${type}`);
+  }
 });
 
 const TEST_TIME_KNOBS = { COPY_BRANCH_GIT_TIMEOUT_MS: String(GIT_TIMEOUT_FOR_TESTS_MS), COPY_BRANCH_DEADLINE_MS: String(GIT_TIMEOUT_FOR_TESTS_MS) };

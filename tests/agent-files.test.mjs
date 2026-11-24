@@ -169,6 +169,21 @@ test('dev-ui and dev-pixel carry the UI rules; dev-pixel loops with ui-check and
   assert.match(agent('pixel-qa'), /ui-proof\.mjs review-page/);
 });
 
+// Owner rule: only the boss starts lex, dev and tess; an agent asks for one with a `needs:` line (by SendMessage to main while it runs
+// in the background, and in its report). "starts `lex`" is allowed only as "the boss starts"; `dev-run` and the like are helpers.
+const STARTS_MAIN_AGENT = /(?<!boss )\b(?:start|starts|launch|launches|spawn|spawns)\s+`?(?:lex|dev|tess)`?(?![\w-])/i;
+const MAIN_AGENTS = ['lex', 'dev', 'tess'];
+
+test('no agent file tells an agent to start lex, dev or tess; each asks the boss with a needs: line', () => {
+  for (const name of NAMES) assert.doesNotMatch(agent(name), STARTS_MAIN_AGENT, name);
+  for (const name of [...MAIN_AGENTS, 'dev-ui', 'dev-pixel', 'dev-debug']) assert.match(agent(name), /Only the boss starts `/, name);
+  for (const name of MAIN_AGENTS) {
+    assert.match(agent(name), /`needs: <agent> to <task>, blocks:\s+<what>`/, `${name}: the mid-run ask`);
+    assert.match(agent(name).replace(/\s+/g, ' '), /`needs:` \(each `<agent> to <task>` you want the boss to start, or `needs: none`\)/, `${name}: the report line`);
+    assert.ok(listed(name, 'tools').includes('SendMessage'), `${name}: can message main`);
+  }
+});
+
 test('no agent names the removed job machinery', () => {
   for (const name of NAMES) assert.doesNotMatch(agent(name), REMOVED_MACHINERY, name);
 });
