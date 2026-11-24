@@ -3,6 +3,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readJson, runPaths } from '../home/tools/long-run/lib/run-store.mjs';
 import { RUN_STATES } from '../home/tools/long-run/lib/view.mjs';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { NativeModuleError, assertInstallStamp } from '../home/tools/long-run/lib/driver.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 import { cli, createRun, driveRun, makeSandbox, readCalls, waitFor } from './long-run-helpers.mjs';
 
 test('exit codes: 2 for usage, 3 for no such run or step, 4 for a run whose driver runs', async () => {
@@ -58,4 +62,16 @@ test('log --tail N prints the last N readable lines (default 20), --raw the stre
   const summary = cli(box, ['summary', paths.runId]);
   assert.match(summary.stdout, /^# long-run logs-/);
   assert.match(summary.stdout, /\| one \| done \| 1 \| 0 \|/);
+});
+
+test('install stamp of another Node ABI: refused with both ABIs and the install fix; same ABI, an old stamp or none pass', () => {
+  const dir = makeTempDir('long-run-stamp-');
+  const stampPath = join(dir, '.lock-sha256');
+  writeFileSync(stampPath, `${'a'.repeat(64)}:137`);
+  assert.throws(() => assertInstallStamp({ stampPath, abi: '147' }), (error) => error instanceof NativeModuleError
+    && /installed for Node ABI 137, this Node .* has ABI 147: run scripts\/install\.sh in the setup repo \(Windows: scripts\/install\.ps1\)$/.test(error.message));
+  assert.doesNotThrow(() => assertInstallStamp({ stampPath, abi: '137' }));
+  writeFileSync(stampPath, 'a'.repeat(64));
+  assert.doesNotThrow(() => assertInstallStamp({ stampPath, abi: '147' }), 'a stamp from before the ABI was stamped');
+  assert.doesNotThrow(() => assertInstallStamp({ stampPath: join(dir, 'none'), abi: '147' }));
 });

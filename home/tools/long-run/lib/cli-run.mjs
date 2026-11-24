@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { freezeJob, loadJob, reloadChanges, units } from './job.mjs';
 import { requireCreditsOff, startAccount } from './run-account.mjs';
 import { RunBusy, driverAlive, ensureRunDirs, listRunIds, newRunId, readJournal, readJson, readRunJob, runPaths, writeJson } from './run-store.mjs';
-import { assertNativeModule } from './driver.mjs';
+import { NativeModuleError, assertNativeModule } from './driver.mjs';
 import { clearControl, sessionLooksOpen } from './control.mjs';
 import { recordEvent } from './events.mjs';
 import { buildGraph, openHold, rerunPoint } from './graph.mjs';
@@ -36,7 +36,12 @@ function loadChecked(jobPath, env) {
   if (!jobPath) throw new UsageError('give a job file');
   const loaded = loadJob(jobPath);
   const account = startAccount(env);
-  assertNativeModule();
+  try {
+    assertNativeModule();
+  } catch (error) {
+    if (error instanceof NativeModuleError) throw new Refusal(error.message);
+    throw error;
+  }
   return { loaded, account };
 }
 

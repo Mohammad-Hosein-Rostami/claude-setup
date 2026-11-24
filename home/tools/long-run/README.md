@@ -13,7 +13,8 @@ node ~/.claude/tools/long-run/long-run.mjs status             # one line per run
 Install: `scripts/install.sh` (macOS, Linux) or `scripts/install.ps1` (Windows) runs `npm ci` here (the tool is in
 `TOOLS_WITH_DEPS` of `scripts/install.mjs`). It stays on npm with `package-lock.json`: `npm ci` runs better-sqlite3's install
 script (a prebuilt binary, no compiler), which pnpm would skip. After a Node upgrade that changes the native ABI the next install
-reinstalls it (the install stamp holds the ABI); `doctor.sh` checks it with `long-run.mjs check --deps`.
+reinstalls it (the install stamp holds the ABI); until then `check` and `start` refuse with that fix, and `doctor.sh` checks
+it with `long-run.mjs check --deps`.
 
 ## Commands
 

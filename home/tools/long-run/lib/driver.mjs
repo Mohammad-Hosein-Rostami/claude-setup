@@ -1,7 +1,8 @@
 // Purpose: the driver of one run (`long-run drive <run>`, usually detached): takes the run lock, beats, keeps the machine awake,
 //   reads the control files every 2 s, runs the graph from where it stopped (new, resumed, answered or re-run), and records how it
 //   ended (held, done, abandoned, paused, stopped) with events, the summary and a note to the owner.
-// Exports: CONTROL_POLL_MS, BEAT_MS, STOP_SIGNALS, assertNativeModule, makeSemaphore, drive.
+// Exports: CONTROL_POLL_MS, BEAT_MS, STOP_SIGNALS, NativeModuleError, assertInstallStamp, assertNativeModule, makeSemaphore,
+//   drive.
 // Invariants: one driver per run (run-store lock); driver.json is written only here; a run-level pause or stop ends every child
 //   gracefully, waits until none runs, then exits the process (the journals are already written: the P3 crash path); SIGTERM,
 //   SIGINT and SIGHUP of the driver are a run-level pause (no boss is left running with nobody reading it; status says paused);
@@ -9,9 +10,10 @@
 //   every timer and signal handler is removed before drive() returns; a note that fails is one events.jsonl line, never a run
 //   failure.
 import { randomUUID } from 'node:crypto';
-import { rmSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { hostname } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { Command, RunControl, isGraphDrained } from '@langchain/langgraph';
 import { appendJsonLine, acquireLock, readJournal, readJson, readRunJob, releaseFolder, releaseLock, writeJournal, writeJson } from './run-store.mjs';
 import { removeIfEmpty } from './worktrees.mjs';
@@ -31,11 +33,40 @@ export const BEAT_MS = 30 * 1000;
 export const STOP_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'];
 const FINAL_EVENTS = { done: 'step-done', failed: 'step-failed', 'needs-owner': 'needs-owner', blocked: 'blocked', paused: 'paused', 'taken-over': 'taken-over' };
 
+/** The install stamp `scripts/install` writes: `<lockfile sha256>:<Node ABI>` of the last install of this tool's dependencies. */
+const INSTALL_STAMP = fileURLToPath(new URL('../node_modules/.lock-sha256', import.meta.url));
+const INSTALL_FIX = 'run scripts/install.sh in the setup repo (Windows: scripts/install.ps1)';
+
+/** The SQLite module or the install of the tool's dependencies does not fit this Node; the message names the fix. */
+export class NativeModuleError extends Error {}
+
 /**
- * Loads better-sqlite3 once, so a Node upgrade that broke the native module is named with its fix (spec 14).
- * @throws {Error} "run scripts/install.sh" when the module does not load.
+ * Refuses when the tool's dependencies were installed for another Node ABI (audit H19): a Node upgrade rebuilds the native
+ * module only on the next install. No stamp, or one from before the ABI was stamped, passes (the module load still checks).
+ * @param {{stampPath?: string, abi?: string}} options stand-ins for tests.
+ * @throws {NativeModuleError} naming both ABIs and the fix.
+ */
+export function assertInstallStamp({ stampPath = INSTALL_STAMP, abi = process.versions.modules } = {}) {
+  let text;
+  try {
+    text = readFileSync(stampPath, 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return;
+    throw error;
+  }
+  const stamped = text.trim().split(':')[1];
+  if (stamped !== undefined && stamped !== abi) {
+    throw new NativeModuleError(`the dependencies were installed for Node ABI ${stamped}, this Node ${process.versions.node} has ABI ${abi}: ${INSTALL_FIX}`);
+  }
+}
+
+/**
+ * Checks the install stamp, then loads better-sqlite3 once, so a Node upgrade that broke the native module is named with its
+ * fix (spec 14).
+ * @throws {NativeModuleError} "run scripts/install.sh" when the stamp is for another ABI or the module does not load.
  */
 export function assertNativeModule() {
+  assertInstallStamp();
   try {
     const Database = createRequire(import.meta.url)('better-sqlite3');
     new Database(':memory:').close();
@@ -43,7 +74,7 @@ export function assertNativeModule() {
     const native = ['ERR_DLOPEN_FAILED', 'MODULE_NOT_FOUND'].includes(error.code) || /NODE_MODULE_VERSION/.test(error.message);
     if (!native) throw error;
     const abi = /NODE_MODULE_VERSION/.test(error.message) ? `built for another Node ABI, this Node ${process.versions.node} needs ${process.versions.modules}` : error.code;
-    throw new Error(`the SQLite module does not load (${abi}): run scripts/install.sh in the setup repo (Windows: scripts/install.ps1)`);
+    throw new NativeModuleError(`the SQLite module does not load (${abi}): ${INSTALL_FIX}`);
   }
 }
 
