@@ -1,26 +1,23 @@
-// Status line (spec R18, owner decisions RC14 to RC20 of 2026-11-22): 2 rows when idle (git and session) and at most 6 when busy
-// (alert, job, now, agents, 1 or 2 git rows, session; 4 from 12 LINES, 2 below), drawn by tools/board/lib/render.mjs and fitted to
+// Status line (spec R18, owner decisions RC14 to RC20 of 2026-11-22): 2 rows when idle (git and session) and at most 5 when busy
+// (alert, agents, 1 or 2 git rows, session; 4 from 12 LINES, 2 below), drawn by tools/board/lib/render.mjs and fitted to
 // COLUMNS - 5 (both read on every run); colour by kind (branch, bar, time, session values) with yellow, red and magenta kept for
-// needs a look, a problem and needs you; a light palette when the terminal says it is light or CLAUDE_STATUS_THEME=light. Every
-// per-agent and per-worktree detail is in `/where`. This file only reads and writes; render.mjs holds every rule of what is shown.
-// Reads: the status input (stdin JSON), the estimate cache entry of the session's job (tools/estimate/lib/segment-cache.mjs), the
-// session's board file (tools/board/lib/refresh.mjs), its asking marker (hooks/lib/asking-marker.mjs: a question waits 2 minutes
-// (RC3), and the alert row must show at once, not after the board's idle refresh every 60 s) and this account's last-seen limits
-// file (tools/estimate/lib/limits-store.mjs).
-// Writes (spec-p5 `r9-statusline`, last-seen files): this account's limit sample, with this session's id, when `rate_limits`
-// brought news that no other session's newer sample already holds (CLAUDE_ACCOUNT; none without it, so accounts never mix) and the session's last-seen cost (~/.claude/state/last-seen/<session>.json, the API-price
-// equivalent `/where` shows; `$` is not on the line, audit case 11).
-// Spawns: only the claimed detached refreshes (the estimate cache's and the board's, one at a time each); no git, no launcher.
+// needs a look, a problem and needs you; a light palette when the terminal says it is light or CLAUDE_STATUS_THEME=light. No job,
+// step or estimate rows (plan 2026-11-24). This file only reads and writes; render.mjs holds every rule of what is shown.
+// Reads: the status input (stdin JSON), the session's board file (tools/board/lib/refresh.mjs), its asking marker
+// (hooks/lib/asking-marker.mjs: a question waits 2 minutes (RC3), and the alert row must show at once, not after the board's idle
+// refresh every 60 s) and this account's last-seen limits file (hooks/lib/limits-store.mjs).
+// Writes (spec-p5 `r9-statusline`): this account's limit sample, with this session's id, when `rate_limits` brought news that no
+// other session's newer sample already holds (CLAUDE_ACCOUNT; none without it, so accounts never mix); `$` is not on the line.
+// Spawns: only the claimed detached board refresh (one at a time); no git, no launcher.
 // Never blank: an error while drawing prints the session row and a `status line error: <reason>` line; an error before that (reading
 // the input or the caches) prints the error line alone; exit 0 always (an empty output or a non-zero exit blanks the row).
 import { readAsking } from './hooks/lib/asking-marker.mjs';
-import { isSessionId, writeSessionFile } from './hooks/lib/session-store.mjs';
+import { readLimits, recordSample } from './hooks/lib/limits-store.mjs';
+import { isSessionId } from './hooks/lib/session-store.mjs';
 import { lookOf } from './tools/board/lib/cells.mjs';
+import { systemTimeZone } from './tools/board/lib/local-clock.mjs';
 import { claimBoardRefresh, readBoard, startBoardRefresh } from './tools/board/lib/refresh.mjs';
 import { sessionRow, statusRows } from './tools/board/lib/render.mjs';
-import { systemTimeZone } from './tools/estimate/lib/local-clock.mjs';
-import { readLimits, recordSample } from './tools/estimate/lib/limits-store.mjs';
-import { estimateSegment } from './tools/estimate/lib/segment-cache.mjs';
 
 // Claude Code sets COLUMNS and LINES for the command (statusline docs); without a usable value assume a plain 80-column terminal.
 // It cuts every row at about COLUMNS - 5 (research-tui 1.1, probe and ccstatusline), so rows are fitted to that width.
@@ -28,19 +25,11 @@ const DEFAULT_COLUMNS = 80;
 const CUT_MARGIN_COLUMNS = 5;
 const MIN_COLUMNS = 20;
 const MAX_ERROR_CHARS = 60;
-const lastSeenDir = () => `${process.getBuiltinModule('node:os').homedir()}/.claude/state/last-seen`;
 
 const terminalColumns = () => {
   const columns = Number.parseInt(process.env.COLUMNS ?? '', 10);
   return Math.max(MIN_COLUMNS, (columns > 0 ? columns : DEFAULT_COLUMNS) - CUT_MARGIN_COLUMNS);
 };
-
-/** The session's last-seen cost for `/where` (< 1 KB, temp file and rename through session-store.mjs); a failure is ignored. */
-function writeLastSeen(d) {
-  const cost = d.cost?.total_cost_usd;
-  if (typeof cost !== 'number' || !isSessionId(d.session_id)) return;
-  writeSessionFile(lastSeenDir(), d.session_id, JSON.stringify({ session: d.session_id, costUsd: cost, t: Date.now() }));
-}
 
 /** The board of the session, after starting its refresh when one is due (claimed first, so renders never stack refreshes). */
 function sessionBoard(d, nowMs) {
@@ -55,17 +44,9 @@ function render(d) {
   const nowMs = Date.now();
   const account = process.env.CLAUDE_ACCOUNT;
   recordSample(account, d.rate_limits, { session: d.session_id });
-  writeLastSeen(d);
-  const duration = d.cost?.total_duration_ms;
-  const segment = estimateSegment({
-    projectDir: d.workspace?.project_dir ?? d.cwd,
-    sessionId: d.session_id,
-    // The project's STATUS.md is this session's job only when it changed during the session (audit case 2).
-    projectSinceMs: typeof duration === 'number' ? nowMs - duration : nowMs,
-  });
   const board = sessionBoard(d, nowMs);
   const view = {
-    input: d, segment, board, asking: isSessionId(d.session_id) ? readAsking(d.session_id, process.env, nowMs) : null,
+    input: d, board, asking: isSessionId(d.session_id) ? readAsking(d.session_id, process.env, nowMs) : null,
     limitsFile: readLimits(account), account, env: process.env, nowMs, timeZone: systemTimeZone(),
   };
   const look = lookOf(process.env, process.platform, terminalColumns());

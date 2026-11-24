@@ -1,12 +1,8 @@
-// The local wall clock of an instant in an IANA zone (the system zone by default, so `TZ` is honoured, Windows included), and the
-// 5-minute grid the printed finish ends sit on. Used by report.mjs.
-// Exports: clockText(ms, zone) -> 'HH:MM'; dayText(ms, zone) -> 'Sun 15 Nov'; localDate(ms, zone); offsetText(ms, zone) -> '+03:30';
-// gridded(ms, zone, up) -> epoch ms on the grid; systemTimeZone(); CLOCK_STEP_MS.
+// The local wall clock of an instant in an IANA zone (the system zone by default, so `TZ` is honoured, Windows included), for the
+// status line's reset clocks (cells.mjs) and its time zone (statusline.mjs).
+// Exports: clockText(ms, zone) -> 'HH:MM'; dayText(ms, zone) -> 'Sun 15 Nov'; localDate(ms, zone) -> a day key such as '2026-1-5'; systemTimeZone().
 // Invariants: pure apart from reading the system time zone; no I/O.
-const MINUTE_MS = 60_000;
 const SECOND_MS = 1000;
-const MINUTES_PER_HOUR = 60;
-export const CLOCK_STEP_MS = 5 * MINUTE_MS; // finish ends are rounded to 5 minutes: finer would claim a precision the data does not have
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const WALL_FIELDS = { hourCycle: 'h23', weekday: 'short', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' };
 const pad = (value) => String(value).padStart(2, '0');
@@ -33,17 +29,3 @@ export const localDate = (ms, timeZone) => {
   const wall = wallClock(ms, timeZone);
   return `${wall.year}-${wall.month}-${wall.day}`;
 };
-
-/** The zone's offset at an instant as `+03:30` / `-05:00` / `+00:00`. */
-export function offsetText(ms, timeZone) {
-  const minutes = Math.round(wallClock(ms, timeZone).offsetMs / MINUTE_MS);
-  const sign = minutes < 0 ? '-' : '+';
-  return `${sign}${pad(Math.floor(Math.abs(minutes) / MINUTES_PER_HOUR))}:${pad(Math.abs(minutes) % MINUTES_PER_HOUR)}`;
-}
-
-/** An instant rounded down (or up) to CLOCK_STEP_MS on the zone's local clock. */
-export function gridded(ms, timeZone, up) {
-  const { offsetMs } = wallClock(ms, timeZone);
-  const steps = (ms + offsetMs) / CLOCK_STEP_MS;
-  return (up ? Math.ceil(steps) : Math.floor(steps)) * CLOCK_STEP_MS - offsetMs;
-}

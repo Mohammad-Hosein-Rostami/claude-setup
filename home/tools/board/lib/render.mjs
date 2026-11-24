@@ -1,14 +1,12 @@
-// The status line rows (spec R18, owner decisions RC14 to RC18 of 2026-11-22): at most 6 rows when busy, 2 when idle, at 100 columns:
+// The status line rows (spec R18, owner decisions RC14 to RC18 of 2026-11-22): at most 5 rows when busy, 2 when idle, at 100 columns:
 //   ? ANSWER NEEDED · 1 question · recommended answer taken in 1:40                 (alert: only while a question or prompt waits)
-//   job     ████░░░░ 6/10 rows done · 2 h 10 work left · done by 21:40                    (the whole job, work-row.mjs jobRow)
-//   now     step 2 of 4 git rows · ██░░░░ 1/3 lanes landed · 40 min work left · step done by 19:55   (work-row.mjs nowRow)
 //   agents  5 running · 1 done · ! reviewer quiet 6 min                          (only while an agent runs, layout.mjs)
-//   git     claude-setup  main  ↑2 to push · 1 staged · 3 changed · 1 new · stash 1 · check ok   (git-rows.mjs gitLineRows)
+//   git     claude-setup  main  ↑2 to push · 1 staged · 3 changed · 1 new · stash 1   (git-rows.mjs gitLineRows)
 //   lanes   r18-git ↑2 ~3 implementer · r18-est ↑4 ready to land                           (git row 2: lanes or a 2nd repo)
 //   session Opus 5.5 high · context 29% · 5h 90% left, empty ~22:32 · 7d 47% left · acct mine
-// Budget (layout.mjs rowBudget: 6, 4 or 2 by LINES): over it the rows are kept in this order: session, git 1, alert, job, now,
-// agents, git 2; they print top to bottom as above. Never blank: `git loading` before the board's first refresh, `context ?` before
-// the first call. Every agent's own row, every worktree, the road's steps, the trend and the cost are in `/where` (tree.mjs).
+// Budget (layout.mjs rowBudget: 6, 4 or 2 by LINES): over it the rows are kept in this order: session, git 1, alert, agents, git 2;
+// they print top to bottom as above. Never blank: `git loading` before the board's first refresh, `context ?` before the first call.
+// No job, step or estimate rows (plan 2026-11-24: estimates and job machinery removed).
 // Exports: statusRows(view, look) -> string[] (never more than rowBudget(view.env) rows); sessionRow(view, look) (statusline.mjs
 // prints it alone when drawing fails); alertRow(view, look) -> string | null; contextOf(window, env); paceOf(limitsFile, nowMs).
 // Rules (audit cases of `certainty/statusline-audit.md`, fixes of display design 4.6): context is the input tokens of the last call
@@ -22,10 +20,9 @@
 // Colour (cells.mjs, RC14): model, effort, context and limit values `session`, clocks `time`, labels dim; yellow from 60 % used,
 // red over 80 %, the pace yellow, the alert magenta.
 // Invariants: pure (no I/O); every outside text goes through cleanText; every row fits look.columns.
-import { clockOf, cleanText, fitParts, STATE } from './cells.mjs';
+import { clockOf, cleanText, fitParts, LABEL_FROM_COLUMNS, labelled, STATE } from './cells.mjs';
 import { gitLineRows } from './git-rows.mjs';
 import { agentsSummaryRow, rowBudget } from './layout.mjs';
-import { jobRow, LABEL_FROM_COLUMNS, labelled, nowRow } from './work-row.mjs';
 
 const TOKENS_PER_K = 1000;
 const PERCENT = 100;
@@ -40,8 +37,8 @@ const MAX_NAME_CHARS = 24;
 const MAX_EFFORT_CHARS = 8;
 const ASKING_MARGIN_MS = 60 * MS_PER_S; // asking-marker.mjs STALE_MARGIN_S: expiresAt is the default's time plus this margin
 /** The rows kept when the budget is short, most useful first (spec R18); they print in ROW_ORDER. */
-const KEEP_ORDER = ['session', 'git1', 'alert', 'job', 'now', 'agents', 'git2'];
-const ROW_ORDER = ['alert', 'job', 'now', 'agents', 'git1', 'git2', 'session'];
+const KEEP_ORDER = ['session', 'git1', 'alert', 'agents', 'git2'];
+const ROW_ORDER = ['alert', 'agents', 'git1', 'git2', 'session'];
 
 const isNumber = (value) => typeof value === 'number' && Number.isFinite(value);
 /** A part whose leading label (`context`, `5h`, `7d`, `acct`) is dim and whose value keeps the part's state. */
@@ -230,25 +227,23 @@ function kept(rows, budget) {
 }
 
 /**
- * All rows of one render within the row budget (spec R18): alert, job, now, agents, git 1, git 2, session.
- * @param {{ input: object, segment: object | null, board: object | null, asking: object | null, limitsFile: object | null,
+ * All rows of one render within the row budget (spec R18): alert, agents, git 1, git 2, session.
+ * @param {{ input: object, board: object | null, asking: object | null, limitsFile: object | null,
  *   account: string | undefined, env: object, nowMs: number, timeZone: string }} view
  * @param {ReturnType<import('./cells.mjs').lookOf>} look the terminal
- * @returns {string[]} 2 to 6 rows: 2 when idle in a repository with no lanes (git and session)
+ * @returns {string[]} 2 to 5 rows: 2 when idle in a repository with no lanes (git and session)
  */
 export function statusRows(view, look) {
-  const { board, nowMs, timeZone } = view;
-  const job = jobRow(view, look);
-  const now = nowRow(view, look);
+  const { board, nowMs } = view;
   const folder = folderShown(view.input, view.env);
   const [git1, git2 = null] = gitLineRows(board, 2, look, folder);
   const rows = {
-    alert: alertRow(view, look), job, now, agents: agentsSummaryRow(board, { nowMs, timeZone, clockShown: job !== null || now !== null }, look),
+    alert: alertRow(view, look), agents: agentsSummaryRow(board, { nowMs }, look),
     git1, git2, session: sessionRow(view, look),
   };
   const budget = rowBudget(view.env);
   const shown = kept(rows, budget);
-  // git 2 left out: git 1 is drawn alone, so it counts what it cannot show (`+1 more repo in /where`, `3 lanes in /where`)
+  // git 2 left out: git 1 is drawn alone, so it counts what it cannot show
   if (git2 !== null && !shown.includes('git2')) [rows.git1] = gitLineRows(board, 1, look, folder);
   return shown.map((key) => rows[key]);
 }

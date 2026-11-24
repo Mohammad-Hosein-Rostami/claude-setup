@@ -1,8 +1,8 @@
 // The board's git facts (spec R18 "Git facts", owner decisions RC15 and RC19): every field of `repo.active` from a real refresh of a
 // cs-test repository with staged, changed and new files, a stash, a conflict, a rebase stopped at step 2 of 3 and a lane worktree;
 // the repository-config programs a refresh must never run (filter, fsmonitor: F1); names that are never options and reach the board
-// cleaned (F2); cached values kept with their age past the git budget (F3); the done-check repo id on POSIX and Windows paths (F4,
-// U3); new files counted only on the session's worktree and at most 4 active branches (F5); repositories used by the lead's edits;
+// cleaned (F2); cached values kept with their age past the git budget (F3); new files counted only on the session's worktree and at
+// most 4 active branches (F5); repositories used by the lead's edits;
 // a FIFO among a repository's files never hangs the refresh; a lane nested in the main checkout is the only current worktree; no git
 // call starts past the git budget (a slow-git stand-in records each call).
 // Every repository and HOME is a temp `cs-test-*` folder; git runs with a fixed identity and no global or system config.
@@ -12,12 +12,9 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, realpat
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { repoIdOfCommon, latestCheck } from '../home/tools/board/lib/check-state.mjs';
 import { cleanName, repoState } from '../home/tools/board/lib/git-state.mjs';
 import { collectBoard } from '../home/tools/board/lib/refresh.mjs';
 import { repoStats } from '../home/tools/board/lib/repo-stats.mjs';
-import { repoIdOf } from '../home/tools/done-check/lib/check-change.mjs';
-import { appendRun } from '../home/tools/done-check/lib/ledger.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const BOARD = fileURLToPath(new URL('../home/tools/board/board.mjs', import.meta.url));
@@ -81,16 +78,13 @@ const FIELDS = ['name', 'current', 'upstream', 'upAhead', 'upBehind', 'ahead', '
   'changed', 'untracked', 'conflicts', 'op', 'opStep'];
 
 test('checkpoint: board.mjs refresh --force writes every spec field of repo.active', () => {
-  const { dir, lane } = checkpointRepo();
-  appendRun({ v: 1, id: 'r1', at: new Date().toISOString(), where: 'stop', session: '', agent: '', repo: repoIdOf(lane), base: null, key: 'k',
-    files: 1, checks: { tests: { result: 'fail', new: 1, old: 0, ms: 5 }, lint: { result: 'ok', new: 0, old: 0, ms: 5 } }, verdict: 'block', risk: [], ms: 9 }, { env: { HOME } });
+  const { dir } = checkpointRepo();
   execFileSync(process.execPath, [BOARD, 'refresh', '--session', SESSION, '--force'], { cwd: dir, env: { ...process.env, HOME }, stdio: 'ignore' });
   const board = JSON.parse(readFileSync(join(HOME, '.claude', 'state', 'board', `${SESSION}.json`), 'utf8'));
   const { repo } = board;
   assert.equal(repo.trust, 'full');
   assert.equal(repo.stash, 1);
-  assert.deepEqual(repo.check?.verdict, 'block');
-  assert.deepEqual(repo.check.failed, ['tests']);
+  assert.equal(Object.hasOwn(repo, 'check'), false, 'the board carries no check verdict');
   for (const branch of repo.active) assert.deepEqual(Object.keys(branch).sort(), [...FIELDS].sort(), branch.name);
   const main = repo.active.find((branch) => branch.name === 'main');
   assert.deepEqual({ current: main.current, upstream: main.upstream, upAhead: main.upAhead, upBehind: main.upBehind, staged: main.staged, changed: main.changed,
@@ -149,18 +143,6 @@ test('F3: past the git budget the cached status stays with its age', () => {
   const spent = repoState({ cwd: dir, sessionFolder: dir, common, cache: first.cache, nowMs: 100_000, startMs: Date.now() - 10_000 });
   assert.equal(spent.repo.worktrees[0].checkedMs, 1_000);
   assert.equal(spent.repo.worktrees[0].staged, 0, 'git ran past its budget');
-});
-
-test('F4 and U3: the board id is the done-check repo id, Windows paths as git prints them', () => {
-  const dir = join(ROOT, 'repo');
-  const lane = join(ROOT, 'wt-lane');
-  assert.equal(repoIdOfCommon(join(dir, '.git'), process.platform), repoIdOf(dir));
-  assert.equal(repoIdOfCommon(join(dir, '.git'), process.platform), repoIdOf(lane), 'a lane worktree shares its repository id');
-  assert.equal(repoIdOfCommon('C:\\Users\\me\\repo\\.git', 'win32'), repoIdOfCommon('C:/Users/me/repo/.git', 'linux'));
-  const setup = fileURLToPath(new URL('..', import.meta.url));
-  const common = git(setup, 'rev-parse', '--path-format=absolute', '--git-common-dir').trim();
-  assert.equal(repoIdOfCommon(common), repoIdOf(setup));
-  assert.equal(latestCheck(join(ROOT, 'none', '.git'), { env: { HOME } }), null);
 });
 
 test('F5: at most 4 active branches, the rest counted; old and landed branches are not active', () => {

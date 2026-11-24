@@ -9,13 +9,12 @@
 // refs only where the repository's config names a filter). A folder is placed in its repository by the file system alone
 // (trusted-repos.mjs trustedRepos of that folder: the `.git` entry of the folder or a parent, real path, disk case); git runs only in
 // the worktrees the repository records (worktreeRecords), never in the used folder itself. The first MAX_REPOS are read with
-// git-state.mjs repoState, sharing one git budget (`startMs`), each with its last done-check verdict (check-state.mjs). When git runs
+// git-state.mjs repoState, sharing one git budget (`startMs`). When git runs
 // out of time (a loaded machine), a repository keeps its last good state up to STALE_KEEP_MS, marked `stale`, instead of vanishing.
 // The git cache holds results only: no path of it reaches git. The used folders come from the refresh cache and the transcripts, both
 // files the same user can write, so they choose repositories exactly as an agent's edits do (RC19); they never name a git folder.
 // Invariants: never throws; no git call here (repoState makes them).
 import { basename, dirname, isAbsolute, sep } from 'node:path';
-import { latestCheck } from './check-state.mjs';
 import { repoState } from './git-state.mjs';
 import { REMOTE_PATH, repoOfDir, trustedRepos } from './trusted-repos.mjs';
 
@@ -53,15 +52,15 @@ const isInside = (dir, path) => dir === path || dir.startsWith(`${path}${sep}`);
 
 /**
  * @param {{ sessionFolder: string | null, usedDirs?: string[], liveDirs?: string[], cache: object | null, nowMs: number,
- *   startMs?: number, env?: object }} source the session's folder, the folders this session used (newest first), the live agents'
- *   folders (git-state.mjs active rule b), the last cache ({ byCommon: { [common]: git cache } }), when the refresh's git budget
- *   started, and the environment whose HOME holds the done-check ledger
+ *   startMs?: number }} source the session's folder, the folders this session used (newest first), the live agents'
+ *   folders (git-state.mjs active rule b), the last cache ({ byCommon: { [common]: git cache } }) and when the refresh's git budget
+ *   started
  * @returns {{ repos: object[], git: object | null, common: string | null, cache: object }} repos = git-state.mjs repo plus `name`
- *   (the main worktree's folder name) and `check` (check-state.mjs), the session folder's first; git = the first repository's own
+ *   (the main worktree's folder name), the session folder's first; git = the first repository's own
  *   { branch, ahead, behind, changed } or null; common = the first repository's shared git folder from the file system (never
  *   from the cache: repo-stats.mjs runs git on it)
  */
-export function sessionRepos({ sessionFolder, usedDirs = [], liveDirs = [], cache, nowMs, startMs = Date.now(), env = process.env }) {
+export function sessionRepos({ sessionFolder, usedDirs = [], liveDirs = [], cache, nowMs, startMs = Date.now() }) {
   const old = cache !== null && typeof cache === 'object' && cache.byCommon ? cache.byCommon : {};
   try {
     const found = [];
@@ -73,7 +72,7 @@ export function sessionRepos({ sessionFolder, usedDirs = [], liveDirs = [], cach
       byCommon[common] = { ...(state.repo === null ? (old[common] ?? {}) : state.cache), last: shown.last };
       if (shown.repo === null) continue;
       const main = shown.repo.worktrees.find((wt) => wt.main);
-      found.push({ repo: { ...shown.repo, name: basename(main?.path ?? dirname(common)), check: latestCheck(common, { env }) }, git: shown.git, common });
+      found.push({ repo: { ...shown.repo, name: basename(main?.path ?? dirname(common)) }, git: shown.git, common });
     }
     return { repos: found.map(({ repo }) => repo), git: found[0]?.git ?? null, common: found[0]?.common ?? null, cache: { byCommon } };
   } catch {

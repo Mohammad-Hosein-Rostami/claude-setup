@@ -1,8 +1,8 @@
 // The cells every progress surface draws with (display design 4.1): the look of the terminal (glyphs, separators, colour), bars,
-// durations, clocks, and fitting a row of parts to a width. Used by render.mjs (the status line rows) and tree.mjs (`/where`).
+// durations, clocks, row labels, and fitting a row of parts to a width. Used by render.mjs (the status line rows).
 // Exports: lookOf(env, platform, columns) -> look; paint(text, state, look, bold); cleanText(text, look); cutWords(text, max, look);
 // fitParts(parts, look) -> string; partsWidth(parts, look); barText(shares, cells, look); durationText(minutes);
-// clockOf(ms, nowMs, timeZone); STATE; DONE_SHOWN_MS.
+// clockOf(ms, nowMs, timeZone); labelled(label, part, look); STATE; DONE_SHOWN_MS; WIDE_COLUMNS, LABEL_FROM_COLUMNS, LABEL_COLUMNS.
 // Colour by kind (owner decision RC14, 2026-11-22: "dont over do"; spec R18 colour table): four kinds have their own colour, each
 // meaning that kind only: `branch` (a git branch name), `bar` (a progress bar and its count), `time` (work left, finish and reset
 // clocks), `session` (model, effort, context, limit values). Three states are reserved and basic ANSI so the terminal theme maps
@@ -17,7 +17,13 @@
 // that is set and not UTF-8; colour off when NO_COLOR is set to any non-empty value (no-color.org), TERM=dumb or on that old console.
 // Invariants: pure (no I/O); every state also has a word in the text (colour is never the only signal); in ASCII mode no byte
 // above 0x7E is ever returned, since every outside text goes through cleanText; a fitted row is never wider than `columns`.
-import { clockText, dayText, localDate } from '../../estimate/lib/local-clock.mjs';
+import { clockText, dayText, localDate } from './local-clock.mjs';
+
+/** From this usable width the rows take their long words: a 120-column terminal gives 115 (COLUMNS - 5, research-tui 1.1). */
+export const WIDE_COLUMNS = 115;
+/** From this usable width every row leads with a LABEL_COLUMNS-wide dim label (100 columns give 95); below it the label and a blank. */
+export const LABEL_FROM_COLUMNS = 90;
+export const LABEL_COLUMNS = 8;
 
 /** The kinds and states a part may carry: four kinds with their own colour, three reserved states, dim and strong, and the plain ones. */
 export const STATE = {
@@ -274,4 +280,20 @@ export function clockOf(ms, nowMs, timeZone, roundUp = false) {
   const at = roundUp ? Math.ceil(ms / MS_PER_MIN) * MS_PER_MIN : ms;
   const day = localDate(at, timeZone) === localDate(nowMs, timeZone) ? '' : `${dayText(at, timeZone).split(' ')[0]} `;
   return `${day}${clockText(at, timeZone)}`;
+}
+
+/** The label column a row starts with: LABEL_COLUMNS wide from LABEL_FROM_COLUMNS, else the label and a blank. */
+const labelHead = (label, look) => (look.columns >= LABEL_FROM_COLUMNS ? label.padEnd(LABEL_COLUMNS) : `${label} `);
+
+/**
+ * A row's first part with its dim label before it.
+ * @param {string} label `agents`, `git`, `lanes` or `session`
+ * @param {{ text: string, state?: string, drop?: number, spans?: object[] }} part the row's first value
+ * @param {ReturnType<typeof lookOf>} look the terminal (the label column from LABEL_FROM_COLUMNS)
+ * @returns {object} the part with the label before it, its value keeping its own spans or state
+ */
+export function labelled(label, part, look) {
+  const head = labelHead(label, look);
+  const value = Array.isArray(part.spans) ? part.spans : [{ text: part.text, state: part.state }];
+  return { ...part, text: `${head}${part.text}`, spans: [{ text: head, state: STATE.dim }, ...value] };
 }
