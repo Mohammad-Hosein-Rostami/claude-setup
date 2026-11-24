@@ -17,7 +17,7 @@ A bad threshold, text that is not `df` output or a wrong command exits 2 with a 
 
 On `WARN` and `FAIL` the line names up to three of the biggest rebuildable caches that exist on the machine, largest first, each with the
 size, the folder and how to clear it: Xcode DerivedData, CoreSimulator, `~/Library/Caches`, the npm cache, the pnpm store, and the old claude
-session folders (`/private/tmp/claude-<uid>` on macOS, `/tmp/claude-<uid>` elsewhere). Measuring all folders together is limited to 30 seconds (so a WARN never outlasts the runner's 120 s limit); a folder not measured in time is still
+session folders (`/private/tmp/claude-<uid>` on macOS, `/tmp/claude-<uid>` elsewhere). Measuring all folders together is limited to 30 seconds (so a WARN never outlasts the Bash tool's 120 s default timeout); a folder not measured in time is still
 named, with "size not measured in time". The Docker builder cache has no folder, so it is always named last (`docker builder prune`).
 
 ## Where it runs

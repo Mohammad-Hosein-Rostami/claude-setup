@@ -6,7 +6,7 @@
 // 2 usage or setup error (an open states entry without a url, a bad flag, an unreadable ledger, a --same base in this run's own --out
 // folder or with no head or this run's own head).
 // Invariants: images are printed only for failures, as crops; PASS and FAIL are the numbers, never a look at an image. `--step
-// <road>.s<N>` and the commit sha of HEAD are stored in ledger.json, so a baseline run on the base tip is that step's start record.
+// <plan>.s<N>` and the commit sha of HEAD are stored in ledger.json, so a baseline run on the base tip is that step's start record.
 // The ledger also stores `root`, the git top-level of the folder the run started in, and with `--same` its `same` section; `--same` never
 // changes the exit code.
 // The matrix's `rule` and the project's recorded viewing conditions (`ui-coverage conditions`) are stored in every record and the ledger.
@@ -170,7 +170,7 @@ function matrixFacts(matrix, strictFlag) {
 function readFlags(argv) {
   const values = parse(argv, options);
   need(values, 'matrix');
-  if (values.step !== undefined && !STEP_LABEL.test(values.step)) throw new UsageError(`--step must look like <road>.s<N> (e.g. r9p3.s2), got ${JSON.stringify(values.step)}`);
+  if (values.step !== undefined && !STEP_LABEL.test(values.step)) throw new UsageError(`--step must look like <plan>.s<N> (e.g. r9p3.s2), got ${JSON.stringify(values.step)}`);
   return values;
 }
 

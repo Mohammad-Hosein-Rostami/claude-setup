@@ -1,7 +1,6 @@
 // Small state files keyed by an id, safe against planted links and special files. The Bash guard's lib/allowed-literals.mjs
-// (guard-allowed) and lib/bounce-once.mjs (guard-bounced) keep one JSON file per session id, the estimate tool its status line
-// cache and calibration log (keyed by a STATUS.md hash; the log is written with sweep off, so it never expires), each in its
-// own folder under ~/.claude/state.
+// (guard-allowed) and lib/bounce-once.mjs (guard-bounced) keep one JSON file per session id, each in its own folder under
+// ~/.claude/state.
 // Exports: isSessionId(session), readSessionFile(dir, session, maxBytes) -> text | null | undefined,
 // writeSessionFile(dir, session, text, options?) -> boolean; for lib/session-lock.mjs: lstatOrNull, isPrivateFile, sameNode, privateFolder,
 // READ_FLAGS, CREATE_FLAGS, FILE_MODE, TEMP_NAME_BYTES.

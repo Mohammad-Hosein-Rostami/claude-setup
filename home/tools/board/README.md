@@ -17,9 +17,9 @@ bottom, at 100 columns:
 | Row | Example (100 columns) | From |
 | --- | --- | --- |
 | alert, only while something waits on the owner | `? ANSWER NEEDED · 1 question · recommended answer taken in 1:40` | the asking marker |
-| agents, only while an agent runs | `agents  5 running · 1 done · ! reviewer quiet 6 min` | the board's agents (`lib/layout.mjs`) |
+| agents, only while an agent runs | `agents  5 running · 1 done · ! tess-review quiet 6 min` | the board's agents (`lib/layout.mjs`) |
 | git | `git     claude-setup  main  ↑2 to push · 1 staged · 3 changed · 1 new · stash 1` | the board's repositories (`lib/git-rows.mjs` gitLineRows) |
-| git row 2: lanes or a second repository | `lanes   r18-git ↑2 ~3 implementer · r18-est ↑4 ready to land · r17-col ↓5 needs rebase · +2 more` | the same |
+| git row 2: lanes or a second repository | `lanes   r18-git ↑2 ~3 dev · r18-est ↑4 ready to land · r17-col ↓5 needs rebase · +2 more` | the same |
 | session | `session Opus 5.5 high · context 29% · 5h 90% left, empty ~22:32 · 7d 47% left · acct mine` | the status input, the account's limit samples |
 
 The agents row (RC8) is one summary whatever the number of agents: running counts the quiet ones, done is finished in the last

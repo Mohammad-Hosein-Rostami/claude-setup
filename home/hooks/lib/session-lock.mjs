@@ -28,8 +28,8 @@ const LOCK_WAIT_MS = 1000; // the longest a hook waits for its turn; a turn (one
 const LOCK_PAUSE_MS = 2; // between two tries for the lock
 const STALE_LOCK_MS = 500; // no turn takes this long: such a lock was left by a hook killed during its turn
 const LOCK_CLOCK_SKEW_MS = 1000; // a lock's time may run this far ahead of the clock; further ahead, no running hook made it
-// A lock whose process still runs is taken only past this age: the slowest turn measured is 185 ms (the removed status
-// tool on a 4 MiB STATUS.md), so a live pid on an older lock is a reused pid, not a holder.
+// A lock whose process still runs is taken only past this age: the slowest turn measured was 185 ms (the status tool, removed
+// 2026-11-24, on a 4 MiB file), so a live pid on an older lock is a reused pid, not a holder.
 const HELD_LOCK_MAX_MS = 5000;
 export const BREAKER_SUFFIX = '.break'; // `<lock>.break`: held by the one waiter that is removing a stale lock
 const LOCK_TOKEN_BYTES = 16; // the random half of the lock's text `<pid> <32 hex>`: release compares it, so it never removes another's lock

@@ -1,8 +1,8 @@
 // The status line rows (spec R18, owner decisions RC14 to RC18 of 2026-11-22): at most 5 rows when busy, 2 when idle, at 100 columns:
 //   ? ANSWER NEEDED · 1 question · recommended answer taken in 1:40                 (alert: only while a question or prompt waits)
-//   agents  5 running · 1 done · ! reviewer quiet 6 min                          (only while an agent runs, layout.mjs)
+//   agents  5 running · 1 done · ! tess-review quiet 6 min                       (only while an agent runs, layout.mjs)
 //   git     claude-setup  main  ↑2 to push · 1 staged · 3 changed · 1 new · stash 1   (git-rows.mjs gitLineRows)
-//   lanes   r18-git ↑2 ~3 implementer · r18-est ↑4 ready to land                           (git row 2: lanes or a 2nd repo)
+//   lanes   r18-git ↑2 ~3 dev · r18-est ↑4 ready to land                                   (git row 2: lanes or a 2nd repo)
 //   session Opus 5.5 high · context 29% · 5h 90% left, empty ~22:32 · 7d 47% left · acct mine
 // Budget (layout.mjs rowBudget: 6, 4 or 2 by LINES): over it the rows are kept in this order: session, git 1, alert, agents, git 2;
 // they print top to bottom as above. Never blank: `git loading` before the board's first refresh, `context ?` before the first call.

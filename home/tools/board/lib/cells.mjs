@@ -7,7 +7,7 @@
 // meaning that kind only: `branch` (a git branch name), `bar` (a progress bar and its count), `time` (work left, finish and reset
 // clocks), `session` (model, effort, context, limit values). Three states are reserved and basic ANSI so the terminal theme maps
 // them: `warn` yellow (needs a look), `block` red (a problem), `wait` magenta (needs you). `dim` (SGR 2) is for labels, ages and
-// the ` · ` between parts; `strong` is bold with no colour (a repository name). `run` (working, `/where` callers only) takes the
+// the ` · ` between parts; `strong` is bold with no colour (a repository name). `run` (a working agent) takes the
 // bar's colour; `ok`, `done` and `road` paint nothing: counts and words are in the default colour. A part's `bold` makes it bold.
 // A part may carry `spans` (texts in order whose join is its text, each with its own state).
 // Palette (lookOf): `none` without colour; 256 colours (`dark`, or `light` when CLAUDE_STATUS_THEME=light or COLORFGBG's last

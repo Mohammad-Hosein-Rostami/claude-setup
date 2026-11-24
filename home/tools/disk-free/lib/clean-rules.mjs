@@ -10,7 +10,7 @@
 //                    the scratchpad root is shared by every config dir of the user (CLAUDE_CONFIG_DIR), while the transcripts and the registry
 //                    read here are one config dir's, so the folder may be a running session's of another one. It is kept, counted in
 //                    context.keptUnknown, until nothing anywhere in it was modified for 30 days. Found or unknown is decided again on every look.
-//                    An empty folder (what a `claude -p` call such as recall's checkpoint leaves) keeps the 3-day rule. Only a regular
+//                    An empty folder (what a `claude -p` call leaves) keeps the 3-day rule. Only a regular
 //                    `<id>.jsonl` file counts as a transcript, and ids are compared in lower case (APFS names are case-insensitive).
 //   session-scratch  in every session folder the rule above keeps (the current one, running ones, ones not idle long enough), the
 //                    entries of <session-id>/scratchpad/ that are a real folder named cs-test-* or a git clone (a folder holding a `.git`

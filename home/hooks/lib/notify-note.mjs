@@ -79,7 +79,7 @@ export function quotaText(type) {
   return null;
 }
 
-/** @returns {string} `Failed: api-redo implementer · lane waits for you` (the board calls it when an agent or lane turns failed) */
+/** @returns {string} `Failed: api-redo dev · lane waits for you` (for a note when an agent or lane turns failed; no caller in this repo yet) */
 export const failedText = ({ name, role }) => `Failed: ${clean(name)}${role ? ` ${clean(role)}` : ''} · lane waits for you`;
 
 /**
