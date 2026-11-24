@@ -118,12 +118,48 @@ test('hook: a per-call model or effort below the agent file pin is left out; an 
   });
   const effort = JSON.parse(runWithAgents({ ...BASE, subagent_type: 'dev-ui', effort: 'low', prompt: 'MATRIX: none: a one-file copy tweak' }).stdout);
   assert.deepEqual(effort.hookSpecificOutput.updatedInput, { ...BASE, subagent_type: 'dev-ui', prompt: 'MATRIX: none: a one-file copy tweak' });
-  for (const kept of [{ subagent_type: 'dev', model: 'opus' }, { subagent_type: 'dev', model: 'fable' },
+  for (const kept of [{ subagent_type: 'dev', model: 'opus' }, { subagent_type: 'dev', model: 'inherit' },
     { subagent_type: 'dev', effort: 'max' }, { subagent_type: '../x', model: 'haiku' }, { subagent_type: 'lex-scout', model: 'haiku' }]) {
     const r = runWithAgents({ ...BASE, ...kept });
     assert.equal(r.status, 0, JSON.stringify(kept));
     assert.equal(r.stdout, '', JSON.stringify(kept));
     assert.equal(r.stderr, '', JSON.stringify(kept));
+  }
+});
+
+const FABLE_REASON = 'Not started: Fable is never used for an agent (the owner chooses it by hand only)';
+const deniedReason = (run) => {
+  assert.equal(run.status, 0, run.stderr);
+  const out = JSON.parse(run.stdout).hookSpecificOutput;
+  assert.equal(out.permissionDecision, 'deny');
+  return out.permissionDecisionReason;
+};
+
+test('hook: a per-call Fable model (the alias or any id, any case) is denied every time with a one-line reason to leave model out', () => {
+  for (const model of ['fable', 'Fable', 'FABLE', 'claude-fable-5', 'claude-fable-5[1m]', 'us.anthropic.claude-fable-5-v1']) {
+    for (const subagent_type of ['dev', 'lex-scout', 'Explore', 'Plan', 'general-purpose', 'some-plugin:agent', undefined]) {
+      for (let send = 0; send < 2; send += 1) {
+        const reason = deniedReason(runWithAgents({ ...BASE, subagent_type, model }));
+        assert.equal(reason, `${FABLE_REASON}: leave \`model\` out of the Agent call (it was \`${model}\`).`, `${subagent_type} ${model} send ${send}`);
+        assert.doesNotMatch(reason, /\n/, 'one line');
+      }
+    }
+  }
+});
+
+test('hook: an agent file that pins Fable is denied when the call names no model; a call model other than Fable outranks the file', () => {
+  const pinFable = (agents) => writeFileSync(join(agents, 'writer.md'), '---\nname: writer\ndescription: test agent\nmodel: claude-fable-5\n---\nbody\n');
+  const reason = deniedReason(runWithAgents({ ...BASE, subagent_type: 'writer' }, pinFable));
+  assert.equal(reason, `${FABLE_REASON}: the \`writer\` agent file pins \`claude-fable-5\`; change its \`model\` line, and leave \`model\` out of the Agent call.`);
+  const outranked = runWithAgents({ ...BASE, subagent_type: 'writer', model: 'opus' }, pinFable);
+  assert.deepEqual([outranked.status, outranked.stdout, outranked.stderr], [0, '', ''], 'the call runs on opus');
+});
+
+test('hook: the shipped agent files pin no Fable, so a plain call to each runs', () => {
+  for (const name of ['dev', 'dev-ui']) {
+    const run = runWithAgents({ ...BASE, subagent_type: name, prompt: 'MATRIX: none: a one-file copy tweak' });
+    assert.equal(run.status, 0, run.stderr);
+    assert.doesNotMatch(run.stdout, /Fable/, name);
   }
 });
 

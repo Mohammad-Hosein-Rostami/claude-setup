@@ -6,6 +6,8 @@
 // dev-pixel, dev-debug, tess-review on Opus; lex-web, pixel-qa, tess on Sonnet; lex-scout, dev-run on Haiku: the frontmatter of
 // home/agents/<name>.md). A failure there leaves the input as it is (stderr line). A rewrite is allow + the full updatedInput.
 // Gates, in order (the first deny wins; each deny-once gate lets the identical call through when it is sent again):
+//   0. No Fable (owner rule: Fable is chosen by hand only, never for an agent): a call whose `model` is Fable (the alias or any id),
+//      or with no `model` and an agent file that pins Fable, is denied every time with a one-line reason (fableReason).
 //   1. Copy-branch brief (lib/copy-branch-brief.mjs): a writer brief that creates `<lane>-2` instead of continuing `<lane>` (deny once).
 //   2. UI brief (lib/ui-brief-gate.mjs): a dev-pixel or pixel-qa brief that names no usable coverage matrix (`MATRIX: <path>`, or
 //      `MATRIX: none: <reason>`) gets the ui-coverage init advice (deny once).
@@ -17,11 +19,12 @@
 //      holds) or read-only (a line starting `read-only:` or `scratchpad-only:`), else it is denied once with advice; a brief naming
 //      more than one worktree is denied once too. Who writes: lib/agent-roles.mjs isWriterRole (dev, dev-ui, dev-pixel, dev-debug;
 //      never lex or the read-only agents; other types by their agent file). A record that cannot be read denies (fail closed).
-// Exports: guardedAgentInput (pure), writerIsolationDeny, copyBranchBriefDeny.
+// Exports: guardedAgentInput (pure), fableReason, writerIsolationDeny, copyBranchBriefDeny.
 // Invariants: the routing never blocks; each deny-once gate denies an identical call at most once per session.
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { claimMainSlot, mainCapReason, releaseMainSlot } from './agent-budget.mjs';
+import { quotedValue } from './lib/agent-brief.mjs';
 import { isWriterRole } from './lib/agent-roles.mjs';
 import { copyBranchBriefAdvice } from './lib/copy-branch-brief.mjs';
 import { recordAgentLaunch } from './lib/agent-launches.mjs';
@@ -129,8 +132,38 @@ export async function copyBranchBriefDeny(input, env = process.env) {
   }
 }
 
+const FABLE_MODEL = /fable/i; // the alias `fable` and every Fable model id
+const FABLE_RULE = 'Not started: Fable is never used for an agent (the owner chooses it by hand only)';
+
+/**
+ * The no-Fable gate (see the header): the model the agent would run on is the call's `model` when set (it outranks the agent file),
+ * else the agent file's pin (lib/agent-pins.mjs readPin, the file Claude Code loads).
+ * @param {unknown} input the hook input: tool_input {subagent_type, model}, cwd
+ * @param {Record<string, string | undefined>} env HOME / CLAUDE_CONFIG_DIR (where the agent files are)
+ * @returns {Promise<string>} the one-line deny reason, or '' when the agent runs on another model; a pin that cannot be read is
+ *   reported on stderr and lets the call run (the pin floor reports the same file)
+ */
+export async function fableReason(input, env = process.env) {
+  const { subagent_type: type, model } = input?.tool_input ?? {};
+  if (typeof model === 'string' && model !== '') {
+    return FABLE_MODEL.test(model) ? `${FABLE_RULE}: leave \`model\` out of the Agent call (it was \`${quotedValue(model)}\`).` : '';
+  }
+  try {
+    const { readPin } = await import('./lib/agent-pins.mjs');
+    const pin = readPin(type, typeof input?.cwd === 'string' ? input.cwd : process.cwd(), env);
+    return typeof pin?.model === 'string' && FABLE_MODEL.test(pin.model)
+      ? `${FABLE_RULE}: the \`${quotedValue(String(type))}\` agent file pins \`${quotedValue(pin.model)}\`; change its \`model\` line, and leave \`model\` out of the Agent call.`
+      : '';
+  } catch (error) {
+    process.stderr.write(`agent-model-guard: fable check skipped: ${error.message}\n`);
+    return '';
+  }
+}
+
 /** The deny line of the gates (header order), or '' when the call may run; a denied launch gives its main-agent slot back. */
 async function gatesDeny(input) {
+  const fable = await fableReason(input);
+  if (fable !== '') return denyOutput(fable);
   const early = (await copyBranchBriefDeny(input)) || (await uiBriefDeny(input));
   if (early !== '') return early;
   const slot = claimMainSlot(input);
