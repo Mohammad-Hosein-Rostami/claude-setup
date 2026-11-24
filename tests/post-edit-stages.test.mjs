@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCheck, runStages } from '../home/hooks/post-edit.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { sharedTool } from './shared-tools.mjs';
 
 const ALL_CHECKS = ['format', 'lint'].map((name) => ({ name, args: ['run', name] }));
 const TIMED_ATTEMPTS = 3;
@@ -24,7 +25,7 @@ async function fastestOfAttempts(job, underMs) {
 }
 
 // Fake package manager (a node script with a shebang): `fake <run> <name>` logs start/end, sleeps, then fails or not
-// per FAKE_* env. Posix only: Windows would need a .cmd shim.
+// per FAKE_* env. Posix only: Windows would need a .cmd shim. One shared copy (shared-tools.mjs: no first-run check per test).
 const FAKE_PM = `#!${process.execPath}
 if (process.env.FAKE_WARM) process.exit(0);
 const { appendFileSync } = require('node:fs');
@@ -42,10 +43,7 @@ setTimeout(() => {
 
 async function fakeProject(env) {
   const dir = makeTempDir('post-edit-fake-');
-  const pm = join(dir, 'fake-pm');
-  await writeFile(pm, FAKE_PM);
-  await chmod(pm, 0o755);
-  warmExec(pm);
+  const pm = sharedTool('fake-pm', FAKE_PM);
   const log = join(dir, 'log.txt');
   await writeFile(log, '');
   Object.assign(process.env, { FAKE_LOG: log }, env);
