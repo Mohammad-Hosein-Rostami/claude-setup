@@ -31,7 +31,8 @@ log: ~/.claude/state/suite/logs/2026-11-24T21-03-05-118Z-4242.log
   a `.cmd` such as `npm` needs `cmd /c npm ...`.
 - It runs in its own process group. SIGINT, SIGTERM and SIGHUP to `suite run` end that group (every test process the command
   started): SIGTERM, then SIGKILL to what is left after 3 s (on Windows `taskkill /T /F`); then `suite run` exits with 128 + the
-  signal number and frees the slot. Such a run prints no verdict and caches nothing.
+  signal number and frees the slot. A second such signal during those 3 s sends SIGKILL to the group at once and exits. Such a
+  run prints no verdict and caches nothing.
 - `--log <file>`: write the log there instead of `state/suite/logs/` (logs there are removed after 14 days).
 
 ### Pass cache (`--cache`)

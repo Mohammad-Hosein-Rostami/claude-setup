@@ -4,10 +4,11 @@
 // - The command is one string the caller typed, so it runs through the platform shell; stdin is closed.
 // - Nothing it starts outlives it: on POSIX it leads its own process group, and the whole group is ended (SIGTERM, then
 //   SIGKILL after a grace, `../long-run/lib/process-tree.mjs`) when the command ends (pass or fail), at the deadline and on a
-//   Ctrl-C of `land`; on Windows `taskkill /T /F` kills the process tree. The result comes once the group is gone.
+//   Ctrl-C of `land`; on Windows `taskkill /T /F` kills the process tree. The result comes once the group is gone. A second
+//   stop signal during the grace sends SIGKILL to the group at once, so pressing Ctrl-C twice still leaves nothing running.
 // - It resolves, never rejects, and keeps only the end of the output, so a test that prints gigabytes cannot exhaust memory.
 import { spawn } from 'node:child_process';
-import { endProcessTree } from '../long-run/lib/process-tree.mjs';
+import { endProcessTree, signalProcessTree } from '../long-run/lib/process-tree.mjs';
 
 // The output kept while the test runs; far more than the lines `land` prints, so the last lines are always whole.
 const OUTPUT_KEPT_BYTES = 1 << 20;
@@ -89,7 +90,12 @@ export function runTestCommand(command, cwd, timeoutSeconds) {
     };
     // Once the test has settled its pid may belong to another process, so it is never signalled then.
     const stop = (reason) => {
-      if (settled || stopReason !== null) return;
+      if (settled) return;
+      if (stopReason !== null) {
+        // A second stop during the grace: no more waiting; the tree's end is seen at the next poll and settles the test.
+        signalProcessTree(child, 'SIGKILL');
+        return;
+      }
       stopReason = reason;
       clearTimeout(deadline);
       if (ending) return; // the command has exited and its tree is already being ended; that path settles the test
@@ -101,7 +107,7 @@ export function runTestCommand(command, cwd, timeoutSeconds) {
     }
 
     deadline = setTimeout(() => stop(`did not finish within ${timeoutSeconds} s; its processes were killed`), timeoutSeconds * MS_PER_SECOND);
-    for (const signal of STOP_SIGNALS) process.once(signal, stopOnSignal);
+    for (const signal of STOP_SIGNALS) process.on(signal, stopOnSignal);
     child.on('error', (error) => finish(`could not start: ${error.message}`));
     child.on('exit', (status, signal) => {
       if (ending) return; // a stop is already ending the tree and settles the test

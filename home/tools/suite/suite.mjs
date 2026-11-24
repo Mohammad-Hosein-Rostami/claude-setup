@@ -9,8 +9,8 @@
 //   related and status: 0; 2 for a usage error, a bad config file, a bad ref or a folder that is not a repository.
 // Invariants:
 // - The command runs as argv, never through a shell, in the repo folder, in its own process group; SIGINT, SIGTERM and SIGHUP end
-//   that group (SIGTERM, then SIGKILL after a grace, `../long-run/lib/process-tree.mjs`) before the exit, any other exit sends
-//   it SIGTERM, and the slot is freed.
+//   that group (SIGTERM, then SIGKILL after a grace, `../long-run/lib/process-tree.mjs`) before the exit, a second one during
+//   the grace sends SIGKILL at once and exits, any other exit sends it SIGTERM, and the slot is freed.
 // - The pass cache is opt-in (`--cache`, for test runs only: an install or a build has effects a cached pass would skip). A pass is
 //   cached only when the tree was clean before and after the run and did not change; a failure is never cached.
 // - State lives in `$CLAUDE_CONFIG_DIR/state/suite/` (else `~/.claude/state/suite/`): one queue for every session on the machine.
@@ -141,12 +141,13 @@ function startLogged(command, repo, logPath) {
 
 /**
  * SIGINT, SIGTERM and SIGHUP end the running command's group (SIGTERM, then SIGKILL after a grace), then exit with 128 + the
- * signal number. Any other exit sends the group EXIT_SIGNAL. queue.mjs frees the slot and the ticket at exit.
+ * signal number; a second one during the grace sends SIGKILL to the group and exits at once. Any other exit sends the group
+ * EXIT_SIGNAL. queue.mjs frees the slot and the ticket at exit.
  * @param {{child: import('node:child_process').ChildProcess | null, stopping: boolean}} current the running command, if any;
  *   `stopping` is set once a stop signal came, so runCommand neither reports nor caches the run it ends.
  */
 function stopChildOnExit(current) {
-  for (const signal of STOP_SIGNALS) process.once(signal, () => { void stopAndExit(current, signal); });
+  for (const signal of STOP_SIGNALS) process.on(signal, () => (current.stopping ? killAndExit(current, signal) : void stopAndExit(current, signal)));
   process.once('exit', () => isRunning(current.child) && signalProcessTree(current.child, EXIT_SIGNAL));
 }
 
@@ -159,6 +160,15 @@ async function stopAndExit(current, signal) {
     console.error(`suite: could not end the command's processes: ${error.message}`);
   }
   current.child = null; // ended: the exit handler must not signal its pid again
+  process.exit(128 + constants.signals[signal]);
+}
+
+/** A second stop during the grace: SIGKILL to the running command's group, if any, then exit with 128 + the number of `signal`. */
+function killAndExit(current, signal) {
+  // Not isRunning: the leader may have exited on the SIGTERM while the rest of its group ignores it, and the group id stays
+  // its pid while any member lives. stopAndExit sets child to null once the group is gone.
+  if (current.child?.pid !== undefined) signalProcessTree(current.child, 'SIGKILL');
+  current.child = null; // killed: the exit handler must not signal its pid again
   process.exit(128 + constants.signals[signal]);
 }
 
