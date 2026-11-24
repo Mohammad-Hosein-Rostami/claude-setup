@@ -18,6 +18,7 @@ live in every running session at once. A half-written hook breaks Bash everywher
 - `~/.claude/settings.json` is a merged copy: change `settings/base.json` (or an OS file) and re-merge with
   `scripts/install.sh`.
 - Never push unless the owner says so.
-- Add or change a skill, agent, tool or hook: update `docs/catalog.md` in the same commit.
+- Add or change a skill, agent, tool or hook: update `docs/catalog.md` in the same commit (`node scripts/catalog.mjs write`
+  builds the skill, agent and hook-event parts; `check` exits 1 on drift).
 - Work habits for day-to-day use are in `docs/daily-use.md`; the global rules the sessions load are `home/CLAUDE.md`
   (shared), then `personal/CLAUDE.md` (yours).
