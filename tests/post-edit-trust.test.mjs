@@ -5,12 +5,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { userInfo } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { basename, delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CLEAN_ENV, git } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { linkSharedTool } from './shared-tools.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/post-edit.mjs', import.meta.url));
 const posix = { skip: process.platform === 'win32' && 'stub tools are shebang scripts' };
@@ -18,15 +19,19 @@ const TRUST_ENV = 'CLAUDE_POST_EDIT_TRUST_FORMAT';
 const EDITED = 'src/a.ts';
 const EVIL_SCRIPT = 'node evil.js';
 const RELATIVE_PROJECT_DIRS = ['.', 'proj']; // never a session folder: not absolute ('.' is the repo, the hook's cwd)
+const PM_MARK_FILE = 'pm-mark'; // in the PATH folder: holds the path of the package managers' log (marks.pm)
 const PACKAGE_MANAGERS = ['npm', 'pnpm', 'yarn']; // any of them may be picked from a lockfile above the temp folder; each is a stub
 // Our variables a test sets itself; the runner's own values must not leak into a hook run.
 const OUR_VARIABLES = [TRUST_ENV, 'CLAUDE_POST_EDIT_SKIP', 'CLAUDE_PROJECT_DIR'];
 const BASE_ENV = Object.fromEntries(Object.entries(CLEAN_ENV).filter(([name]) => !OUR_VARIABLES.includes(name)));
 
-/** A shebang script at `path` that runs `body` with `node:fs` and `node:child_process` loaded. */
+/**
+ * A link at `path` to one shared shebang script (shared-tools.mjs: no first-run check per test) that runs `body` with `node:fs`,
+ * `node:child_process` and `join` loaded and `here` set to the link's own folder (Node keeps the link path in argv[1]), so a body
+ * finds its test's files from where it is linked. It does nothing under FAKE_WARM (the shared-tools warm-up).
+ */
 function stubScript(path, body) {
-  writeFileSync(path, `#!${process.execPath}\nconst fs = require('node:fs');\nconst cp = require('node:child_process');\n${body}\n`);
-  chmodSync(path, 0o755);
+  linkSharedTool(dirname(path), basename(path), `#!${process.execPath}\nif (process.env.FAKE_WARM) process.exit(0);\nconst fs = require('node:fs');\nconst cp = require('node:child_process');\nconst { dirname, join } = require('node:path');\nconst here = dirname(process.argv[1]);\n${body}\n`);
 }
 
 /**
@@ -49,12 +54,14 @@ function formatRepo(script, files = {}, gitMode = null) {
     git(dir, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'team');
   }
   mkdirSync(join(dir, 'node_modules', '.bin'), { recursive: true });
-  stubScript(join(dir, 'node_modules', '.bin', 'prettier'), `fs.appendFileSync(${JSON.stringify(marks.prettier)}, JSON.stringify(process.argv.slice(2)) + '\\n');`);
+  // <dir>/node_modules/.bin/../../prettier-ran is marks.prettier
+  stubScript(join(dir, 'node_modules', '.bin', 'prettier'), `fs.appendFileSync(join(here, '..', '..', 'prettier-ran'), JSON.stringify(process.argv.slice(2)) + '\\n');`);
   const pathBin = makeTempDir('post-edit-trust-path-');
   symlinkSync(process.execPath, join(pathBin, 'node')); // the script's `node` is this node, whatever the runner's PATH holds
+  writeFileSync(join(pathBin, PM_MARK_FILE), marks.pm); // where the package managers linked here log their runs
   for (const pm of PACKAGE_MANAGERS) {
     stubScript(join(pathBin, pm), `const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(marks.pm)}, JSON.stringify({ pm: ${JSON.stringify(pm)}, args }) + '\\n');
+fs.appendFileSync(fs.readFileSync(join(here, ${JSON.stringify(PM_MARK_FILE)}), 'utf8'), JSON.stringify({ pm: ${JSON.stringify(pm)}, args }) + '\\n');
 const script = JSON.parse(fs.readFileSync('package.json', 'utf8')).scripts[args[1]];
 cp.execSync([script, ...args.slice(3)].join(' '), { stdio: 'inherit' });`);
   }
