@@ -29,8 +29,8 @@ const FORCE_ON_VALUES = ['1', 'true', 'yes', 'on']; // Claude Code's Ne(), after
 const ALIAS_TARGET_ENV = /^ANTHROPIC_DEFAULT_(?:(?:OPUS|SONNET|HAIKU)_)?MODEL$/;
 const isRunTimeAlias = (model) => RUN_TIME_ALIAS.test(model.trim());
 export const FABLE_RULE = 'Not started: Fable is never used for an agent (the owner chooses it by hand only)';
-// Names the model the agent should run on, never a lower one: the shipped pins are opus for lex and dev, sonnet for tess
-export const NAME_A_MODEL = 'name the model its agent file should pin in the Agent call, never Fable (`model: "opus"` for lex and dev, `"sonnet"` for tess)';
+// Names the model the agent should run on, never a lower one: the shipped pins are opus for lex, dev and tess
+export const NAME_A_MODEL = 'name the model its agent file should pin in the Agent call, never Fable (`model: "opus"` for lex, dev and tess)';
 
 /** The reason for a call that names its model, or '' when that model is neither Fable, a run-time alias nor `inherit`. */
 export function callModelReason(model) {

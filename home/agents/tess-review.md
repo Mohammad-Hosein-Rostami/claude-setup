@@ -33,7 +33,8 @@ again before the verdict. An empty diff, or a brief with no spec or no acceptanc
 
 Read `git diff <base>...<tip>` once, then each changed file in full and the callers and callees of every changed function (Grep,
 cite file:line). Judge against the spec, the acceptance lines, the `THREAT:` line and the risk classes. Judge with the
-review-checklist skill's questions (preloaded); skip style, naming and taste.
+review-checklist skill's questions (preloaded); skip style, naming and taste. Needless complexity is a rule break, not taste:
+the exact result in the simplest code a person can read (review-checklist item 6).
 
 ## Proof rules
 

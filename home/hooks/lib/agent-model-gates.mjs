@@ -4,8 +4,8 @@
 // Plan call gets `opus` (types matched in any case: `explore`, `plan`). Forks (subagent_type "fork"), plugin agents and an explicit
 // model are not routed, and nothing is routed while CLAUDE_CODE_SUBAGENT_MODEL_FORCE is on under every env the session may run with (Claude Code then ignores `model`). Input that is not a JSON object, and any crash of the guard, deny the call (the no-Fable gate fails closed).
 // Pin floor (lib/agent-pins.mjs): the agent file Claude Code loads sets a floor for its own model and effort, so a lower per-call
-// value is left out (haiku < sonnet < opus; low < ... < max); this is how each agent keeps the pin of the plan (lex, dev, dev-ui,
-// dev-pixel, dev-debug, tess-review, tess-write on Opus; lex-web, pixel-qa, tess, dev-part, tess-simple, tess-edge on Sonnet; lex-scout,
+// value is left out (haiku < sonnet < opus; low < ... < max); this is how each agent keeps the pin of the plan (lex, dev, tess, dev-ui,
+// dev-pixel, dev-debug, tess-review on Opus; lex-web, pixel-qa, dev-part, tess-write, tess-simple, tess-edge on Sonnet; lex-scout,
 // dev-run on Haiku: the frontmatter of home/agents/<name>.md). A failure there leaves the input as it is (stderr line). A rewrite is
 // allow + the full updatedInput.
 // Gates, in order (the first deny wins; each deny-once gate lets the identical call through when it is sent again):
