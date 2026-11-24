@@ -1,21 +1,16 @@
 // Tests for the compare gate of ui-coverage (lib/accepted.mjs): a failing Figma compare may be accepted only when an
-// `accepted` entry covers every finding and its owner ref is a decision the owner made (ask queue answer, or a line under
-// Standing rules / Owner decisions in a notes file). `check` runs in process with an injected readText.
+// `accepted` entry covers every finding and its owner ref is a decision the owner made (a line under Standing rules / Owner
+// decisions in a notes file; the old ask queue form fails closed). `check` runs in process with an injected readText.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { checkMatrix } from '../home/tools/ui-coverage/lib/check.mjs';
 import { formatReport } from '../home/tools/ui-coverage/lib/report.mjs';
 
-const QUEUE_DIR = '/q';
-const QUEUE = `${QUEUE_DIR}/queue.jsonl`;
 const NOTES = '/m/STATUS.md';
 const SIGN_IN = { node: '12:40', name: 'Sign in', width: 1440, cells: [{ surface: 'signin', state: 'rest', locale: 'en' }] };
 const CELL = { surface: 'signin', state: 'rest', locale: 'en' };
-const QUESTION = { type: 'q', id: 'q2', question: 'Keep the extra link on the sign in page (frame 12:40)?', why: 'It is not in Figma', options: [{ label: 'Match Figma', effect: 'remove' }, { label: 'Keep it', effect: 'keep' }], recommended: 'Match Figma', blocks: 'sign in', from: 'visual-qa' };
-const KEEP_LINK = 'Keep the extra link';
-const answerLine = (extra = {}) => JSON.stringify({ type: 'a', id: 'q2', ts: 't', answer: KEEP_LINK, ...extra });
-const queueText = (...lines) => [JSON.stringify(QUESTION), ...lines].join('\n');
 const STANDING = '- 12:40 sign in: keep a.extra-link, owner said yes on 2026-11-02';
+const ASK_FORM_GONE = 'owner.ask is no longer read (the ask queue was removed); write the decision as {status, line}';
 
 const elementFinding = (element) => ({ check: 'element', element, detail: 'is different' });
 const failRecord = (findings, extra = {}) => ({ ...CELL, width: 1440, status: 'fail', evidence: 'https://x/report', part: 'compare', findings, ...extra });
@@ -34,22 +29,17 @@ const matrixWith = (accepted) => ({
 const FRAMES_TEXT = JSON.stringify({ file: 'KEY', frames: [{ node: '12:40', name: 'Sign in', width: 1440 }] });
 function check(accepted, records, files = {}) {
   const texts = { '/m/frames.json': FRAMES_TEXT, ...files };
-  return checkMatrix(matrixWith(accepted), records, { baseDir: '/m', readText: (path) => texts[path] ?? null, queueDir: QUEUE_DIR, realPath: (path) => path });
+  return checkMatrix(matrixWith(accepted), records, { baseDir: '/m', readText: (path) => texts[path] ?? null });
 }
 const ownerWhy = (result) => result.problems.filter((p) => p.code === 'owner-ref').map((p) => p.message.replace(/^.*has no owner decision: /, '').replace(/; ask the owner or match Figma$/, ''));
 const LINK_FAIL = failRecord([elementFinding('a.extra-link')]);
 
-test('T5 owner-ref: no owner, an unanswered q2, a differing answer, a timeout answer with the matching text, and a line under another heading are not owner decisions', () => {
-  const refAsk = { ask: `${QUEUE}#q2`, answer: KEEP_LINK };
+test('T5 owner-ref: no owner, an old ask queue ref, an unreadable notes file and a line under another heading are not owner decisions', () => {
+  const queueAnswer = JSON.stringify({ type: 'a', id: 'q2', ts: 't', answer: 'Keep the extra link' });
   const cases = [
     [accept(undefined), {}, 'no owner field'],
-    [accept(refAsk), { [QUEUE]: queueText() }, 'q2 unanswered'],
-    [accept(refAsk), { [QUEUE]: queueText(answerLine({ answer: 'Match Figma' })) }, 'answer differs'],
-    [accept(refAsk), { [QUEUE]: queueText(answerLine({ by: 'timeout' })) }, 'q2 was taken by timeout, not answered by the owner'],
-    [accept(refAsk), {}, 'queue missing (copy the decision into STATUS.md Standing rules)'],
-    [accept(refAsk), { [QUEUE]: queueText(answerLine({ by: 'default' })) }, 'q2 was marked by "default", not answered by the owner'],
-    [accept(refAsk), { [QUEUE]: queueText(answerLine({ by: 'Timeout' })) }, 'q2 was marked by "Timeout", not answered by the owner'],
-    [accept({ ask: '/m/queue.jsonl#q2', answer: KEEP_LINK }), { '/m/queue.jsonl': queueText(answerLine()) }, 'queue file is outside the ask queue folder (copy the decision into STATUS.md Standing rules)'],
+    [accept({ ask: '/q/queue.jsonl#q2', answer: 'Keep the extra link' }), { '/q/queue.jsonl': queueAnswer }, ASK_FORM_GONE],
+    [accept({ status: 'STATUS.md', line: STANDING }), {}, 'STATUS.md cannot be read'],
     [accept({ status: 'STATUS.md', line: STANDING }), { [NOTES]: `## Taken by default\n${STANDING}\n` }, 'line not under those headings (## Standing rules, ## Owner decisions)'],
     [accept({ status: 'STATUS.md', line: STANDING }), { [NOTES]: `## Standing rules\nnothing here\n## Taken by default\n${STANDING}\n` }, 'line not under those headings (## Standing rules, ## Owner decisions)'],
     [accept({ status: 'STATUS.md', line: '- keep a.extra-link, owner said yes' }), { [NOTES]: '## Standing rules\n- keep a.extra-link, owner said yes\n' }, 'line does not name 12:40'],
@@ -62,10 +52,8 @@ test('T5 owner-ref: no owner, an unanswered q2, a differing answer, a timeout an
   }
 });
 
-test('T5 a matching ask answer, or a line under Standing rules or Owner decisions (also with CRLF), accepts the cell: exit 0 shape, counts and a listing', () => {
+test('T5 a line under Standing rules or Owner decisions (also with CRLF) accepts the cell: exit 0 shape, counts and a listing', () => {
   const owners = [
-    [accept({ ask: `${QUEUE}#q2`, answer: KEEP_LINK }), { [QUEUE]: queueText(answerLine()) }],
-    [accept({ ask: `${QUEUE}#q2`, answer: KEEP_LINK }), { [QUEUE]: queueText(answerLine({ answer: 'old' }), answerLine()) }],
     [accept({ status: 'STATUS.md', line: STANDING }), { [NOTES]: `# Task\n## Standing rules\n${STANDING}\n## Other\n` }],
     [accept({ status: 'STATUS.md', line: STANDING }), { [NOTES]: `## Owner decisions\r\n${STANDING}\r\n` }],
   ];
@@ -80,7 +68,7 @@ test('T5 a matching ask answer, or a line under Standing rules or Owner decision
   assert.match(lines[1], /\| pass 0 \| fail 0 \| accepted 1 \| na 0 /);
   assert.equal(lines[2], 'frames: 0/1 compared and passing, 1 accepted by the owner, 0 not built');
   assert.equal(lines[3], 'accepted by the owner (1):');
-  assert.equal(lines[4], `  signin rest en @1440 (frame 12:40) - ask ${QUEUE}#q2`);
+  assert.equal(lines[4], `  signin rest en @1440 (frame 12:40) - STATUS.md line "${STANDING}"`);
 });
 
 test('T5 an uncovered element, a percent above maxPercent, or a pixel finding with no number keeps the cell failing; a percent equal to maxPercent is covered', () => {
@@ -111,31 +99,13 @@ test('a cell that also fails in a responsive record, or was set to fail by hand,
   assert.equal(result.accepted.length, 0);
 });
 
-test('an accepted entry naming a node or a cell that frames do not map is an accepted-node problem; a bad entry is a shape problem; a queue that is not JSON lines is unanswered', () => {
+test('an accepted entry naming a node or a cell that frames do not map is an accepted-node problem; a bad entry is a shape problem', () => {
   const owner = { status: 'STATUS.md', line: STANDING };
   const elsewhere = check([accept(owner, undefined, { node: '99:9' }), accept(owner, undefined, { state: 'rest:other' })], [LINK_FAIL], { [NOTES]: `## Standing rules\n${STANDING}\n` });
   assert.deepEqual(elsewhere.problems.filter((p) => p.code === 'accepted-node').length, 2);
   assert.ok(elsewhere.problems.some((p) => p.code === 'fail'));
   const bad = check([accept(owner, [])], [LINK_FAIL]);
   assert.deepEqual(bad.problems.map((p) => p.code), ['shape']);
-  const garbage = check([accept({ ask: `${QUEUE}#q2`, answer: KEEP_LINK })], [LINK_FAIL], { [QUEUE]: 'not json\n{"half"\n\u0000\u0000' });
-  assert.deepEqual(ownerWhy(garbage), ['q2 unanswered']);
-  assert.deepEqual(ownerWhy(check([accept({ ask: 'no-hash-here', answer: 'x' })], [LINK_FAIL])), ['owner.ask must look like <queue path>#q2']);
-});
-
-test('an answered question that does not name the frame is not the owner\'s decision for it; a longer node id in the question or the line does not count', () => {
-  const unrelated = { ...QUESTION, id: 'q1', question: 'Proceed with the build now, yes or no?' };
-  const ref = { ask: `${QUEUE}#q1`, answer: 'Yes' };
-  const queue = [JSON.stringify(unrelated), JSON.stringify({ type: 'a', id: 'q1', ts: 't', answer: 'Yes' })].join('\n');
-  assert.deepEqual(ownerWhy(check([accept(ref)], [LINK_FAIL], { [QUEUE]: queue })), ['q1 does not name frame 12:40']);
-  const longer = JSON.stringify({ ...unrelated, question: 'Keep the extra link on frame 12:401 or 112:40?' });
-  assert.deepEqual(ownerWhy(check([accept(ref)], [LINK_FAIL], { [QUEUE]: [longer, JSON.stringify({ type: 'a', id: 'q1', ts: 't', answer: 'Yes' })].join('\n') })), ['q1 does not name frame 12:40']);
-});
-
-test('a queue file reached through a link out of the ask folder is outside it (the real path is judged)', () => {
-  const linked = { ...matrixWith([accept({ ask: `${QUEUE}#q2`, answer: KEEP_LINK })]) };
-  const result = checkMatrix(linked, [LINK_FAIL], { baseDir: '/m', readText: (path) => ({ '/m/frames.json': FRAMES_TEXT, '/elsewhere/real.jsonl': queueText(answerLine()) })[path] ?? null, queueDir: QUEUE_DIR, realPath: (path) => (path === QUEUE ? '/elsewhere/real.jsonl' : path) });
-  assert.deepEqual(ownerWhy(result), ['queue file is outside the ask queue folder (copy the decision into STATUS.md Standing rules)']);
 });
 
 test('a Standing rules line names the node only as a whole token (12:4 vs 12:40, 112:4, 12:4;5:6)', () => {

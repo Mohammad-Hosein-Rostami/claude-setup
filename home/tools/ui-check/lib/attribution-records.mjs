@@ -9,7 +9,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import pngjs from 'pngjs';
-import { askDir } from '../../ask/lib/store.mjs';
 import { pixelAcceptances } from '../../ui-coverage/lib/accepted.mjs';
 import { acceptedBox, attributePixels, CLASSES, CLASS_LABELS, leftoverPixels, textScopeBoxes } from './attribution.mjs';
 import { exitCodeFor, writeBatchResults } from './batch-records.mjs';
@@ -57,8 +56,7 @@ export function acceptanceContext(matrixFile) {
   } catch (error) {
     throw new UsageError(`--accepted ${matrixFile}: ${error.message}`);
   }
-  const realPath = (file) => orNull(() => fs.realpathSync.native(file));
-  return { matrix, files: { baseDir: path.dirname(path.resolve(matrixFile)), readText: (file) => orNull(() => fs.readFileSync(file, 'utf8')), queueDir: realPath(askDir()), realPath } };
+  return { matrix, files: { baseDir: path.dirname(path.resolve(matrixFile)), readText: (file) => orNull(() => fs.readFileSync(file, 'utf8')) } };
 }
 
 const fresh = (file, than) => fs.existsSync(file) && fs.statSync(file).mtimeMs >= fs.statSync(than).mtimeMs;

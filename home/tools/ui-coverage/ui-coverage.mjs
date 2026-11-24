@@ -14,9 +14,8 @@
 // Exit codes: 0 ok / matrix complete, 1 problems found, 2 usage or setup error (bad flag, unreadable or invalid JSON file).
 // Invariants: logic lives in lib/ (pure); this file only parses arguments, reads and writes files and prints. `check`
 // never writes; it resolves relative evidence and mountedAt paths from the matrix file's directory (or its `root`). `expand` refuses to write a structurally broken matrix (exit 1, problems on stderr).
-import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
-import { askDir } from '../ask/lib/store.mjs';
 import { checkMatrix } from './lib/check.mjs';
 import { expandMatrix } from './lib/cells.mjs';
 import { readFramesFile } from './lib/frames.mjs';
@@ -175,21 +174,12 @@ const readText = (path) => {
   }
 };
 
-// The real path of a file or folder, or null when it does not exist (a missing queue is a problem line, not an error).
-const realPath = (path) => {
-  try {
-    return realpathSync.native(path);
-  } catch {
-    return null;
-  }
-};
-
 function check(argv) {
   const { flags, positional } = parseArgs(argv, ['--results'], ['--verbose']);
   const path = matrixPath(positional);
   const matrix = readJson(path);
   const records = flags['--results'].flatMap(recordsFrom);
-  const result = checkMatrix(matrix, records, { baseDir: dirname(path), fileExists: isFile, readText, queueDir: realPath(askDir()), realPath, conditions: projectConditions(dirname(resolve(path))) });
+  const result = checkMatrix(matrix, records, { baseDir: dirname(path), fileExists: isFile, readText, conditions: projectConditions(dirname(resolve(path))) });
   console.log(formatReport(result, { verbose: flags['--verbose'].length > 0 }));
   return result.problems.length === 0 ? 0 : EXIT_PROBLEMS;
 }

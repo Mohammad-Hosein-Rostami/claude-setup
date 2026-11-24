@@ -1,7 +1,7 @@
 // T11: replay of a real two-day auth UI job. The fixture in fixtures/ui-coverage/replay-auth/ is the state that was handed
 // to the owner as done: 4 template surfaces x en,fa at 1440 whose rest cells pass on probe evidence, 8 Figma frames of which
 // 2 were never listed, 1 maps to no cell and 2 mapped ones have no compare record, 2 failing compares, and an accepted
-// difference whose ask-queue decision was never answered. `check` must refuse it, naming each miss.
+// difference backed only by an ask-queue ref (a form no longer read). `check` must refuse it, naming each miss.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -21,6 +21,6 @@ test('T11 the replayed auth job exits 1 with frame-missing, frame-unmapped, no-c
   assert.equal(codes('frame-unmapped').length, 1);
   assert.equal(codes('no-compare').length, 2);
   assert.equal(codes('owner-ref').length, 1);
-  assert.match(codes('owner-ref')[0], /queue file is outside the ask queue folder/, 'a queue file kept beside the matrix is not the ask queue folder');
+  assert.match(codes('owner-ref')[0], /owner\.ask is no longer read/, 'an ask queue ref is no owner decision');
   assert.equal(codes('fail').length, 2, 'the unaccepted difference and the pixel difference both still fail');
 });

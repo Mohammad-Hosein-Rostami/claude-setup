@@ -7,7 +7,7 @@ A matrix says which surfaces x locales x widths x states must be checked. These 
 - `states.mjs`: the one list of default states for each kind of control (hover, open, error, ...).
 - `cells.mjs`: the set of cells the matrix demands, expanding it into `todo` cells, and merging `ui-check` results into it.
 - `frames.mjs`: the Figma frame inventory of `check` (frames file, unmapped and missing frames, compare records) and the `frames:` report line.
-- `accepted.mjs`: which failing compare cells the owner accepted, and whether the owner ref (ask queue answer or STATUS.md line) is a real owner decision.
+- `accepted.mjs`: which failing compare cells the owner accepted, and whether the owner ref (a notes file line under the owner headings) is a real owner decision.
 - `reuse.mjs`: proves a control really uses the component the matrix names (the `mountedAt` line).
 - `check.mjs`: the `check` command's logic: validate, merge results, list every reason the matrix is not done.
 - `group.mjs`: groups failing cells by kind and cause, so many failures print as a few groups.
