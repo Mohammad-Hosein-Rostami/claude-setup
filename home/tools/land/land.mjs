@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Purpose: land one lane on its base branch with one command: rebase the lane onto the base, optionally test the rebased tip,
-//   fast-forward the base checkout to it, then delete the lane's worktree and branch. It runs no review.
+//   fast-forward the base checkout to it, then delete the lane's worktree and branch, then every other branch provably done
+//   (folded into the lane, or merged) and print what is left and why (sweep.mjs). It runs no review.
 // Usage: node ~/.claude/tools/land/land.mjs <branch> [--repo <path>] [--test <command>] [--test-timeout <seconds>]
 //   --repo is the base checkout (the folder where the base branch is checked out), default the current folder; the base is the
 //   branch checked out there. --test runs <command> in the lane's worktree at the rebased tip; a failing test refuses the land.
@@ -18,12 +19,17 @@
 //   it, and a base that moved meanwhile is refused. A rebase that stops is aborted, so the lane is left as it was.
 // - Never pushes and never forces: a locked worktree is unlocked, then removed with `git worktree remove`; the branch goes with
 //   `git branch -d`. Git runs without a shell and without the variables that pick a repository (../git-tidy/lib/git.mjs).
+// - The lane's history (its reflog since its newest reset) is read before anything moves it and recorded in the landing log
+//   (../git-tidy/lib/landed-log.mjs) right after the fast-forward, before any removal: deleting the branch deletes its reflog,
+//   the only proof of what was folded into it. A record that cannot be written is printed; the landing stands.
 import { realpathSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { UsageError, gitFlag, gitText, runGit } from '../git-tidy/lib/git.mjs';
+import { readLaneHistory, recordLanding } from '../git-tidy/lib/landed-log.mjs';
 import { listWorktrees } from '../git-tidy/lib/repo.mjs';
 import { LandRefusal, firstLine, refuseUnclean } from './refusal.mjs';
 import { MAX_TIMEOUT_SECONDS } from './run-test.mjs';
+import { sweepRepo } from './sweep.mjs';
 import { overlappingFiles, testRebasedTip } from './test-gate.mjs';
 
 const USAGE = 'usage: node ~/.claude/tools/land/land.mjs <branch> [--repo <path>] [--test <command>] [--test-timeout <seconds>]';
@@ -140,6 +146,25 @@ function removeLane({ dir, base }, branch, worktree, tip) {
   return done;
 }
 
+/** Records the landing (landed-log.mjs); returns null, or the line to print when it cannot be written (the lane has landed). */
+function saveLanding(dir, history, details) {
+  try {
+    recordLanding(dir, history, details);
+    return null;
+  } catch (error) {
+    return `land: the landing record could not be written (${error.message}); branches folded into ${history.branch} stay`;
+  }
+}
+
+/** The clean-up of the other branches (sweep.mjs); an unexpected failure says the lane itself has landed. */
+function sweepAfter(checkout, branch, tip) {
+  try {
+    return sweepRepo(checkout);
+  } catch (error) {
+    throw new LandRefusal(`${branch} landed on ${checkout.base} at ${tip} and was removed, but the clean-up of other branches stopped: ${error.message}`);
+  }
+}
+
 /** Lands `branch` on the base checked out at `repo`, printing one line per step. Throws LandRefusal when it refuses or stops. */
 async function land({ branch, repo, test, testTimeoutSeconds }) {
   const checkout = openBase(repo);
@@ -147,6 +172,8 @@ async function land({ branch, repo, test, testTimeoutSeconds }) {
   const worktree = findLane(checkout, branch);
   if (worktree !== null) refuseUnclean(`the worktree of ${branch}`, worktree.path);
   const baseSha = gitText(checkout.dir, ['rev-parse', '--verify', `${HEADS}${checkout.base}^{commit}`]);
+  // Read before anything moves the lane: the test gate's `switch -C` would end its history with a reset.
+  const history = readLaneHistory(checkout.dir, branch, baseSha);
   // Read before the rebase, which moves the lane's branch point to the base's tip.
   const overlap = overlappingFiles(checkout, branch, baseSha);
   const tip = test === null && overlap.length === 0
@@ -155,7 +182,10 @@ async function land({ branch, repo, test, testTimeoutSeconds }) {
   fastForward(checkout, branch, { baseSha, tip });
   const count = gitText(checkout.dir, ['rev-list', '--count', `${baseSha}..${tip}`]);
   console.log(`landed ${branch} on ${checkout.base} at ${tip} (${count} commit(s))`);
+  const unsaved = saveLanding(checkout.dir, history, { base: checkout.base, landedTip: tip });
+  if (unsaved !== null) console.error(unsaved);
   for (const line of removeLane(checkout, branch, worktree, tip)) console.log(line);
+  for (const line of sweepAfter(checkout, branch, tip)) console.log(line);
 }
 
 async function main(argv) {
