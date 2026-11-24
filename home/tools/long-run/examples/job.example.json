@@ -1,0 +1,19 @@
+{
+  "name": "docs-cleanup",
+  "model": "claude-opus-5-5",
+  "effort": "high",
+  "cwd": "/Users/you/Desktop/some-repo",
+  "loopGuards": { "maxAttempts": 3, "maxStarts": 10 },
+  "retry": { "firstDelaySeconds": 60, "factor": 4, "maxDelaySeconds": 1800 },
+  "maxParallel": 3,
+  "steps": [
+    { "id": "plan", "prompt": "Plan the docs cleanup of this repo; commit the plan as docs/cleanup-plan.md." },
+    { "id": "pages", "worktree": true, "parallel": [
+        { "id": "guide", "prompt": "Rewrite docs/guide.md per docs/cleanup-plan.md." },
+        { "id": "api", "promptFile": "prompts/api.md" }
+    ] },
+    { "id": "build", "promptFile": "prompts/build.md", "check": { "command": "node --test tests/*.test.mjs" },
+      "next": { "failed": "fix" } },
+    { "id": "fix", "prompt": "The tests fail after the docs work; fix them.", "next": { "done": "build" } }
+  ]
+}

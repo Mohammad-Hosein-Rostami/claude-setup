@@ -49,8 +49,9 @@ import * as tools from './install/tools.mjs';
  */
 // lead.md and lead-rules.md left the list (plan 2026-11-24): removeRetiredLinks removes their recorded links on the next install.
 export const LINKS = ['CLAUDE.md', 'rules', 'skills', 'agents', 'standards', 'hooks', 'tools', 'project-notes', 'statusline.mjs'];
-// Tools with npm dependencies: ui-check (odiff-bin, pngjs) and env-names (yaml). scripts/lane-new.sh reads this line.
-export const TOOLS_WITH_DEPS = ['ui-check', 'env-names'];
+// Tools with npm dependencies: ui-check (odiff-bin, pngjs), env-names (yaml) and long-run (LangGraph.js, its SQLite checkpointer with
+// the native better-sqlite3, zod). scripts/lane-new.sh reads the list line below.
+export const TOOLS_WITH_DEPS = ['ui-check', 'env-names', 'long-run'];
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
