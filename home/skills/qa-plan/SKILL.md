@@ -22,7 +22,7 @@ Write the plan into the detail file before the first check runs.
    | dependencies | `<pm> audit --prod` at high severity (network: `not run (network)` when offline); lockfile diff: new packages, `hasInstallScript`, widened ranges, a new registry or a git or URL source; osv-scanner when installed |
    | security class | `standards/security.md` S1-S11 against the diff; gitleaks on the range when installed (`gitleaks git --log-opts="<base>..<tip>" --redact`) |
    | UI, non-pixel | ui-quality-pass items 1-8 read against the diff; the project's a11y or e2e tests; `ui-check responsive` at 320, 768, 1280 only when the brief gives a URL |
-   | tests only | run them; the "can it fail" check (tess step 7) |
+   | tests only | run them; the "can it fail" check (tess, "Verify tess-write's tests") |
    | docs or text only | none (links: `node ~/.claude/tools/refs/refs.mjs check .` when the repo uses it) |
    | AI setup or CI | the repo's own tests for them; review on the gate class |
 
@@ -32,7 +32,8 @@ Write the plan into the detail file before the first check runs.
 7. Edge-case list by what changed: input parsing (empty, missing, huge, unicode, hostile names), paths (spaces, Windows `\`,
    symlinked `~/.claude`), files and state (two runs at once, crash midway, stale lock or temp file), time (`datetime-handling`),
    error paths (a failed read taken as empty), upgrade and rollback (old data, old config). Each probe names what it touches and
-   runs with a temporary `HOME`, never the real `~/.claude`, a real database or a live system.
+   runs with a temporary `HOME`, `USERPROFILE` and `TMPDIR` (`mktemp -d`), never the real `~/.claude`, a real database or a
+   live system.
 8. Test-file changes inside a code diff: list each edited or deleted assertion and each new skip, `.only`, `todo` or raised timeout
    as a finding candidate (agents edit tests to pass them).
 9. Order: cheap and narrow first (typecheck, lint, related tests), then build and suite. Run every planned check; never stop at the

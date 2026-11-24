@@ -49,7 +49,7 @@ long edge, never a full page at device pixel ratio 2; a crop explains a row, PAS
    (a diagnostic state), plus a "settled, do not report again" list for the owner. No owner approval during the work: the final
    report lists every accepted difference with its reason, and the owner checks them when the work is done.
 
-The UI lane owns the batch loop (step 7); pixel-qa runs the independent final gate on the tree that lands (the lane rebased onto
+The UI lane owns the batch loop; pixel-qa runs the independent final gate on the tree that lands (the lane rebased onto
 the current base; same matrix, URL, widths), writes the review page (`ui-proof review-page`) and only its PASS counts
 (`ui-proof check` holds it). A pixel-qa failure goes back to the UI lane's loop.
 

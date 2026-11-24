@@ -18,8 +18,8 @@ description: Use when reviewing a diff, or before returning a risky lane - check
    - gate: can a check pass when it should block, block forever, be switched off by what it checks, or read an error as a pass?
    - large: which part has no acceptance line, and does it still do what the spec says? A removal: does a shared callee lose its
      only test, does a deleted file live on under a new path, does every consumer of a changed shape still get its fields?
-4. Tests: do they fail when the code is broken (Google: "false positives")? Test edits in the diff (qa-plan step 8). The vacuous
-   patterns of test-writing step 7.
+4. Tests: do they fail when the code is broken (Google: "false positives")? Test edits in the diff (qa-plan step 8). Test-writing's
+   vacuous patterns.
 5. Classes that recurred before:
    - Kinder fakes: a test double that forgives what the real dependency does not; probe through the real service.
    - Vacuous tests: both sides from one function, always-true disjuncts, preconditions never reached, `includes(a) || includes(b)`,
