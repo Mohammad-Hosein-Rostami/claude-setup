@@ -1,6 +1,7 @@
 // Tests for "any max running makes outward asks click-only" (plan M2b, case 4): a max in any session of this machine (its record under
 // HOME/.claude/state/main-agents) makes every outward ask anywhere run only after a click; a record that cannot be read fails closed;
-// only the newest MAX_SESSION_FILES files are read; planted names, links and folders are skipped (lib/main-agents-store.mjs anyRunning).
+// every session file is read, whatever its age, and a store of more than MAX_SESSION_FILES files is unusable; planted names, links and
+// folders are skipped (lib/main-agents-store.mjs anyRunning).
 // The store is written by hand under a temp HOME; the hook runs with a fake dialog tool.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -90,31 +91,40 @@ test('anyRunning skips a folder and a link with a session name (only plain files
   assert.equal(anyRunning('max', env), 'no');
 });
 
-/** MAX_SESSION_FILES + `extra` session files, the max record the oldest by mtime, every other file an empty record. */
-function storeWithOldestMax(extra) {
+const OLD_NEWEST_READ = 64; // the earlier rule read only the 64 newest files, so a store one file bigger shows the whole store is read
+const MINUTE_MS = 60_000;
+
+/** `total` session files one minute apart, the max record the oldest or the newest by mtime, every other file an empty record. */
+function storeWithMax(total, maxAt) {
   const env = isolatedEnv();
   const now = Date.now();
-  const total = MAX_SESSION_FILES + extra;
+  const maxIndex = maxAt === 'oldest' ? 0 : total - 1;
   for (let i = 0; i < total; i++) {
-    const file = i === 0 ? writeRecord(env.HOME, 'session-max', runningMax(now)) : writeRecord(env.HOME, `session-${String(i).padStart(4, '0')}`, stoppedMax());
-    const seconds = (now - (total - i) * 60_000) / 1000; // file 0 (the max) is the oldest; one minute apart
+    const file = i === maxIndex ? writeRecord(env.HOME, 'session-max', runningMax(now)) : writeRecord(env.HOME, `session-${String(i).padStart(4, '0')}`, stoppedMax());
+    const seconds = (now - (total - i) * MINUTE_MS) / 1000; // file 0 is the oldest
     utimesSync(file, seconds, seconds);
   }
   return env;
 }
 
-test('anyRunning reads the newest MAX_SESSION_FILES files: a max among them counts, one older than all of them is not read', () => {
-  assert.equal(MAX_SESSION_FILES, 64);
-  assert.equal(anyRunning('max', storeWithOldestMax(0)), 'yes');
-  assert.equal(anyRunning('max', storeWithOldestMax(1)), 'no');
+test('anyRunning reads the whole store of up to MAX_SESSION_FILES files: a max older than every other file still counts', () => {
+  assert.equal(anyRunning('max', storeWithMax(OLD_NEWEST_READ + 1, 'oldest')), 'yes');
+  assert.equal(anyRunning('max', storeWithMax(MAX_SESSION_FILES, 'oldest')), 'yes');
 });
 
-test('anyRunning: a corrupt file older than the newest MAX_SESSION_FILES is not read, so it does not make the store unusable', () => {
-  const env = storeWithOldestMax(1);
+test('anyRunning: a store of more than MAX_SESSION_FILES session files is "unusable", even with the max record the newest of them', () => {
+  assert.equal(anyRunning('max', storeWithMax(MAX_SESSION_FILES + 1, 'newest')), 'unusable');
+  assert.equal(anyRunning('max', storeWithMax(MAX_SESSION_FILES + 1, 'oldest')), 'unusable');
+});
+
+test('anyRunning: a corrupt file older than every other file of a store within MAX_SESSION_FILES makes the store "unusable"', () => {
+  const env = isolatedEnv();
+  const now = Date.now();
+  for (let i = 0; i < OLD_NEWEST_READ + 1; i++) writeRecord(env.HOME, `session-${String(i).padStart(4, '0')}`, stoppedMax());
   const corrupt = writeRaw(env.HOME, 'session-corrupt.json', 'not json');
-  const old = (Date.now() - 1000 * 60_000) / 1000;
+  const old = (now - 1000 * MINUTE_MS) / 1000; // far older than the empty records written just now
   utimesSync(corrupt, old, old);
-  assert.equal(anyRunning('max', env), 'no');
+  assert.equal(anyRunning('max', env), 'unusable');
 });
 
 test('hook: a max running in another session makes a deploy from dev click-only (a full timeout denies)', () => {
