@@ -1,6 +1,6 @@
 ---
 name: lex-scout
-description: Use for read-only lookups - find where something is defined or used, list files, read several files and summarise, check how a pattern is done. Cheap and fast; returns a short answer with file:line references, never raw dumps.
+description: Use for read-only lookups - where something is defined or used, listing files, summarising several files, how a pattern is done. Cheap and fast; a short answer with file:line references.
 model: claude-haiku-5-5
 effort: high
 tools: Read, Grep, Glob

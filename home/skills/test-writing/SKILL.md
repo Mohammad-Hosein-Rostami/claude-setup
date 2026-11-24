@@ -1,6 +1,6 @@
 ---
 name: test-writing
-description: Use when writing or changing tests - new behaviour, a bug repro, a regression guard or a gap tess found: the project's runner and conventions, the right level, a failing test first for a bug, no weakened tests.
+description: Use when writing or changing tests - new behaviour, a bug repro, a regression guard or a gap tess found; the project's runner and conventions, the right level, a failing test first for a bug, no weakened tests.
 ---
 
 1. Find the runner and conventions: test script, config, two neighbouring test files (naming, folders, helpers, fixtures). Add no

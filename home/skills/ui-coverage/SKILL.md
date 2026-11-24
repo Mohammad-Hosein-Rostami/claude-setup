@@ -1,6 +1,6 @@
 ---
 name: ui-coverage
-description: Use for any UI task with more than one component, any Figma or pixel-perfect work, any "all screens / all forms / everywhere" request, and any i18n or RTL work - build a coverage matrix of surfaces x states x locales, gate it with ui-coverage check, hand over a live page.
+description: Use for UI work across several components, screens or locales (all screens, i18n, RTL), Figma work included - a coverage matrix of surfaces x states x locales, gated by ui-coverage check, and a live review page.
 ---
 
 Where the check plan (`ui-proof plan`, `standards/ui-checks.md`) is visual or pixel, the matrix, `ui-coverage check` and every compare

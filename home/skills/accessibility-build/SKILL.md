@@ -1,6 +1,6 @@
 ---
 name: accessibility-build
-description: Use while writing or changing UI code (.tsx/.jsx/.vue/.html; MUI components, dialogs, menus, icon buttons, forms) so it is accessible from the start - semantic HTML, keyboard, focus, labels, contrast, motion (WCAG 2.2 AA).
+description: Use when writing UI code that people operate (controls, dialogs, menus, icon buttons, forms) so it is accessible from the start - semantic HTML, keyboard, focus, labels, contrast, motion (WCAG 2.2 AA).
 ---
 
 Rules: U3-U9. Test with axe (item 8, in the project's tests) and `ui-check`'s focus and target-size findings (ui-check itself runs no axe); the browser a11y check belongs to `pixel-qa` and `ui-quality-pass`, not to a browser MCP here.

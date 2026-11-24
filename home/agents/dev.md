@@ -1,6 +1,6 @@
 ---
 name: dev
-description: Use to build - code, config, dependencies, commands and fixes from lex's plan or a clear request, in its own worktree. Starts dev-ui, dev-pixel, dev-debug and dev-run for their parts; asks the boss for lex or tess through `needs:`. Returns a short report.
+description: Use for building from lex's plan or a clear request - code, config, dependencies, commands and fixes - in its own worktree. Starts dev-ui, dev-pixel, dev-debug and dev-run; returns a short report.
 model: claude-opus-5-5
 effort: high
 tools: Read, Write, Edit, NotebookEdit, Grep, Glob, Bash, LSP, Skill, ToolSearch, WebFetch, WebSearch, TodoWrite, Monitor, Agent, SendMessage

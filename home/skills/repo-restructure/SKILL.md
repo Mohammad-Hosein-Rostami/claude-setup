@@ -1,6 +1,6 @@
 ---
 name: repo-restructure
-description: Use when restructuring a whole repository - removing a build tool or layer (Nx, module federation, a monorepo tool), merging or moving apps and packages, deleting dead folders, scripts, plans or old configs, or rebuilding CI, Docker and deploy for a new layout.
+description: Use when restructuring a whole repository - removing a build tool or layer (Nx, module federation), merging or moving apps and packages, deleting dead folders and old configs, rebuilding CI and deploy.
 ---
 
 Goal: the same product in a simpler layout. Nothing the owner did not name disappears, and every config still points at something real.

@@ -1,6 +1,6 @@
 ---
 name: review-checklist
-description: Use when reviewing a change, or before returning a risky lane - checks a diff against its spec, acceptance lines and threat model, by risk class; skips style and taste.
+description: Use when reviewing a diff, or before returning a risky lane - checks it against its spec, acceptance lines and threat model by risk class; skips style and taste. Which checks to run is qa-plan.
 ---
 
 1. Read: the spec, acceptance and `THREAT:` line first. Then the diff once, each changed file in full, and the callers and callees

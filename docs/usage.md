@@ -9,15 +9,14 @@ something looks off.
 Keep every file valid at each commit: the files are live in every Claude session on this machine.
 
 ## Add a skill
-1. `home/skills/<name>/SKILL.md` with frontmatter `name` and a one-line `description` that starts "Use when ..."
-   (the description is loaded in every session: keep it short), except explicit-invoke skills (`handoff`),
-   which describe the command instead. Optional: `model`, `disable-model-invocation: true`
-   for slash-command-only skills.
+1. `home/skills/<name>/SKILL.md` with frontmatter `name` and a one-line `description` that starts "Use when ..." or
+   "Use for ..." and stays near 200 characters (it is loaded in every session). Optional: `model`,
+   `disable-model-invocation: true` for slash-command-only skills.
 2. Body: numbered steps, a done-gate, rule ids it enforces; link a `standards/` file instead of inlining long reference.
 3. Add the row to `docs/catalog.md` (edit by hand, copying the description verbatim from the frontmatter).
 
 ## Add an agent
-`home/agents/<name>.md` with frontmatter `name`, `description` ("Use to ..."), `model` (alias `haiku`, `sonnet` or `opus`, or a full id such as `claude-opus-5-5`), `effort`,
+`home/agents/<name>.md` with frontmatter `name`, `description` ("Use when ..." or "Use for ...", near 200 characters), `model` (alias `haiku`, `sonnet` or `opus`, or a full id such as `claude-opus-5-5`), `effort`,
 optional `tools`/`disallowedTools`. State what it returns and a size cap. Add a routing line to
 `home/CLAUDE.md` if it changes who does what. Add it to `docs/catalog.md`. No `maxTurns`: at the cap the agent stops and returns a partial result that has to be resumed; keep it focused through its prompt instead.
 

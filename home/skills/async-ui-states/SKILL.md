@@ -1,6 +1,6 @@
 ---
 name: async-ui-states
-description: Use for any screen that loads or changes server data, or whose first screen depends on sign-in, role or saved progress - loading, empty, error, offline, stale responses, pagination, search-as-you-type, no wrong screen before a redirect.
+description: Use for a screen that loads or changes server data, or whose first screen depends on sign-in, role or saved progress - loading, empty, error, offline, stale responses, pagination, search-as-you-type.
 ---
 
 1. Every data view has five states, all designed and tested: loading (skeleton the size of the real content), empty (says what to do next), error (says what failed, with Retry), partial/stale, success. Offline shows a clear message (`navigator.onLine` plus failed fetch) and retries.

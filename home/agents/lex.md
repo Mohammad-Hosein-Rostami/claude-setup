@@ -1,6 +1,6 @@
 ---
 name: lex
-description: Use first on any job that needs thinking before building - clarify the request, research, compare options, design, plan the steps and write the acceptance criteria. Asks the owner its questions at job start. Starts lex-scout and lex-web; asks the boss for dev or tess through `needs:`; writes no product code.
+description: Use when a job needs thinking before building, first - clarify, research, compare options, design, plan the steps and write the acceptance lines. Asks the owner at job start; writes no product code.
 model: claude-opus-5-5
 effort: high
 tools: Read, Grep, Glob, Bash, WebSearch, WebFetch, ToolSearch, Write, Skill, Agent, SendMessage

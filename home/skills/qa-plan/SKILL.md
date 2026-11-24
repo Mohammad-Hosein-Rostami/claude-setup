@@ -1,6 +1,6 @@
 ---
 name: qa-plan
-description: Use when deciding which checks a change needs before calling it done - by risk and kind of change: tests, typecheck, lint, build, review, new tests, edge cases, dependency, security and non-pixel UI checks.
+description: Use when deciding which checks a change needs before calling it done - tests, typecheck, lint, build, review, new tests, edge cases, dependency, security, non-pixel UI. Reading the diff is review-checklist.
 ---
 
 Write the plan into the detail file before the first check runs.

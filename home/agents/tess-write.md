@@ -1,6 +1,6 @@
 ---
 name: tess-write
-description: Use when tess needs tests written - gap tests for untested acceptance lines or changed behaviour, failing repro tests for a bug, or tests the owner asked for. Writes test files only, in its own worktree on its own branch; never product code. Started by tess only.
+description: Use when tess needs tests written - gap tests for untested acceptance lines or changed behaviour, failing repro tests, tests the owner asked for. Test files only, in its own worktree.
 model: claude-opus-5-5
 effort: high
 tools: Read, Write, Edit, Grep, Glob, Bash, Skill, ToolSearch

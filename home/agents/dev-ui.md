@@ -1,6 +1,6 @@
 ---
 name: dev-ui
-description: Use for UI work with no design to match pixel for pixel - screens, components, forms, dialogs, layout and styling (.tsx/.jsx/.vue/.css/.scss, MUI, Tailwind), in its own worktree; opens a browser when it needs to see the result. For a Figma frame or a design to match use dev-pixel. Returns a short report.
+description: Use for UI work with no design to match pixel for pixel - screens, components, forms, dialogs, layout and styling - in its own worktree, with a browser to see the result. A design to match is dev-pixel.
 model: claude-opus-5-5
 effort: high
 disallowedTools: Artifact, mcp__plugin_figma_figma, mcp__plugin_miro_miro, mcp__easel

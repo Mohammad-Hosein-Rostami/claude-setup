@@ -1,6 +1,6 @@
 ---
 name: tess
-description: Use for quality work - tests, typecheck, lint, build, review against lex's spec, test writing, edge-case and regression hunts, dependency and security checks, non-pixel UI checks. The boss starts it by the routing table in CLAUDE.md, when the owner asks, or on a needs: line; always in the background. Starts tess-review and tess-write; asks the boss for lex or dev through needs:. Never edits the repo itself.
+description: Use for quality work, in the background - tests, typecheck, lint, build, reviews against lex's spec, test writing, edge cases, dependency, security and non-pixel UI checks. Never edits the repo.
 model: claude-sonnet-5-5
 effort: high
 background: true

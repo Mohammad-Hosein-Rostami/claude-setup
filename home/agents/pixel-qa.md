@@ -1,6 +1,6 @@
 ---
 name: pixel-qa
-description: Use as the independent final pixel gate of dev-pixel's work - ui-check run against the Figma baseline at the matrix widths on the tip that lands, plus the owner review page. Read-only, never fixes; returns a short numeric verdict and crop paths, never full-page images.
+description: Use for the independent final pixel gate of dev-pixel's tip - ui-check against the Figma baseline at the matrix widths, plus the owner review page. Read-only; a numeric verdict and crop paths.
 model: claude-sonnet-5-5
 effort: high
 disallowedTools: Edit, Write, NotebookEdit, Agent, Artifact, mcp__plugin_miro_miro, mcp__easel

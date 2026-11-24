@@ -1,6 +1,6 @@
 ---
 name: git-linear-history
-description: Use before integrating a branch, pulling, or landing parallel lanes, and whenever the owner asks to clean up git - merge commits, tangled or leftover branches, old worktrees, a messy graph. History is one straight line - rebase, never merge.
+description: Use when integrating a branch, pulling or landing lanes, or when the owner asks to clean up git (merge commits, tangled or leftover branches, old worktrees). History stays one line - rebase, never merge.
 ---
 
 Goal: `git log --graph` of the base branch is one line of small Conventional Commits, and no branch or worktree outlives its work (C37).

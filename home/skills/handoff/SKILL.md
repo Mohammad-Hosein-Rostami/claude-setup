@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Write a compact handoff note so work can continue in a fresh session after /clear. Use at a phase change, after repeated compactions, before /clear, or when the user says handoff or continue later.
+description: Use when work must carry over to a fresh session - at a phase change, after repeated compactions, before /clear, or when the user says handoff or continue later. Writes a compact HANDOFF.md.
 effort: low
 ---
 

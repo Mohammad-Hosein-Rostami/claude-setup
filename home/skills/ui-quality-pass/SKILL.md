@@ -1,6 +1,6 @@
 ---
 name: ui-quality-pass
-description: Use before saying any UI component, page, screen, step or dialog is done or fixed, including small tweaks and work a subagent did - tokens, semantics, keyboard, contrast, responsive, async states, copy.
+description: Use when any UI component, page, screen, step or dialog is about to be called done or fixed, small tweaks and subagent work included - the final pass over tokens, semantics, keyboard, contrast, responsive, copy.
 ---
 
 Runs with no switch before saying a UI piece is done, at the depth the check plan asks (`ui-proof plan`, `standards/ui-checks.md`):

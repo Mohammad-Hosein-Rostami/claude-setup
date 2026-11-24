@@ -1,6 +1,6 @@
 ---
 name: ask-owner
-description: Use when a decision is the owner's (scope, money, irreversible or outward-facing actions, credentials, real trade-offs), or when an agent returns a `questions:` block - how to word the question and ask it.
+description: Use when a decision is the owner's (scope, money, irreversible or outward-facing actions, credentials, real trade-offs), or when an agent returns a `questions:` block - how to word and ask them.
 ---
 
 Only the main session (the boss) can call AskUserQuestion; agents cannot. Ask the moment a decision comes up and

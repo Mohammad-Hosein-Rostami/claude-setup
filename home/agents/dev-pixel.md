@@ -1,6 +1,6 @@
 ---
 name: dev-pixel
-description: Use when a Figma link, frame or node, or a design to match pixel for pixel, is part of the job - builds it in its own worktree, compares screenshots and diffs at every width in a real browser, loops until every state matches, then starts pixel-qa as the independent final gate. Returns a short numeric verdict.
+description: Use when a Figma frame or a design must be matched pixel for pixel - builds in its own worktree, compares in a real browser at every width until every state passes, then starts pixel-qa.
 model: claude-opus-5-5
 effort: high
 disallowedTools: Artifact, mcp__plugin_miro_miro, mcp__easel

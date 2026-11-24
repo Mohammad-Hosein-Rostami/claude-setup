@@ -1,6 +1,6 @@
 ---
 name: dev-debug
-description: Use for hard bugs - after one honest fix attempt failed, when the failure is intermittent or flaky, spans packages, or its cause is unclear. Finds the root cause with evidence and applies the minimal fix in its own worktree; never rewrites code at length.
+description: Use for hard bugs - after one honest fix failed, or when the failure is flaky, spans packages or has an unclear cause. Finds the root cause with evidence and fixes it small in its own worktree.
 model: claude-opus-5-5
 effort: xhigh
 tools: Read, Write, Edit, Grep, Glob, Bash, LSP, Skill, ToolSearch, TodoWrite, Monitor, Agent

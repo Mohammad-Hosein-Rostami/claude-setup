@@ -1,6 +1,6 @@
 ---
 name: figma-pixel-perfect
-description: Use whenever a task has a Figma link, frame or node id, or says match the design / pixel perfect - pull the baseline, build, compare with ui-check, fix until it passes, then check responsive.
+description: Use when a task has a Figma link, frame or node id, or says match the design / pixel perfect - pull the baseline, build, compare with ui-check and fix until it passes. The state matrix is ui-coverage.
 ---
 
 When the check plan is pixel (design words in the request, or a look change on a surface with a Figma frame: `standards/ui-checks.md`), with no switch: pull the Figma baseline, build to it, run the `ui-check run` compare loop and the responsive checks, then the `pixel-qa` final gate.

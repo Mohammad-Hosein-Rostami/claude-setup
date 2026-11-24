@@ -1,6 +1,6 @@
 ---
 name: datetime-handling
-description: Use whenever code stores, parses, compares, shows or schedules dates and times, in the UI or the backend - time zones, DST, date-only values, formats.
+description: Use when code stores, parses, compares, shows or schedules dates and times, in the UI or the backend - time zones, DST, date-only values, formats.
 ---
 
 1. Instants (when something happened) are stored and sent as UTC ISO 8601 with `Z` or an offset; the database type is `timestamptz`, never naive `timestamp`. Date-only values (birthday, due date) are `YYYY-MM-DD` strings or date types and never pass through `Date`/timezone conversion.
