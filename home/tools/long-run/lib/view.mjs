@@ -45,9 +45,10 @@ export function runState(paths, now = new Date()) {
 
 function sessionOf(paths, unit, journal, driver) {
   const live = driver?.live?.[unit.id];
-  const held = journal?.final?.status;
-  const takenOver = journal?.last === 'taken-over' && !journal.running ? 'taken-over' : null;
-  const state = live ? live.state : takenOver ?? (held === 'paused' ? held : null);
+  // A session stays listed while it waits to be continued: its last start ended by a pause or a takeover and the step is not over.
+  const over = ['done', 'failed', 'skipped'].includes(journal?.final?.status);
+  const waitsForOwner = ['taken-over', 'paused'].includes(journal?.last) && !journal.running && !over;
+  const state = live ? live.state : waitsForOwner ? journal.last : null;
   if (!state || !journal?.sessionId) return null;
   const log = journal.startsLog.at(-1)?.log;
   return { step: unit.id, state, account: journal.account, sessionId: journal.sessionId, folder: journal.folder, log: log ? join(paths.dir, log) : null, since: live?.since ?? journal.startsLog.at(-1)?.at ?? null, until: live?.until ?? null };

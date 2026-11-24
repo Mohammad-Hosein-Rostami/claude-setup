@@ -8,7 +8,8 @@
 import { claimLane } from '../../git-tidy/lib/lane-pool.mjs';
 import { openRepo } from '../../git-tidy/lib/repo.mjs';
 import { limitWaitUntil } from './limit-time.mjs';
-import { readJournal, writeJournal } from './run-store.mjs';
+import { isPidAlive, readJournal, writeJournal } from './run-store.mjs';
+import { endOrphan } from './claude-run.mjs';
 import { AccountRefusal } from './run-account.mjs';
 import { startOnce } from './step-start.mjs';
 
@@ -67,7 +68,7 @@ function journalFor(ctx, unit, visit, reply) {
 function claimWorktree(ctx, unit, journal) {
   if (unit.kind !== 'item' || !unit.group.worktree || journal.worktree) return journal;
   const base = readJournal(ctx.paths, unit.group.id)?.base;
-  const lane = claimLane(openRepo(unit.group.cwd), { branch: `long-run/${ctx.runId}/${unit.id}`, base, env: ctx.env });
+  const lane = claimLane(openRepo(unit.group.cwd, null), { branch: `long-run/${ctx.runId}/${unit.id}`, base, env: ctx.env });
   return { ...journal, folder: lane.folder, worktree: lane.folder, branch: lane.branch };
 }
 
@@ -156,7 +157,10 @@ export async function runUnit(ctx, unit, { visit, reply }) {
   } catch (error) {
     return finish(ctx, unit, journal, { status: 'failed', reason: `no worktree: ${error.message}` });
   }
-  if (journal.running) journal = { ...journal, running: false, last: journal.last ?? 'restart', notes: [...journal.notes, 'driver restarted mid-start'] };
+  if (journal.running) {
+    const orphan = await endOrphan({ pid: journal.pid, sessionId: journal.sessionId, platform: ctx.platform, isAlive: isPidAlive, killAfter: ctx.killAfter });
+    journal = { ...journal, running: false, pid: null, last: journal.last ?? 'restart', notes: [...journal.notes, `driver restarted mid-start; the old child: ${orphan}`] };
+  }
   writeJournal(ctx.paths, unit.id, journal);
   let pendingReply = reply;
   for (;;) {

@@ -3,7 +3,7 @@
 // Script: $FAKE_LR_DIR/script.json maps a step id (LONG_RUN_STEP) to a list of modes, one per call (the last repeats; no entry:
 // `done`). Modes: done, say:<text>, echo (replies with the last line of its stdin), blocked, needs-owner, no-verdict, crash, limit,
 // weekly-limit, auth, max-turns, no-conversation, leak, sleep:<ms>, hang, deaf (ignores SIGINT and SIGTERM), tool:<ms> (a tool call
-// and its result, then `done` after <ms>). Every call appends one JSON line to $FAKE_LR_DIR/calls.jsonl: {step, mode, args, stdin,
+// and its result, then `done` after <ms>). Every call appends one JSON line to $FAKE_LR_DIR/calls.jsonl: {step, mode, args, stdin, cwd,
 // envNames, account, tokenHash, pid, start, end, ended} (`end` and `ended` on a second line kind `end`), never the token itself;
 // each session writes its transcript to $CLAUDE_CONFIG_DIR/projects/fake-project/<session id>.jsonl (the open-session check).
 // The stream is real `--output-format stream-json` shapes: a system init line, assistant lines, user tool_result lines, a result line.
@@ -29,7 +29,7 @@ const modes = script[step] ?? ['done'];
 const mode = modes[Math.min(n, modes.length - 1)];
 const token = process.env.CLAUDE_CODE_OAUTH_TOKEN ?? '';
 const record = (extra) => appendFileSync(join(dir, 'calls.jsonl'), JSON.stringify({ step, sessionId, pid: process.pid, ...extra }) + '\\n');
-record({ kind: 'start', mode, args, stdin, envNames: Object.keys(process.env).sort(), account: process.env.CLAUDE_ACCOUNT ?? null,
+record({ kind: 'start', mode, args, stdin, cwd: process.cwd(), envNames: Object.keys(process.env).sort(), account: process.env.CLAUDE_ACCOUNT ?? null,
   tokenHash: token ? createHash('sha256').update(token).digest('hex') : null, start: Date.now() });
 const transcriptDir = join(process.env.CLAUDE_CONFIG_DIR, 'projects', 'fake-project');
 mkdirSync(transcriptDir, { recursive: true });

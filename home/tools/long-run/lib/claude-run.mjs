@@ -1,6 +1,6 @@
 // Purpose: one `claude -p` start of a step (spec 7.4): its arguments, the scrubbed log stream, the result line, a graceful end
 //   (now or at the next safe point, spec 19.2), and the exhaustive classification of how it ended (spec 7.2, 5).
-// Exports: KILL_AFTER, LOG_MAX_BYTES, SAFE_POINT_MAX_MS, claudeArgs, startClaude, classify, parseVerdict, scrub.
+// Exports: KILL_AFTER, LOG_MAX_BYTES, SAFE_POINT_MAX_MS, claudeArgs, startClaude, endOrphan, classify, parseVerdict, scrub.
 // Invariants: the prompt goes on stdin, never argv; the token is only in the child env (claude-child.mjs childEnv drops every
 //   billing variable, CLAUDE_CODE_RETRY_WATCHDOG* and CLAUDECODE); every stdout and stderr line is scrubbed of the token and any
 //   token-shaped text before it is written; no `--bare`, no permission flag, no `--max-turns` (owner decisions O2, O4); the exit
@@ -26,6 +26,7 @@ const VERDICT = /^STEP-RESULT:\s*(done|blocked|needs-owner)\s*(?::\s*(.*))?$/;
 const SUMMARY_MAX_CHARS = 600;
 const STDERR_TAIL_CHARS = 4000;
 const TRUNCATED_NOTE = '{"type":"long-run","note":"log truncated"}\n';
+const ORPHAN_POLL_MS = 250;
 
 /** Text with the token and any token-shaped text replaced by `<token>`. */
 export const scrub = (text, token) => (token ? String(text).split(token).join('<token>') : String(text)).replace(TOKEN_SHAPED, '<token>');
@@ -138,6 +139,40 @@ export function startClaude({ args, prompt, cwd, env, token, added, logBase, pla
     });
   });
   return { pid: child.pid, done, end, endAtSafePoint };
+}
+
+function commandLineOf(pid, platform, runner) {
+  const run = platform === 'win32'
+    ? runner('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`], { encoding: 'utf8', windowsHide: true })
+    : runner('ps', ['-o', 'args=', '-p', String(pid)], { encoding: 'utf8' });
+  return run.status === 0 ? String(run.stdout) : '';
+}
+
+/**
+ * Ends a child a dead driver left running (its pid is in the journal), so a resume never makes a second writer of one session.
+ * The pid counts only while its command line still names the session id (a reused pid is left alone).
+ * @param {{pid: number | null, sessionId: string, platform?: string, runner?: Function, isAlive: (pid: number) => boolean,
+ *   killAfter?: {term: number, kill: number}}} orphan
+ * @returns {Promise<'none' | 'ended'>}
+ */
+export async function endOrphan({ pid, sessionId, platform = process.platform, runner = spawnSync, isAlive, killAfter = KILL_AFTER }) {
+  if (!Number.isInteger(pid) || !isAlive(pid) || !commandLineOf(pid, platform, runner).includes(sessionId)) return 'none';
+  const child = { pid };
+  const started = Date.now();
+  killTree(child, platform, 'SIGINT', runner);
+  let sent = 'SIGINT';
+  while (isAlive(pid)) {
+    const waited = Date.now() - started;
+    if (waited >= killAfter.kill && sent !== 'SIGKILL') {
+      killTree(child, platform, 'SIGKILL', runner);
+      sent = 'SIGKILL';
+    } else if (waited >= killAfter.term && sent === 'SIGINT') {
+      killTree(child, platform, 'SIGTERM', runner);
+      sent = 'SIGTERM';
+    }
+    await new Promise((resolve) => { setTimeout(resolve, ORPHAN_POLL_MS); });
+  }
+  return 'ended';
 }
 
 /**
