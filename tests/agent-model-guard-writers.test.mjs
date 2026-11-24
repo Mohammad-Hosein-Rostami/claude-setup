@@ -26,6 +26,9 @@ const PROMPT_SCAN_CHARS = 32 * 1024;
 const BRIEF_FILE_BYTES = 64 * 1024;
 const MAX_PATH_BYTES = 4096;
 const MAX_WORKTREE_FIELDS = 8; // lib/writer-agents.mjs MAX_WORKTREE_LINES: more `worktree:` fields than this name many
+// The calls come from inside a main agent (agent_id): the writer gate covers helpers as well, and a helper may be of any type (the
+// boss's route gate, which lets only lex, dev and tess through, is tested in agent-budget.test.mjs)
+const FROM_AGENT = { agent_id: 'agent-dev-1', agent_type: 'dev' };
 let counter = 0;
 
 /**
@@ -37,7 +40,7 @@ function writerSession({ cwd, env: extraEnv = {} } = {}) {
   const project = cwd ?? makeTempDir('writer-gate-project-');
   const session = `writers-${process.pid}-${counter++}`;
   const env = hookEnv({ HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: project, ...extraEnv });
-  const input = (toolInput) => JSON.stringify({ hook_event_name: 'PreToolUse', session_id: session, cwd: project, tool_name: 'Agent', tool_input: toolInput });
+  const input = (toolInput) => JSON.stringify({ hook_event_name: 'PreToolUse', session_id: session, cwd: project, tool_name: 'Agent', tool_input: toolInput, ...FROM_AGENT });
   const parse = ({ status, stdout, stderr }) => {
     assert.equal(status, 0, stderr);
     return stdout === '' ? null : JSON.parse(stdout).hookSpecificOutput;

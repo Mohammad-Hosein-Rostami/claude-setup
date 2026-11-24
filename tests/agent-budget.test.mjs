@@ -1,7 +1,9 @@
 // Tests for the main-agent cap of home/hooks/agent-budget.mjs, enforced through agent-model-guard.mjs (PreToolUse Agent|Task): at
 // most MAX_MAIN_AGENTS (6) agents launched from the main session run at once, helpers (a call with agent_id) never count, a launch
 // another gate denies holds no slot, pending launches expire, a started one runs until its SubagentStop (or STALE_MS idle), a
-// resumed main agent counts again, and an unusable record denies (fail closed). The budget hook itself prints nothing.
+// resumed main agent counts again, and an unusable record denies (fail closed). The route gate: the boss (no agent_id) starts only
+// lex, dev, tess, claude-code-guide and statusline-setup; any other type is denied with the route, and helpers are free. The budget
+// hook itself prints nothing.
 // Each test has a private HOME (the records) and its own session id; call counters live in a private TMPDIR.
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -110,14 +112,57 @@ test('helpers are never capped: a call from inside a subagent (agent_id) runs wh
   assert.equal(readStore(s).launches.length, MAX_MAIN_AGENTS);
 });
 
-test('a call another gate denies holds no slot: the UI gate before the cap, the writer gate after it gives the slot back', () => {
+test('a call another gate denies holds no slot: the route gate before the cap, the writer gate after it gives the slot back', () => {
   const s = newSession();
-  assert.ok(denied(guard(s, { subagent_type: 'dev-pixel', description: 'ui', prompt: 'build the screen' })), 'no MATRIX line: denied once');
+  assert.ok(denied(guard(s, { subagent_type: 'dev-pixel', description: 'ui', prompt: 'build the screen' })), 'a helper from the boss');
   assert.equal(existsSync(storeOf(s)), false, 'nothing recorded');
   const plainWriter = (prompt) => ({ subagent_type: 'dev', description: 'build', prompt });
   assert.ok(!denied(guard(s, plainWriter('lane one'))), 'the first writer runs');
   assert.ok(denied(guard(s, plainWriter('lane two'))), 'a second plain writer is denied once by the writer gate');
   assert.equal(readStore(s).launches.length, 1, 'the denied writer gave its slot back');
+});
+
+const ROUTE_LEAD = 'agent route: the boss starts lex, dev or tess;';
+const helperRoute = (type, owner) => `${ROUTE_LEAD} ${type} is ${owner}'s helper: start ${owner} with the brief, and it starts ${type}`;
+const otherRoute = (type) => `${ROUTE_LEAD} ${type} is not one of them: start lex (research, design), dev (build, fix) or tess (checks) with the brief`;
+
+test('the boss starting lex-web is denied every time with the route through lex; nothing is recorded', () => {
+  const s = newSession();
+  for (let send = 0; send < 2; send += 1) {
+    const out = guard(s, mainCall(send, 'lex-web'));
+    assert.ok(denied(out), `send ${send}`);
+    assert.equal(out.permissionDecisionReason, helperRoute('lex-web', 'lex'));
+  }
+  assert.equal(existsSync(storeOf(s)), false, 'a route deny takes no main-agent slot');
+});
+
+test('every helper from the boss is denied with its own main agent named', () => {
+  const owners = { 'lex-scout': 'lex', 'lex-web': 'lex', 'dev-ui': 'dev', 'dev-pixel': 'dev', 'pixel-qa': 'dev', 'dev-debug': 'dev', 'dev-run': 'dev', 'tess-review': 'tess' };
+  const s = newSession();
+  for (const [type, owner] of Object.entries(owners)) assert.equal(guard(s, mainCall(type, type)).permissionDecisionReason, helperRoute(type, owner), type);
+});
+
+test('the boss starts lex, dev and tess, and Claude Code\'s claude-code-guide and statusline-setup', () => {
+  const s = newSession();
+  for (const type of ['lex', 'dev', 'tess', 'claude-code-guide', 'statusline-setup']) assert.ok(!denied(guard(s, mainCall(type, type))), type);
+});
+
+test('the other built-ins, an omitted type and any other agent are denied from the boss', () => {
+  const s = newSession();
+  for (const type of ['general-purpose', 'Explore', 'Plan', 'claude', 'fork', 'some-plugin:agent', 'security-auditor']) {
+    assert.equal(guard(s, mainCall(type, type)).permissionDecisionReason, otherRoute(type), type);
+  }
+  const { subagent_type: omitted, ...noType } = mainCall('none');
+  assert.equal(omitted, 'lex');
+  assert.equal(guard(s, noType).permissionDecisionReason, otherRoute('general-purpose'), 'no subagent_type runs general-purpose');
+  assert.equal(existsSync(storeOf(s)), false, 'no route deny takes a slot');
+});
+
+test('a call from inside a subagent (agent_id) starts lex-web or any other type: helpers are free', () => {
+  const s = newSession();
+  for (const type of ['lex-web', 'lex-scout', 'general-purpose', 'Explore']) {
+    assert.ok(!denied(guard(s, mainCall(type, type), { agent_id: 'agent-lex-1', agent_type: 'lex' })), type);
+  }
 });
 
 test('a hook input with no usable session id is not capped (no store can be named)', () => {

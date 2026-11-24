@@ -6,6 +6,9 @@
 // dev-pixel, dev-debug, tess-review on Opus; lex-web, pixel-qa, tess on Sonnet; lex-scout, dev-run on Haiku: the frontmatter of
 // home/agents/<name>.md). A failure there leaves the input as it is (stderr line). A rewrite is allow + the full updatedInput.
 // Gates, in order (the first deny wins; each deny-once gate lets the identical call through when it is sent again):
+//   R. Main-agent route (agent-budget.mjs mainRouteReason): the main session starts only lex, dev and tess (and Claude Code's
+//      claude-code-guide and statusline-setup); any other type from the main session is denied every time with the route to take.
+//      A call from inside a subagent (a helper) is never routed. First, so a wrong route spends no deny-once gate.
 //   0. No Fable (owner rule: Fable is chosen by hand only, never for an agent): a call whose `model` is Fable (the alias or any id),
 //      or with no `model` and an agent file that pins Fable, is denied every time with a one-line reason (fableReason).
 //   1. Copy-branch brief (lib/copy-branch-brief.mjs): a writer brief that creates `<lane>-2` instead of continuing `<lane>` (deny once).
@@ -23,7 +26,7 @@
 // Invariants: the routing never blocks; each deny-once gate denies an identical call at most once per session.
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { claimMainSlot, mainCapReason, releaseMainSlot } from './agent-budget.mjs';
+import { claimMainSlot, mainCapReason, mainRouteReason, releaseMainSlot } from './agent-budget.mjs';
 import { quotedValue } from './lib/agent-brief.mjs';
 import { isWriterRole } from './lib/agent-roles.mjs';
 import { copyBranchBriefAdvice } from './lib/copy-branch-brief.mjs';
@@ -162,6 +165,8 @@ export async function fableReason(input, env = process.env) {
 
 /** The deny line of the gates (header order), or '' when the call may run; a denied launch gives its main-agent slot back. */
 async function gatesDeny(input) {
+  const route = mainRouteReason(input);
+  if (route !== '') return denyOutput(route);
   const fable = await fableReason(input);
   if (fable !== '') return denyOutput(fable);
   const early = (await copyBranchBriefDeny(input)) || (await uiBriefDeny(input));

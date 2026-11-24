@@ -49,8 +49,11 @@ const touchCounter = (s, agent, ms) => {
 
 // ---- the hook, spawned the way Claude Code runs it ----
 
+// From inside a main agent (agent_id): the boss's route gate would stop a `scout` call before the writer gate this file tests
+const FROM_AGENT = { agent_id: 'agent-dev-1', agent_type: 'dev' };
+
 function hookInput(s, toolInput, extra = {}) {
-  return JSON.stringify({ hook_event_name: 'PreToolUse', session_id: s.session, cwd: s.home, tool_name: 'Agent', tool_input: toolInput, ...extra });
+  return JSON.stringify({ hook_event_name: 'PreToolUse', session_id: s.session, cwd: s.home, tool_name: 'Agent', tool_input: toolInput, ...FROM_AGENT, ...extra });
 }
 const guardEnv = (s) => hookEnv({ HOME: s.home, USERPROFILE: s.home, CLAUDE_PROJECT_DIR: s.home });
 const parseOutput = ({ status, stdout, stderr }) => {

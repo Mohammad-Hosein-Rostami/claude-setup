@@ -1,5 +1,5 @@
-// Tests for the copy-branch brief gate wired into home/hooks/agent-model-guard.mjs (round 4, lane W1) and the rule that no hook redirects a plain
-// Agent call (the lead picks inline or an agent by the job). The private HOME holds a skill on purpose: a removed backstop advised exactly when
+// Tests for the copy-branch brief gate wired into home/hooks/agent-model-guard.mjs (round 4, lane W1) and the rule that no gate but the
+// main-agent route redirects a plain Agent call. The private HOME holds a skill on purpose: a removed backstop advised exactly when
 // skills were installed. Each test has a private HOME.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,6 +16,10 @@ const SEND_AGAIN = 'Send the same call again unchanged and it runs.';
 const GUARD = fileURLToPath(new URL('../home/hooks/agent-model-guard.mjs', import.meta.url));
 const SKILLS = ['quick'];
 let counter = 0;
+// send() calls come from inside a subagent (agent_id) unless a test sets agent_id: undefined (the boss): the boss starts only lex, dev
+// and tess (the route gate, tested in agent-budget.test.mjs), while a main agent may start any helper
+const FROM_AGENT = { agent_id: 'agent-dev-1', agent_type: 'dev' };
+const FROM_BOSS = { agent_id: undefined, agent_type: undefined };
 const GIT_TIMEOUT_FOR_TESTS_MS = 60_000; // the suite runs beside other work; the hook's 1 s default would silently skip the advice
 
 /** A private HOME holding the named skills; send(toolInput, extra) runs the hook once and returns the parsed hookSpecificOutput or null. */
@@ -31,7 +35,7 @@ function session({ skills = SKILLS, envExtra = {}, settings } = {}) {
   const sessionId = `copy-brief-${process.pid}-${counter++}`;
   const log = () => readFileSync(env.CLAUDE_GUARD_LOG, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
   const send = (toolInput, extra = {}) => {
-    const input = { hook_event_name: 'PreToolUse', session_id: sessionId, cwd: project, tool_name: 'Agent', tool_input: toolInput, ...extra };
+    const input = { hook_event_name: 'PreToolUse', session_id: sessionId, cwd: project, tool_name: 'Agent', tool_input: toolInput, ...FROM_AGENT, ...extra };
     const { status, stdout, stderr } = spawnSync(process.execPath, [GUARD], { input: JSON.stringify(input), encoding: 'utf8', env });
     assert.equal(status, 0, stderr);
     return stdout === '' ? null : JSON.parse(stdout).hookSpecificOutput;
@@ -42,12 +46,13 @@ const denied = (out) => out?.permissionDecision === 'deny';
 // isolation: "worktree" keeps the writer isolation gate (another gate of the same hook) out of these tests
 const call = (type, prompt = 'do the job', extra = {}) => ({ description: 'job', prompt, subagent_type: type, model: 'sonnet', isolation: 'worktree', ...extra });
 
-test('a plain lead Agent call is never redirected: every agent type runs at once (routing is by the job, not by a hook)', () => {
+test('no gate but the route redirects a plain Agent call: a main agent starts every type, the boss lex, dev and tess', () => {
   const types = ['dev', 'dev-ui', 'dev-pixel', 'dev-debug', 'dev-run', 'lex', 'lex-scout', 'lex-web', 'tess', 'tess-review', 'pixel-qa', 'test-writer', 'security-auditor', 'Explore', 'general-purpose'];
   const brief = 'do the job\nMATRIX: none: not a screen, a hook test'; // the MATRIX line keeps the UI gate quiet
   // one session per call: the main-agent cap (6 at once per session) is not what this test is about
   for (const type of types) assert.equal(denied(session().send(call(type, brief))), false, type);
   assert.equal(denied(session().send(call('general-purpose', 'research the best queue for this'))), false, 'a research question too');
+  for (const type of ['lex', 'dev', 'tess']) assert.equal(denied(session().send(call(type, brief), FROM_BOSS)), false, `the boss starts ${type}`);
 });
 
 const TEST_TIME_KNOBS = { COPY_BRANCH_GIT_TIMEOUT_MS: String(GIT_TIMEOUT_FOR_TESTS_MS), COPY_BRANCH_DEADLINE_MS: String(GIT_TIMEOUT_FOR_TESTS_MS) };
@@ -111,9 +116,9 @@ test('the deny text starts with "Not started:", gives the same-branch steps and 
   assert.ok(reason.endsWith(`\n${SEND_AGAIN}`), reason);
 });
 
-test('the log row of a copy deny holds fixed fields and the digest, never the prompt; a call from inside an agent (agent_id) is advised too', () => {
+test('the log row of a copy deny holds fixed fields and the digest, never the prompt; a call from the boss (no agent_id) is advised too', () => {
   const s = repoSession();
-  assert.ok(denied(s.send(call('dev', `${COPY_BRIEF}\nsecret-marker-text`), { agent_id: 'agent-1' })));
+  assert.ok(denied(s.send(call('dev', `${COPY_BRIEF}\nsecret-marker-text`), FROM_BOSS)));
   const text = readFileSync(s.logPath, 'utf8');
   assert.ok(!text.includes('secret-marker-text') && !text.includes('lane/x-2'), 'no prompt text in the log');
   assert.match(text, /"digest":"[0-9a-f]{64}"/);

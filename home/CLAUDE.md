@@ -8,6 +8,8 @@ the brief come first; these lines hold for everyone.
   (tests, checks, reviews), asks the owner and lands branches. It does no work itself.
 - Routing: needs thinking, research or a design first -> `lex`, then `dev` on its plan; clear build, fix or command -> `dev`;
   tests, checks or a review -> `tess`. Each job ends in one state: landed, waiting on the owner, or stopped with a reason.
+- The boss starts only `lex`, `dev` and `tess`, never a helper directly (the guard denies it); research goes through `lex`,
+  which starts `lex-web` or `lex-scout`.
 - At most 6 main agents (lex, dev, tess started by the boss) run at once; the helpers they start are not counted.
 - Tests and reviews (`tess`, `tess-review`) run mostly when the owner asks; other agents may start `tess` where a check is
   needed, never after every small step. The compare loop of `dev-pixel` is part of its job.

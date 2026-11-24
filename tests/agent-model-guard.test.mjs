@@ -43,6 +43,10 @@ test('guardedAgentInput: forks, the repo agents (they pin their own model) and o
   for (const bad of [undefined, null, 'Explore', 42]) assert.equal(guardedAgentInput(bad), null);
 });
 
+// The hook calls come from inside a subagent (agent_id), so the main-agent route gate (agent-budget.mjs) lets every type through;
+// that gate is tested in agent-budget.test.mjs.
+const FROM_AGENT = { agent_id: 'agent-dev-1', agent_type: 'dev' };
+
 // The hook runs in a temp HOME with the session's mode file and no agent files.
 function run(mode, stdin) {
   const home = makeTempDir('model-guard-');
@@ -54,7 +58,7 @@ function run(mode, stdin) {
 }
 
 test('hook: a Plan call without model gets opus in all five modes; an explicit model wins', () => {
-  const plan = (extra) => JSON.stringify({ session_id: 'sess1', tool_input: { ...BASE, subagent_type: 'Plan', ...extra } });
+  const plan = (extra) => JSON.stringify({ ...FROM_AGENT, session_id: 'sess1', tool_input: { ...BASE, subagent_type: 'Plan', ...extra } });
   for (const mode of ['normal', 'medium', 'high', 'extra-high', 'ultra-high']) {
     assert.equal(JSON.parse(run(mode, plan({})).stdout).hookSpecificOutput.updatedInput.model, 'opus', mode);
     assert.equal(run(mode, plan({ model: 'sonnet' })).stdout, '', `${mode}: an explicit model is kept, so nothing is rewritten`);
@@ -63,7 +67,7 @@ test('hook: a Plan call without model gets opus in all five modes; an explicit m
 
 test('hook: ultra-high Explore without model prints an allow decision with the full updated input', () => {
   const toolInput = { ...BASE, subagent_type: 'Explore' };
-  const r = run('ultra-high', JSON.stringify({ session_id: 'sess1', tool_name: 'Agent', tool_input: toolInput }));
+  const r = run('ultra-high', JSON.stringify({ ...FROM_AGENT, session_id: 'sess1', tool_name: 'Agent', tool_input: toolInput }));
   assert.equal(r.status, 0);
   assert.deepEqual(JSON.parse(r.stdout), {
     hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: { ...toolInput, model: 'sonnet' } },
@@ -72,20 +76,20 @@ test('hook: ultra-high Explore without model prints an allow decision with the f
 
 test('hook: medium mode general-purpose gets sonnet too', () => {
   const toolInput = { ...BASE, subagent_type: 'general-purpose' };
-  const r = run('medium', JSON.stringify({ session_id: 'sess1', tool_input: toolInput }));
+  const r = run('medium', JSON.stringify({ ...FROM_AGENT, session_id: 'sess1', tool_input: toolInput }));
   assert.equal(r.status, 0);
   assert.equal(JSON.parse(r.stdout).hookSpecificOutput.updatedInput.model, 'sonnet');
 });
 
 test('hook: a long non-ASCII prompt reaches the agent intact (stdin is decoded once, not chunk by chunk)', () => {
   const toolInput = { ...BASE, subagent_type: 'Explore', prompt: 'سلام دنیا، این یک آزمایش است. '.repeat(10000) }; // about 530 KB, mostly 2-byte characters: many 64 KB stdin chunks
-  const r = run('medium', JSON.stringify({ session_id: 'sess1', tool_input: toolInput }));
+  const r = run('medium', JSON.stringify({ ...FROM_AGENT, session_id: 'sess1', tool_input: toolInput }));
   assert.equal(r.status, 0);
   assert.equal(JSON.parse(r.stdout).hookSpecificOutput.updatedInput.prompt, toolInput.prompt);
 });
 
 test('hook: explicit model, a fork, a pinned repo agent and bad JSON exit 0 with no output', () => {
-  const explore = { session_id: 'sess1', tool_input: { ...BASE, subagent_type: 'Explore', model: 'haiku' } };
+  const explore = { ...FROM_AGENT, session_id: 'sess1', tool_input: { ...BASE, subagent_type: 'Explore', model: 'haiku' } };
   const asType = (subagent_type) => JSON.stringify({ ...explore, tool_input: { ...BASE, subagent_type } });
   for (const [mode, stdin] of [['ultra-high', JSON.stringify(explore)], ['medium', asType('fork')], ['medium', asType('security-auditor')], ['ultra-high', 'not json']]) {
     const r = run(mode, stdin);
@@ -107,7 +111,7 @@ function runWithAgents(toolInput, prepare = () => {}) {
   const env = { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CODE_SUBAGENT_MODEL: 'claude-sonnet-5-5' };
   delete env.CLAUDE_CONFIG_DIR; // the personal folder is the temp HOME's
   delete env.CLAUDE_CODE_SUBAGENT_EFFORT;
-  return spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ tool_input: toolInput }), encoding: 'utf8', env, cwd: home });
+  return spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ ...FROM_AGENT, tool_input: toolInput }), encoding: 'utf8', env, cwd: home });
 }
 
 test('hook: a per-call model or effort below the agent file pin is left out; an equal, unknown or unpinned value passes', () => {

@@ -16,7 +16,13 @@
 // Store: ~/.claude/state/main-agents/<session>.json through lib/session-store.mjs under lib/session-lock.mjs (0600, at most
 // MAX_STORE_BYTES for writer and reader): {"launches": [{"key", "type", "at", "agent"?}], "stopped": [agent ids]}. A corrupt file
 // reads as empty; an unusable store or a lock that stays taken is `unusable`, and the guard denies (the owner's cap fails closed).
-// Exports: MAX_MAIN_AGENTS, PENDING_MS, STALE_MS, claimMainSlot, releaseMainSlot, mainCapReason, recordMainStart, recordMainStop.
+// Main-agent route (mainRouteReason, the guard's first gate): the boss starts only lex, dev and tess, and they start their helpers.
+// A main-session call of any other type is denied every time with the route to take. Default for Claude Code's built-ins: an
+// omitted subagent_type (general-purpose), general-purpose, Explore, Plan, claude, fork and any plugin or unknown type are denied
+// from the main session too; only claude-code-guide and statusline-setup (Claude Code's own help and config agents) are let
+// through. A call from inside a subagent (`agent_id`) is never routed: helpers are free.
+// Exports: MAX_MAIN_AGENTS, PENDING_MS, STALE_MS, MAIN_AGENT_TYPES, mainRouteReason, claimMainSlot, releaseMainSlot, mainCapReason,
+// recordMainStart, recordMainStop.
 // Invariants: never throws; the hook's own events fail open (exit 0, no output); output is fixed text, types and the store path.
 import { appendFileSync, mkdirSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
@@ -38,6 +44,32 @@ const STOPPED_KEPT = 200; // stopped main agent ids kept for a resume
 const KEY_BYTES = 8;
 const SAFE_ID = /^[\w-]{1,128}$/;
 const NO_STORE = { state: 'unusable', running: [] };
+
+/** The agents the main session may start (the owner's design: the boss routes to lex, dev and tess only). */
+export const MAIN_AGENT_TYPES = ['lex', 'dev', 'tess'];
+// Claude Code's own help and config agents: no job work, so the boss may start them directly
+const BOSS_BUILT_INS = ['claude-code-guide', 'statusline-setup'];
+// Which main agent starts each helper of home/agents, so a deny names the route
+const HELPER_OWNERS = {
+  'lex-scout': 'lex', 'lex-web': 'lex',
+  'dev-ui': 'dev', 'dev-pixel': 'dev', 'pixel-qa': 'dev', 'dev-debug': 'dev', 'dev-run': 'dev',
+  'tess-review': 'tess',
+};
+
+/**
+ * The deny reason for an Agent or Task call of the main session that starts anything but a main agent (see the header).
+ * @param {unknown} input the PreToolUse hook input: agent_id (set inside a subagent), tool_input.subagent_type
+ * @returns {string} one line naming the route, or '' when the call may go on (a helper's call, a main agent, an allowed built-in)
+ */
+export function mainRouteReason(input) {
+  if (input?.agent_id) return '';
+  const type = agentTypeOf(input?.tool_input?.subagent_type);
+  if (MAIN_AGENT_TYPES.includes(type) || BOSS_BUILT_INS.includes(type)) return '';
+  const shown = quotedValue(type);
+  const owner = Object.hasOwn(HELPER_OWNERS, type) ? HELPER_OWNERS[type] : undefined;
+  if (owner) return `agent route: the boss starts lex, dev or tess; ${shown} is ${owner}'s helper: start ${owner} with the brief, and it starts ${shown}`;
+  return `agent route: the boss starts lex, dev or tess; ${shown} is not one of them: start lex (research, design), dev (build, fix) or tess (checks) with the brief`;
+}
 
 const mainAgentsDir = (env) => join(env.HOME || env.USERPROFILE || homedir(), '.claude', 'state', 'main-agents');
 
