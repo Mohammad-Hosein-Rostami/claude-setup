@@ -1,5 +1,8 @@
 // PostToolUse(Edit|Write|MultiEdit): run the project's own `format` script on a code file after it changes (C21). Only a
 // script that exists in the nearest package.json runs.
+// Trust (audit H8, lib/format-trust.mjs): a cloned repo's `format` script runs through the package manager only in a project the owner
+// trusts (CLAUDE_POST_EDIT_TRUST_FORMAT=1); elsewhere only one plain call of a known formatter runs, as that tool's binary, and any
+// other script is not run and warned about once per session.
 // A format script that targets the whole repo (`prettier --write .`, `nx run-many`) is replaced by the tool's binary on the
 // edited file, or skipped; CLAUDE_POST_EDIT_SKIP opts out ("all" or "format"), but not when only a project's committed
 // .claude/settings.json sets it (lib/team-switch.mjs): then the format runs and the owner gets one warning per session (a
@@ -12,6 +15,7 @@ import { dirname, isAbsolute, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readPlainFile } from './lib/plain-file.mjs';
 import { CODE_FILE, diagnostics } from './lib/diagnostics.mjs';
+import { formatterCall, refusedText, TRUST_ENV, trustedFormat } from './lib/format-trust.mjs';
 import { noticeOnce, switchDirs, trustedSwitch } from './lib/team-switch.mjs';
 
 const SAFE_PATH = /^[\w@+=:,./-]+$/; // no `%`: cmd.exe expands %VAR%
@@ -24,6 +28,7 @@ const BROAD_SCRIPT = /(^|\s)\.\/?(\s|$)|\*|\brun-many\b|\bnx\b|\bturbo\b|\blerna
 export const SKIP_ENV = 'CLAUDE_POST_EDIT_SKIP'; // the shell or a project's .claude/settings.local.json env; a team file's value is ignored
 
 export { diagnostics, isSamePath } from './lib/diagnostics.mjs';
+export { formatterCall, TRUST_ENV, trustedFormat } from './lib/format-trust.mjs';
 
 export const isCodeFile = (file) => CODE_FILE.test(file);
 
@@ -53,18 +58,34 @@ export const skipFilter = (skip = '') => {
   return (name) => !names.has('all') && !names.has(name);
 };
 
+const formatScriptOf = (scripts) => (typeof scripts?.[FORMAT_SCRIPT] === 'string' ? scripts[FORMAT_SCRIPT] : null);
+
+/** True when the project's `format` script would run only with trust: it exists, is not broad and is no known formatter call. Pure. */
+export function needsTrust(scripts) {
+  const script = formatScriptOf(scripts);
+  return script !== null && !isBroadScript(script) && formatterCall(script) === null;
+}
+
 /**
  * Checks to run for `file`: [{ name, cmd?, args }]; without `cmd` the package manager runs `args`. Pure.
  * A format script that is broad would format the whole repo, so the tool's own binary (found by `findTool`) runs on
- * the file instead; when that binary is missing the check is skipped.
+ * the file instead; when that binary is missing the check is skipped. Any other script goes through the package manager only when
+ * `trusted`; untrusted, a known formatter call runs as the tool's binary (found, else its bare name on PATH) and anything else
+ * is not planned (needsTrust tells the caller to warn).
  */
-export function plannedChecks(scripts, file, findTool = () => null) {
-  const script = typeof scripts?.[FORMAT_SCRIPT] === 'string' ? scripts[FORMAT_SCRIPT] : null;
+export function plannedChecks(scripts, file, findTool = () => null, trusted = false) {
+  const script = formatScriptOf(scripts);
   if (script === null) return [];
-  if (!isBroadScript(script)) return [{ name: FORMAT_SCRIPT, args: ['run', FORMAT_SCRIPT, '--', file] }];
-  const [tool, ...flags] = FORMAT_TOOL;
-  const cmd = findTool(tool);
-  return cmd ? [{ name: FORMAT_SCRIPT, cmd, args: [...flags, file] }] : [];
+  if (isBroadScript(script)) {
+    const [tool, ...flags] = FORMAT_TOOL;
+    const cmd = findTool(tool);
+    return cmd ? [{ name: FORMAT_SCRIPT, cmd, args: [...flags, file] }] : [];
+  }
+  if (trusted) return [{ name: FORMAT_SCRIPT, args: ['run', FORMAT_SCRIPT, '--', file] }];
+  const call = formatterCall(script);
+  if (call === null) return [];
+  const [tool, ...args] = call;
+  return [{ name: FORMAT_SCRIPT, cmd: findTool(tool) ?? tool, args: [...args, file] }];
 }
 
 /** Finder for the nearest node_modules/.bin/<tool> walking up from `dir` (a monorepo hoists binaries to the root); returns null when absent. */
@@ -177,28 +198,38 @@ export async function runStages(checks, ctx) {
 export const trustedSkip = (env = process.env, cwd = undefined) => trustedSwitch(env, SKIP_ENV, switchDirs(env, cwd));
 
 /**
- * Run the format check for `file`; resolves to the failure lines ([] = all passed or nothing to run).
+ * Runs the format check for `file`.
  * @param {string} file the edited file (absolute)
- * @param {string} [skip] the trusted CLAUDE_POST_EDIT_SKIP value (trustedSkip), read from this process's env by default
+ * @param {{ skip?: string, env?: Record<string, string|undefined>, cwd?: string }} [options] skip: the trusted CLAUDE_POST_EDIT_SKIP
+ *   value (trustedSkip); env and cwd decide the trust (trustedFormat); this process's env by default
+ * @returns {Promise<{ failures: string[], refused: { dir: string, ignored: string|null } | null }>} failures: the failure lines ([] = all
+ *   passed or nothing to run); refused: the package folder whose format script was not run for want of trust
  */
-export async function checkFile(file, skip = trustedSkip().value) {
-  if (!isCodeFile(file) || !existsSync(file)) return [];
+export async function formatFile(file, { skip = trustedSkip().value, env = process.env, cwd = undefined } = {}) {
+  const none = { failures: [], refused: null };
+  if (!isCodeFile(file) || !existsSync(file)) return none;
   const dir = findPackageDir(file);
-  if (!dir) return [];
+  if (!dir) return none;
   const rel = relative(dir, file).replace(/\\/g, '/');
-  if (process.platform === 'win32' && !SAFE_PATH.test(rel)) return []; // shell is on: refuse metacharacters
+  if (process.platform === 'win32' && !SAFE_PATH.test(rel)) return none; // shell is on: refuse metacharacters
   let scripts;
   try {
     // a linked package.json is followed once by realpath; the read never waits (lib/plain-file.mjs): a FIFO or device is reported
     // unreadable instead of holding the hook
     scripts = JSON.parse(readPlainFile(realpathSync(join(dir, 'package.json')), PACKAGE_JSON_MAX_BYTES)).scripts;
   } catch (error) {
-    return [`${rel}:1 HOOK unreadable package.json in ${dir}: ${error.message}`];
+    return { failures: [`${rel}:1 HOOK unreadable package.json in ${dir}: ${error.message}`], refused: null };
   }
-  const notSkipped = skipFilter(skip);
-  const checks = plannedChecks(scripts, rel, toolFinder(dir)).filter((c) => notSkipped(c.name));
-  return runStages(checks, { pm: packageManager(dir), cwd: dir, rel, deadline: Date.now() + BUDGET_MS });
+  if (!skipFilter(skip)(FORMAT_SCRIPT)) return none;
+  const trust = trustedFormat(env, cwd, dir);
+  const refused = !trust.trusted && needsTrust(scripts) ? { dir, ignored: trust.ignored } : null;
+  const checks = plannedChecks(scripts, rel, toolFinder(dir), trust.trusted);
+  const failures = await runStages(checks, { pm: packageManager(dir), cwd: dir, rel, deadline: Date.now() + BUDGET_MS });
+  return { failures, refused };
 }
+
+/** The failure lines of formatFile alone ([] = all passed or nothing to run), with this process's env. */
+export const checkFile = async (file, skip = trustedSkip().value) => (await formatFile(file, { skip })).failures;
 
 async function readStdin() {
   const chunks = [];
@@ -216,14 +247,17 @@ async function main() {
   const file = input?.tool_input?.file_path;
   if (typeof file !== 'string') return;
   const skip = trustedSkip(process.env, input.cwd);
-  const failures = await checkFile(file, skip.value);
-  // Warn only where the switch would have changed something (a code file), once per session.
-  const warning = skip.ignored !== null && isCodeFile(file) && noticeOnce(input.session_id, SKIP_ENV) ? skip.ignored : null;
+  const { failures, refused } = await formatFile(file, { skip: skip.value, cwd: input.cwd });
+  // Warn only where the switch would have changed something (a code file), each warning once per session.
+  const warnings = [
+    skip.ignored !== null && isCodeFile(file) && noticeOnce(input.session_id, SKIP_ENV) ? skip.ignored : null,
+    refused !== null && noticeOnce(input.session_id, TRUST_ENV) ? refusedText(refused) : null,
+  ].filter((warning) => warning !== null);
   if (failures.length) {
-    process.stderr.write([...failures, ...(warning ? [warning] : [])].join('\n') + '\n');
+    process.stderr.write([...failures, ...warnings].join('\n') + '\n');
     process.exitCode = 2;
-  } else if (warning) {
-    process.stdout.write(`${JSON.stringify({ systemMessage: warning })}\n`);
+  } else if (warnings.length) {
+    process.stdout.write(`${JSON.stringify({ systemMessage: warnings.join('\n') })}\n`);
   }
 }
 

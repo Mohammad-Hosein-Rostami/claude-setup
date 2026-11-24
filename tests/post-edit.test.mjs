@@ -97,9 +97,11 @@ test('skipFilter honours "all" and named checks', () => {
   assert.equal(skipFilter()('lint'), true);
 });
 
-test('plannedChecks plans the format script only, and runs it with the file after `--`', () => {
+test('plannedChecks plans the format script only: trusted, through the package manager with the file after `--`; untrusted, a known formatter as its binary', () => {
   const scripts = { format: 'prettier --write', lint: 'eslint', typecheck: 'tsc --noEmit' };
-  assert.deepEqual(plannedChecks(scripts, 'src/a.ts'), [{ name: 'format', args: ['run', 'format', '--', 'src/a.ts'] }]);
+  assert.deepEqual(plannedChecks(scripts, 'src/a.ts', () => null, true), [{ name: 'format', args: ['run', 'format', '--', 'src/a.ts'] }]);
+  assert.deepEqual(plannedChecks(scripts, 'src/a.ts', (tool) => `/bin/${tool}`), [{ name: 'format', cmd: '/bin/prettier', args: ['--write', 'src/a.ts'] }]);
+  assert.deepEqual(plannedChecks({ format: 'node evil.js' }, 'src/a.ts'), []);
   assert.deepEqual(plannedChecks({ lint: 'eslint', typecheck: 'tsc --noEmit' }, 'src/a.ts'), []);
 });
 
