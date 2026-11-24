@@ -78,12 +78,26 @@ test('lex.md attacks its own plan once and probes a platform fact before decidin
 });
 
 const COMMAND_AGENTS = ['dev', 'dev-part', 'dev-run', 'tess', 'tess-write', 'tess-edge'];
+// Each command agent's own no-polling line: dev-run holds the wait recipe, the others point to it.
+const NO_POLL_LINE = {
+  dev: 'Never poll in a loop of your own.',
+  'dev-part': 'Never poll in a loop of your own.',
+  'dev-run': 'Never poll the log or wait in a sleep loop.',
+  tess: 'started and waited for as `~/.claude/agents/dev-run.md` says, never polled or sleep-looped.',
+  'tess-write': 'started and waited for as `~/.claude/agents/dev-run.md` says, never polled or sleep-looped.',
+  'tess-edge': 'Never poll in a loop of your own.',
+};
+// The command agents that do not load home/CLAUDE.md carry its stop-before-report rule themselves.
+const OWN_RULE_AGENTS = ['dev-part', 'dev-run', 'tess-edge'];
+const STOP_BEFORE_REPORT = 'Before your final report, stop every background command and monitor you started (TaskStop); never report while one runs.';
 
-test('agents that run commands: Bash timeout 600000 for installs and long runs, 60000 for probes, no polling, no wake-up promise', () => {
+test('agents that run commands: Bash timeout 600000 for installs and long runs, 60000 for probes, no polling, stop before the report, no wake-up promise', () => {
   for (const agent of COMMAND_AGENTS) {
     const text = flat(read(`home/agents/${agent}.md`));
     assert.match(text, /runs in the foreground with an explicit Bash `timeout`: 600000 for an install or a long run, 60000 for a probe/, agent);
-    assert.match(text, /Never end your turn while it runs/, `${agent}.md never ends the turn while a background command runs`);
+    assert.ok(text.includes(NO_POLL_LINE[agent]), `${agent}.md forbids polling`);
+    if (OWN_RULE_AGENTS.includes(agent)) assert.ok(text.includes(STOP_BEFORE_REPORT), `${agent}.md stops its background commands before the report`);
+    else assert.doesNotMatch(read(`home/agents/${agent}.md`), /^omitClaudeMd: true$/m, `${agent}.md loads home/CLAUDE.md, which holds the stop rule`);
     assert.doesNotMatch(text, /dies when you reply/, agent);
     assert.doesNotMatch(text, /you are woken|woken (at|when)|you (are|will be|get) notified|wakes you|reported when it ends/i, `${agent}.md promises no wake-up`);
     assert.doesNotMatch(text, /until <test>; do sleep/, `${agent}.md has no sleep-loop recipe`);
@@ -106,9 +120,9 @@ test('the long-command line: over 3 minutes runs in the background with a timeou
 });
 
 // The 3-min mark is a background subagent's limit: its foreground command is moved to the background after 3 min.
-test('home/CLAUDE.md: long-command line says over 3 min, with a timeout, no polling and no turn end while it runs', () => {
+test('home/CLAUDE.md: long-command line says over 3 min, with a timeout, wait for the notice or a Monitor, no polling, stop before the final report, and points to dev-run.md', () => {
   const claude = read('home/CLAUDE.md');
-  assert.match(claude, /A command that may run over 3 min runs with `run_in_background: true` and its `timeout` set \(at most 2 h\)\. Never poll or\s+sleep-loop, and never end your turn while it runs/);
+  assert.match(claude, /A command that may run over 3 min runs with `run_in_background: true` and its `timeout` set \(at most 2 h\); wait for its\s+notice or a Monitor, never poll or sleep-loop; stop every background shell you started before your final report \(how:\s+`~\/\.claude\/agents\/dev-run\.md`\)\./);
   assert.doesNotMatch(claude, /watch\.mjs/, 'watch.mjs is removed and never a way to run or bound a command');
   assert.doesNotMatch(claude, /A command over ~2 min/);
 });
