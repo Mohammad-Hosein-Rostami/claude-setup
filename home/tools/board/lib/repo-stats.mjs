@@ -24,7 +24,7 @@ function landedToday(common, base, nowMs, startMs) {
   if (gitBudgetSpent(startMs)) return null;
   const midnight = new Date(nowMs);
   midnight.setHours(0, 0, 0, 0);
-  const text = gitIn(common, [`--git-dir=${common}`, 'log', '--first-parent', '--format=%ct', `--since=${midnight.toISOString()}`, '-n', String(MAX_LANDED), '--end-of-options', base, '--']);
+  const { text } = gitIn(common, [`--git-dir=${common}`, 'log', '--first-parent', '--format=%ct', `--since=${midnight.toISOString()}`, '-n', String(MAX_LANDED), '--end-of-options', base, '--']);
   if (text === null) return null;
   const times = text.split('\n').map(Number).filter((t) => Number.isInteger(t) && t > 0);
   return { count: times.length, lastMs: times.length > 0 ? Math.max(...times) * MS_PER_S : null };
@@ -43,7 +43,7 @@ export function repoStats({ common, base, cache, nowMs, startMs = Date.now() }) 
     const same = old.common === common && old.base === base;
     if (same && nowMs - (old.at ?? 0) < STATS_EVERY_MS) return { stats: old.stats ?? null, cache: old };
     if (gitBudgetSpent(startMs)) return { stats: same ? (old.stats ?? null) : null, cache: same ? old : {} };
-    const tip = gitIn(common, [`--git-dir=${common}`, 'rev-parse', '--verify', '--quiet', '--end-of-options', `${base}^{commit}`])?.trim() ?? '';
+    const tip = gitIn(common, [`--git-dir=${common}`, 'rev-parse', '--verify', '--quiet', '--end-of-options', `${base}^{commit}`]).text?.trim() ?? '';
     if (!SHA.test(tip)) return { stats: same ? (old.stats ?? null) : null, cache: same ? old : {} };
     const stats = { tip, landed: landedToday(common, base, nowMs, startMs) ?? (same ? old.stats?.landed ?? null : null) };
     return { stats, cache: { common, base, at: nowMs, stats } };

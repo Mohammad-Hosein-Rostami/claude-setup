@@ -6,7 +6,8 @@
 // From board.repo and board.repos (repos.mjs: the session folder's repository first): in the session's repository its current
 // branch, then a `lanes` row of its other active branches (git-state.mjs rules a to e, at most MAX_LANES_SHOWN, then `+K more`);
 // outside one or with a second repository, one row each (at most GIT_LINE_ROWS, then `+K more repos`), lanes after ` │ `. A branch:
-// to push, to pull (yellow), conflicts (red), an operation (yellow), files (`changes ?` for refs only), stash, last commit age; a
+// to push, to pull (yellow), conflicts (red), an operation (yellow), files (`changes ?` for refs only, `changes unknown` when git gave
+// no status), stash, last commit age; a
 // lane `ready to land` or `needs rebase` (yellow). Too wide: last commit drops first, then stash, never the rest. Below
 // LABEL_FROM_COLUMNS short forms (`↑2 +1 ~3 ?1`), no repository name when only one shows; branch names in the `branch` colour,
 // repository names bold. An old board without `active` draws its worktrees.
@@ -23,6 +24,7 @@ const worktreesOf = (repo) => (Array.isArray(repo?.worktrees) ? repo.worktrees.f
 const arrows = (look) => (look.ascii ? { up: '^', down: 'v', clean: 'ok' } : { up: '↑', down: '↓', clean: '✓' });
 const above = (value) => isCount(value) && value > 0;
 const opText = (branch, look) => cleanText(`${branch.op}${branch.opStep ? ` ${branch.opStep}` : ''}`, look);
+const UNKNOWN = 'unknown'; // git-state.mjs: counts git could not give this refresh (the worktree entry's `unknown` says why)
 
 /** A branch as the line draws it, from a worktree (an old board without `active`, or a main checkout whose branch is not active). */
 const branchOfWorktree = (wt) => ({ name: wt.branch ?? wt.name, upAhead: wt.upAhead ?? null, upBehind: wt.upBehind ?? null,
@@ -40,8 +42,12 @@ function branchesOf(repo) {
   return { head, lanes: active.filter((branch) => branch !== head), more: isCount(repo.activeMore) ? repo.activeMore : 0, inRepo: current !== undefined };
 }
 
-/** The files of a branch: `1 staged · 3 changed · 1 new` (short `+1 ~3 ?1`); `changes ?` without counts; '' when none. */
+/**
+ * The files of a branch: `1 staged · 3 changed · 1 new` (short `+1 ~3 ?1`); `changes unknown` when git gave no status; `changes ?`
+ * without counts (refs only); '' when none.
+ */
 function filesPart(branch, refsOnly, look) {
+  if (branch.staged === UNKNOWN) return { text: 'changes unknown', state: STATE.dim };
   if (refsOnly || !isCount(branch.staged) || !isCount(branch.changed)) return { text: 'changes ?', state: STATE.dim };
   const short = look.columns < LABEL_FROM_COLUMNS;
   const counts = [[branch.staged, 'staged', '+'], [branch.changed, 'changed', '~'], [branch.untracked, 'new', '?']].filter(([count]) => above(count));
@@ -81,6 +87,7 @@ function lanePart(lane, base, look, { inline, compact }) {
   if (lane.op) add(opText(lane, look), STATE.warn);
   const files = [[lane.staged, '+'], [lane.changed, '~'], [lane.untracked, '?']].filter(([count]) => above(count)).map(([count, mark]) => `${mark}${count}`);
   if (files.length > 0) add(files.join(' '));
+  if (lane.staged === UNKNOWN) add('changes unknown', STATE.dim);
   const agents = Array.isArray(lane.agents) ? lane.agents.filter((name) => typeof name === 'string') : [];
   // an agent's name is `<type>:<model>` or its description: the part before `:` says who works there
   if (!inline && agents.length > 0) add(agents.map((name) => cutWords(cleanText(name.split(':')[0], look), AGENT_NAME_CHARS, look)).join(','));

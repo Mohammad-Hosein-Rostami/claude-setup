@@ -49,6 +49,8 @@ const MS_PER_MIN = 60_000;
 const MS_PER_S = 1000;
 const BASE_NAMES = ['main', 'master'];
 const REPOSITORY_SCOPES = new Set(['local', 'worktree']); // config that comes with the repository, not the owner's own
+const UNKNOWN = 'unknown'; // a count git could not give this refresh (no earlier answer cached); the entry's `unknown` says why
+const BUDGET_USED = `git budget of ${GIT_BUDGET_MS} ms for this refresh used up`;
 /**
  * Before every git call, on the command line so it beats the repository's own config: no fsmonitor hook, no hook from the
  * repository's hooks path, no signature program, no repository found by discovery inside a folder unless named (review SEC-7).
@@ -83,17 +85,25 @@ function gitEnv(common) {
   return { ...env, GIT_COMMON_DIR: common, GIT_NO_LAZY_FETCH: '1', GIT_OPTIONAL_LOCKS: '0' };
 }
 
+/** Why a git call gave no output, in words the board file keeps (an unknown fact always says why: principle P3). */
+function failureOf(error) {
+  if (error?.code === 'ETIMEDOUT') return `timed out after ${GIT_TIMEOUT_MS} ms`;
+  if (Number.isInteger(error?.status)) return `failed with exit ${error.status}`;
+  return `could not run (${error?.code ?? error?.message ?? 'no error code'})`;
+}
+
 /**
  * One git call of the board with fixed flags, on the repository whose shared git folder is `common`.
  * @param {string} common the verified shared git folder (trusted-repos.mjs)
  * @param {string[]} args the arguments after GIT_SAFETY (always with an explicit `--git-dir=`)
- * @returns {string | null} stdout; null on any failure or timeout
+ * @returns {{ text: string | null, why: string | null }} stdout and null; or null and why git gave none (timeout, exit code)
  */
 export function gitIn(common, args) {
   try {
-    return execFileSync('git', [...GIT_SAFETY, ...args], { encoding: 'utf8', timeout: GIT_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, env: gitEnv(common) });
-  } catch {
-    return null;
+    const text = execFileSync('git', [...GIT_SAFETY, ...args], { encoding: 'utf8', timeout: GIT_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, env: gitEnv(common) });
+    return { text, why: null };
+  } catch (error) {
+    return { text: null, why: failureOf(error) };
   }
 }
 
@@ -148,27 +158,37 @@ function opOf(gitDir) {
   return { op, opStep, rebasing: headName ?? null };
 }
 
-/** Whether the repository's own config (local or worktree scope, includes followed) names a filter; null when it cannot be read. */
+/**
+ * Whether the repository's own config (local or worktree scope, includes followed) names a filter.
+ * @returns {{ names: boolean, why: null } | { names: null, why: string }} why: the config could not be read
+ */
 function namesFilter(common, wt) {
   const list = gitIn(common, [`--git-dir=${wt.gitDir}`, 'config', '--list', '--name-only', '--show-scope']);
-  if (list === null) return null;
-  return list.split('\n').some((line) => {
+  if (list.text === null) return { names: null, why: `git config ${list.why}` };
+  const names = list.text.split('\n').some((line) => {
     const [scope, key = ''] = line.split('\t');
     return REPOSITORY_SCOPES.has(scope) && key.toLowerCase().startsWith('filter.');
   });
+  return { names, why: null };
 }
 
-/** One worktree's status call, `refs` when its repository's config names a filter, or null (no answer or no budget: the cache stays). */
+/**
+ * One worktree's status call: `{ trust, value }` (`refs` and no value when its repository's config names a filter), or `{ why }` when
+ * git gave no answer or the refresh's git budget was used up (the caller keeps the cache, else marks the counts unknown).
+ */
 function freshStatus(wt, common, withUntracked, clock) {
-  if (gitBudgetSpent(clock.startMs)) return null;
+  if (gitBudgetSpent(clock.startMs)) return { why: BUDGET_USED };
   const filter = namesFilter(common, wt);
-  if (filter === null) return null; // config unreadable or git out of time: no status runs
-  if (filter) return { trust: 'refs', value: null };
-  if (gitBudgetSpent(clock.startMs)) return null; // the config look used the rest of the budget
-  const text = gitIn(common, ['-C', wt.path, `--git-dir=${wt.gitDir}`, `--work-tree=${wt.path}`, '--no-optional-locks', 'status', '--porcelain=v2', '--branch',
+  if (filter.why !== null) return { why: filter.why }; // no status runs when the config look failed: a filter could hide in it
+  if (filter.names) return { trust: 'refs', value: null };
+  if (gitBudgetSpent(clock.startMs)) return { why: BUDGET_USED }; // the config look used the rest of the budget
+  const status = gitIn(common, ['-C', wt.path, `--git-dir=${wt.gitDir}`, `--work-tree=${wt.path}`, '--no-optional-locks', 'status', '--porcelain=v2', '--branch',
     `--untracked-files=${withUntracked ? 'normal' : 'no'}`, '--ignore-submodules=dirty']);
-  return text === null ? null : { trust: 'full', value: parseStatus(text, withUntracked) };
+  return status.text === null ? { why: `git status ${status.why}` } : { trust: 'full', value: parseStatus(status.text, withUntracked) };
 }
+
+/** A worktree's counts when git gave no status and none is cached: each `unknown` (the state's `unknown` says why). */
+const unknownCounts = (own) => ({ head: null, staged: UNKNOWN, changed: UNKNOWN, conflicts: UNKNOWN, untracked: own ? UNKNOWN : null, entries: UNKNOWN });
 
 /**
  * One worktree's status, reused from the cache while its index and HEAD are unchanged and it is younger than STATUS_EVERY_MS. Git gets
@@ -179,26 +199,36 @@ function freshStatus(wt, common, withUntracked, clock) {
 function statusOf(wt, common, cached, { clock, own }) {
   const dir = wt.gitDir;
   const key = `${mtimeOf(join(dir, 'index'))}:${mtimeOf(join(dir, 'HEAD'))}`;
-  const kept = { key: '', at: 0, untrackedAt: 0, trust: 'full', value: null, ...(cached ?? {}), ...opOf(dir) };
+  const kept = { key: '', at: 0, untrackedAt: 0, trust: 'full', value: null, unknown: null, ...(cached ?? {}), ...opOf(dir) };
   const fresh = cached !== undefined && cached.key === key && clock.nowMs - cached.at < STATUS_EVERY_MS;
   if (fresh) return kept;
   const withUntracked = own && clock.nowMs - (kept.untrackedAt ?? 0) >= UNTRACKED_EVERY_MS;
   const got = freshStatus(wt, common, withUntracked, clock);
-  if (got === null) return kept;
+  if (got.why !== undefined) {
+    // An earlier answer (counts, or refs only) stays, with its age (checkedMs). Without one the counts are `unknown` with the reason,
+    // never a null that reads as "nothing to count" (P3). The old key and time stay, so the next refresh asks git again.
+    const hasEarlierAnswer = kept.at > 0;
+    return hasEarlierAnswer ? kept : { ...kept, value: unknownCounts(own), unknown: got.why };
+  }
   const untracked = withUntracked ? got.value?.untracked ?? null : own ? kept.value?.untracked ?? null : null;
   const value = got.value === null ? null : { ...got.value, untracked };
-  return { ...kept, key, at: clock.nowMs, untrackedAt: withUntracked ? clock.nowMs : kept.untrackedAt, trust: got.trust, value };
+  return { ...kept, key, at: clock.nowMs, untrackedAt: withUntracked ? clock.nowMs : kept.untrackedAt, trust: got.trust, value, unknown: null };
 }
 
-/** The base branch and every branch's counts, reused from the cache while fresh; git runs on the shared git folder alone. */
+/**
+ * The base branch and every branch's counts, reused from the cache while fresh; git runs on the shared git folder alone.
+ * `refsUnknown` says why there are no refs at all (git gave none and none is cached), else null.
+ */
 function refsOf(common, worktrees, cache, clock) {
   const spent = gitBudgetSpent(clock.startMs); // the refresh's whole git budget is used: the cached refs stay
   const base = baseOf(common, worktrees);
   const refsFresh = spent || (cache.common === common && cache.base === base && clock.nowMs - (cache.refsAt ?? 0) < REFS_EVERY_MS);
   const format = `%(refname:short)%09%(committerdate:unix)%09%(upstream:short)%09%(upstream:track,nobracket)${base ? `%09%(ahead-behind:${base})` : ''}`;
-  const refsText = refsFresh ? null : gitIn(common, [`--git-dir=${common}`, 'for-each-ref', `--format=${format}`, 'refs/heads']);
-  const refs = refsText === null ? cache.refs : parseRefs(refsText);
-  return { base, refs: refs !== null && typeof refs === 'object' ? refs : {}, refsAt: refsText === null ? (cache.refsAt ?? 0) : clock.nowMs };
+  const call = refsFresh ? null : gitIn(common, [`--git-dir=${common}`, 'for-each-ref', `--format=${format}`, 'refs/heads']);
+  if (call !== null && call.text !== null) return { base, refs: parseRefs(call.text), refsAt: clock.nowMs, refsUnknown: null };
+  const cached = cache.refs !== null && typeof cache.refs === 'object' ? cache.refs : null;
+  const why = call !== null ? `git for-each-ref ${call.why}` : spent ? BUDGET_USED : 'no refs in the cache';
+  return { base, refs: cached ?? {}, refsAt: cache.refsAt ?? 0, refsUnknown: cached === null ? why : null };
 }
 
 /** The stash count from the stash reflog (one line per entry); 0 with none, null when it cannot be read. */
@@ -210,7 +240,10 @@ function stashOf(common) {
 }
 
 const ageOf = (ref, nowMs) => (ref?.t ? Math.max(0, Math.round((nowMs - ref.t * MS_PER_S) / MS_PER_MIN)) : null);
-const hasChanges = (wt) => (wt.staged ?? 0) + (wt.changed ?? 0) + (wt.conflicts ?? 0) + (wt.untracked ?? 0) > 0 || wt.op !== null;
+const countOrZero = (count) => (Number.isInteger(count) ? count : 0);
+/** Whether a worktree has changes; one whose counts are `unknown` may have some, so it counts as changed (an error is never "none"). */
+const hasChanges = (wt) => wt.staged === UNKNOWN || wt.op !== null
+  || countOrZero(wt.staged) + countOrZero(wt.changed) + countOrZero(wt.conflicts) + countOrZero(wt.untracked) > 0;
 
 /** Why a branch is active, as a rank (lower shows first), or null: spec rules (a) to (e). */
 function activeRank(name, ref, wt, place) {
@@ -249,7 +282,7 @@ function worktreeEntry(wt, refs, state, nowMs) {
   return {
     name: cleanName(wt.main ? (branch ?? basename(wt.path)) : basename(wt.path)), path: wt.path, branch: cleanName(branch), main: wt.main,
     ahead: ref?.ahead ?? null, behind: ref?.behind ?? null, changed: value === null ? null : value.entries, op: state.op, opStep: state.opStep,
-    staged: value?.staged ?? null, conflicts: value?.conflicts ?? null, untracked: value?.untracked ?? null, trust: state.trust,
+    staged: value?.staged ?? null, conflicts: value?.conflicts ?? null, untracked: value?.untracked ?? null, trust: state.trust, unknown: state.unknown ?? null,
     ageMin: ageOf(ref, nowMs), agents: [], checkedMs: state.at, upAhead: ref?.upAhead ?? null, upBehind: ref?.upBehind ?? null,
   };
 }
@@ -274,7 +307,7 @@ export function repoState({ cwd, sessionFolder = null, common, liveDirs = [], ca
     const records = worktreeRecords(common).slice(0, MAX_WORKTREES);
     const sessionPath = holderOf(sessionFolder, records)?.path ?? null;
     const livePaths = new Set(liveDirs.map((dir) => holderOf(dir, records)?.path).filter((path) => path !== undefined));
-    const { base, refs, refsAt } = refsOf(common, records, old, clock);
+    const { base, refs, refsAt, refsUnknown } = refsOf(common, records, old, clock);
     const status = Object.fromEntries(records.map((wt) => [wt.path, statusOf(wt, common, old.status?.[wt.path], { clock, own: wt.path === sessionPath })]));
     const worktrees = records.map((wt) => worktreeEntry(wt, refs, status[wt.path], nowMs));
     // for the active branches: the raw branch name (the refs' key) and `changed` as the spec counts it (Y not `.`, not every entry)
@@ -286,10 +319,10 @@ export function repoState({ cwd, sessionFolder = null, common, liveDirs = [], ca
     return {
       repo: {
         base, branches: names.length, unlanded: names.filter((name) => name !== base && (refs[name].ahead ?? 0) > 0).length,
-        trust: worktrees.every((wt) => wt.trust === 'full') ? 'full' : 'refs', stash: stashOf(common),
+        trust: worktrees.every((wt) => wt.trust === 'full') ? 'full' : 'refs', stash: stashOf(common), refsUnknown,
         ...activeOf(refs, withRaw, { sessionPath, livePaths, nowMs, base }), worktrees,
       },
-      git: ownStatus?.value ? { branch: cleanName(ownStatus.value.head), ahead: ownRef?.upAhead ?? null, behind: ownRef?.upBehind ?? null, changed: ownStatus.value.entries } : null,
+      git: ownStatus?.value && !ownStatus.unknown ? { branch: cleanName(ownStatus.value.head), ahead: ownRef?.upAhead ?? null, behind: ownRef?.upBehind ?? null, changed: ownStatus.value.entries } : null,
       cache: { common, base, refs, refsAt, status },
     };
   } catch {
