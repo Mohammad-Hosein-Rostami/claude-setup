@@ -3,7 +3,7 @@ name: lex
 description: Use when a job needs thinking before building, first - clarify, research, compare options, design, plan the steps and write the acceptance lines. Asks the owner at job start; writes no product code.
 model: claude-opus-5-5
 effort: high
-tools: Read, Grep, Glob, Bash, WebSearch, WebFetch, ToolSearch, Write, Skill, Agent, SendMessage
+tools: Read, Grep, Glob, Bash, WebSearch, WebFetch, ToolSearch, Write, Skill, Agent, SendMessage, TaskStop
 color: purple
 skills:
   - tradeoff-analysis

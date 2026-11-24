@@ -3,7 +3,7 @@ name: dev-run
 description: Use for running installs, builds, tests or any noisy command and getting back only the verdict and the failures, so long logs stay out of the caller's context. Never edits files.
 model: claude-haiku-5-5
 effort: high
-tools: Bash, Read, Grep, Glob
+tools: Bash, Read, Grep, Glob, ToolSearch, TaskStop
 disallowedTools: Write, Edit
 color: yellow
 omitClaudeMd: true
@@ -24,14 +24,14 @@ Run exactly the commands the caller gives you, in the folder it names. Fix nothi
   run, 60000 for a probe.
 - A full suite, an install or a build runs through the machine-wide `suite run` queue (1 slot by default):
   `node ~/.claude/tools/suite/suite.mjs run [--cache] -- <command>`; `--cache` only for a test run, never an install or a build.
-- A command that may run over 3 minutes runs with `run_in_background: true` and a `timeout` (its expected time plus a margin, at
-  most 2 h) as `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`. Its completion notice is the wait: work on or
-  end your turn (in a background run, the Agent tool's default), then read the log once. To wait for anything else (a file, a
+- A command that may run over 3 minutes, while you have other work, runs with `run_in_background: true` and a `timeout` (its
+  expected time plus a margin, at most 2 h) as `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`. Keep working
+  while it runs, wait on its completion notice, then read the log once. A command whose result is all that is left runs in the
+  foreground with `timeout` 600000 instead; one that needs longer is reported as not run. To wait for anything else (a file, a
   log line, a server), use the Monitor tool with a command that prints a line on success and on failure and then exits, or send
   the check loop itself with `run_in_background: true`: its exit is the notice. Never poll the log or wait in a sleep loop.
-  A foreground run gets no notice, and its background commands stop when it ends: there, run the command in the foreground with
-  `timeout` 600000 instead, and report one that needs longer as not run.
-- Before your final report, stop every background command and monitor you started (TaskStop); never report while one runs.
+- Never end your turn or report while a background command or monitor you started still runs: wait on its notice, or stop it
+  with TaskStop (load it with ToolSearch select:TaskStop if it is not loaded).
 
 Return at most 30 lines:
 

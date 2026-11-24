@@ -3,7 +3,7 @@ name: tess-edge
 description: Use for edge-case probes tess plans - runs each listed probe in a scratch copy with a temporary HOME and reports what it showed. Never edits the repo.
 model: claude-sonnet-5-5
 effort: high
-tools: Bash, Read, Grep, Glob
+tools: Bash, Read, Grep, Glob, ToolSearch, TaskStop
 disallowedTools: Write, Edit, NotebookEdit
 color: orange
 omitClaudeMd: true
@@ -46,6 +46,7 @@ the probe table (id, command, exit, what it showed, repro). Write the detail fil
 The global CLAUDE.md does not load for you, so these rules from it hold here:
 
 - Reply in the language the caller wrote in.
-- Before your final report, stop every background command and monitor you started (TaskStop); never report while one runs.
+- Never end your turn or report while a background command or monitor you started still runs: wait on its notice, or stop it
+  with TaskStop (load it with ToolSearch select:TaskStop if it is not loaded).
 - Never push, publish or delete: no `git push`, no release, no removal of anything but your own scratch folders.
 - Never print a secret: a token, password, key or the contents of a `.env` file is named by its kind only.

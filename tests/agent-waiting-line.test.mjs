@@ -20,7 +20,7 @@ const RECIPE_HOLDER = 'dev-run';
 const RECIPE_POINTER = 'started and waited for as `~/.claude/agents/dev-run.md` says';
 // A shell still running at the final report keeps the agent listed as running (lib/wait-advice.mjs), so the agents and the advice
 // say the same line.
-const STOP_BEFORE_REPORT = 'Before your final report, stop every background command and monitor you started (TaskStop); never report while one runs.';
+const STOP_BEFORE_REPORT = 'Never end your turn or report while a background command or monitor you started still runs: wait on its notice, or stop it with TaskStop (load it with ToolSearch select:TaskStop if it is not loaded).';
 // The helpers that hold Bash and do not load the global CLAUDE.md, so the stop line must be in their own file.
 const OWN_RULE_HELPERS = ['dev-run', 'dev-part', 'tess-edge', 'tess-simple'];
 // A background command of a foreground subagent stops when that agent's run ends and nobody is woken (Claude Code tools reference, Bash
@@ -53,10 +53,11 @@ test('the guard\'s start form is in dev-run.md, and every other long-running age
 
 test('dev-run.md holds the wait recipe: the completion notice, a Monitor for anything else, no poll, and the foreground case', () => {
   const text = agentText(RECIPE_HOLDER);
-  assert.match(text, /Its completion notice is the wait: work on or end your turn \(in a background run, the Agent tool's default\), then read the log once\./);
+  assert.match(text, /A command that may run over 3 minutes, while you have other work, runs with `run_in_background: true`/);
+  assert.match(text, /Keep working while it runs, wait on its completion notice, then read the log once\./);
   assert.match(text, /To wait for anything else \(a file, a log line, a server\), use the Monitor tool with a command that prints a line on success and on failure and then exits, or send the check loop itself with `run_in_background: true`: its exit is the notice\./);
   assert.match(text, /Never poll the log or wait in a sleep loop\./);
-  assert.match(text, /A foreground run gets no notice, and its background commands stop when it ends: there, run the command in the foreground with `timeout` 600000 instead, and report one that needs longer as not run\./);
+  assert.match(text, /A command whose result is all that is left runs in the foreground with `timeout` 600000 instead; one that needs longer is reported as not run\./);
 });
 
 test('the wait recipe is in dev-run.md only: no other agent file carries a second copy of a wait loop', () => {
@@ -65,7 +66,7 @@ test('the wait recipe is in dev-run.md only: no other agent file carries a secon
   for (const file of others) {
     const text = oneLine(read(`home/agents/${file}`));
     assert.ok(!text.includes('<log>.exit'), `${file}: no exit-file wait`);
-    assert.ok(!text.includes('completion notice is the wait'), `${file}: no copy of the notice wait`);
+    assert.ok(!text.includes('wait on its completion notice'), `${file}: no copy of the notice wait`);
     assert.ok(!text.includes('Monitor tool with a command'), `${file}: no copy of the Monitor wait`);
   }
 });
@@ -99,9 +100,9 @@ test('no agent text and no guard advice promises a wake-up: a foreground subagen
 
 test('the guard advice names the notice wait, the Monitor tool, the foreground case and the stop before the final report', () => {
   assert.match(WAIT_ADVICE, /A command that ends within 3 min runs in the foreground with an explicit timeout\./);
-  assert.ok(WAIT_ADVICE.includes(`started as ${WAIT_START_FORM}. Its completion notice is the wait: work on or end your turn, then read the log once.`), 'the start form, then the notice');
+  assert.ok(WAIT_ADVICE.includes(`started as ${WAIT_START_FORM}. Do so only while you have other work: keep working while it runs, wait on its completion notice, then read the log once.`), 'the start form, then the notice');
   assert.match(WAIT_ADVICE, /To wait for anything else \(a file, a log line, a server\), use the Monitor tool with a command that prints a line on success and on failure and then exits, or send the check loop itself with run_in_background: true: its exit is the notice\./);
-  assert.match(WAIT_ADVICE, /A foreground subagent gets no notice and its background commands stop when its run ends: there, run the command in the foreground with timeout 600000\./);
+  assert.match(WAIT_ADVICE, /A command whose result is all that is left runs in the foreground with timeout 600000 instead\./);
   assert.ok(WAIT_ADVICE.includes(STOP_BEFORE_REPORT), 'the stop-before-report line, as the agents say it');
 });
 
@@ -129,9 +130,9 @@ test('the catalog rows name timeout with the 2-h maximum, and the advice row nam
   }
   assert.match(adviceRow, /unattended run \(`-p`, Agent SDK, CI, cloud\)[^.]*30 min \(10 min for a text `-p` prompt\)/);
   assert.doesNotMatch(adviceRow, /watch\.mjs/, 'the watch tool was removed');
-  assert.ok(adviceRow.includes(`started as \`${WAIT_START_FORM}\`, then its completion notice is the wait (work on or end the turn, read the log once)`), 'the row names the start form, then the notice');
+  assert.ok(adviceRow.includes(`started as \`${WAIT_START_FORM}\`, only while the agent has other work: it keeps working and waits on the completion notice, then reads the log once`), 'the row names the start form, then the notice');
   assert.match(adviceRow, /anything else \(a file, a log line, a server\) is waited for with Claude Code's `Monitor` tool/);
-  assert.match(adviceRow, /Before the final report every background command and monitor the agent started is stopped \(TaskStop\)\./);
+  assert.match(adviceRow, /An agent never ends its turn or reports while a background command or monitor it started still runs: it waits on the notice or stops it with TaskStop/);
   assert.match(adviceRow, /The agents that run long commands point to the same recipe in `home\/agents\/dev-run\.md`\./);
   assert.match(adviceRow, /`\$\(\.\.\.\)` and backtick bodies are not looked into/);
 });

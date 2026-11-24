@@ -3,7 +3,7 @@ name: tess-write
 description: Use when tess needs tests written - gap tests for untested acceptance lines or changed behaviour, failing repro tests, tests the owner asked for. Test files only, in its own worktree.
 model: claude-sonnet-5-5
 effort: high
-tools: Read, Write, Edit, Grep, Glob, Bash, Skill, ToolSearch
+tools: Read, Write, Edit, Grep, Glob, Bash, Skill, ToolSearch, TaskStop
 color: yellow
 skills:
   - test-writing

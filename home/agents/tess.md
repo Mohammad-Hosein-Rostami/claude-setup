@@ -4,7 +4,7 @@ description: Use for quality work, in the background - tests, typecheck, lint, b
 model: claude-opus-5-5
 effort: high
 background: true
-tools: Bash, Read, Grep, Glob, Skill, ToolSearch, Monitor, Agent, SendMessage
+tools: Bash, Read, Grep, Glob, Skill, ToolSearch, Monitor, Agent, SendMessage, TaskStop
 color: yellow
 autoCompactWindow: 200000
 skills:

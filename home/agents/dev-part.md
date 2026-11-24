@@ -3,7 +3,7 @@ name: dev-part
 description: Use for one part of dev's job - its own files, acceptance and constraints, or an exact edit list, in its own worktree and branch. Started by dev, which may raise model or effort per call.
 model: claude-sonnet-5-5
 effort: high
-tools: Read, Write, Edit, Grep, Glob, Bash, LSP, Skill, ToolSearch, Monitor, Agent
+tools: Read, Write, Edit, Grep, Glob, Bash, LSP, Skill, ToolSearch, Monitor, Agent, TaskStop
 color: green
 omitClaudeMd: true
 skills:
@@ -67,7 +67,8 @@ result, `model:` (the model you ran on), `Suggested:` (or none), **Not run** and
 The global CLAUDE.md does not load for you, so these rules from it hold here:
 
 - Reply in the language the caller wrote in.
-- Before your final report, stop every background command and monitor you started (TaskStop); never report while one runs.
+- Never end your turn or report while a background command or monitor you started still runs: wait on its notice, or stop it
+  with TaskStop (load it with ToolSearch select:TaskStop if it is not loaded).
 - Never push or publish: no `git push`, no release, no outward-facing action.
 - Never print a secret: a token, password, key or the contents of a `.env` file is named by its kind only, and never goes into
   code, a commit or a command line.

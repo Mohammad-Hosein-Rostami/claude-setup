@@ -173,7 +173,7 @@ const LOOP_LIMIT_SECONDS = 5;
 test('the start form that the advice and dev-run name runs at the first send in the background, and the advice makes its completion notice the wait', () => {
   const session = guardSession();
   assert.deepEqual(session.run(asSent(WAIT_START_FORM), 'sess-1', IN_BACKGROUND), { decision: 'allow' });
-  assert.ok(WAIT_ADVICE.includes(`started as ${WAIT_START_FORM}. Its completion notice is the wait`), 'the advice names the start form, then the notice');
+  assert.ok(WAIT_ADVICE.includes(`started as ${WAIT_START_FORM}. Do so only while you have other work`), 'the advice names the start form, then the notice');
 });
 
 test('the start form removes an old <log>.exit first, so the wait for a second run never ends at once on the first run\'s exit code; the guard lets it run at the first send, foreground and background', () => {

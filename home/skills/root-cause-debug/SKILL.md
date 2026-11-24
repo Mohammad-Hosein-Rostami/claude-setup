@@ -16,7 +16,7 @@ Ladder: a failed fix goes once to `xhigh`, then once to `max`, then back to `lex
 
 Second report of the same defect (the owner says it is still broken): reproduce it under the owner's conditions (zoom, pixel ratio, OS, theme, data) and hand it to `dev-debug` before any fix; never answer "no defect" to a second report. The condition joins the UI matrix for good.
 
-Flaky tests (pass and fail with no code change): reproduce by running the test 20-50 times alone, then with the suite, then in parallel, and record the failure rate. Classify the cause: shared state or order, clock or timers, randomness, un-awaited async, network, a race in product code, ports/files, colliding test data. Fix that cause (isolate state, fake the clock, seed randomness, await the event, fake the network, unique ids); a retry or longer timeout is not a fix, and a race in the product is fixed in the product. Rerun the same count to prove it.
+Flaky tests (pass and fail with no code change): reproduce by running the failing test 20-50 times alone, then in parallel (the suite is tess's), and record the failure rate. Classify the cause: shared state or order, clock or timers, randomness, un-awaited async, network, a race in product code, ports/files, colliding test data. Fix that cause (isolate state, fake the clock, seed randomness, await the event, fake the network, unique ids); a retry or longer timeout is not a fix, and a race in the product is fixed in the product. Rerun the same count to prove it.
 
 Never: silence the check (C13), catch-and-ignore (C9), retry until green.
 

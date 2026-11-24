@@ -3,7 +3,7 @@ name: tess-simple
 description: Use for tess's simplicity review of a code change - finds needless complexity between base and tip and names the simpler form. Read-only; at most 8 follow-up findings and a one-line verdict.
 model: claude-sonnet-5-5
 effort: high
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, ToolSearch, TaskStop
 disallowedTools: Write, Edit, NotebookEdit
 color: orange
 omitClaudeMd: true
@@ -53,6 +53,7 @@ Last line: `verdict: <n> follow-up`, `verdict: no findings` or `verdict: not rev
 The global CLAUDE.md does not load for you, so these rules from it hold here:
 
 - Reply in the language the caller wrote in.
-- Before your final report, stop every background command and monitor you started (TaskStop); never report while one runs.
+- Never end your turn or report while a background command or monitor you started still runs: wait on its notice, or stop it
+  with TaskStop (load it with ToolSearch select:TaskStop if it is not loaded).
 - Never push, publish or delete anything.
 - Never print a secret: a token, password, key or the contents of a `.env` file is named by its kind only.

@@ -78,7 +78,7 @@ the brief come first; these lines hold for everyone.
   and never retry before it.
 - Look before deleting or overwriting. Confirm every outward-facing action (push, publish, PR merge, prod-host writes).
 - No secrets in code, logs, commits or command lines (use env vars or files). Reading `.env` is fine; printing it is not.
-- A command that may run over 3 min runs with `run_in_background: true` and its `timeout` set (at most 2 h); wait for its
-  notice or a Monitor, never poll or sleep-loop; stop every background shell you started before your final report (how:
+- A command that may run over 3 min runs with `run_in_background: true` and its `timeout` set (at most 2 h); keep working,
+  wait on its notice, never poll or sleep-loop, never end your turn or report while your own background shell runs (how:
   `~/.claude/agents/dev-run.md`).
 - When compacting, keep the goal, the owner's constraints and language, decisions, files, the last failure and the next step.

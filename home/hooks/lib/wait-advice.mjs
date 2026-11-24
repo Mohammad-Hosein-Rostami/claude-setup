@@ -13,9 +13,11 @@
 // background command stops after 30 min (10 min for a text `-p` prompt) unless `timeout` is passed, and 7200000 ms is the most; an interactive
 // session has no limit. No page says which of the two a background subagent is, so the advice is "set timeout" for every background command.
 // Same page: a background command of a foreground subagent stops when that agent's run ends, while the main session's or a background
-// subagent's keeps running and its exit is a completion notice. So the text names one way to wait: over 3 min, start in the background
-// and wait for that notice; to wait for anything else, the Monitor tool (each line its command prints is a notice; it ends when the
-// command exits). A shell still running at the final report keeps the agent listed as running, so the text says to stop it first.
+// subagent's keeps running and its exit is a completion notice. So the text names one way to wait: over 3 min and with other work to
+// do, start in the background and wait on that notice; with nothing else left, run in the foreground; to wait for anything else, the
+// Monitor tool (each line its command prints is a notice; it ends when the command exits). A shell still running when the agent ends
+// its turn keeps it listed as running (and a foreground subagent's stops), so the text says never to end the turn or report while one
+// runs: wait on it, or stop it with TaskStop, a deferred tool that ToolSearch loads (Claude Code 2.1.330: `shouldDefer`).
 // Condition loops (spec-p3 `r9-waits-more`): a `while` or `until` loop whose condition polls (`kill -0`, `pgrep`, `grep -q`, `test`, `[`, `[[`)
 // and that sleeps at all is a wait at any sleep length (`while kill -0 $pid; do sleep 2; done`); a `for` loop keeps the 5 s rule, so
 // a bounded `for` pause loop still runs. Plain retries (`until npm ci; do sleep 1; done`) stay allowed. A background subagent's
@@ -36,11 +38,11 @@ export const WAIT_START_FORM = 'rm -f <log>.exit; <command> > <log> 2>&1; echo $
 export const WAIT_ADVICE = 'Waiting (speed): do not wait with a long sleep or a sleep loop: it holds the turn, and a repeated check costs a model call each time. '
   + 'A command that ends within 3 min runs in the foreground with an explicit timeout. '
   + `Run a longer one with run_in_background: true and set timeout to its expected run plus a margin, at most ${BACKGROUND_TIMEOUT_MAX_MS} ms (2 h), started as ${WAIT_START_FORM}. `
-  + 'Its completion notice is the wait: work on or end your turn, then read the log once. '
+  + 'Do so only while you have other work: keep working while it runs, wait on its completion notice, then read the log once. '
   + 'To wait for anything else (a file, a log line, a server), use the Monitor tool with a command that prints a line on success and on failure and then exits, '
   + 'or send the check loop itself with run_in_background: true: its exit is the notice. '
-  + `A foreground subagent gets no notice and its background commands stop when its run ends: there, run the command in the foreground with timeout ${FOREGROUND_TIMEOUT_MAX_MS}. `
-  + 'Before your final report, stop every background command and monitor you started (TaskStop); never report while one runs. '
+  + `A command whose result is all that is left runs in the foreground with timeout ${FOREGROUND_TIMEOUT_MAX_MS} instead. `
+  + 'Never end your turn or report while a background command or monitor you started still runs: wait on its notice, or stop it with TaskStop (load it with ToolSearch select:TaskStop if it is not loaded). '
   + 'Set timeout for every background command: in an unattended run (-p, Agent SDK, CI, cloud) one without it stops after 30 min '
   + '(10 min for a text -p prompt). A run over 2 h is split, or started in an interactive session, where background commands have no limit. '
   + "A background subagent's result arrives as a notification (with fork mode on the lead cannot wait on a subagent at all): never poll its output file. "

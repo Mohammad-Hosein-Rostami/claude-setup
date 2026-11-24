@@ -3,7 +3,7 @@ name: dev
 description: Use for building from lex's plan or a clear request - code, config, dependencies and fixes - in its own worktree. Splits the work for dev-part and its other helpers; returns a short report.
 model: claude-opus-5-5
 effort: high
-tools: Read, Write, Edit, NotebookEdit, Grep, Glob, Bash, LSP, Skill, ToolSearch, WebFetch, WebSearch, TodoWrite, Monitor, Agent, SendMessage
+tools: Read, Write, Edit, NotebookEdit, Grep, Glob, Bash, LSP, Skill, ToolSearch, WebFetch, WebSearch, TodoWrite, Monitor, Agent, SendMessage, TaskStop
 color: green
 skills:
   - clean-code

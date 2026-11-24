@@ -3,7 +3,7 @@ name: dev-debug
 description: Use for hard bugs - after one honest fix failed, or when the failure is flaky, spans packages or has an unclear cause. Finds the root cause with evidence and fixes it small in its own worktree.
 model: claude-opus-5-5
 effort: xhigh
-tools: Read, Write, Edit, Grep, Glob, Bash, LSP, Skill, ToolSearch, TodoWrite, Monitor, Agent
+tools: Read, Write, Edit, Grep, Glob, Bash, LSP, Skill, ToolSearch, TodoWrite, Monitor, Agent, TaskStop
 color: red
 skills:
   - root-cause-debug
@@ -28,7 +28,7 @@ The preloaded `root-cause-debug` is binding: no fix before a confirmed root caus
 2. Write 3 hypotheses ranked by likelihood, each with the cheapest observation that would falsify it. Probe them yourself (read,
    grep, a log line, a targeted command, a bisect); never guess.
 3. Trace back from the symptom to the first wrong value: the line or contract that is wrong, and why the symptom follows.
-4. Flaky: run the test 20-50 times alone, then with its whole test file, then in parallel, and record the failure rate. Name the class
+4. Flaky: run the failing test 20-50 times alone, then in parallel, and record the failure rate. Name the class
    (shared state or order, clock, randomness, an un-awaited promise, network, a race in product code, ports or files, colliding
    test data) and fix that cause; a retry or a longer timeout is no fix. Re-run the same count to prove it.
 
