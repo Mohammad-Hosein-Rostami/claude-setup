@@ -236,6 +236,13 @@ test('a command is passed as argv, never through a shell', async () => {
   assert.equal(existsSync(join(work, 'pwned')), false);
 });
 
+test('a --repo that is not a folder is a usage error (exit 2)', async () => {
+  const { work, env } = makeCase();
+  const result = await suite(['run', '--repo', join(work, 'missing'), '--', process.execPath, '-e', '0'], { env, cwd: work });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /is not a folder/);
+});
+
 test('status shows a held slot and a waiter', async () => {
   const { stateDir, env, work } = makeCase();
   mkdirSync(join(stateDir, 'slots', '0'), { recursive: true });

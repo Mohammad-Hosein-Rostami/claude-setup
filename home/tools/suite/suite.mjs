@@ -14,7 +14,7 @@
 // - State lives in `$CLAUDE_CONFIG_DIR/state/suite/` (else `~/.claude/state/suite/`): one queue for every session on the machine.
 //   It holds only locks, the cache and logs, so it can be deleted at any time.
 import { spawn, spawnSync } from 'node:child_process';
-import { closeSync, mkdirSync, openSync, readFileSync, readSync, fstatSync } from 'node:fs';
+import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
 import { constants, homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -77,7 +77,9 @@ function readRunArgs(args) {
   const { values } = parseArgs({ args: args.slice(0, split), options, strict: true, allowPositionals: false });
   const slots = values.slots === undefined ? undefined : Number(values.slots);
   if (slots !== undefined && !isSlotCount(slots)) throw new UsageError(`--slots must be a whole number from 1 to ${MAX_SLOTS}`);
-  return { repo: resolve(values.repo ?? '.'), slots, fresh: values.fresh === true, log: values.log, command: args.slice(split + 1) };
+  const repo = resolve(values.repo ?? '.');
+  if (!statSync(repo, { throwIfNoEntry: false })?.isDirectory()) throw new UsageError(`--repo ${repo} is not a folder`);
+  return { repo, slots, fresh: values.fresh === true, log: values.log, command: args.slice(split + 1) };
 }
 
 /** The repo's tree sha when its worktree is clean (no change, no untracked file), else null; null outside a repository too. */
