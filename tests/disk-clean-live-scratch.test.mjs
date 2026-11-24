@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { runClean } from '../home/tools/disk-free/disk-clean.mjs';
 import { FIRST_SEEN_STORE, recordKey } from '../home/tools/disk-free/lib/first-seen.mjs';
 import { age, cliEnv, DAY_MS, folder, NEWEST, OLD, posix, sessionFile, transcript, world } from './disk-clean-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const TOOL = fileURLToPath(new URL('../home/tools/disk-free/disk-clean.mjs', import.meta.url));
 const LIVE = '12345678-0000-4000-8000-00000000000a';
@@ -45,7 +46,7 @@ function seenDaysAgo(w, days, ...paths) {
 
 /** git with a fixed identity and branch name, no config of the machine's owner. */
 const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'init.defaultBranch=main', ...args],
-  { cwd, stdio: 'pipe', env: { ...process.env, GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_NOSYSTEM: '1' } });
+  { cwd, stdio: 'pipe', env: cleanEnv({ GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_NOSYSTEM: '1' }) });
 
 /** Sets the times of a folder and of everything in it `days` back (a negative number is ahead of the clock). */
 function ageTree(path, days) {

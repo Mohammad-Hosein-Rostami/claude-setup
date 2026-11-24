@@ -6,6 +6,7 @@ import fs, { mkdirSync, realpathSync, utimesSync, writeFileSync } from 'node:fs'
 import { syncBuiltinESMExports } from 'node:module';
 import { join, resolve } from 'node:path';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 export const posix = { skip: process.platform === 'win32' && 'needs symlinks and file modes' };
 export const DAY_MS = 24 * 60 * 60 * 1000;
@@ -32,7 +33,7 @@ export function world() {
  * The environment of a CLI run in a fake world: the home, the temp folder and the scratchpad root are the world's, never the real ones, and
  * no other config dir is set. The temp folder is the world's root, so every root of the world lies under it (a root must be under the temp folder).
  */
-export const cliEnv = (w, extra = {}) => ({ ...process.env, HOME: w.home, USERPROFILE: w.home, TMPDIR: w.root, TMP: w.root, TEMP: w.root, DISK_FREE_CLAUDE_TMP: w.claudeTmp, CLAUDE_CONFIG_DIR: '', ...extra });
+export const cliEnv = (w, extra = {}) => cleanEnv({ HOME: w.home, USERPROFILE: w.home, TMPDIR: w.root, TMP: w.root, TEMP: w.root, DISK_FREE_CLAUDE_TMP: w.claudeTmp, CLAUDE_CONFIG_DIR: '', ...extra });
 
 export const ago = (days) => new Date(Date.now() - days * DAY_MS);
 export const age = (path, days) => utimesSync(path, ago(days), ago(days));

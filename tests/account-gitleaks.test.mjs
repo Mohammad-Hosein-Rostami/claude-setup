@@ -9,6 +9,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const CONFIG = fileURLToPath(new URL('../.gitleaks.toml', import.meta.url));
 const HAS_GITLEAKS = spawnSync('gitleaks', ['version'], { encoding: 'utf8' }).status === 0;
@@ -20,7 +21,7 @@ const oauthToken = () => `${['sk', 'ant', 'oat01', ''].join('-')}${body(95)}`;
 function scan(variable, value) {
   const dir = makeTempDir('account-gitleaks-');
   writeFileSync(join(dir, 'start.sh'), `export ${variable}="${value}"\n`, { mode: 0o600 });
-  const run = spawnSync('gitleaks', ['dir', '--redact', '--no-banner', '--config', CONFIG, dir], { encoding: 'utf8', env: { ...process.env, HOME: dir } });
+  const run = spawnSync('gitleaks', ['dir', '--redact', '--no-banner', '--config', CONFIG, dir], { encoding: 'utf8', env: cleanEnv({ HOME: dir }) });
   assert.ok(!`${run.stdout}${run.stderr}`.includes(value), 'gitleaks redacts what it finds');
   return run.status;
 }

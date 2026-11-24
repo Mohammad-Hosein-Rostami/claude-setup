@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { OS_NAME } from '../scripts/install/context.mjs';
 import { settingsLayersLine } from '../scripts/install/settings.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const INSTALLER = join(REPO, 'scripts', 'install.mjs');
@@ -19,7 +20,7 @@ const hooksPath = () => spawnSync('git', ['-C', REPO, 'config', '--get', 'core.h
 test('--dry-run prints the hooksPath it would set and the settings layers, and changes nothing', () => {
   const home = makeTempDir('install-dry-run-');
   const before = hooksPath();
-  const run = spawnSync(process.execPath, [INSTALLER, '--dry-run', '--no-plugins', '--no-tools'], { env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8' });
+  const run = spawnSync(process.execPath, [INSTALLER, '--dry-run', '--no-plugins', '--no-tools'], { env: cleanEnv({ HOME: home, USERPROFILE: home }), encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
   assert.ok(run.stdout.includes(HOOKS_LINE), run.stdout);
   assert.match(run.stdout, new RegExp(`settings layers: settings/base\\.json \\+ settings/${OS_NAME}\\.json(?: \\+ settings/local\\.json)?\\n`));

@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 import { runTestInWorker } from './worker-tests.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const HELPER_URL = new URL('./worker-tests.mjs', import.meta.url).href;
 const FIXTURE_TESTS = `const { test, suite, runNamedBody } = workerTests(import.meta.url);
@@ -78,7 +79,7 @@ test('a body that sets a failing exit code fails, though it reported that it ran
 test('through node --test, the file registers its tests on the main thread: one passes, one fails with its own error, exit 1', () => {
   const { path } = fixtureFile({ withRunLine: true, tests: MAIN_THREAD_FIXTURE_TESTS });
   // without NODE_TEST_CONTEXT the nested run reports for itself instead of to this test runner
-  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => name !== 'NODE_TEST_CONTEXT'));
+  const env = Object.fromEntries(Object.entries(cleanEnv()).filter(([name]) => name !== 'NODE_TEST_CONTEXT'));
   const result = spawnSync(process.execPath, ['--test', '--test-reporter=tap', path], { encoding: 'utf8', env });
   assert.equal(result.status, 1, result.stdout + result.stderr);
   for (const line of ['# tests 2', '# pass 1', '# fail 1']) assert.match(result.stdout, new RegExp(`^${line}$`, 'm'), result.stdout);

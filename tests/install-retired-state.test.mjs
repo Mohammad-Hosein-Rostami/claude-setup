@@ -14,6 +14,7 @@ import { RECORD_NAME } from '../scripts/install/record.mjs';
 import { RETIRED_STATE, removeRetiredState } from '../scripts/install/retired-state.mjs';
 import { posix } from './disk-clean-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const INSTALLER = join(REPO, 'scripts', 'install.mjs');
@@ -104,7 +105,7 @@ test('a link at a retired path is never followed or moved', posix, () => {
 
 test('the installer moves state/stop-blocks into the backup folder and records it; a second --dry-run prints no action', () => {
   const home = makeTempDir('retired state install ');
-  const env = { ...process.env, HOME: home, USERPROFILE: home };
+  const env = cleanEnv({ HOME: home, USERPROFILE: home });
   const claudeDir = join(home, '.claude');
   const store = join(claudeDir, 'state', 'stop-blocks');
   mkdirSync(store, { recursive: true });
@@ -129,7 +130,7 @@ test('the installer moves state/stop-blocks into the backup folder and records i
 
 test('install then --uninstall puts a moved store back where it was', () => {
   const home = makeTempDir('retired state uninstall ');
-  const env = { ...process.env, HOME: home, USERPROFILE: home };
+  const env = cleanEnv({ HOME: home, USERPROFILE: home });
   const verdicts = join(home, '.claude', 'state', 'mcp-discover-verdicts.json');
   fillStore(verdicts);
   const install = spawnSync(process.execPath, [INSTALLER, '--no-plugins', '--no-tools'], { env, encoding: 'utf8' });

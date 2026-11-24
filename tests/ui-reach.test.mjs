@@ -12,9 +12,10 @@ import { test } from 'node:test';
 import { reachedScreens } from '../home/tools/ui-proof/lib/reach.mjs';
 import { inferScreens, isComplete } from '../home/tools/ui-proof/lib/screens.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const GIT_ENV = {
-  ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_'))),
+  ...Object.fromEntries(Object.entries(cleanEnv()).filter(([name]) => !name.startsWith('GIT_'))),
   GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
   GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t',
 };

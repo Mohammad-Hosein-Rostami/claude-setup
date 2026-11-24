@@ -12,12 +12,13 @@ import { RECORD_KINDS, matrixArg, recordRun } from '../home/tools/ui-proof/lib/r
 import { PROOF_AGENT, findPass, readRecords, storeFile } from '../home/tools/ui-proof/lib/records.mjs';
 import { workingUiTree } from '../home/tools/ui-proof/lib/ui-files.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/ui-proof/ui-proof.mjs', import.meta.url));
 const POSIX = process.platform !== 'win32';
 process.env.UI_PROOF_STATE_DIR = fs.realpathSync.native(makeTempDir('ui-proof-record-store-'));
 const GIT_ENV = {
-  ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_'))),
+  ...Object.fromEntries(Object.entries(cleanEnv()).filter(([name]) => !name.startsWith('GIT_'))),
   GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
   GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t',
 };

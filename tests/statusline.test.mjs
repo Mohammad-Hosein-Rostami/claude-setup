@@ -4,13 +4,14 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const STATUSLINE = fileURLToPath(new URL('../home/statusline.mjs', import.meta.url));
 
 async function render(model) {
   const home = makeTempDir('statusline-home-');
   const input = JSON.stringify({ model, rate_limits: { five_hour: {} } });
-  return spawnSync(process.execPath, [STATUSLINE], { input, env: { ...process.env, HOME: home, USERPROFILE: home, NO_COLOR: '1' }, encoding: 'utf8' }).stdout;
+  return spawnSync(process.execPath, [STATUSLINE], { input, env: cleanEnv({ HOME: home, USERPROFILE: home, NO_COLOR: '1' }), encoding: 'utf8' }).stdout;
 }
 
 // Without a session there is no board: `git     loading`, then the session row led by its label and the model's name (spec R18).

@@ -16,6 +16,7 @@ import { cleanName, repoState } from '../home/tools/board/lib/git-state.mjs';
 import { collectBoard } from '../home/tools/board/lib/refresh.mjs';
 import { repoStats } from '../home/tools/board/lib/repo-stats.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const BOARD = fileURLToPath(new URL('../home/tools/board/board.mjs', import.meta.url));
 const GIT_STATE = new URL('../home/tools/board/lib/git-state.mjs', import.meta.url).href;
@@ -28,7 +29,7 @@ const HOME = join(ROOT, 'home');
 mkdirSync(HOME);
 
 const GIT_ENV = {
-  ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_'))), HOME, GIT_CONFIG_NOSYSTEM: '1',
+  ...Object.fromEntries(Object.entries(cleanEnv()).filter(([name]) => !name.startsWith('GIT_'))), HOME, GIT_CONFIG_NOSYSTEM: '1',
   GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t',
 };
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, env: GIT_ENV, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -79,7 +80,7 @@ const FIELDS = ['name', 'current', 'upstream', 'upAhead', 'upBehind', 'ahead', '
 
 test('checkpoint: board.mjs refresh --force writes every spec field of repo.active', () => {
   const { dir } = checkpointRepo();
-  execFileSync(process.execPath, [BOARD, 'refresh', '--session', SESSION, '--force'], { cwd: dir, env: { ...process.env, HOME }, stdio: 'ignore' });
+  execFileSync(process.execPath, [BOARD, 'refresh', '--session', SESSION, '--force'], { cwd: dir, env: cleanEnv({ HOME }), stdio: 'ignore' });
   const board = JSON.parse(readFileSync(join(HOME, '.claude', 'state', 'board', `${SESSION}.json`), 'utf8'));
   const { repo } = board;
   assert.equal(repo.trust, 'full');
@@ -194,7 +195,7 @@ test('R1: a FIFO as packed-refs never hangs the refresh (repository files are re
   execFileSync('mkfifo', [join(dir, '.git', 'packed-refs')]);
   const call = { cwd: dir, sessionFolder: dir, common: join(dir, '.git'), cache: null, nowMs: Date.now() };
   const code = `import { repoState } from ${JSON.stringify(GIT_STATE)}; repoState(${JSON.stringify(call)});`;
-  const run = spawnSync(process.execPath, ['--input-type=module', '-e', code], { timeout: HANG_LIMIT_MS, env: { ...process.env, HOME } });
+  const run = spawnSync(process.execPath, ['--input-type=module', '-e', code], { timeout: HANG_LIMIT_MS, env: cleanEnv({ HOME }) });
   assert.equal(run.error?.code, undefined, 'the refresh hung on the FIFO');
   assert.equal(run.status, 0);
 });

@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MAX_AGENT_FILES, NOTE_MAX_CHARS, projectAgentNote } from '../home/hooks/lib/project-agents.mjs';
 import { AGENTS, BOTH_ADVICE, CAP_ADVICE, NOTE_START, POSIX, agent, noteOf, sandbox } from './project-agents-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const DOCTOR = fileURLToPath(new URL('../scripts/doctor.sh', import.meta.url));
 const MERGE_HOOK = fileURLToPath(new URL('../home/hooks/project-merge.mjs', import.meta.url));
@@ -76,7 +77,7 @@ test('the personal agents folder is not flagged as a project', async () => {
 /** What one SessionStart hook prints for the project folder, run as a command with HOME set to the sandbox's home. */
 function runStartHook(hook, home, projectDir, source = 'startup') {
   const input = JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'abc-1', source, cwd: projectDir });
-  return spawnSync(process.execPath, [hook], { input, encoding: 'utf8', env: { ...process.env, HOME: home, USERPROFILE: home } }).stdout;
+  return spawnSync(process.execPath, [hook], { input, encoding: 'utf8', env: cleanEnv({ HOME: home, USERPROFILE: home }) }).stdout;
 }
 
 /** The sandbox's project made a real git repository (its `.git` folder starts empty), as project-merge asks git for the root. */
@@ -104,7 +105,7 @@ test('project-merge prints the project-agents note once, for startup and compact
 const hasJq = spawnSync('jq', ['--version']).status === 0;
 
 const FOUR_DIGITS = 4; // index width in a file name, so that names sort like their numbers
-const runDoctor = (home, projectDir, extraEnv = {}) => spawnSync('bash', [DOCTOR], { encoding: 'utf8', env: { ...process.env, HOME: home, DOCTOR_PROJECT: projectDir, DOCTOR_ONLY: 'check_project_agents', ...extraEnv } });
+const runDoctor = (home, projectDir, extraEnv = {}) => spawnSync('bash', [DOCTOR], { encoding: 'utf8', env: cleanEnv({ HOME: home, DOCTOR_PROJECT: projectDir, DOCTOR_ONLY: 'check_project_agents', ...extraEnv }) });
 
 test('doctor warns about a capped project agent (DOCTOR_PROJECT), names the project, and is ok for a clean one', { skip: !hasJq && 'jq not installed' }, async () => {
   const made = await sandbox({ project: { builder: 'maxTurns: 60\n' } });
@@ -161,7 +162,7 @@ test('a link or a FIFO among the agent files is not read, and the SessionStart h
   assert.equal(spawnSync('mkfifo', [join(agents, 'pipe.md')]).status, 0);
   const runHook = (hook) => spawnSync(process.execPath, [hook], {
     input: JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'abc-2', source: 'startup', cwd: projectDir }),
-    encoding: 'utf8', env: { ...process.env, HOME: home, USERPROFILE: home }, timeout: 4000,
+    encoding: 'utf8', env: cleanEnv({ HOME: home, USERPROFILE: home }), timeout: 4000,
   });
   const merge = runHook(MERGE_HOOK);
   assert.equal(merge.signal, null, 'project-merge ends on its own');

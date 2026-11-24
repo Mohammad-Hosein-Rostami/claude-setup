@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { hookEnv } from './hook-env.mjs';
 import { agentHomeEnv } from './agent-home-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 process.env.TMPDIR = makeTempDir('agent-budget-tmp-'); // the call counters (callCounterPath) go under the temp root of this process
 const { MAX_AGENTS_PER_TYPE, PENDING_MS, STALE_MS, claimMainSlot, recordMainStart, recordMainStop, releaseMainSlot } = await import('../home/hooks/agent-budget.mjs');
@@ -369,7 +370,7 @@ test('the budget hook prints nothing: a subagent tool call marks its counter, it
 
 test('the budget hook fails open on bad input', () => {
   for (const input of ['not json', '', '{"hook_event_name":"SubagentStart"}', 'null']) {
-    const run = spawnSync(process.execPath, [BUDGET], { input, encoding: 'utf8' });
+    const run = spawnSync(process.execPath, [BUDGET], { input, encoding: 'utf8', env: cleanEnv() });
     assert.deepEqual([run.status, run.stdout, run.stderr], [0, '', ''], input);
   }
 });

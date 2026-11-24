@@ -7,12 +7,13 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const TOOL = fileURLToPath(new URL('../home/tools/disk-free/with-run-tmp.mjs', import.meta.url));
 const PRINT_TMPDIR = 'console.log(require("node:os").tmpdir())';
 
 function wrapper(args, parentTmp) {
-  return spawnSync(process.execPath, [TOOL, ...args], { encoding: 'utf8', env: { ...process.env, TMPDIR: parentTmp } });
+  return spawnSync(process.execPath, [TOOL, ...args], { encoding: 'utf8', env: cleanEnv({ TMPDIR: parentTmp }) });
 }
 
 test('the command sees a fresh TMPDIR inside the parent temp folder, and the folder is gone afterwards', () => {
@@ -63,7 +64,7 @@ test('SIGTERM to the wrapper reaches the command and the folder is still removed
   const parent = makeTempDir('wrt-parent-');
   const marker = join(parent, 'started');
   const sleeper = `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "1"); setTimeout(() => {}, 60000)`;
-  const child = spawn(process.execPath, [TOOL, '--', process.execPath, '-e', sleeper], { env: { ...process.env, TMPDIR: parent }, stdio: 'ignore' });
+  const child = spawn(process.execPath, [TOOL, '--', process.execPath, '-e', sleeper], { env: cleanEnv({ TMPDIR: parent }), stdio: 'ignore' });
   const closed = new Promise((resolve) => child.on('close', (code, signal) => resolve({ code, signal })));
   const deadline = Date.now() + 10_000;
   while (!existsSync(marker) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));

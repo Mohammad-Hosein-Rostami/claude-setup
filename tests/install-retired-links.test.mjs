@@ -15,6 +15,7 @@ import { RECORD_NAME } from '../scripts/install/record.mjs';
 import { LINKS } from '../scripts/install.mjs';
 import { posix } from './disk-clean-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 
@@ -178,7 +179,7 @@ test('the installer itself retires the recorded modes, lead rules and launcher l
   const made = [{ kind: 'link', path: modes }, { kind: 'link', path: leadRules }, { kind: 'link', path: ccm }];
   writeFileSync(recordFile, JSON.stringify({ version: 1, repo: REPO, root: REPO, tag: null, firstLayer: null, made, backups: [] }));
   const run = spawnSync(process.execPath, [join(REPO, 'scripts', 'install.mjs'), '--no-plugins', '--no-tools'], {
-    env: { ...process.env, HOME: home, USERPROFILE: home },
+    env: cleanEnv({ HOME: home, USERPROFILE: home }),
     encoding: 'utf8',
   });
   assert.equal(run.status, 0, run.stderr);
@@ -203,7 +204,7 @@ test('install then --uninstall: a recorded launcher copy does not come back, the
   writeFileSync(join(modes, 'my-playbook.md'), 'owner note\n');
   const made = [{ kind: 'dir', path: bin }, { kind: 'link', path: modes }, { kind: 'copy', path: copy }];
   writeFileSync(join(ctx.claudeDir, RECORD_NAME), JSON.stringify({ version: 1, repo: REPO, root: REPO, tag: null, firstLayer: null, made, backups: [] }));
-  const env = { ...process.env, HOME: home, USERPROFILE: home };
+  const env = cleanEnv({ HOME: home, USERPROFILE: home });
   const installer = join(REPO, 'scripts', 'install.mjs');
   const install = spawnSync(process.execPath, [installer, '--no-plugins', '--no-tools'], { env, encoding: 'utf8' });
   assert.equal(install.status, 0, install.stderr);

@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { markQuestionAnswered, questionAnsweredDir, questionTexts, wasQuestionAnswered } from '../home/hooks/lib/question-answered.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/question-answered.mjs', import.meta.url));
 const SESSION = 'session-marker-1';
@@ -58,7 +59,7 @@ test('a mark older than 15 min is dropped by the next write', () => {
   assert.deepEqual(readdirSync(questionAnsweredDir(env)).filter((name) => name.endsWith('.json')), [`${SESSION}.json`]);
 });
 
-const runHook = (input, env) => spawnSync(process.execPath, [HOOK], { input: typeof input === 'string' ? input : JSON.stringify(input), encoding: 'utf8', env: { ...process.env, ...env } });
+const runHook = (input, env) => spawnSync(process.execPath, [HOOK], { input: typeof input === 'string' ? input : JSON.stringify(input), encoding: 'utf8', env: cleanEnv(env) });
 
 test('PostToolUse hook: an AskUserQuestion result writes the mark the PermissionRequest hook looks for', () => {
   const env = privateEnv();

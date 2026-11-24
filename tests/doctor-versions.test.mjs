@@ -11,6 +11,7 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const DOCTOR = fileURLToPath(new URL('../scripts/doctor.sh', import.meta.url));
 const INSTALL_CLI = fileURLToPath(new URL('../scripts/install/cli.mjs', import.meta.url));
@@ -23,7 +24,7 @@ function doctorWith(check, tool, output) {
   const home = makeTempDir('doctor-home-');
   writeFileSync(join(bin, tool), `#!/bin/sh\necho '${output}'\n`);
   chmodSync(join(bin, tool), 0o755);
-  const env = { ...process.env, HOME: home, USERPROFILE: home, DOCTOR_ONLY: check, PATH: `${bin}${delimiter}${process.env.PATH}` };
+  const env = cleanEnv({ HOME: home, USERPROFILE: home, DOCTOR_ONLY: check, PATH: `${bin}${delimiter}${process.env.PATH}` });
   const run = spawnSync('bash', [DOCTOR], { encoding: 'utf8', env });
   return { status: run.status, out: run.stdout };
 }
@@ -87,7 +88,7 @@ test('doctor warns, never crashes or fails, when claude is missing or prints jun
   // No claude anywhere on PATH: the folders that hold one are left out (the real CLI included).
   const home = makeTempDir('doctor-home-');
   const path = process.env.PATH.split(delimiter).filter((dir) => dir && !existsSync(join(dir, 'claude'))).join(delimiter);
-  const env = { ...process.env, HOME: home, USERPROFILE: home, DOCTOR_ONLY: 'check_claude_version', PATH: path };
+  const env = cleanEnv({ HOME: home, USERPROFILE: home, DOCTOR_ONLY: 'check_claude_version', PATH: path });
   const missing = spawnSync('bash', [DOCTOR], { encoding: 'utf8', env });
   assert.equal(missing.status, 0, missing.stdout + missing.stderr);
   assert.match(missing.stdout, /^WARN  claude --version gave no version/m);
@@ -113,8 +114,7 @@ test('the whole doctor run checks Claude Code and fails below its floor', { skip
   const home = makeTempDir('doctor-home-');
   writeFileSync(join(bin, 'claude'), "#!/bin/sh\necho '2.1.294 (Claude Code)'\n");
   chmodSync(join(bin, 'claude'), 0o755);
-  const env = {
-    ...process.env,
+  const env = cleanEnv({
     HOME: home,
     USERPROFILE: home,
     DOCTOR_PROJECT: home,
@@ -123,7 +123,7 @@ test('the whole doctor run checks Claude Code and fails below its floor', { skip
     // the disk-clean dry run lists these roots, not the machine's real temp folders (a dry run: no --apply)
     DOCTOR_DISK_CLEAN_ARGS: `--claude-tmp ${join(home, 'none')} --projects ${join(home, 'projects')} --tmp ${join(home, 'tmp')}`,
     PATH: `${bin}${delimiter}${process.env.PATH}`,
-  };
+  });
   delete env.DOCTOR_ONLY;
   delete env.CLAUDE_PROD_HOSTS_FILE; // doctor.sh reads these from the parent environment: the run must use the temp HOME's own state
   for (const name of Object.keys(env)) if (name.startsWith('RECALL_') || name.startsWith('DISK_')) delete env[name];

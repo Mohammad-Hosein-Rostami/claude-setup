@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { UNREADABLE_INPUT, guardedAgentInput } from '../home/hooks/lib/agent-model-gates.mjs';
 import { FROM_AGENT, originOf } from './agent-call-origin.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/agent-model-guard.mjs', import.meta.url));
 const BASE = { description: 'look', prompt: 'find x' };
@@ -59,7 +60,7 @@ function run(mode, stdin) {
   const home = makeTempDir('model-guard-');
   mkdirSync(join(home, '.claude', 'state', 'modes'), { recursive: true });
   writeFileSync(join(home, '.claude', 'state', 'modes', 'sess1'), `${mode}\n`);
-  const env = { ...process.env, HOME: home, USERPROFILE: home };
+  const env = cleanEnv({ HOME: home, USERPROFILE: home });
   delete env.CLAUDE_MODE;
   return spawnSync(process.execPath, [HOOK], { input: stdin, encoding: 'utf8', env, cwd: home });
 }
@@ -124,7 +125,7 @@ function runWithAgents(toolInput, prepare = () => {}, { cwd, env: extraEnv = {} 
   mkdirSync(agents, { recursive: true });
   for (const name of ['dev', 'dev-ui']) copyFileSync(join(AGENTS, `${name}.md`), join(agents, `${name}.md`));
   prepare(agents);
-  const env = { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CODE_SUBAGENT_MODEL: 'claude-sonnet-5-5', ...extraEnv };
+  const env = cleanEnv({ HOME: home, USERPROFILE: home, CLAUDE_CODE_SUBAGENT_MODEL: 'claude-sonnet-5-5', ...extraEnv });
   delete env.CLAUDE_CONFIG_DIR; // the personal folder is the temp HOME's
   delete env.CLAUDE_CODE_SUBAGENT_EFFORT;
   for (const [name, value] of Object.entries(extraEnv)) if (value === undefined) delete env[name];

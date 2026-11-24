@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LOG_KEEP_MS, MAX_LOG_BYTES, readLimits, recordSample } from '../home/hooks/lib/limits-store.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const STORE_URL = new URL('../home/hooks/lib/limits-store.mjs', import.meta.url).href;
 const STATUSLINE = fileURLToPath(new URL('../home/statusline.mjs', import.meta.url));
@@ -35,7 +36,7 @@ const storedFive = (dir) => readLimits(ACCOUNT, { dir }).samples.map((s) => s.fi
 const record = (dir, session, limits, t) => recordSample(ACCOUNT, limits, { dir, now: t, session });
 const deadPid = () => spawnSync(process.execPath, ['-e', '']).pid; // exited: the pid is free
 const renderStatusLine = (home, input) => spawnSync(process.execPath, [STATUSLINE], {
-  input: JSON.stringify(input), env: { ...process.env, HOME: home, USERPROFILE: home, NO_COLOR: '1', CLAUDE_ACCOUNT: ACCOUNT }, encoding: 'utf8',
+  input: JSON.stringify(input), env: cleanEnv({ HOME: home, USERPROFILE: home, NO_COLOR: '1', CLAUDE_ACCOUNT: ACCOUNT }), encoding: 'utf8',
 });
 
 /** Puts a lock at the account's lock name as session-lock writes it (`<pid> <token>`), dated ageMs ago. */

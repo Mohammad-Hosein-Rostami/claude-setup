@@ -9,6 +9,7 @@ import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const SCRIPTS = fileURLToPath(new URL('../scripts', import.meta.url));
 const read = (...parts) => readFileSync(join(SCRIPTS, ...parts), 'utf8');
@@ -32,7 +33,7 @@ chmodSync(join(fakeBin, 'node'), 0o755);
 
 /** Runs install.sh --dry-run with the fake node reporting `version`. */
 function installWithNode(version) {
-  const env = { ...process.env, PATH: `${fakeBin}:${process.env.PATH}`, FAKE_NODE_VERSION: version };
+  const env = cleanEnv({ PATH: `${fakeBin}:${process.env.PATH}`, FAKE_NODE_VERSION: version });
   return spawnSync('bash', [join(SCRIPTS, 'install.sh'), '--dry-run'], { env, encoding: 'utf8' });
 }
 

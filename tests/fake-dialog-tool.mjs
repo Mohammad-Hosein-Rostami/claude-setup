@@ -8,6 +8,7 @@ import { dialogExecutable } from '../home/hooks/lib/timed-ask.mjs';
 import { tempLogPath } from './hook-env.mjs';
 import { warmExec } from './warm-exec.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const HANG_MS = 60_000; // a hanging popup outlives every test; the test kills it
 const SCRIPT = `
@@ -53,7 +54,7 @@ export function fakePopup(result, extra = {}) {
   if (process.platform !== 'win32') warmExec(bin);
   const pidFile = join(dir, 'popup.pid');
   const home = join(dir, 'home');
-  const env = { ...process.env, HOME: home, USERPROFILE: home, PATH: `${dir}${delimiter}${process.env.PATH}`, DISPLAY: ':0', FAKE_POPUP_RESULT: result, FAKE_POPUP_PID: pidFile, CLAUDE_GUARD_LOG: tempLogPath(), ...extra };
+  const env = cleanEnv({ HOME: home, USERPROFILE: home, PATH: `${dir}${delimiter}${process.env.PATH}`, DISPLAY: ':0', FAKE_POPUP_RESULT: result, FAKE_POPUP_PID: pidFile, CLAUDE_GUARD_LOG: tempLogPath(), ...extra });
   for (const name of ['NODE_TEST_CONTEXT', 'SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY', 'CI']) delete env[name];
   const pid = () => {
     try {

@@ -9,6 +9,7 @@ import { cpSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const SCRIPTS = fileURLToPath(new URL('../scripts', import.meta.url));
 const DEPS = ['@langchain/langgraph', '@langchain/langgraph-checkpoint-sqlite', 'better-sqlite3'];
@@ -30,7 +31,7 @@ function checkout({ deps = DEPS, cli = '' } = {}) {
 
 function doctor(repo) {
   const home = makeTempDir('doctor-long-run-home-');
-  return spawnSync('bash', [join(repo, 'scripts', 'doctor.sh')], { env: { ...process.env, HOME: home, DOCTOR_ONLY: 'check_long_run' }, encoding: 'utf8' });
+  return spawnSync('bash', [join(repo, 'scripts', 'doctor.sh')], { env: cleanEnv({ HOME: home, DOCTOR_ONLY: 'check_long_run' }), encoding: 'utf8' });
 }
 
 test('a missing dependency folder: FAIL "long-run deps (<fix>)" naming it, exit 1, and check --deps is not run', () => {

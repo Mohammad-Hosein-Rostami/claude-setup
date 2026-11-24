@@ -15,6 +15,7 @@ import { permissionReply } from '../home/hooks/permission-timed-allow.mjs';
 import { hookEnv, tempLogPath } from './hook-env.mjs';
 import { warmExec } from './warm-exec.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/permission-timed-allow.mjs', import.meta.url));
 const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
@@ -324,7 +325,7 @@ function allowingDialogEnv() {
   writeFileSync(bin, process.platform === 'win32' ? `@node "${script}" %*\r\n` : `#!/bin/sh\n[ -n "$FAKE_WARM" ] && exit 0\nexec node "${script}" "$@"\n`);
   chmodSync(bin, 0o755);
   if (process.platform !== 'win32') warmExec(bin);
-  const env = { ...process.env, ...privateEnv(), PATH: `${dir}${delimiter}${process.env.PATH}`, DISPLAY: ':0' };
+  const env = cleanEnv({ ...privateEnv(), PATH: `${dir}${delimiter}${process.env.PATH}`, DISPLAY: ':0' });
   for (const name of ['NODE_TEST_CONTEXT', 'SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY', 'CI']) delete env[name];
   return env;
 }

@@ -7,6 +7,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const DOCTOR = fileURLToPath(new URL('../scripts/doctor.sh', import.meta.url));
 const skip = spawnSync('jq', ['--version']).status !== 0 && 'jq not installed'; // doctor reads the install record with jq
@@ -20,7 +21,7 @@ function checkShareDeny(list) {
   mkdirSync(join(home, '.claude'));
   writeFileSync(join(home, '.claude', '.claude-setup-install.json'), JSON.stringify({ repo: clone }));
   if (list !== undefined) writeFileSync(join(clone, 'personal', 'share-deny.txt'), list);
-  return spawnSync('bash', [DOCTOR], { env: { ...process.env, HOME: home, DOCTOR_ONLY: 'check_share_deny' }, encoding: 'utf8' });
+  return spawnSync('bash', [DOCTOR], { env: cleanEnv({ HOME: home, DOCTOR_ONLY: 'check_share_deny' }), encoding: 'utf8' });
 }
 
 test('a missing deny list is one WARN that names the file to fill', { skip }, () => {
@@ -40,7 +41,7 @@ test('a list that cannot be read is a FAIL, never read as empty', { skip }, () =
   mkdirSync(join(home, 'clone', 'personal', 'share-deny.txt'), { recursive: true });
   mkdirSync(join(home, '.claude'));
   writeFileSync(join(home, '.claude', '.claude-setup-install.json'), JSON.stringify({ repo: join(home, 'clone') }));
-  const result = spawnSync('bash', [DOCTOR], { env: { ...process.env, HOME: home, DOCTOR_ONLY: 'check_share_deny' }, encoding: 'utf8' });
+  const result = spawnSync('bash', [DOCTOR], { env: cleanEnv({ HOME: home, DOCTOR_ONLY: 'check_share_deny' }), encoding: 'utf8' });
   assert.match(result.stdout, /^FAIL\s+share-check deny list .*share-deny\.txt is not readable$/m);
   assert.equal(result.status, 1);
 });

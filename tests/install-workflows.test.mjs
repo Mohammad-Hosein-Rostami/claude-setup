@@ -10,6 +10,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const skip = spawnSync('jq', ['--version']).status === 0 ? false : 'jq not installed';
@@ -19,7 +20,7 @@ function install(flags) {
   const project = join(home, 'project');
   mkdirSync(project);
   spawnSync('git', ['init', '-q', project]);
-  const run = spawnSync('bash', [join(REPO, 'scripts', 'install.sh'), '--no-plugins', '--no-tools', ...flags(project)], { env: { ...process.env, HOME: home }, encoding: 'utf8' });
+  const run = spawnSync('bash', [join(REPO, 'scripts', 'install.sh'), '--no-plugins', '--no-tools', ...flags(project)], { env: cleanEnv({ HOME: home }), encoding: 'utf8' });
   return { home, project, run };
 }
 

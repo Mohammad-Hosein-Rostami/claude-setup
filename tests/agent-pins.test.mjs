@@ -8,6 +8,7 @@ import { chmodSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { flooredAgentInput, floorDrops, pinVerdict, readPin } from '../home/hooks/lib/agent-pins.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 /** An agent file's text: `pins` are the extra frontmatter lines. */
 const agentText = (name, pins = 'model: claude-opus-5-5\neffort: high\n') => `---\nname: ${name}\ndescription: works\n${pins}---\nbody\n`;
@@ -60,7 +61,7 @@ test('readPin: a project folder above the session folder counts, up to the git r
 test('readPin: a linked worktree with no agents folder at its root reads the main checkout\'s (R1)', () => {
   withFolders(({ projectAgents, project }) => {
     writeFileSync(join(projectAgents, 'worker.md'), agentText('worker', 'model: opus\n'));
-    execFileSync('git', ['-C', project, 'commit', '-q', '--allow-empty', '-m', 'start'], { env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
+    execFileSync('git', ['-C', project, 'commit', '-q', '--allow-empty', '-m', 'start'], { env: cleanEnv({ GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' }) });
     const linked = join(makeTempDir('pins-linked-'), 'lane');
     execFileSync('git', ['-C', project, 'worktree', 'add', '-q', '-b', 'lane', linked]);
     assert.deepEqual(readPin('worker', linked, NO_ENV), { model: 'opus', effort: null });

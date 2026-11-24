@@ -13,6 +13,7 @@ import { ensureRunDirs, isPidAlive, newRunId, readJournal, readJson, readJsonLin
 import { drive } from '../home/tools/long-run/lib/driver.mjs';
 import { installFakeClaude } from './long-run-fake-claude.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 export const CLI = resolve(import.meta.dirname, '..', 'home', 'tools', 'long-run', 'long-run.mjs');
 const TOKEN_PREFIX = ['sk', 'ant', 'test', ''].join('-');
@@ -31,7 +32,7 @@ export function makeSandbox({ creditsOff = { 'acct-a': true, 'acct-b': true }, a
   const folders = Object.fromEntries(['bin', 'home', 'state', 'accounts', 'account-state', 'config', 'fake', 'work'].map((name) => [name, join(dir, name)]));
   for (const folder of Object.values(folders)) mkdirSync(folder, { recursive: true, mode: 0o700 });
   installFakeClaude(folders.bin);
-  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !SESSION_VARIABLES.test(name)));
+  const env = Object.fromEntries(Object.entries(cleanEnv()).filter(([name]) => !SESSION_VARIABLES.test(name)));
   Object.assign(env, {
     PATH: `${folders.bin}${delimiter}${process.env.PATH}`, HOME: folders.home, USERPROFILE: folders.home, LONG_RUN_STATE_DIR: folders.state,
     CLAUDE_ACCOUNT_DIR: folders.accounts, CLAUDE_ACCOUNT_STORE: 'file', ACCOUNT_STATE_DIR: folders['account-state'],

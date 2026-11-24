@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { runClean } from '../home/tools/disk-free/disk-clean.mjs';
 import { removeInside } from '../home/tools/disk-free/lib/safe-remove.mjs';
 import { age, CURRENT, folder, NEWEST, NO_TRANSCRIPT_OLD, NO_TRANSCRIPT_RECENT, OLD, posix, RECENT, transcript, world } from './disk-clean-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const TOOL = fileURLToPath(new URL('../home/tools/disk-free/disk-clean.mjs', import.meta.url));
 const LIB = fileURLToPath(new URL('../home/tools/disk-free/lib/', import.meta.url));
@@ -143,16 +144,16 @@ test('CLI: --json prints one summary line, a dry run is the default, a bad flag 
   const w = world();
   folder(join(w.tmp, 'cs-test-cli-AbCdEf'), { days: 3 });
   const roots = ['--claude-tmp', w.claudeTmp, '--projects', w.projects, '--tmp', w.tmp];
-  const run = spawnSync(process.execPath, [TOOL, '--json', ...roots], { encoding: 'utf8' });
+  const run = spawnSync(process.execPath, [TOOL, '--json', ...roots], { encoding: 'utf8', env: cleanEnv() });
   assert.equal(run.status, 0, run.stderr);
   const summary = JSON.parse(run.stdout);
   assert.equal(summary.apply, false);
   assert.equal(summary.items, 1);
   assert.equal(summary.rules['test-temp'].items, 1);
   assert.equal(existsSync(join(w.tmp, 'cs-test-cli-AbCdEf')), true);
-  assert.equal(spawnSync(process.execPath, [TOOL, '--bogus'], { encoding: 'utf8' }).status, 2);
-  assert.equal(spawnSync(process.execPath, [TOOL, '--now', 'soon'], { encoding: 'utf8' }).status, 2);
-  const applied = spawnSync(process.execPath, [TOOL, '--apply', ...roots], { encoding: 'utf8', env: { ...process.env, HOME: w.home } }); // HOME: the run lock lives there
+  assert.equal(spawnSync(process.execPath, [TOOL, '--bogus'], { encoding: 'utf8', env: cleanEnv() }).status, 2);
+  assert.equal(spawnSync(process.execPath, [TOOL, '--now', 'soon'], { encoding: 'utf8', env: cleanEnv() }).status, 2);
+  const applied = spawnSync(process.execPath, [TOOL, '--apply', ...roots], { encoding: 'utf8', env: cleanEnv({ HOME: w.home }) }); // HOME: the run lock lives there
   assert.match(applied.stdout, /1 removed/);
   assert.equal(existsSync(join(w.tmp, 'cs-test-cli-AbCdEf')), false);
 });
@@ -164,7 +165,7 @@ test('CLI --apply: a second run at the same time does nothing; a run lock older 
   const lock = join(w.home, '.claude', 'state', 'disk-clean.run.lock');
   writeFileSync(lock, '');
   const args = [TOOL, '--apply', '--claude-tmp', w.claudeTmp, '--projects', w.projects, '--tmp', w.tmp];
-  const run = () => spawnSync(process.execPath, args, { encoding: 'utf8', env: { ...process.env, HOME: w.home } });
+  const run = () => spawnSync(process.execPath, args, { encoding: 'utf8', env: cleanEnv({ HOME: w.home }) });
   assert.match(run().stdout, /another run is working/);
   assert.equal(existsSync(path), true);
   age(lock, 7 / 24);

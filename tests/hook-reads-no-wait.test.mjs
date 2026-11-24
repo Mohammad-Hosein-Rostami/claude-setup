@@ -15,6 +15,7 @@ import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { effectiveChannel } from '../home/hooks/lib/notify-note.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const ANSWER_WITHIN_MS = 2000;
 const SKIP = process.platform === 'win32' ? 'no FIFO or mkfifo on Windows' : false;
@@ -33,7 +34,7 @@ syncBuiltinESMExports();
 function runChild(code, { env = {}, args = [], input = '' } = {}) {
   const started = Date.now();
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', code, ...args], {
-    encoding: 'utf8', env: { ...process.env, ...env }, input, timeout: ANSWER_WITHIN_MS, killSignal: 'SIGKILL',
+    encoding: 'utf8', env: cleanEnv(env), input, timeout: ANSWER_WITHIN_MS, killSignal: 'SIGKILL',
   });
   assert.equal(result.error?.code, undefined, `the read waited on the FIFO (${Date.now() - started} ms)`);
   assert.equal(result.status, 0, result.stderr);

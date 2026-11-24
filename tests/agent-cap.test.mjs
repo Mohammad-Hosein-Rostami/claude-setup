@@ -15,6 +15,7 @@ process.env.TMPDIR = makeTempDir('agent-cap-tmp-'); // the call counters (callCo
 import { IDLE_MS, LATE_CALL_MS, PENDING_MS, recordAgentLaunch, recordAgentStart, recordAgentStop, runningAgentsOf } from '../home/hooks/lib/agent-launches.mjs';
 import { callCounterPath } from '../home/hooks/lib/writer-agents.mjs';
 import { MAIN_AGENT_TYPES, MAX_AGENTS_PER_TYPE } from '../home/hooks/agent-budget.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const GUARD = join(REPO, 'home', 'hooks', 'agent-model-guard.mjs');
@@ -299,7 +300,7 @@ function doctorCheck(live) {
   const home = makeTempDir('agent-cap-doctor-');
   mkdirSync(join(home, '.claude'), { recursive: true });
   if (live !== undefined) writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify(live));
-  return spawnSync('bash', [DOCTOR], { env: { ...process.env, HOME: home, DOCTOR_ONLY: 'check_agent_cap' }, encoding: 'utf8' });
+  return spawnSync('bash', [DOCTOR], { env: cleanEnv({ HOME: home, DOCTOR_ONLY: 'check_agent_cap' }), encoding: 'utf8' });
 }
 
 test('check_agent_cap is ok when the live settings match', (t) => {

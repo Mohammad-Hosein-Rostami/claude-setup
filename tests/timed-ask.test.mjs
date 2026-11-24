@@ -15,6 +15,7 @@ import { decide } from '../home/hooks/pre-bash-guard.mjs';
 import { questionReply, questionTimeoutSeconds } from '../home/hooks/lib/question-reply.mjs';
 import { tempLogPath } from './hook-env.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
 const ARTIFACT = fileURLToPath(new URL('../home/hooks/artifact-ask.mjs', import.meta.url));
@@ -51,7 +52,7 @@ function fakeDialog(result, extra = {}) {
   if (process.platform !== 'win32') warmExec(bin);
   const out = join(dir, 'asked.json');
   const home = join(dir, 'home'); // the guard keeps per-session state under HOME (bounce store): never the real one
-  const env = { ...process.env, HOME: home, USERPROFILE: home, PATH: `${dir}${delimiter}${process.env.PATH}`, DISPLAY: ':0', FAKE_DIALOG_RESULT: result, FAKE_DIALOG_OUT: out, CLAUDE_GUARD_LOG: tempLogPath(), ...extra };
+  const env = cleanEnv({ HOME: home, USERPROFILE: home, PATH: `${dir}${delimiter}${process.env.PATH}`, DISPLAY: ':0', FAKE_DIALOG_RESULT: result, FAKE_DIALOG_OUT: out, CLAUDE_GUARD_LOG: tempLogPath(), ...extra });
   for (const name of ['NODE_TEST_CONTEXT', 'SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY', 'CI']) delete env[name];
   return {
     env,

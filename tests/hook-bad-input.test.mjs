@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const hookPath = (name) => fileURLToPath(new URL(`../home/hooks/${name}`, import.meta.url));
 const MIB = 1024 * 1024;
@@ -33,7 +34,7 @@ function sandbox(extra = {}) {
   const home = makeTempDir('hook-bad-input-');
   const tmp = join(home, 'tmp');
   mkdirSync(tmp);
-  const base = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_') && !OUR_VARIABLES.includes(name)));
+  const base = Object.fromEntries(Object.entries(cleanEnv()).filter(([name]) => !name.startsWith('GIT_') && !OUR_VARIABLES.includes(name)));
   const env = { ...base, HOME: home, USERPROFILE: home, TMPDIR: tmp, TMP: tmp, TEMP: tmp, DISK_FREE_CLAUDE_TMP: join(tmp, 'claude-tmp'), CLAUDE_GUARD_LOG: join(home, 'guard.jsonl'), ...extra };
   return { home, tmp, env };
 }

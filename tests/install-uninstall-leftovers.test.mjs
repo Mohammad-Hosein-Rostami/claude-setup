@@ -9,11 +9,12 @@ import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const INSTALLER = fileURLToPath(new URL('../scripts/install.mjs', import.meta.url));
 
 function run(home, args) {
-  return spawnSync(process.execPath, [INSTALLER, ...args], { env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8' });
+  return spawnSync(process.execPath, [INSTALLER, ...args], { env: cleanEnv({ HOME: home, USERPROFILE: home }), encoding: 'utf8' });
 }
 
 /** The list lines right under the "Left in place" header of an uninstall's output (the run summary follows after a blank line). */

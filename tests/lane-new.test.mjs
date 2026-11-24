@@ -7,6 +7,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, realpathS
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const SCRIPT = fileURLToPath(new URL('../scripts/lane-new.sh', import.meta.url));
 const INSTALL = readFileSync(fileURLToPath(new URL('../scripts/install.mjs', import.meta.url)), 'utf8');
@@ -15,7 +16,7 @@ const TOOLS_LINE = /^export const TOOLS_WITH_DEPS = \[('[a-z-]+'(?:, '[a-z-]+')*
 const skip = process.platform === 'win32' && 'bash script';
 const GIT_IDENTITY = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 
-const git = (cwd, ...args) => spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...GIT_IDENTITY } });
+const git = (cwd, ...args) => spawnSync('git', args, { cwd, encoding: 'utf8', env: cleanEnv(GIT_IDENTITY) });
 
 /** A repo `<parent>/claude-setup` on branch main with the script, an install.mjs listing two tools, and a lockfile for one. */
 function makeRepo() {
@@ -41,7 +42,7 @@ function makeRepo() {
 }
 
 const lane = ({ repo, bin }, ...args) =>
-  spawnSync('bash', [join(repo, 'scripts', 'lane-new.sh'), ...args], { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, ...GIT_IDENTITY } });
+  spawnSync('bash', [join(repo, 'scripts', 'lane-new.sh'), ...args], { encoding: 'utf8', env: cleanEnv({ PATH: `${bin}:${process.env.PATH}`, ...GIT_IDENTITY }) });
 
 test('install.mjs keeps the one list of tools with dependencies that lane-new.sh reads', { skip }, () => {
   assert.match(INSTALL, TOOLS_LINE);
@@ -68,7 +69,7 @@ test('a second lane started from inside the first still lands next to the main c
   assert.equal(lane(ctx, 'x1').status, 0);
   git(ctx.repo, 'branch', 'other', 'main');
   const first = join(ctx.parent, 'claude-setup-wt', 'x1');
-  const r = spawnSync('bash', [join(first, 'scripts', 'lane-new.sh'), 'x2', 'other'], { encoding: 'utf8', env: { ...process.env, PATH: `${ctx.bin}:${process.env.PATH}`, ...GIT_IDENTITY } });
+  const r = spawnSync('bash', [join(first, 'scripts', 'lane-new.sh'), 'x2', 'other'], { encoding: 'utf8', env: cleanEnv({ PATH: `${ctx.bin}:${process.env.PATH}`, ...GIT_IDENTITY }) });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout.trim(), join(ctx.parent, 'claude-setup-wt', 'x2'));
 });
@@ -91,7 +92,7 @@ test('refuses an existing branch, an existing folder and a bad name, and changes
 
 test('a failing npm ci prints what is half made and how to finish or remove it, exits non-zero, deletes nothing', { skip }, () => {
   const ctx = makeRepo();
-  const r = spawnSync('bash', [join(ctx.repo, 'scripts', 'lane-new.sh'), 'f1'], { encoding: 'utf8', env: { ...process.env, PATH: `${ctx.bin}:${process.env.PATH}`, FAIL_TOOL: 'with-lock', ...GIT_IDENTITY } });
+  const r = spawnSync('bash', [join(ctx.repo, 'scripts', 'lane-new.sh'), 'f1'], { encoding: 'utf8', env: cleanEnv({ PATH: `${ctx.bin}:${process.env.PATH}`, FAIL_TOOL: 'with-lock', ...GIT_IDENTITY }) });
   const path = join(ctx.parent, 'claude-setup-wt', 'f1');
   assert.notEqual(r.status, 0);
   assert.equal(r.stdout, '', 'the path is printed only for a lane that is ready');

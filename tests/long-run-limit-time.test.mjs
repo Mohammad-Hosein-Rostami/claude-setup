@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { FALLBACK_WAIT_MS, LIMIT_TEXT, RESUME_MARGIN_MS, limitWaitUntil, parseResetTime, resetFromSamples } from '../home/tools/long-run/lib/limit-time.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const ZONES = ['UTC', 'America/Los_Angeles', 'Pacific/Kiritimati'];
 const local = (...parts) => new Date(...parts);
@@ -48,7 +49,7 @@ test('no readable time: the newest stored sample (a full window) is used, else o
 // Registered only in the first run: the zone runs are its children.
 if (!process.env.LONG_RUN_TZ_CHILD) test('the same cases hold under UTC, America/Los_Angeles and Pacific/Kiritimati', () => {
   for (const zone of ZONES) {
-    const run = spawnSync(process.execPath, ['--test', fileURLToPath(import.meta.url)], { env: { ...process.env, TZ: zone, LONG_RUN_TZ_CHILD: '1' }, encoding: 'utf8' });
+    const run = spawnSync(process.execPath, ['--test', fileURLToPath(import.meta.url)], { env: cleanEnv({ TZ: zone, LONG_RUN_TZ_CHILD: '1' }), encoding: 'utf8' });
     assert.equal(run.status, 0, `${zone}: ${run.stdout.split('\n').filter((line) => line.includes('not ok') || line.includes('Error')).join('\n')}`);
   }
 });

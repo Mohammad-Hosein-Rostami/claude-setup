@@ -9,6 +9,7 @@ import { cpSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const SCRIPTS = fileURLToPath(new URL('../scripts', import.meta.url));
 const FIX_LINE = 'git config core.hooksPath .githooks';
@@ -22,7 +23,7 @@ function setupRepo() {
   cpSync(join(SCRIPTS, 'doctor'), join(repo, 'scripts', 'doctor'), { recursive: true });
   const emptyConfig = join(root, 'empty-gitconfig');
   writeFileSync(emptyConfig, '');
-  const env = { ...process.env, HOME: root, USERPROFILE: root, GIT_CONFIG_GLOBAL: emptyConfig, GIT_CONFIG_NOSYSTEM: '1', DOCTOR_ONLY: 'check_git_hooks_path' };
+  const env = cleanEnv({ HOME: root, USERPROFILE: root, GIT_CONFIG_GLOBAL: emptyConfig, GIT_CONFIG_NOSYSTEM: '1', DOCTOR_ONLY: 'check_git_hooks_path' });
   assert.equal(spawnSync('git', ['init', '-q', repo], { env }).status, 0);
   const git = (...args) => spawnSync('git', ['-C', repo, ...args], { env, encoding: 'utf8' });
   const doctor = () => spawnSync('bash', [join(repo, 'scripts', 'doctor.sh')], { env, encoding: 'utf8' });

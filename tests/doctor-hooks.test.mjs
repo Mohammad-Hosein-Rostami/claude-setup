@@ -7,6 +7,7 @@ import { cp, mkdir, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const DOCTOR = fileURLToPath(new URL('../scripts/doctor.sh', import.meta.url));
 const hasJq = spawnSync('jq', ['--version']).status === 0;
@@ -32,7 +33,7 @@ async function fakeHome({ plugin } = {}) {
 }
 
 function doctor(home, checks) {
-  return spawnSync('bash', [DOCTOR], { env: { ...process.env, HOME: home, DOCTOR_ONLY: checks }, encoding: 'utf8' });
+  return spawnSync('bash', [DOCTOR], { env: cleanEnv({ HOME: home, DOCTOR_ONLY: checks }), encoding: 'utf8' });
 }
 
 test('check_plugin_session_start warns about an enabled plugin that injects EXTREMELY_IMPORTANT', { skip }, async () => {
@@ -58,7 +59,7 @@ test('check_hook_files also covers hook files named in agent frontmatter', { ski
   await cp(DOCTOR, join(repo, 'scripts', 'doctor.sh'));
   await writeFile(join(repo, 'settings', 'base.json'), '{}');
   await writeFile(join(repo, 'home', 'agents', 'a.md'), '---\nhooks:\n  PreToolUse:\n    - hooks:\n        - command: node "$HOME/.claude/hooks/gone.mjs"\n---\n');
-  const run = () => spawnSync('bash', [join(repo, 'scripts', 'doctor.sh')], { env: { ...process.env, HOME: repo, DOCTOR_ONLY: 'check_hook_files' }, encoding: 'utf8' });
+  const run = () => spawnSync('bash', [join(repo, 'scripts', 'doctor.sh')], { env: cleanEnv({ HOME: repo, DOCTOR_ONLY: 'check_hook_files' }), encoding: 'utf8' });
   const missing = run();
   assert.equal(missing.status, 1);
   assert.match(missing.stdout, /FAIL\s+agent frontmatter hook file missing: home\/hooks\/gone\.mjs/);
@@ -69,7 +70,7 @@ test('check_hook_files also covers hook files named in agent frontmatter', { ski
 });
 
 // check_workflows_gone: workflows are gone (2026-11-22), so no ~/.claude/workflows path may be left; a leftover is a warning.
-const workflowGoneCheck = (home) => spawnSync('bash', [DOCTOR], { env: { ...process.env, HOME: home, USERPROFILE: home, DOCTOR_ONLY: 'check_workflows_gone' }, encoding: 'utf8' });
+const workflowGoneCheck = (home) => spawnSync('bash', [DOCTOR], { env: cleanEnv({ HOME: home, USERPROFILE: home, DOCTOR_ONLY: 'check_workflows_gone' }), encoding: 'utf8' });
 
 test('check_workflows_gone passes when there is no ~/.claude/workflows', { skip }, async () => {
   const home = makeTempDir('doctor-wf-gone-');
@@ -93,7 +94,7 @@ test('check_prod_hosts fails when the prod-hosts file is a link, and passes for 
   await mkdir(privateDir, { recursive: true });
   const real = join(home, 'real-hosts');
   await writeFile(real, 'db1.example\n');
-  const linkEnv = { ...process.env, HOME: home, USERPROFILE: home, DOCTOR_ONLY: 'check_prod_hosts' };
+  const linkEnv = cleanEnv({ HOME: home, USERPROFILE: home, DOCTOR_ONLY: 'check_prod_hosts' });
   delete linkEnv.CLAUDE_PROD_HOSTS_FILE; // doctor.sh reads this one first; the link run must look at the temp HOME's own file
   const run = () => spawnSync('bash', [DOCTOR], { encoding: 'utf8', env: linkEnv });
   await symlink(real, join(privateDir, 'prod-hosts'));
@@ -103,7 +104,7 @@ test('check_prod_hosts fails when the prod-hosts file is a link, and passes for 
   await writeFile(join(home, 'plain'), 'db1.example\n');
   const plain = spawnSync('bash', [DOCTOR], {
     encoding: 'utf8',
-    env: { ...process.env, HOME: home, USERPROFILE: home, DOCTOR_ONLY: 'check_prod_hosts', CLAUDE_PROD_HOSTS_FILE: join(home, 'plain') },
+    env: cleanEnv({ HOME: home, USERPROFILE: home, DOCTOR_ONLY: 'check_prod_hosts', CLAUDE_PROD_HOSTS_FILE: join(home, 'plain') }),
   });
   assert.equal(plain.status, 0);
   assert.match(plain.stdout, /^ok\s+prod-hosts list: 1 entries/m);
@@ -116,7 +117,7 @@ test('check_doctor_accepted skips the retired ollama-off id silently and still w
   const list = join(home, 'accepted');
   const run = () => spawnSync('bash', [DOCTOR], {
     encoding: 'utf8',
-    env: { ...process.env, HOME: home, USERPROFILE: home, DOCTOR_ONLY: 'check_doctor_accepted', CLAUDE_DOCTOR_ACCEPTED_FILE: list },
+    env: cleanEnv({ HOME: home, USERPROFILE: home, DOCTOR_ONLY: 'check_doctor_accepted', CLAUDE_DOCTOR_ACCEPTED_FILE: list }),
   });
   await writeFile(list, 'ollama-off\napple-terminal-notes\n');
   const retired = run();

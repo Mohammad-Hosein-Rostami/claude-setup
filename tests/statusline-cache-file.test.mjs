@@ -11,6 +11,7 @@ import { writeSessionFile } from '../home/hooks/lib/session-store.mjs';
 import { cacheDir, writeCacheFile } from '../home/tools/board/lib/cache-file.mjs';
 import { placedWriterBoard } from './statusline-board-fixture.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const STATUSLINE = fileURLToPath(new URL('../home/statusline.mjs', import.meta.url));
 const DAY_S = 24 * 60 * 60;
@@ -46,7 +47,7 @@ test('F2: a status line run on a 256-colour terminal writes no file to the board
   const home = makeTempDir('statusline-no-hues-');
   const session = 'no-hues-session-1';
   writeSessionFile(join(home, '.claude', 'state', 'board'), session, JSON.stringify({ ...placedWriterBoard(Date.now()), session }));
-  const env = { ...process.env, HOME: home, USERPROFILE: home, TERM: 'xterm-256color', COLORTERM: 'truecolor', LANG: 'en_US.UTF-8', COLUMNS: '160', LINES: '36', NO_COLOR: '' };
+  const env = cleanEnv({ HOME: home, USERPROFILE: home, TERM: 'xterm-256color', COLORTERM: 'truecolor', LANG: 'en_US.UTF-8', COLUMNS: '160', LINES: '36', NO_COLOR: '' });
   const run = spawnSync(process.execPath, [STATUSLINE], { input: JSON.stringify({ session_id: session, model: { display_name: 'Opus 5.5' } }), env, encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
   assert.match(run.stdout, /agents/, 'the line drew the board');

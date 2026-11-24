@@ -10,6 +10,7 @@ import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { makeTempDir, testTempRoot } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 export const CLI = fileURLToPath(new URL('../home/tools/git-tidy/git-tidy.mjs', import.meta.url));
 const TEMP_ROOT = realpathSync(testTempRoot()); // where makeTempDir makes every test folder
@@ -18,7 +19,7 @@ const IDENTITY = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_
 const PINNED_HOME = makeTempDir('git-tidy-home-');
 const SESSION_ID_VARIABLES = ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID']; // the session-store readers use both
 export const CLEAN_ENV = {
-  ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_') && !SESSION_ID_VARIABLES.includes(name))),
+  ...Object.fromEntries(Object.entries(cleanEnv()).filter(([name]) => !name.startsWith('GIT_') && !SESSION_ID_VARIABLES.includes(name))),
   ...NO_GIT_CONFIG,
   ...IDENTITY,
   HOME: PINNED_HOME,

@@ -5,6 +5,7 @@
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 // A made-up token (built from parts, so no secret scanner sees a literal): `callHaiku` starts no `claude` without a login.
 const FAKE_LOGIN_TOKEN = ['sk', 'ant', 'oat01', 'MadeUpClaudeFakeStackToken0000'].join('-');
@@ -37,11 +38,11 @@ export function fakeStack({ claudeMode = 'ok' } = {}) {
   chmodSync(join(bin, 'claude'), 0o755);
   const claudeLog = join(dir, 'claude.log');
   writeFileSync(claudeLog, '');
-  const env = {
-    ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}`, ACCOUNT_STATE_DIR: join(dir, 'state'),
+  const env = cleanEnv({
+    PATH: `${bin}${delimiter}${process.env.PATH}`, ACCOUNT_STATE_DIR: join(dir, 'state'),
     FAKE_CLAUDE_LOG: claudeLog, FAKE_CLAUDE_MODE: claudeMode,
     CLAUDE_CODE_OAUTH_TOKEN: FAKE_LOGIN_TOKEN, // the terminal's login; never the real one of the shell that runs the tests
-  };
+  });
   const lines = (path) => readFileSync(path, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
   return { dir, bin, env, claudeCalls: () => lines(claudeLog) };
 }

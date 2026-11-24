@@ -16,6 +16,7 @@ import { mergedSettings } from '../scripts/install/settings.mjs';
 import { enabledPluginIds, installPlugins } from '../scripts/install/tools.mjs';
 import { pluginFindings } from '../scripts/doctor-projects.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const INSTALLER = join(REPO, 'scripts', 'install.mjs');
@@ -180,7 +181,7 @@ function repoPluginSplit(home) {
 function runInstaller(args) {
   const home = makeTempDir('install-plugins-run-');
   const log = join(makeTempDir('install-plugins-log-'), 'claude-calls.jsonl');
-  const env = { ...process.env, HOME: home, USERPROFILE: home, TMPDIR: makeTempDir('install-plugins-tmp-'), PATH: `${FAKE_BIN}${delimiter}${process.env.PATH}`, FAKE_CLAUDE_LOG: log, FAKE_CLAUDE_LOCK: join(home, '.claude', INSTALL_LOCK_NAME) };
+  const env = cleanEnv({ HOME: home, USERPROFILE: home, TMPDIR: makeTempDir('install-plugins-tmp-'), PATH: `${FAKE_BIN}${delimiter}${process.env.PATH}`, FAKE_CLAUDE_LOG: log, FAKE_CLAUDE_LOCK: join(home, '.claude', INSTALL_LOCK_NAME) });
   const run = spawnSync(process.execPath, [INSTALLER, ...args], { env, encoding: 'utf8' });
   return { home, run, calls: callsIn(log) };
 }

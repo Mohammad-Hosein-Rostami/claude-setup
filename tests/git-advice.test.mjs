@@ -17,6 +17,7 @@ import { ADVICE_CLASS, reasonClass } from '../home/hooks/lib/reason-classes.mjs'
 import { commit, git, makeRepo } from './git-tidy-helpers.mjs';
 import { hookEnv } from './hook-env.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
 const lane = (repo) => { // a repo on main with a lane branch `lane-x` that exists locally
@@ -148,6 +149,6 @@ test('runGit never lets the repository or the caller choose what runs: fsmonitor
   assert.equal(runGit(bare, ['rev-parse', '--git-dir']), null, 'an embedded bare repository was entered');
 
   const other = makeRepo();
-  assert.equal(runGit(repo, ['rev-parse', '--git-dir'], { ...process.env, GIT_DIR: join(other, '.git') }), '.git', 'GIT_DIR from the caller was used');
+  assert.equal(runGit(repo, ['rev-parse', '--git-dir'], cleanEnv({ GIT_DIR: join(other, '.git') })), '.git', 'GIT_DIR from the caller was used');
   assert.equal(runGit(repo, ['rev-parse', '--git-dir'], process.env, Date.now() - 1), null, 'a passed deadline starts no git');
 });

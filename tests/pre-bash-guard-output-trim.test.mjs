@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { isTrimmedRunner, TRIM_ENV, TRIM_LINES, trimmedCommand } from '../home/hooks/lib/output-trim.mjs';
 import { hookEnv } from './hook-env.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
 const PROJECT = resolve('/work/proj');
@@ -56,7 +57,7 @@ test('a fake runner that prints 400 lines and exits 3: the rewritten command pri
   writeFileSync(runner, `#!/bin/sh\ni=1\nwhile [ $i -le ${FAKE_LINES} ]; do echo "line $i"; i=$((i + 1)); done\nexit ${FAKE_EXIT}\n`);
   chmodSync(runner, 0o755);
   const { hookSpecificOutput } = JSON.parse(hookAnswer({ command: 'pytest -q' }));
-  const env = { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}` };
+  const env = cleanEnv({ PATH: `${bin}${delimiter}${process.env.PATH}` });
   const run = spawnSync('bash', ['-c', hookSpecificOutput.updatedInput.command], { cwd: makeTempDir('trim-run-'), encoding: 'utf8', env });
   assert.equal(run.status, FAKE_EXIT, run.stderr);
   const lines = run.stdout.trimEnd().split('\n');

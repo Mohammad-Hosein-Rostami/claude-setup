@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { GUARD_LOG_FILE, GUARD_LOG_MAX_BYTES, GUARD_ROTATE_LOCK_FILE, logDecision, rotatedLogPath } from '../home/hooks/lib/guard-log.mjs';
 import { checkGuardStateWrite } from '../home/hooks/lib/guard-state-write.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const posix = { skip: process.platform === 'win32' && 'needs symlinks and file modes' };
 const GUARD_LOG = new URL('../home/hooks/lib/guard-log.mjs', import.meta.url).href;
@@ -71,7 +72,7 @@ test(`${RACERS} writers on a full log at once: rotated once, no line lost`, posi
   const filled = fill(path, 'A'); // fill writes the whole file: the folder-making line is gone
   const script = `const { logDecision } = await import(${JSON.stringify(GUARD_LOG)}); logDecision({ hook: 'h', tool: 'Bash', decision: 'ask', outcome: 'allow', reason: 'r', command: process.argv[1] });`;
   const writer = (n) => new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['--input-type=module', '-e', script, `racer-${n}`], { env: { ...process.env, ...env }, stdio: 'ignore' });
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script, `racer-${n}`], { env: cleanEnv(env), stdio: 'ignore' });
     child.on('error', reject);
     child.on('close', resolve);
   });

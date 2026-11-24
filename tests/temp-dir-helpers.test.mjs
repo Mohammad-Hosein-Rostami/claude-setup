@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TEST_TEMP_PREFIX, makeTempDir, removeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const HELPER_URL = new URL('./temp-dir-helpers.mjs', import.meta.url).href;
 const TESTS_DIR = dirname(fileURLToPath(import.meta.url));
@@ -15,7 +16,7 @@ const TESTS_DIR = dirname(fileURLToPath(import.meta.url));
 function runChild(code) {
   const sandbox = makeTempDir('sandbox-');
   const script = `import { makeTempDir, removeTempDir } from ${JSON.stringify(HELPER_URL)};\nconst dir = makeTempDir('child-'); console.log(dir);\n${code}`;
-  const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env: { ...process.env, TMPDIR: sandbox } });
+  const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env: cleanEnv({ TMPDIR: sandbox }) });
   return { run, dir: run.stdout.trim(), sandbox, leftovers: readdirSync(sandbox) };
 }
 

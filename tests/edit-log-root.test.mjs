@@ -12,6 +12,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { checkedTempRoot, tempRoot } from '../home/hooks/lib/edit-log.mjs';
 import { callCounterPath } from '../home/hooks/lib/writer-agents.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const POSIX_ONLY = process.platform === 'win32' ? 'owner and mode bits are POSIX only (Windows: phase 7)' : false;
 const EDIT_LOG_MODULE = pathToFileURL(fileURLToPath(new URL('../home/hooks/lib/edit-log.mjs', import.meta.url))).href;
@@ -44,7 +45,7 @@ function assertRefused() {
 /** The root check in a second process (a hook is its own process), with TMPDIR as set now: its answer. */
 function checkedRootInChildProcess() {
   const script = `import { checkedTempRoot } from ${JSON.stringify(EDIT_LOG_MODULE)}; console.log(JSON.stringify(checkedTempRoot()));`;
-  const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: KILL_AFTER_MS, env: { ...process.env } });
+  const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: KILL_AFTER_MS, env: cleanEnv({ CLAUDE_GUARD_LOG: process.env.CLAUDE_GUARD_LOG }) }); // inTemp's own log
   assert.deepEqual([run.status, run.signal, run.stdout.trim()], [0, null, 'null'], run.stderr);
 }
 const refusedLines = (lines) => lines.map((line) => [line.hook, line.tool, line.decision, line.outcome]);
@@ -134,7 +135,7 @@ test('(g) a FIFO at the root path is refused without waiting', { skip: POSIX_ONL
   execFileSync('mkfifo', [join(tmp, NAME)]);
   const guardLog = join(makeTempDir('edit-log-root-log-'), 'guard.jsonl');
   const script = `import { checkedTempRoot } from ${JSON.stringify(EDIT_LOG_MODULE)}; console.log(JSON.stringify(checkedTempRoot()));`;
-  const env = { ...process.env, TMPDIR: tmp, CLAUDE_GUARD_LOG: guardLog };
+  const env = cleanEnv({ TMPDIR: tmp, CLAUDE_GUARD_LOG: guardLog });
   const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: KILL_AFTER_MS, env });
   assert.deepEqual([run.status, run.signal, run.stdout.trim()], [0, null, 'null'], run.stderr);
   assert.equal(readFileSync(guardLog, 'utf8').trim().split('\n').length, 1);

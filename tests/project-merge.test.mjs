@@ -13,6 +13,7 @@ import { hookOutput } from '../home/hooks/project-merge.mjs';
 import { LEAD_NOTE_MAX_CHARS } from '../home/hooks/lib/project-merge-text.mjs';
 import { NOTE_START } from '../home/hooks/lib/project-agents-text.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/project-merge.mjs', import.meta.url));
 const POSIX = process.platform !== 'win32';
@@ -80,7 +81,7 @@ test('a team project:the lead note names AGENTS.md, the hidden handoff skill wit
 test('a team project:a SubagentStart gets no note, in process and as a command', async () => {
   const box = sandbox({ project: TEAM_PROJECT, notes: { 'proj-repo': 'Use the team verify skill.' } });
   assert.equal(await hookOutput(subagent(box.top), { home: box.home, coreHome: box.coreHome, now: sinceNow() }), null);
-  const run = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(box.top)), encoding: 'utf8', env: { ...process.env, HOME: box.home } });
+  const run = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(box.top)), encoding: 'utf8', env: cleanEnv({ HOME: box.home }) });
   assert.equal(run.status, 0, run.stderr);
   assert.equal(run.stdout, '');
 });
@@ -88,7 +89,7 @@ test('a team project:a SubagentStart gets no note, in process and as a command',
 test('a project with no AI files and no note prints nothing, as a command too', async () => {
   const box = sandbox();
   assert.equal(await hookOutput(start(box.top), { home: box.home, coreHome: box.coreHome, now: sinceNow() }), null);
-  const run = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(start(box.top)), encoding: 'utf8', env: { ...process.env, HOME: box.home } });
+  const run = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(start(box.top)), encoding: 'utf8', env: cleanEnv({ HOME: box.home }) });
   assert.equal(run.status, 0);
   assert.equal(run.stdout, '');
 });
@@ -96,7 +97,7 @@ test('a project with no AI files and no note prints nothing, as a command too', 
 test('the output is hook JSON whose hookEventName is the event', async () => {
   const box = sandbox({ project: TEAM_PROJECT, name: 'cs-fixture-only-here' });
   const input = start(box.top);
-  const run = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), encoding: 'utf8', env: { ...process.env, HOME: box.home } });
+  const run = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), encoding: 'utf8', env: cleanEnv({ HOME: box.home }) });
   assert.equal(run.status, 0, run.stderr);
   const output = JSON.parse(run.stdout);
   assert.deepEqual(Object.keys(output.hookSpecificOutput), ['hookEventName', 'additionalContext']);

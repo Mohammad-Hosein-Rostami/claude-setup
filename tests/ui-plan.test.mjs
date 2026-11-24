@@ -11,12 +11,13 @@ import { readRecords, storeFile } from '../home/tools/ui-proof/lib/records.mjs';
 import { NO_UI_TREE, changedUiFiles, uiTreeAt, workingUiTree } from '../home/tools/ui-proof/lib/ui-files.mjs';
 import { briefFloor, planChecks, planProofProblem } from '../home/tools/ui-proof/lib/ui-plan.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/ui-proof/ui-proof.mjs', import.meta.url));
 const STATE = fs.realpathSync.native(makeTempDir('ui-plan-state-'));
 process.env.UI_SCREENS_STATE_DIR = path.join(STATE, 'screens');
 const GIT_ENV = {
-  ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_'))),
+  ...Object.fromEntries(Object.entries(cleanEnv()).filter(([name]) => !name.startsWith('GIT_'))),
   GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
   GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t',
 };
@@ -167,7 +168,7 @@ test('a repository with no UI file plans none; unreadable evidence plans pixel',
 });
 
 function cli(args, env = {}) {
-  const result = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env: { ...process.env, UI_PROOF_STATE_DIR: path.join(STATE, 'proof'), ...env } });
+  const result = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env: cleanEnv({ UI_PROOF_STATE_DIR: path.join(STATE, 'proof'), ...env }) });
   return { code: result.status, out: result.stdout, err: result.stderr };
 }
 

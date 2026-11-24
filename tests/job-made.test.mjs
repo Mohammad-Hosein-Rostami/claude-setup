@@ -13,6 +13,7 @@ import {
 } from '../home/tools/disk-free/lib/job-made.mjs';
 import { posix } from './disk-clean-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const SESSION = 'aaaaaaaa-0000-4000-8000-000000000001';
 const OTHER = 'bbbbbbbb-0000-4000-8000-000000000002';
@@ -112,7 +113,7 @@ function writerProcess(env, session, tag) {
     }
     process.exit(failed === 0 ? 0 : 1);`;
   return new Promise((done) => {
-    spawn(process.execPath, ['--input-type=module', '-e', script, session, tag], { env: { ...process.env, ...env }, stdio: 'ignore' }).on('exit', done);
+    spawn(process.execPath, ['--input-type=module', '-e', script, session, tag], { env: cleanEnv(env), stdio: 'ignore' }).on('exit', done);
   });
 }
 
@@ -144,7 +145,7 @@ function lockHolder(env, session, [lineA, lineB]) {
       return true;
     });
     process.exit(done === true ? 0 : 1);`;
-  const child = spawn(process.execPath, ['--input-type=module', '-e', script, session, lineA, lineB], { env: { ...process.env, ...env } });
+  const child = spawn(process.execPath, ['--input-type=module', '-e', script, session, lineA, lineB], { env: cleanEnv(env) });
   const exited = new Promise((done) => child.on('exit', done));
   const holding = new Promise((done) => child.stdout.once('data', done));
   return { holding, exited };

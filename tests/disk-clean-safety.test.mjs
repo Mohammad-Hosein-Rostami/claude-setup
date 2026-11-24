@@ -15,6 +15,7 @@ import { liveSessionIds } from '../home/tools/disk-free/lib/live-sessions.mjs';
 import { touchedSince, treeBytes, walkTree } from '../home/tools/disk-free/lib/clean-scan.mjs';
 import { OLD_TEST_PREFIXES } from '../home/tools/disk-free/lib/test-temp-prefixes.mjs';
 import { age, CURRENT, folder, NEWEST, OLD, OTHER, posix, sessionFile, sessionFolder, transcript, world } from './disk-clean-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const TOOL = fileURLToPath(new URL('../home/tools/disk-free/disk-clean.mjs', import.meta.url));
 
@@ -167,7 +168,7 @@ test('CLI: the running session id from CLAUDE_CODE_SESSION_ID (or the older CLAU
     transcript(w, '-proj', NEWEST, 0);
     const mine = sessionFolder(w, CURRENT, 20);
     const roots = ['--claude-tmp', w.claudeTmp, '--projects', w.projects, '--tmp', w.tmp, '--sessions', w.sessions];
-    const env = { ...process.env, HOME: w.home, CLAUDE_CODE_SESSION_ID: '', CLAUDE_SESSION_ID: '', [variable]: CURRENT };
+    const env = cleanEnv({ HOME: w.home, CLAUDE_CODE_SESSION_ID: '', CLAUDE_SESSION_ID: '', [variable]: CURRENT });
     assert.equal(spawnSync(process.execPath, [TOOL, '--apply', ...roots], { env, encoding: 'utf8' }).status, 0);
     assert.equal(existsSync(mine), true, variable);
   }
@@ -247,7 +248,7 @@ test('CLI: HOME empty or CLAUDE_CONFIG_DIR set means no session folder is remove
   const path = sessionFolder(w, OLD, 10);
   mkdirSync(join(w.home, '.claude', 'sessions'), { recursive: true });
   const args = [TOOL, '--apply', '--claude-tmp', w.claudeTmp, '--tmp', w.tmp];
-  const withEnv = (env) => spawnSync(process.execPath, args, { encoding: 'utf8', env: { ...process.env, CLAUDE_CONFIG_DIR: '', HOME: w.home, ...env } });
+  const withEnv = (env) => spawnSync(process.execPath, args, { encoding: 'utf8', env: cleanEnv({ CLAUDE_CONFIG_DIR: '', HOME: w.home, ...env }) });
   assert.match(withEnv({ HOME: '' }).stdout, /nothing done/);
   assert.match(withEnv({ CLAUDE_CONFIG_DIR: join(w.root, 'elsewhere') }).stdout, /SKIPPED/);
   assert.equal(existsSync(path), true);

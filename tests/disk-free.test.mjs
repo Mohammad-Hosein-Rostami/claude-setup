@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { availableGb, judgeFreeSpace } from '../home/tools/disk-free/disk-free.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const TOOL = fileURLToPath(new URL('../home/tools/disk-free/disk-free.mjs', import.meta.url));
 const KB_PER_GB = 1024 * 1024;
@@ -61,7 +62,7 @@ async function fakeHome(sizesKb) {
 
 function check(home, freeGb, extraEnv = {}, extraArgs = []) {
   return spawnSync('node', [TOOL, 'check', ...extraArgs], {
-    env: { ...process.env, HOME: home, DISK_FREE_DF_OUTPUT: dfWithFreeGb(freeGb), DISK_FREE_CLAUDE_TMP: join(home, 'no-such-claude-tmp'), ...extraEnv },
+    env: cleanEnv({ HOME: home, DISK_FREE_DF_OUTPUT: dfWithFreeGb(freeGb), DISK_FREE_CLAUDE_TMP: join(home, 'no-such-claude-tmp'), ...extraEnv }),
     encoding: 'utf8',
   });
 }

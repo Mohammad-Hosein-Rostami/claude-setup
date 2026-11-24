@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cleanEnv, openLogFile, startIfDue } from '../home/hooks/disk-clean-start.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv as cleanTestEnv } from './clean-env.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/disk-clean-start.mjs', import.meta.url));
 const HOUR_MS = 60 * 60 * 1000;
@@ -106,7 +107,7 @@ const runHook = (home, env) => {
   const { tmp, claudeTmp } = fixtureFolders(home);
   mkdirSync(claudeTmp, { recursive: true });
   const fixtures = { HOME: home, USERPROFILE: home, TMPDIR: tmp, TMP: tmp, TEMP: tmp, DISK_FREE_CLAUDE_TMP: claudeTmp, CLAUDE_CONFIG_DIR: '' };
-  const hook = spawn(process.execPath, [HOOK], { env: { ...process.env, ...fixtures, ...env }, stdio: ['pipe', 'ignore', 'pipe'] });
+  const hook = spawn(process.execPath, [HOOK], { env: cleanTestEnv({ ...fixtures, ...env }), stdio: ['pipe', 'ignore', 'pipe'] });
   let stderr = '';
   hook.stderr.on('data', (chunk) => { stderr += chunk; });
   hook.stdin.end(JSON.stringify(startup));

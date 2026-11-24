@@ -10,6 +10,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const SCRIPT = fileURLToPath(new URL('../scripts/sync-machines.mjs', import.meta.url));
 const FLOOR = '2.1.326';
@@ -62,7 +63,7 @@ function setup({ targets = undefined, cliVersion = '', dirty = false } = {}) {
 function run(fixture, args, env = {}) {
   const result = spawnSync('node', [SCRIPT, '--repo', fixture.repo, '--json', ...args], {
     encoding: 'utf8',
-    env: { ...process.env, PATH: `${fixture.bin}:${process.env.PATH}`, HOME: fixture.home, TMPDIR: fixture.root, FAKE_LOG: fixture.log, FAKE_VERSION: FLOOR, ...env },
+    env: cleanEnv({ PATH: `${fixture.bin}:${process.env.PATH}`, HOME: fixture.home, TMPDIR: fixture.root, FAKE_LOG: fixture.log, FAKE_VERSION: FLOOR, ...env }),
   });
   const calls = existsSync(fixture.log) ? readFileSync(fixture.log, 'utf8') : '';
   const rows = result.stdout.split('\n').filter((line) => line.startsWith('[')).at(-1);
@@ -161,7 +162,7 @@ test('a claude version that changed during the install fails that machine', () =
 test('a bundle file already in use stops the run with exit 2', () => {
   const fixture = setup({ targets: [{ name: 'pc', ssh: 'pc' }] });
   writeFileSync(join(fixture.root, 'sync-sync-pc.bundle'), '');
-  const result = spawnSync('node', [SCRIPT, '--repo', fixture.repo], { encoding: 'utf8', env: { ...process.env, PATH: `${fixture.bin}:${process.env.PATH}`, HOME: fixture.home, TMPDIR: fixture.root, FAKE_LOG: fixture.log, FAKE_VERSION: FLOOR } });
+  const result = spawnSync('node', [SCRIPT, '--repo', fixture.repo], { encoding: 'utf8', env: cleanEnv({ PATH: `${fixture.bin}:${process.env.PATH}`, HOME: fixture.home, TMPDIR: fixture.root, FAKE_LOG: fixture.log, FAKE_VERSION: FLOOR }) });
   assert.equal(result.status, 2);
   assert.match(result.stderr, /exists/);
 });

@@ -14,6 +14,7 @@ import { CLAUDE_MD_MARKER, checkImportPath, claudeMdText, importPath } from '../
 import { isNewMachine } from '../scripts/install/settings.mjs';
 import { INSTALL_LOCK_STALE_MS, RECORD_NAME } from '../scripts/install/record.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const skip = spawnSync('jq', ['--version']).status === 0 ? false : 'jq not installed';
@@ -37,7 +38,7 @@ function checkout(name = 'repo') {
 const newHome = () => makeTempDir('personal-home-');
 function run(repo, home, ...flags) {
   const args = [join(repo, 'scripts', 'install.mjs'), ...flags, ...(flags.includes('--uninstall') ? [] : ['--no-plugins', '--no-tools'])];
-  return spawnSync(process.execPath, args, { env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8' });
+  return spawnSync(process.execPath, args, { env: cleanEnv({ HOME: home, USERPROFILE: home }), encoding: 'utf8' });
 }
 const claudeMd = (home) => join(home, '.claude', 'CLAUDE.md');
 const backups = (home) => readdirSync(home).filter((name) => name.startsWith('.claude-backup-'));
@@ -329,7 +330,7 @@ test('two installs at once on one fresh copy (two HOMEs) make personal/ once and
   const { spawn } = await import('node:child_process');
   const once = (home) =>
     new Promise((done) => {
-      const child = spawn(process.execPath, [join(repo, 'scripts', 'install.mjs'), '--no-plugins', '--no-tools'], { env: { ...process.env, HOME: home, USERPROFILE: home } });
+      const child = spawn(process.execPath, [join(repo, 'scripts', 'install.mjs'), '--no-plugins', '--no-tools'], { env: cleanEnv({ HOME: home, USERPROFILE: home }) });
       child.on('exit', done);
     });
   const homes = [newHome(), newHome()];

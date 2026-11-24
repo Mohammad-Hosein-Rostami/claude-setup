@@ -17,6 +17,7 @@ import { readdirSync } from 'node:fs';
 import { NOTE_MAX_CHARS, projectAgentNote } from '../home/hooks/lib/project-agents.mjs';
 import { AGENTS, CAP_ADVICE, LINK_ADVICE, POSIX, SHADOW_ADVICE, agent, noteOf } from './project-agents-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const REAL_PERSONAL_AGENTS_DIR = fileURLToPath(new URL('../home/agents', import.meta.url));
 const BUILT_IN_AGENTS = ['general-purpose', 'Explore', 'Plan', 'claude', 'claude-code-guide', 'statusline-setup']; // the hook's fixed list, written out a second time
@@ -50,7 +51,7 @@ test('fixture A: .claude/agents is a relative link into another repository: noth
   // becomes a real repository here.
   assert.equal(spawnSync('git', ['init', '-q'], { cwd: projectDir }).status, 0);
   const input = JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'links-1', source: 'startup', cwd: projectDir });
-  const hook = spawnSync(process.execPath, [MERGE_HOOK], { input, encoding: 'utf8', env: { ...process.env, HOME: home, USERPROFILE: home } });
+  const hook = spawnSync(process.execPath, [MERGE_HOOK], { input, encoding: 'utf8', env: cleanEnv({ HOME: home, USERPROFILE: home }) });
   const text = JSON.parse(hook.stdout).hookSpecificOutput.additionalContext;
   assert.ok(text.split('\n').includes(LINK_OUTSIDE_NOTE), 'the SessionStart hook prints the note');
   assert.doesNotMatch(text, /deploy\.md|never edited/);

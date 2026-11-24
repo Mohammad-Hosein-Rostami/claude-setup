@@ -7,6 +7,7 @@ import { mkdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const DOCTOR = fileURLToPath(new URL('../scripts/doctor.sh', import.meta.url));
 const KB_PER_GB = 1024 * 1024;
@@ -15,7 +16,7 @@ const dfWithFreeGb = (gb) => `Filesystem 1024-blocks Used Available Capacity Mou
 async function doctorDisk(freeGb, env = {}) {
   const home = makeTempDir('doctor-disk-');
   return spawnSync('bash', [DOCTOR], {
-    env: { ...process.env, HOME: home, DOCTOR_ONLY: 'check_disk_free', DISK_FREE_DF_OUTPUT: dfWithFreeGb(freeGb), DISK_FREE_CLAUDE_TMP: join(home, 'none'), ...env },
+    env: cleanEnv({ HOME: home, DOCTOR_ONLY: 'check_disk_free', DISK_FREE_DF_OUTPUT: dfWithFreeGb(freeGb), DISK_FREE_CLAUDE_TMP: join(home, 'none'), ...env }),
     encoding: 'utf8',
   });
 }
@@ -59,7 +60,7 @@ function doctorDiskClean(fakeBytes, env = {}) {
   const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
   utimesSync(join(tmp, 'cs-test-old-AbCdEf'), old, old);
   const roots = `--claude-tmp ${join(home, 'none')} --projects ${join(home, 'projects')} --tmp ${tmp}`;
-  return spawnSync('bash', [DOCTOR], { env: { ...process.env, HOME: home, DOCTOR_ONLY: 'check_disk_clean', DOCTOR_DISK_CLEAN_ARGS: roots, ...env }, encoding: 'utf8' });
+  return spawnSync('bash', [DOCTOR], { env: cleanEnv({ HOME: home, DOCTOR_ONLY: 'check_disk_clean', DOCTOR_DISK_CLEAN_ARGS: roots, ...env }), encoding: 'utf8' });
 }
 
 test('check_disk_clean prints an INFO line with the dry-run total and exits 0', () => {

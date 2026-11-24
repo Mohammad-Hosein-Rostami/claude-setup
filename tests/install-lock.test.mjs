@@ -15,6 +15,7 @@ import { uninstall } from '../scripts/install/uninstall.mjs';
 import { INSTALL_LOCK_NAME, INSTALL_LOCK_STALE_MS, RECORD_NAME, lockInstall } from '../scripts/install/record.mjs';
 import { posix } from './disk-clean-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const MINUTE_MS = 60 * 1000;
 const REPO = fileURLToPath(new URL('..', import.meta.url));
@@ -33,7 +34,7 @@ function setup() {
 const deadPid = () => spawnSync(process.execPath, ['-e', '']).pid;
 
 const runInstaller = (home, args = ['--no-plugins', '--no-tools']) =>
-  spawnSync(process.execPath, [INSTALLER, ...args], { env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8' });
+  spawnSync(process.execPath, [INSTALLER, ...args], { env: cleanEnv({ HOME: home, USERPROFILE: home }), encoding: 'utf8' });
 
 test('the lock names its owner; a second take while the owner lives is refused; released, it can be taken again', () => {
   const { ctx, lock } = setup();
@@ -387,7 +388,7 @@ async function raceOnce(round) {
   writeFileSync(recordFile, JSON.stringify({ version: 1, repo: REPO, root: REPO, tag: null, firstLayer: null, made, backups: [] }));
   const start = () =>
     new Promise((resolve) => {
-      const child = spawn(process.execPath, [INSTALLER, '--no-plugins', '--no-tools'], { env: { ...process.env, HOME: home, USERPROFILE: home }, stdio: 'ignore' });
+      const child = spawn(process.execPath, [INSTALLER, '--no-plugins', '--no-tools'], { env: cleanEnv({ HOME: home, USERPROFILE: home }), stdio: 'ignore' });
       child.on('close', resolve);
     });
   const codes = await Promise.all([start(), start()]);
@@ -424,7 +425,7 @@ async function installVersusUninstall(round) {
   assert.equal(runInstaller(home).status, 0);
   const start = (args) =>
     new Promise((resolve) => {
-      const child = spawn(process.execPath, [INSTALLER, ...args], { env: { ...process.env, HOME: home, USERPROFILE: home }, stdio: 'ignore' });
+      const child = spawn(process.execPath, [INSTALLER, ...args], { env: cleanEnv({ HOME: home, USERPROFILE: home }), stdio: 'ignore' });
       child.on('close', resolve);
     });
   await Promise.all([start(['--no-plugins', '--no-tools']), start(['--uninstall'])]);

@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { switchDirs, switchNames, trustedSwitch } from '../home/hooks/lib/team-switch.mjs';
 import { git as runGit } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const hookPath = (name) => fileURLToPath(new URL(`../home/hooks/${name}`, import.meta.url));
 const SETTINGS = '.claude/settings.json';
@@ -157,7 +158,7 @@ test('post-edit: CLAUDE_POST_EDIT_SKIP=all from a team file still formats and wa
   const tmp = makeTempDir('team-switch-tmp-');
   for (const [index, one] of namedCases('CLAUDE_POST_EDIT_SKIP', 'all').entries()) {
     const dir = formatProject(one.files, one.git ?? null);
-    const env = { ...process.env, HOME: tmp, USERPROFILE: tmp, TMPDIR: tmp, TEMP: tmp, TMP: tmp, CLAUDE_PROJECT_DIR: dir, CLAUDE_POST_EDIT_SKIP: 'all', ...one.env };
+    const env = cleanEnv({ HOME: tmp, USERPROFILE: tmp, TMPDIR: tmp, TEMP: tmp, TMP: tmp, CLAUDE_PROJECT_DIR: dir, CLAUDE_POST_EDIT_SKIP: 'all', ...one.env });
     const edit = () => spawnSync(process.execPath, [hookPath('post-edit.mjs')], { input: JSON.stringify({ session_id: `post-edit-${index}`, cwd: dir, tool_input: { file_path: join(dir, 'src', 'a.ts') } }), encoding: 'utf8', env, cwd: dir });
     const first = edit();
     const second = edit();

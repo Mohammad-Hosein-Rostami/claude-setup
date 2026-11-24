@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { diagnostics, isBroadScript, isCodeFile, isSamePath, plannedChecks, shellCommand, skipFilter } from '../home/hooks/post-edit.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/post-edit.mjs', import.meta.url));
 
@@ -114,7 +115,7 @@ test('plannedChecks swaps a broad format script for the tool binary, or skips it
 
 test('hook contract: bad JSON, empty stdin and non-code files exit 0 silently', () => {
   for (const input of ['not json', '', JSON.stringify({ tool_input: { file_path: 'README.md' } }), JSON.stringify({})]) {
-    const r = spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8' });
+    const r = spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env: cleanEnv({ CLAUDE_GUARD_LOG: process.env.CLAUDE_GUARD_LOG }) });
     assert.equal(r.status, 0);
     assert.equal(r.stdout + r.stderr, '');
   }
