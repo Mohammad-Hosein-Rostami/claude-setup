@@ -1,6 +1,6 @@
 ---
 name: ship-readiness
-description: Use before shipping work to real users, or for a production-readiness review - release quality, rollout and rollback, config and secrets, observability, capacity, dependencies, the go/no-go. Preloaded by max; lex loads it for a plan with `ship:`.
+description: Use before shipping work to real users, or for a production-readiness review - release quality, rollout and rollback, config and secrets, observability, capacity, dependencies, the go/no-go. Preloaded by max; lex loads it for a plan that names a `ship:` target.
 ---
 
 One checklist for a release, a deploy, a publish or a showcase for real users, built from Google's production readiness review

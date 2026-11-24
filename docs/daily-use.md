@@ -13,9 +13,10 @@ Keep extra usage off in claude.ai so nothing can bill credits.
 - One task per session. For an unrelated next task, `/clear` or start a new session first.
 - The main session is the boss: it routes the work, asks you what only you can decide and lands branches; it does no work
   itself. It starts four main agents, at most 3 of each at once:
-  - `lex` (Opus, high; the boss raises it to `effort: "xhigh"` or `effort: "max"` for a hard job) clarifies, researches,
-    compares, designs and plans, and writes the acceptance lines. It asks you its questions at the start of a job. Its helpers
-    take the simple parts: `lex-scout` (code and doc lookups, maps of an area) and `lex-web` (web research with sources).
+  - `lex` (Opus, high; the boss raises it to `effort: "xhigh"` for a hard design or an unclear need, and to `effort: "max"`
+    only when a wrong choice is costly to undo) clarifies, researches, compares, designs and plans, and writes the acceptance
+    lines. It asks you its questions at the start of a job. Its helpers take the simple parts: `lex-scout` (code and doc
+    lookups, maps of an area) and `lex-web` (web research with sources).
   - `dev` writes code, config and fixes in its own worktree and runs no tests. It splits the job into parts, each owning its
     files (parts that share a file run one after another), may write any part itself and reads every helper's diff before
     taking it. Its helpers: `dev-part` (one part; Sonnet by default, Opus or xhigh for an important, risky or hard part),
@@ -28,17 +29,18 @@ Keep extra usage off in claude.ai so nothing can bill credits.
     plans and judges; its helpers do the work: `dev-run` (the runs, the full suite through the `suite` queue), `tess-edge`
     (edge cases), `tess-simple` (needless complexity), `tess-review` (reviews the code against lex's spec) and `tess-write`
     (writes the missing tests in its own worktree, one per area; tess then proves each one can fail).
-  - `max` (the ship agent; Opus) starts rarely: when you call it, or after a job's last land when lex's plan has `ship:` or you
-    asked for a release, deploy or showcase. It prepares everything (release notes, deploy and rollback plans, the exact
-    commands) and never pushes, publishes, deploys or writes to production on its own; it runs one of those only on an
-    `owner-command:` line, from your own words in chat.
+  - `max` (the ship agent; Opus, high) starts rarely: when you call it, or after a job's last land when lex's plan names a
+    `ship:` target or you asked for a release, deploy or showcase. It prepares everything (release notes, deploy and rollback
+    plans, the exact commands) and never pushes, publishes, deploys or writes to production on its own; it runs one of those
+    only on an `owner-command:` line, from your own words in chat.
 - Only the boss starts `lex`, `dev`, `tess` and `max`. An agent that needs one asks the boss with a `needs:` line (by message
   while it runs in the background, else in its report); the boss starts it, keeps track of who is on what and sends the result
   back.
 - Helpers are not counted. Two lanes or helpers never change the same file at once. Technical choices are made and stated in one line; your decisions are asked.
 - Landing is one script call, not an agent: the `land` script (`home/tools/land`) rebases the branch, fast-forwards it with
-  `git merge --ff-only` and removes the landed branch and worktree. `--test "<command>"` runs a test on the rebased tip first;
-  when the base and the lane changed the same files, `land` lists them and refuses to land without that test. A machine sync, where your setup has one, brings your
+  `git merge --ff-only` and removes the landed branch and worktree. `--test "<command>"` runs a test on the rebased tip first.
+  A test is needed only when the base and the lane changed the same files: `land` lists them and runs `--test`, else the lane's
+  `npm test` script, else refuses; a rebase conflict is reported first. A machine sync, where your setup has one, brings your
   other machines along (`docs/setup.md`, "Sync the machines").
 - UI work is checked as closely as the change needs, by the check plan (`node ~/.claude/tools/ui-proof/ui-proof.mjs plan`, rules
   in `home/standards/ui-checks.md`): nobody labels the work; the request, the diff and the screens it reaches decide. A docs page,
@@ -60,7 +62,7 @@ Keep extra usage off in claude.ai so nothing can bill credits.
 - The boss asks them as popups in one batch and sends your answers back to the agent.
 - A question with no answer in time: a small, reversible choice takes the recommended option; a big or deleting one waits for
   you. Permission prompts are not questions: every one (any tool, risky ones included) goes ahead as Allow after 2 minutes
-  unless you deny it (below); `max`'s outward ones (push, publish, deploy) never go ahead by themselves.
+  unless you deny it (below), but while any `max` runs, an outward one (push, publish, deploy) runs only on your click.
 
 ## Long or unattended runs
 - Run long or unattended sessions in a plain terminal app (or tmux), not an editor's built-in terminal: closing or

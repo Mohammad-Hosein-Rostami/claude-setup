@@ -24,11 +24,11 @@ duty; (D3) simplicity: few agents, few lines; (D4) cost: rare Opus runs, a cheap
 
 B, with the owner's decisions (2026-11-25):
 
-- `max` (Opus 5.5 high; the boss raises it to xhigh for a real ship or an incident; never Fable) runs one job and ends: the
-  `ship-readiness` review, the release gaps closed (code gaps through `dev-part`, notes through `dev-docs`), the built artefact
-  checked in a production-like local run, and the exact outward and rollback commands written. Then it stops. The owner pushes,
-  deploys and publishes himself. max runs an outward action only on an `owner-command:` brief line, which the boss writes from
-  the owner's own chat words, and its dialog for that action never goes ahead by itself (enforced by the guard in a later lane).
+- `max` (Opus 5.5 high; never Fable) runs one job and ends: the `ship-readiness` review, the release gaps closed (code gaps
+  through `dev-part`, notes through `dev-docs`), the built artefact checked in a production-like local run, and the exact
+  outward and rollback commands written. Then it stops. The owner pushes, deploys and publishes himself. max runs an outward
+  action only on an `owner-command:` brief line, which the boss writes from the owner's own chat words, and only a click runs
+  its dialog for that action; while any max runs, every outward ask needs a click (the guard enforces both).
 - max is started rarely: when the owner asks, or after a job's last land when lex's plan ends with `ship: <target>`. Never for a
   job whose result only lands, and never from a long-run step. It has its own 3 slots beside lex, dev and tess.
 - `dev-docs` (Sonnet 5.5 high; Opus per call for migration notes, a public API reference or security text) writes the docs and
