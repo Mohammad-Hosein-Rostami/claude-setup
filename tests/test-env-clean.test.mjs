@@ -2,13 +2,14 @@
 // A Claude Code session exports the owner's switches (CLAUDE_GUARD_ASK=allow turns a guard ask into an allow) and a TMPDIR deep in
 // its own scratchpad (180+ chars, inside claude-<uid>, which the guard frees and the 160-char shown paths cut). These cases prove
 // cleanEnv/hookEnv drop the switches, that no test spawns with the raw session env, that makeTempDir leaves a long session TMPDIR,
-// and that a long-run child's desktop note reaches the quiet stand-in, never the real osascript / notify-send.
+// that a long-run child under cleanEnv shows no desktop note (CLAUDE_LONG_RUN_DESKTOP_NOTES=off, also when the session exports it
+// on), and that with the switch removed its note reaches the quiet stand-in, never the real osascript / notify-send.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join, resolve, sep } from 'node:path';
 import { test } from 'node:test';
-import { desktopCommand, readNotifyConfig } from '../home/tools/long-run/lib/notify.mjs';
+import { DESKTOP_NOTES_SWITCH, desktopCommand, readNotifyConfig } from '../home/tools/long-run/lib/notify.mjs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { cleanEnv } from './clean-env.mjs';
 import { hookEnv } from './hook-env.mjs';
@@ -104,11 +105,23 @@ test('makeTempDir under a long TMPDIR inside a claude-<uid> tree makes a short f
   assert.ok(folder.length < SHOWN_PATH_CUT, `${folder.length} chars: ${folder}`);
 });
 
+test('a long-run child under cleanEnv shows no desktop note, also when the session exports the switch on', () => {
+  const home = makeTempDir('quiet-notify-off-home-');
+  const log = join(home, 'quiet-tools.log');
+  const env = withSessionEnv({ [DESKTOP_NOTES_SWITCH]: 'on' }, () => cleanEnv({ HOME: home, USERPROFILE: home, [QUIET_TOOLS_LOG_ENV]: log }));
+  assert.equal(env[DESKTOP_NOTES_SWITCH], 'off');
+  assert.equal(readNotifyConfig(env), null, 'no ntfy topic in this HOME, so no phone push');
+  const run = spawnSync(process.execPath, [LONG_RUN, 'notify', 'test'], { encoding: 'utf8', env });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /sent a test note/);
+  assert.equal(existsSync(log), false, 'a note tool ran although the switch is off');
+});
+
 // Windows has no quiet stand-ins (a script cannot shadow powershell.exe), so there is nothing to prove there.
-test('a long-run child under cleanEnv sends its desktop note to the quiet stand-in, with the argv of the real command', { skip: process.platform === 'win32' }, () => {
+test('a long-run child with the switch removed sends its desktop note to the quiet stand-in, with the argv of the real command', { skip: process.platform === 'win32' }, () => {
   const home = makeTempDir('quiet-notify-home-');
   const log = join(home, 'quiet-tools.log');
-  const env = cleanEnv({ HOME: home, USERPROFILE: home, [QUIET_TOOLS_LOG_ENV]: log });
+  const env = cleanEnv({ HOME: home, USERPROFILE: home, [QUIET_TOOLS_LOG_ENV]: log, [DESKTOP_NOTES_SWITCH]: undefined });
   assert.equal(readNotifyConfig(env), null, 'no ntfy topic in this HOME, so no phone push');
   const run = spawnSync(process.execPath, [LONG_RUN, 'notify', 'test'], { encoding: 'utf8', env });
   assert.equal(run.status, 0, run.stderr);

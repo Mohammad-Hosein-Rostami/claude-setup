@@ -3,16 +3,18 @@
 // Why: a test run from a Claude Code session inherits the owner's switches (CLAUDE_GUARD_ASK=allow, CLAUDE_GUARD_TRIM,
 // CLAUDE_POST_EDIT_TRUST_FORMAT, CLAUDE_PERMISSION_TIMEOUT_S, ...) and the session's own markers (CLAUDE_CODE_SESSION_ID,
 // CLAUDECODE, ...); a child that reads them answers differently there than in a plain terminal (allow where a test expects ask).
-// A test that needs one passes it in `extra`. tests/hook-env.mjs builds hookEnv on it; tests/pin-home.mjs drops the same names from
-// the test process itself, for modules a test imports.
-// Quiet tools: a long-run driver or CLI that a test runs as a child shows a real desktop note (long-run lib/notify.mjs spawns
-// osascript / notify-send / powershell.exe, and the product has no off-switch), and a dialog tool would show a real dialog. On
-// POSIX this module puts inert stand-ins of those tools first on process.env.PATH when it loads, so every PATH a test builds from
+// A test that needs one passes it in `extra`. cleanEnv adds one switch back after the strip: CLAUDE_LONG_RUN_DESKTOP_NOTES=off,
+// so a long-run child shows no desktop note on any platform (Windows has no stand-in for powershell.exe). tests/hook-env.mjs
+// builds hookEnv on it; tests/pin-home.mjs drops the same names from the test process itself, for modules a test imports.
+// Quiet tools: a dialog tool a test reaches would show a real dialog, and a long-run child run without the switch above (a test
+// that removes it on purpose) would show a real desktop note (osascript / notify-send / powershell.exe). On POSIX this module
+// puts inert stand-ins of those tools first on process.env.PATH when it loads, so every PATH a test builds from
 // process.env.PATH (and cleanEnv's) finds them before the real ones, after a test's own fakes (e.g. tests/fake-dialog-tool.mjs).
 // Invariants: process.env changes only in PATH, once, at load; `extra` wins over everything; the quiet-tools folder is this
 // user's own (owner-only, no symlink) or this module throws.
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, utimesSync, writeFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
+import { DESKTOP_NOTES_SWITCH } from '../home/tools/long-run/lib/notify.mjs';
 import { TEST_TEMP_PREFIX, testTempRoot } from './temp-dir-helpers.mjs';
 
 /** A name the setup or Claude Code reads as a switch or a session marker: every `CLAUDE_*` and `CLAUDECODE`. */
@@ -37,8 +39,10 @@ exit ${code}
 `;
 
 /**
- * The quiet tools' folder, made or refreshed. It is one folder per user that is never removed: a detached long-run driver can
- * notify after its test process ended (it writes `done` before its note), and a removed folder would let it reach the real tool.
+ * The quiet tools' folder, made or refreshed. It is one fixed folder per user that no test removes: parallel test files share it,
+ * and a detached child can still run a tool after its test process ended, so removing it at exit could let one reach the real
+ * tool. It holds a few small scripts, so it is safe to leave: each load sets its time to now, so disk-clean's test-temp rule
+ * (cs-test-* idle 1 day) removes it only after a day with no test run, never during one.
  * @returns {string | null} the folder, or null on Windows (a script cannot stand in for powershell.exe there)
  */
 export function quietToolsDir() {
@@ -58,6 +62,8 @@ export function quietToolsDir() {
     chmodSync(temp, RUNNABLE);
     renameSync(temp, file);
   }
+  const now = new Date();
+  utimesSync(dir, now, now);
   return dir;
 }
 
@@ -68,8 +74,10 @@ if (QUIET_DIR !== null && !(process.env.PATH ?? '').split(delimiter).includes(QU
 
 /**
  * @param {Record<string, string | undefined>} extra variables added on top (they win, `CLAUDE_*` and PATH too)
- * @returns {Record<string, string | undefined>} a copy of process.env without OUR_SWITCH names, then `extra`
+ * @returns {Record<string, string | undefined>} a copy of process.env without OUR_SWITCH names, then desktop notes off, then `extra`
+ *   (pass `{ [DESKTOP_NOTES_SWITCH]: undefined }` to let a long-run child notify again)
  */
 export function cleanEnv(extra = {}) {
-  return { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !OUR_SWITCH.test(name))), ...extra };
+  const withoutSwitches = Object.fromEntries(Object.entries(process.env).filter(([name]) => !OUR_SWITCH.test(name)));
+  return { ...withoutSwitches, [DESKTOP_NOTES_SWITCH]: 'off', ...extra };
 }
