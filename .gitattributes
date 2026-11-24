@@ -2,6 +2,5 @@
 *.sh            text eol=lf
 *.jq            text eol=lf
 .githooks/*     text eol=lf
-# Lanes build in parallel and each appends rows to the catalog: keep both sides' lines instead of a conflict on every land.
-# tests/catalog.test.mjs catches a duplicated key or a row whose file is gone.
-docs/catalog.md merge=union
+# docs/catalog.md uses git's normal text merge on purpose: a union merge let a rebase bring back rows another lane had
+# deleted, silently. Two lanes that edit the same catalog lines now get a conflict to resolve by hand.

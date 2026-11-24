@@ -1,9 +1,8 @@
-// Tests for docs/catalog.md as a union-merged file: parallel lanes append rows to it, so git merges them by `merge=union`
-// (.gitattributes). Union keeps both sides' lines and cannot tell a duplicated or lost row from a good one, so these tests catch that.
+// Tests for docs/catalog.md: parallel lanes add and remove rows, so a careless merge can duplicate a row or keep one whose file is
+// gone. The catalog merges as normal text (.gitattributes has no `merge=union` for it), so a deleted row never comes back unseen.
 // Exports: readTables, duplicateKeys, missingFiles (the checks, so the fixture test can run them on a small catalog).
 // Invariants: (1) the first cell of a row is unique within its table; (2) every file a row of a file table names exists;
-// (3) two lanes that each append a row to the same table rebase one after the other with no conflict and keep both rows;
-// (4) the session-notes entries (this catalog and home/hooks/README.md) give its deadline the prune only, never the project-agents child.
+// (3) a lane made before a row was deleted, that adds a row beside it, stops its rebase with a conflict instead of bringing the row back.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -109,31 +108,36 @@ test('the key check finds a row that was added twice, and the path check finds a
   assert.deepEqual(missingFiles(tables, root), ['Agents: `gone` names home/agents/gone.md']);
 });
 
+/** Runs git in `cwd` with a throwaway identity; returns the result so a test can expect a failure. */
+function gitRun(cwd, ...args) {
+  return spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8' });
+}
+
 function git(cwd, ...args) {
-  const result = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8' });
+  const result = gitRun(cwd, ...args);
   assert.equal(result.status, 0, `git ${args.join(' ')}: ${result.stderr}${result.stdout}`);
   return result.stdout;
 }
 
-test('two lanes that each append a catalog row rebase one after the other with no conflict and keep both rows', () => {
+test('a lane that adds a row beside one main deleted gets a rebase conflict, never the deleted row back', () => {
   const dir = makeTempDir('catalog-rebase-');
   git(dir, 'init', '-q', '-b', 'main');
   mkdirSync(join(dir, 'docs'));
   writeFileSync(join(dir, '.gitattributes'), readFileSync(join(REPO, '.gitattributes')));
   const header = '| Skill | Description |\n| ----- | ----------- |\n| `base` | first |\n';
-  writeFileSync(join(dir, 'docs', 'catalog.md'), header);
+  const catalog = join(dir, 'docs', 'catalog.md');
+  writeFileSync(catalog, `${header}| \`removed\` | deleted on main |\n`);
   git(dir, 'add', '.');
   git(dir, 'commit', '-q', '-m', 'base');
-  for (const lane of ['one', 'two']) {
-    git(dir, 'switch', '-q', '-c', `lane/${lane}`, 'main');
-    writeFileSync(join(dir, 'docs', 'catalog.md'), `${header}| \`${lane}\` | added by ${lane} |\n`);
-    git(dir, 'commit', '-q', '-am', `lane ${lane}`);
-  }
+  git(dir, 'switch', '-q', '-c', 'lane/old', 'main');
+  writeFileSync(catalog, `${header}| \`removed\` | deleted on main |\n| \`added\` | added by the lane |\n`);
+  git(dir, 'commit', '-q', '-am', 'lane adds a row');
   git(dir, 'switch', '-q', 'main');
-  git(dir, 'merge', '-q', '--ff-only', 'lane/one');
-  git(dir, 'switch', '-q', 'lane/two');
-  git(dir, 'rebase', 'main');
-  const rows = readFileSync(join(dir, 'docs', 'catalog.md'), 'utf8');
-  for (const key of ['base', 'one', 'two']) assert.match(rows, new RegExp(`^\\| \`${key}\``, 'm'));
-  assert.deepEqual(duplicateKeys(readTables(rows)), []);
+  writeFileSync(catalog, header);
+  git(dir, 'commit', '-q', '-am', 'main deletes a row');
+  git(dir, 'switch', '-q', 'lane/old');
+  const rebase = gitRun(dir, 'rebase', 'main');
+  assert.notEqual(rebase.status, 0, 'the rebase stops on the catalog instead of merging it silently');
+  assert.match(git(dir, 'diff', '--name-only', '--diff-filter=U'), /^docs\/catalog\.md$/m);
+  git(dir, 'rebase', '--abort');
 });
