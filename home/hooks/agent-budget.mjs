@@ -19,14 +19,8 @@
 // MAX_STORE_BYTES for writer and reader): {"launches": [{"key", "type", "at", "agent"?}], "stopped": [agent ids]}. A corrupt file
 // (not JSON, not that shape, or an entry outside it), an unusable store or a lock that stays taken is `unusable`, and the guard
 // denies (the owner's cap fails closed) until the file is fixed or deleted.
-// Main-agent route (mainRouteReason, the guard's first gate): only the boss starts lex, dev and tess, and they start their helpers.
-// A main-session call of any other type is denied every time with the route to take. Default for Claude Code's built-ins: an
-// omitted subagent_type (general-purpose), general-purpose, Explore, Plan, claude, fork and any plugin or unknown type are denied
-// from the main session too; only claude-code-guide and statusline-setup (Claude Code's own help and config agents) are let
-// through. A call from inside a subagent (`agent_id`) that starts lex, dev or tess is denied every time (owner rule: the boss
-// knows who is on what, and the cap counts only its starts); the agent asks the boss with a `needs:` line instead. Any other
-// type from inside a subagent is free: which helper each agent starts is set by its agent file, not here.
-// Exports: MAX_AGENTS_PER_TYPE, PENDING_MS, STALE_MS, MAIN_AGENT_TYPES, mainRouteReason, claimMainSlot, releaseMainSlot, mainCapReason,
+// The main-agent route (which types the boss and the subagents may start) is lib/agent-route.mjs, the guard's first gate.
+// Exports: MAX_AGENTS_PER_TYPE, PENDING_MS, STALE_MS, MAIN_AGENT_TYPES (lib/agent-route.mjs's, kept here for its callers), claimMainSlot, releaseMainSlot, mainCapReason,
 // recordMainStart, recordMainStop.
 // Invariants: never throws; the hook's own events fail open (exit 0, no output); output is fixed text, types and the store path.
 import { appendFileSync, mkdirSync, realpathSync, rmSync, statSync } from 'node:fs';
@@ -36,6 +30,7 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { quotedValue } from './lib/agent-brief.mjs';
 import { recordAgentStart, recordAgentStop } from './lib/agent-launches.mjs';
+import { MAIN_AGENT_TYPES } from './lib/agent-route.mjs';
 import { withSessionLock } from './lib/session-lock.mjs';
 import { isSessionId, readSessionFile, writeSessionFile } from './lib/session-store.mjs';
 import { agentTypeOf, callCounterPath } from './lib/writer-agents.mjs';
@@ -50,37 +45,7 @@ const SAFE_ID = /^[\w-]{1,128}$/;
 const NO_STORE = { state: 'unusable', running: [] };
 const STARTING = 'starting'; // a launch with no SubagentStart yet has no agent id
 
-/** The agents the main session may start (the owner's design: the boss routes to lex, dev and tess only). */
-export const MAIN_AGENT_TYPES = ['lex', 'dev', 'tess'];
-// Claude Code's own help and config agents: no job work, so the boss may start them directly
-const BOSS_BUILT_INS = ['claude-code-guide', 'statusline-setup'];
-// Which main agent starts each helper of home/agents, so a deny names the route
-const HELPER_OWNERS = {
-  'lex-scout': 'lex', 'lex-web': 'lex',
-  'dev-ui': 'dev', 'dev-pixel': 'dev', 'pixel-qa': 'dev', 'dev-debug': 'dev', 'dev-run': 'dev',
-  'tess-review': 'tess', 'tess-write': 'tess',
-};
-
-/**
- * The deny reason for an Agent or Task call on the wrong route (see the header): the main session starting anything but a main
- * agent, or a subagent starting a main agent.
- * @param {unknown} input the PreToolUse hook input: agent_id (set inside a subagent), tool_input.subagent_type
- * @returns {string} one line naming the route, or '' when the call may go on (a subagent's helper, the boss's main agent, an
- *   allowed built-in)
- */
-export function mainRouteReason(input) {
-  const type = agentTypeOf(input?.tool_input?.subagent_type);
-  if (input?.agent_id) {
-    if (!MAIN_AGENT_TYPES.includes(type)) return '';
-    return `agent route: only the boss starts lex, dev and tess; ask it with the line 'needs: ${type} to <task>, blocks: <what>' `
-      + '(SendMessage to main from a background run, else in your report) and go on with what does not depend on it';
-  }
-  if (MAIN_AGENT_TYPES.includes(type) || BOSS_BUILT_INS.includes(type)) return '';
-  const shown = quotedValue(type);
-  const owner = Object.hasOwn(HELPER_OWNERS, type) ? HELPER_OWNERS[type] : undefined;
-  if (owner) return `agent route: the boss starts lex, dev or tess; ${shown} is ${owner}'s helper: start ${owner} with the brief, and it starts ${shown}`;
-  return `agent route: the boss starts lex, dev or tess; ${shown} is not one of them: start lex (research, design), dev (build, fix) or tess (checks) with the brief`;
-}
+export { MAIN_AGENT_TYPES };
 
 const mainAgentsDir = (env) => join(env.HOME || env.USERPROFILE || homedir(), '.claude', 'state', 'main-agents');
 

@@ -8,12 +8,13 @@
 // dev-pixel, dev-debug, tess-review, tess-write on Opus; lex-web, pixel-qa, tess on Sonnet; lex-scout, dev-run on Haiku: the frontmatter of
 // home/agents/<name>.md). A failure there leaves the input as it is (stderr line). A rewrite is allow + the full updatedInput.
 // Gates, in order (the first deny wins; each deny-once gate lets the identical call through when it is sent again):
-//   R. Main-agent route (agent-budget.mjs mainRouteReason): the main session starts only lex, dev and tess (and Claude Code's
+//   R. Main-agent route (lib/agent-route.mjs mainRouteReason): the main session starts only lex, dev and tess (and Claude Code's
 //      claude-code-guide and statusline-setup); any other type from the main session is denied every time with the route to take.
 //      A call from inside a subagent (`agent_id`) that starts lex, dev or tess is denied every time too: only the boss starts them,
 //      and the agent asks for one with a `needs:` line; its other calls (its helpers) are not routed. First, so a wrong route spends
 //      no deny-once gate.
-//   0. No Fable (owner rule: Fable is chosen by hand only, never for an agent), denied every time with a one-line reason (fableReason),
+//   0. No Fable (owner rule: Fable is chosen by hand only, never for an agent), denied every time with a one-line reason (fableReason;
+//      the reason texts are lib/fable-model-reasons.mjs),
 //      and fail closed: a call whose `model` is Fable (the alias or any id) or `inherit`; with no `model`, an agent file that pins Fable,
 //      `inherit` or nothing (with no CLAUDE_CODE_SUBAGENT_MODEL, or a Fable one); a pin that cannot be read or is not certain; a type
 //      with no agent file the gate reads (a plugin agent, a fork, an unknown type: it runs only with a non-Fable `model` in the call).
@@ -31,12 +32,14 @@
 // Exports: guardedAgentInput (pure), fableReason, UNREADABLE_INPUT, writerIsolationDeny, copyBranchBriefDeny, runGuard.
 // Invariants: the routing never blocks; each deny-once gate denies an identical call at most once per session; the hook never lets an
 // Agent call through without the no-Fable gate's yes (bad input and a crash deny).
-import { claimMainSlot, mainCapReason, mainRouteReason, releaseMainSlot } from '../agent-budget.mjs';
+import { claimMainSlot, mainCapReason, releaseMainSlot } from '../agent-budget.mjs';
 import { quotedValue } from './agent-brief.mjs';
 import { isWriterRole } from './agent-roles.mjs';
+import { mainRouteReason } from './agent-route.mjs';
 import { copyBranchBriefAdvice } from './copy-branch-brief.mjs';
 import { recordAgentLaunch } from './agent-launches.mjs';
 import { isSessionId } from './session-store.mjs';
+import { FABLE_RULE, NAME_A_MODEL, callModelReason, foundPinReason } from './fable-model-reasons.mjs';
 import { uiBriefDeny } from './ui-brief-gate.mjs';
 import { agentTypeOf, isReadOnlyBrief, laneWorktreeOf, worktreeLineAdvice } from './writer-agents.mjs';
 
@@ -142,41 +145,8 @@ export async function copyBranchBriefDeny(input, env = process.env) {
   }
 }
 
-const FABLE_MODEL = /fable/i; // the alias `fable` and every Fable model id
-const INHERIT_MODEL = /^inherit$/i; // the agent runs on the lead's model, which the hook cannot see
-const FABLE_RULE = 'Not started: Fable is never used for an agent (the owner chooses it by hand only)';
-// Names the model the agent should run on, never a lower one: the shipped pins are opus for lex and dev, sonnet for tess
-const NAME_A_MODEL = 'name the model its agent file should pin in the Agent call, never Fable (`model: "opus"` for lex and dev, `"sonnet"` for tess)';
 /** The deny reason for unreadable hook input (the guard denies the Agent call rather than let the no-Fable gate pass). */
 export const UNREADABLE_INPUT = 'agent-model-guard could not read its input';
-
-/** The reason for a call that names its model, or '' when that model is neither Fable nor `inherit`. */
-function callModelReason(model) {
-  if (typeof model !== 'string') return `${FABLE_RULE}: the call's \`model\` is not text, so the model is unknown; ${NAME_A_MODEL}.`;
-  if (FABLE_MODEL.test(model)) return `${FABLE_RULE}: leave \`model\` out of the Agent call (it was \`${quotedValue(model)}\`).`;
-  if (INHERIT_MODEL.test(model)) return `${FABLE_RULE}: \`model: inherit\` runs the agent on the lead's model, which may be Fable; ${NAME_A_MODEL}.`;
-  return '';
-}
-
-/** The reason for the pin of an agent file found for `type`, or '' when it runs on a known model other than Fable. */
-function foundPinReason(type, pin, env, isPlainModelName) {
-  const shown = quotedValue(type);
-  if (typeof pin.model === 'string' && FABLE_MODEL.test(pin.model)) {
-    return `${FABLE_RULE}: the \`${shown}\` agent file pins \`${quotedValue(pin.model)}\`; change its \`model\` line, and leave \`model\` out of the Agent call.`;
-  }
-  const fallback = env.CLAUDE_CODE_SUBAGENT_MODEL; // what Claude Code uses for a file with no model line (lib/agent-pins.mjs header)
-  const model = pin.model ?? (typeof fallback === 'string' && fallback !== '' ? fallback : null);
-  if (model !== null && !isPlainModelName(model)) { // quoted with escapes, a block scalar, a value below its line: not read as written
-    return `${FABLE_RULE}: the \`${shown}\` agent's model \`${quotedValue(model)}\` is not a plain model name, so what it runs on is unknown; ${NAME_A_MODEL}.`;
-  }
-  if (pin.model === null && model !== null && FABLE_MODEL.test(model)) {
-    return `${FABLE_RULE}: the \`${shown}\` agent file pins no model and CLAUDE_CODE_SUBAGENT_MODEL is \`${quotedValue(model)}\`; ${NAME_A_MODEL}.`;
-  }
-  if (model === null || INHERIT_MODEL.test(model)) {
-    return `${FABLE_RULE}: the \`${shown}\` agent would run on the lead's model (no model pinned, or \`inherit\`), which may be Fable; ${NAME_A_MODEL}, or pin one in its file.`;
-  }
-  return '';
-}
 
 /**
  * The no-Fable gate (see the header). It fails closed: whenever the model the agent would run on is not known, the call is denied.
