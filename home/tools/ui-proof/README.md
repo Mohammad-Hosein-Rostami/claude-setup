@@ -4,7 +4,8 @@ This folder holds the UI proof record tool: `node ~/.claude/tools/ui-proof/ui-pr
 
 ## Records (F7, P8)
 
-`hooks/ui-proof-gate.mjs` (PostToolUse Bash) writes one record per `ui-check run`, whatever its verdict, into
+The `ui-proof-gate` hook wrote one record per `ui-check run`, whatever its verdict; that hook was removed (2026-11-24), so no
+new record is written and `check` reads only the records already stored. A record lives in
 `~/.claude/state/ui-proof/<repo>-<hash>.json` (`UI_PROOF_STATE_DIR` overrides the folder; worktrees of one clone share the file;
 the newest 200 records are kept): the hash of the UI files of the working tree, HEAD, the verdict, the rule, the viewing conditions,
 the matrix hash, the `--step` label, the widths and frames, and the batch reference from the run's `ledger.json` (per state the
@@ -12,40 +13,33 @@ capture sha256, pixels, colour-metric pixels, rows and pixel ratio; the comparat
 ledger (`ledgerSha256`, how a later `--same` run names this run as its base), the ledger's `same` section and its captures (key,
 sha256, finding ids, page errors). The working tree is the one of the ledger's `root` (the folder `ui-check run` started in) when
 that is a worktree of the same repository as the hook's folder, else the hook's folder. The agent type is taken from the
-hook input (`agent_type`), never from the command line; a record without one is nobody's. Only a PASS made by visual-qa on the tree
-that lands is the final gate of a visual or pixel plan; a same or render plan is proved by runner or visual-qa runs (below).
+hook input (`agent_type`), never from the command line; a record without one is nobody's. Only a PASS made by pixel-qa on the tree
+that lands is the final gate of a visual or pixel plan; a same or render plan is proved by dev-run or pixel-qa runs (below).
 
-UI files (`lib/ui-files.mjs`, the one definition): the skill router's `isUiFile` plus `.ts`/`.js` style scripts under a
+UI files (`lib/ui-files.mjs`, the one definition): markup and style files plus `.ts`/`.js` style scripts under a
 styles/theme/sx folder or named `*.styles.ts`, `*.theme.ts`, `*.sx.ts`, minus folders named `test`, `tests`, `__tests__` or
 `fixtures`; in a repo that has such a file at either sha, also every `package.json`, its lockfile and the files under a
 `locales`, `locale`, `i18n` or `lang` folder.
 
 | Command | Exit |
 | ------- | ---- |
-| `check --tip <sha> [--against <sha> \| --against-step <road>.s<N>] [--repo DIR]` | 0: a visual-qa PASS for the tip's UI tree and, with `--against`, no state worse than the record taken at that sha (with `--against-step`: than the record labelled `<road>.s<N>`); a state with no reference row prints `new` (INFO). 1: no such PASS, a state worse, another comparator or renderer (fail closed), or no record with that sha or label. 2: usage. `git-tidy land` calls it with `--against`, the road gate with `--against-step` (phase 3). |
-| `has --step <road>.s<N> [--repo DIR]` | 0 a record with that label exists, 1 none, 2 usage (`road.mjs next` uses it, not `check`). |
+| `check --tip <sha> [--against <sha>] [--repo DIR]` | 0: a pixel-qa PASS for the tip's UI tree and, with `--against`, no state worse than the record taken at that sha; a state with no reference row prints `new` (INFO). 1: no such PASS, a state worse, another comparator or renderer (fail closed), or no record with that sha. 2: usage. `git-tidy land` calls it with `--against`. |
 | `changed --from <sha> --to <sha> [--repo DIR]` | Lists the UI files that differ: 0 none, 1 some, 2 usage. |
 | `plan --base <sha> --tip <sha> \| --files <path>... [--request <file>]... [--matrix <path>] [--json] [--write-run <dir>] [--repo DIR]` | The check plan (`lib/ui-plan.mjs`, rules in `home/standards/ui-checks.md`): `plan: <depth>`, a `tests:` line when logic changed, `surface <id>: <needs> (<why>)` (a set such as `same + pixel`: `same` stays beside any raised need), a `map:` line (the widths, locales and states a same or render proof covers, where they came from, and the run matrix's sha256), `exempt <file> (<why>)` and one line per safe path taken. `--files` judges the expected files of a brief by path at HEAD. `--request` files are the request itself (the brief): a STATUS.md is not read, and the `## Standing rules` and `## Owner decisions` sections of any other file are cut, each with a reason line. The map takes the lane matrix's widths and locales, else 360, 768, 1280 and the repository's locale folder names (`locales/fa/`, `i18n/fa.json`), else `en`. `--write-run <dir>` writes `matrix.json` (the map's run matrix, byte for byte, so a run of it carries the plan's matrix hash) and `states.json` of the surfaces that need same or render under `~/.claude/state/ui-plan-runs/` (`UI_PLAN_STATE_DIR` overrides; a folder inside the repository is refused). Exit 0, 2 usage. |
-| `check --tip <sha> --plan --base <sha> [--request <file>]... [--matrix <path>] [--repo DIR]` | The plan of base..tip and its proof. none: PASS. visual, pixel: exactly `check --tip <sha>` when no surface also needs same. same, render: the newest runner or visual-qa run at the tip (head and UI tree) of the plan's run matrix (its `matrixHash`) with `--same`, whose base ledger (by `ledgerSha256`) is a runner or visual-qa run at the base (head and UI tree), with a row for every width, locale and state of the map on every planned surface; same needs identical or equal states, render no new finding, no more page errors and no missing state; a state with no base render needs a visual-qa PASS; a visual-qa PASS on the tip also proves render, never same. 0 PASS with `follow-up:` lines for findings on both sides, 1 FAIL (zero rows, a missing row, a run of another matrix, a missing record, any other agent's run, `unexpected visual change: <states>`, an unreadable store), 2 usage. |
+| `check --tip <sha> --plan --base <sha> [--request <file>]... [--matrix <path>] [--repo DIR]` | The plan of base..tip and its proof. none: PASS. visual, pixel: exactly `check --tip <sha>` when no surface also needs same. same, render: the newest dev-run or pixel-qa run at the tip (head and UI tree) of the plan's run matrix (its `matrixHash`) with `--same`, whose base ledger (by `ledgerSha256`) is a dev-run or pixel-qa run at the base (head and UI tree), with a row for every width, locale and state of the map on every planned surface; same needs identical or equal states, render no new finding, no more page errors and no missing state; a state with no base render needs a pixel-qa PASS; a pixel-qa PASS on the tip also proves render, never same. 0 PASS with `follow-up:` lines for findings on both sides, 1 FAIL (zero rows, a missing row, a run of another matrix, a missing record, any other agent's run, `unexpected visual change: <states>`, an unreadable store), 2 usage. |
 
-The stop gate (`hooks/ui-proof-gate.mjs`, Stop and SubagentStop): when the working tree's UI files differ from the merge base with
-the default branch and no PASS matches the tree, it blocks once per state (the lead needs visual-qa's PASS; a ui-implementer or
-visual-qa stop takes its own); a newer run on the same tree that is worse than the PASS's reference blocks too; an unreadable record
-blocks (fail closed). Claude Code overrides a Stop gate after 8 blocks in a row and lets a crashed one through, so no proof rests
-on it alone: `git-tidy land` and the road gate are the hard checks. `MATRIX: none:` skips the Figma compare, never the proof:
-visual-qa runs `run` on a matrix without a Figma source.
+`MATRIX: none:` skips the Figma compare, never the proof: pixel-qa runs `run` on a matrix without a Figma source.
 
 ## No waiver of the UI proof
 
 The owner's per-road waiver of the UI proof was removed on 2026-11-23 (owner: no kinds, no waivers; the checks are detected from the
-work). `git-tidy land` and `land-lane` refuse its old flag (exit 2) and prove the check plan of the rebased diff instead (`check --plan`);
-a docs page, tests or dev config need no UI proof at all. The road gate's line 4 reads an old landing row that ends with
-` (ui-proof waived: owner decision)` as no plan proof.
+work). `git-tidy land` refuses its old flag (exit 2) and proves the check plan of the rebased diff instead (`check --plan`);
+a docs page, tests or dev config need no UI proof at all.
 
 ## review-page
 
 `ui-proof review-page --results <dir> --out <dir> [--matrix <matrix.json>]` writes `<out>/index.html`, the page the owner
-reviews before a UI fix is reported as done (visual-qa's final gate runs it and gives the page path in its report).
+reviews before a UI fix is reported as done (pixel-qa's final gate runs it and gives the page path in its report).
 
 - Input: `<results>/results.json` as `ui-check batch` or `run` writes it (records `{surface, state, locale, width, status,
   evidence, findings, part, url?, images?: {baseline, actual, diff}}`). Without `images` the actual capture and the diff are

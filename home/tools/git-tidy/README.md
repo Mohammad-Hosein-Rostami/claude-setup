@@ -121,7 +121,7 @@ puts a lane on the base as one straight line:
      (`new-file-size`). No `--brief` names no path; a file already on the base never counts.
    - The UI check plan of the rebased diff must be proved (`lib/ui-plan-check.mjs`): `ui-proof check --plan --base <base> --tip <tip>`
      with `--request <brief>` and `--matrix <lane matrix>` recomputes the plan (rules: `home/standards/ui-checks.md`) and checks its proof
-     on the records: none needs nothing, same and render need runner or visual-qa runs at both ends, visual and pixel a visual-qa PASS for
+     on the records: none needs nothing, same and render need dev-run or pixel-qa runs at both ends, visual and pixel a pixel-qa PASS for
      the tree (today's check, its line word for word). Not proved: exit 6 (`ui-proof`) with the failing states and the reason. A plan other
      than none with no `--brief` is exit 6 too (the request would be unread). Always on, no waiver; when the ui-proof tool cannot be loaded
      every landing exits 6 with that reason. A proved plan other than pixel prints `ui plan <depth>: proved` and its `follow-up:` lines
@@ -136,8 +136,7 @@ puts a lane on the base as one straight line:
 
 `git-tidy range <sha>` reads the base's reflog (newest 200 entries) for the step `from..to` that holds every patch of the
 sha not on the base (or, for a sha on the base, that sha itself); `--landed <sha>` also requires that commit in the
-range. It prints `from <sha>` and `to <sha>` (exit 0) or exits 1. `land-lane` uses it after a restart, to write
-`landed <to> on <base> from <from>` for a landing a killed run made.
+range. It prints `from <sha>` and `to <sha>` (exit 0) or exits 1, so a landing a killed run made can be found again.
 
 ### What `prune --apply` never touches
 

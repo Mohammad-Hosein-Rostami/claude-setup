@@ -1,11 +1,10 @@
 #!/usr/bin/env node
-// Purpose: CLI of the UI proof records (F7, P8): `check`, `has`, `changed`, `review-page`. The records are written by the
-// PostToolUse(Bash) hook hooks/ui-proof-gate.mjs after every `ui-check run`.
-//   ui-proof check --tip <sha> [--against <sha> | --against-step <road>.s<N>] [--repo DIR]
-//     0 = a visual-qa PASS for the tip's UI tree and (with --against / --against-step) no state worse than that record; a state with no
+// Purpose: CLI of the UI proof records (F7, P8): `check`, `plan`, `changed`, `review-page`. The records were written by the
+// ui-proof-gate hook after every `ui-check run`; that hook is removed, so `check` reads only the records already stored.
+//   ui-proof check --tip <sha> [--against <sha>] [--repo DIR]
+//     0 = a pixel-qa PASS for the tip's UI tree and (with --against) no state worse than that record; a state with no
 //     reference row prints `new` (INFO), never worse. 1 = no such PASS, a state worse, another comparator or renderer, or no record with
-//     that sha or label. 2 = usage.
-//   ui-proof has --step <road>.s<N> [--repo DIR]      0 a record with that label exists, 1 none, 2 usage (road.mjs next uses it)
+//     that sha. 2 = usage.
 //   ui-proof changed --from <sha> --to <sha> [--repo DIR]   lists the UI files that differ: 0 none, 1 some, 2 usage
 //   ui-proof review-page --results <dir> --out <dir> [--matrix <file>]   the owner review page (review-page.mjs)
 //   ui-proof plan --base <sha> --tip <sha> | --files <path>... [--request <file>]... [--matrix <path>] [--json] [--write-run <dir>] [--repo DIR]
@@ -23,12 +22,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { compareReference, formatReference } from '../ui-check/lib/ledger.mjs';
-import { PROOF_AGENT, findAtCommit, findLabelled, findPass, readRecords, storeFile } from './lib/records.mjs';
+import { PROOF_AGENT, findAtCommit, findPass, readRecords, storeFile } from './lib/records.mjs';
 import { changedUiFiles, git, uiTreeAt } from './lib/ui-files.mjs';
 import { planChecks, planProofProblem, runFiles } from './lib/ui-plan.mjs';
 
-const USAGE = 'usage: ui-proof <check --tip <sha> [--against <sha> | --against-step <road>.s<N> | --plan --base <sha> [--request <file>]... [--matrix <path>]] | plan (--base <sha> --tip <sha> | --files <path>...) [--request <file>]... [--matrix <path>] [--json] [--write-run <dir>] | has --step <label> | changed --from <sha> --to <sha> | review-page --results <dir> --out <dir> [--matrix <file>]> [--repo DIR]';
-const STEP_LABEL = /^[A-Za-z0-9_-]+\.s\d+$/;
+const USAGE = 'usage: ui-proof <check --tip <sha> [--against <sha> | --plan --base <sha> [--request <file>]... [--matrix <path>]] | plan (--base <sha> --tip <sha> | --files <path>...) [--request <file>]... [--matrix <path>] [--json] [--write-run <dir>] | changed --from <sha> --to <sha> | review-page --results <dir> --out <dir> [--matrix <file>]> [--repo DIR]';
 const EXIT_USAGE = 2;
 const REQUEST_MAX_BYTES = 4 << 20; // a request file read for evidence; requestEvidence reads its first 1 MB
 const OWNER_SECTIONS = /^## (?:Standing rules|Owner decisions)\b/; // rules about the work, never request evidence (R4)
@@ -46,38 +44,33 @@ function flags(argv, names, extra = {}) {
 
 const commitOf = (repo, rev) => git(repo, ['rev-parse', '--verify', '--end-of-options', `${rev}^{commit}`]).trim();
 
-/** The reference record for --against / --against-step, or the reason it is missing. */
+/** The reference record for --against, or the reason it is missing. */
 function referenceOf(records, repo, values) {
-  if (values['against-step'] !== undefined) {
-    if (!STEP_LABEL.test(values['against-step'])) throw new UsageError('--against-step must look like <road>.s<N>');
-    const ref = findLabelled(records, values['against-step']);
-    return ref ? { ref } : { why: `no record labelled ${values['against-step']} (take the step-start run: ui-check run --step ${values['against-step']} on the base tip)` };
-  }
   const sha = commitOf(repo, values.against);
   const ref = findAtCommit(records, sha);
   return ref ? { ref } : { why: `no ui-check run record taken at ${sha}` };
 }
 
 function check(argv) {
-  const values = flags(argv, ['tip', 'against', 'against-step', 'base', 'matrix'], { plan: { type: 'boolean' }, request: { type: 'string', multiple: true } });
+  const values = flags(argv, ['tip', 'against', 'base', 'matrix'], { plan: { type: 'boolean' }, request: { type: 'string', multiple: true } });
   if (values.plan) return checkPlan(values);
   if (values.base !== undefined || values.matrix !== undefined || values.request !== undefined) throw new UsageError('--base, --matrix and --request go with --plan');
-  if (values.tip === undefined || (values.against !== undefined && values['against-step'] !== undefined)) throw new UsageError(USAGE);
+  if (values.tip === undefined) throw new UsageError(USAGE);
   return checkPass(values);
 }
 
-/** Today's check: a visual-qa PASS for the tip's UI tree and, with --against / --against-step, no state worse. */
+/** Today's check: a pixel-qa PASS for the tip's UI tree and, with --against, no state worse. */
 function checkPass(values) {
   const repo = path.resolve(values.repo ?? '.');
   const tip = commitOf(repo, values.tip);
   const records = readRecords(storeFile(repo));
   const pass = findPass(records, uiTreeAt(repo, tip), [PROOF_AGENT]);
   if (!pass) {
-    console.log(`ui-proof: FAIL - no ${PROOF_AGENT} PASS for the UI files of ${tip} (a ui-implementer's own PASS, or a record without an agent type, does not count)`);
+    console.log(`ui-proof: FAIL - no ${PROOF_AGENT} PASS for the UI files of ${tip} (a dev-ui or dev-pixel's own PASS, or a record without an agent type, does not count)`);
     return 1;
   }
   console.log(`ui-proof: ${PROOF_AGENT} PASS ${pass.id} (${pass.createdAt}, rule ${pass.rule}, widths ${pass.widths.join(',')})`);
-  if (values.against === undefined && values['against-step'] === undefined) return 0;
+  if (values.against === undefined) return 0;
   const { ref, why } = referenceOf(records, repo, values);
   if (!ref) {
     console.log(`ui-proof: FAIL - ${why}`);
@@ -141,7 +134,7 @@ function planLines(plan) {
   const map = plan.map?.hash ? [`map: widths ${plan.map.widths.join(',')}; locales ${plan.map.locales.map((l) => l.tag).join(',')}; states ${plan.map.states.join(',')} (${plan.map.source}); run matrix sha256 ${plan.map.hash}`] : [];
   return [
     `plan: ${plan.depth}`,
-    ...(plan.tests ? ['tests: done-check tests must be ok (logic changed)'] : []),
+    ...(plan.tests ? ['tests: the related tests must pass (logic changed)'] : []),
     ...plan.surfaces.map((s) => `surface ${s.id}: ${s.needs.join(' + ')} (${s.why})`),
     ...map,
     ...plan.exempt.map((e) => `exempt ${e.file} (${e.why})`),
@@ -170,7 +163,7 @@ function writeRun(plan, values, repo) {
   const top = fs.realpathSync.native(git(repo, ['rev-parse', '--show-toplevel']).trim());
   if (isInside(top, realTarget(dir))) throw new UsageError(`--write-run ${dir} lies inside the repository ${top}: the project is never written`);
   const run = plan.map ? runFiles(plan.surfaces, plan.map) : { count: 0 };
-  if (run.count === 0) return ['run: nothing for a runner to render (no same or render surface with a url)'];
+  if (run.count === 0) return ['run: nothing for dev-run to render (no same or render surface with a url)'];
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   fs.writeFileSync(path.join(dir, 'matrix.json'), run.matrixText);
   fs.writeFileSync(path.join(dir, 'states.json'), run.statesText);
@@ -188,7 +181,7 @@ function plan(argv) {
 
 /** check --plan: the plan of base..tip and its proof on the records; a visual or pixel plan prints today's check, byte for byte. */
 function checkPlan(values) {
-  if (values.tip === undefined || values.base === undefined || values.against !== undefined || values['against-step'] !== undefined) throw new UsageError(USAGE);
+  if (values.tip === undefined || values.base === undefined || values.against !== undefined) throw new UsageError(USAGE);
   const repo = path.resolve(values.repo ?? '.');
   const tip = commitOf(repo, values.tip);
   const base = commitOf(repo, values.base);
@@ -206,14 +199,6 @@ function checkPlan(values) {
   return problem ? 1 : 0;
 }
 
-function has(argv) {
-  const values = flags(argv, ['step']);
-  if (values.step === undefined || !STEP_LABEL.test(values.step)) throw new UsageError(USAGE);
-  const found = findLabelled(readRecords(storeFile(path.resolve(values.repo ?? '.'))), values.step);
-  console.log(found ? `ui-proof: record ${values.step} at ${found.head ?? 'unknown sha'}` : `ui-proof: no record labelled ${values.step}`);
-  return found ? 0 : 1;
-}
-
 function changed(argv) {
   const values = flags(argv, ['from', 'to']);
   if (values.from === undefined || values.to === undefined) throw new UsageError(USAGE);
@@ -228,7 +213,7 @@ async function reviewPage(argv) {
   return page.run(argv);
 }
 
-const COMMANDS = { check, plan, has, changed, 'review-page': reviewPage };
+const COMMANDS = { check, plan, changed, 'review-page': reviewPage };
 
 const [name, ...rest] = process.argv.slice(2);
 try {

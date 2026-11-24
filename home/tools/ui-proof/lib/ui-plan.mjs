@@ -179,7 +179,7 @@ const classesVia = (walked, via) => [...new Set((walked.find((f) => f.file === v
 
 /**
  * A surface's needs with one more need (R1): `same`, the identical-render proof, is kept beside any other need, since a stricter
- * proof (a visual-qa PASS) never proves it; any other need replaces a weaker one (stricter wins). Returned in DEPTHS order.
+ * proof (a pixel-qa PASS) never proves it; any other need replaces a weaker one (stricter wins). Returned in DEPTHS order.
  */
 function addNeed(needs, need) {
   const others = needs.filter((n) => n !== 'same');
@@ -235,7 +235,7 @@ function planFiles(input, { judged, exempt, evidence, reasons }) {
   const found = screensOf(input);
   if (found.screens.length === 0) {
     const depth = evidence.design ? 'pixel' : 'visual';
-    return plan(depth, { tests, exempt, reasons: [...reasons, `no inferable route (${found.unresolved[0] ?? 'no router, page or story found'}): ${depth} plan, visual-qa sets up its own matrix`] });
+    return plan(depth, { tests, exempt, reasons: [...reasons, `no inferable route (${found.unresolved[0] ?? 'no router, page or story found'}): ${depth} plan, pixel-qa sets up its own matrix`] });
   }
   const needs = screenNeeds({ ...input, ...found }, judged, reasons);
   // Frames of the lane matrix that tie to no surface here: any look change may be on one of them, so every surface is pixel.
@@ -265,8 +265,8 @@ function evidenceOf(requestText, reasons) {
  *   matrix (Figma frames, widths, locales)
  * @returns {{depth: string, tests: boolean, surfaces: {id: string, need: string, needs: string[], why: string, url: string|null}[],
  *   exempt: {file: string, why: string}[], reasons: string[], map: object|null}} depth: the strictest need; tests: logic changed
- *   (done-check tests must be ok); needs: the surface's set of needs (`same` beside any other), need: the strictest of them; url: the
- *   first url of the surface (the runner's render); reasons: one line per safe path taken; map: the render map a same or render proof
+ *   (the related tests must pass); needs: the surface's set of needs (`same` beside any other), need: the strictest of them; url: the
+ *   first url of the surface (dev-run's render); reasons: one line per safe path taken; map: the render map a same or render proof
  *   covers (ui-plan-proof.mjs renderMap), null without surfaces. Never throws: unreadable evidence is the pixel plan with its reason.
  */
 export function planChecks({ repoDir, base, tip, requestText = '', matrixPath = null, files }) {

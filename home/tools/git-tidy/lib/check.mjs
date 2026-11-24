@@ -166,7 +166,7 @@ function notStartedLanes(repo, leftovers, worktrees) {
 const notStartedInfo = (notStarted) => [...notStarted].map(([branch, path]) => item('not-started-lane', branch, `in ${path} (locked, no commit of its own yet)`));
 
 // `lane folders: <n> free[, <m> busy][, <k> missing]`: one info line for the pool (lane-slots.mjs); idle folders are neither findings
-// nor hints (road gate line 3 stays PASS). A repository without a main worktree folder has no pool.
+// nor hints. A repository without a main worktree folder has no pool.
 function laneFolderInfo(repo) {
   if (repo.bare) return [];
   let slots;

@@ -1,11 +1,11 @@
 // Purpose: the UI step of `git-tidy land` (ui-kinds-spec.md section 3): the check plan of base..tip and its proof, by `ui-proof check
 //   --plan` of the tool next to this one. That command recomputes the plan from the diff, the brief and the lane matrix; nothing a lane
-//   writes about itself feeds it (P14). `land-lane` calls the same function for a landing found again after a restart (F2).
+//   writes about itself feeds it (P14).
 // Exports: runPlanCheck({ repoDir, baseSha, tip, brief, matrix }) -> { why, plan, depth }, PLAN_CHECK_TIMEOUT_MS.
 // Invariants (P3): a check that cannot start, times out or prints no verdict is a refusal, never a pass. A plan other than none needs the
 //   brief: without it the owner's request is unread and the plan may be too light. `plan` (the pointer a landing row ends with, ` (ui plan
 //   <depth>: proved)`) is set only for a proved plan that printed its depth and is not pixel: the visual and pixel chains print today's
-//   visual-qa check, so their output stays as before (F5); a none plan sets it only when a UI file changed (a docs page), so a lane with no
+//   pixel-qa check, so their output stays as before (F5); a none plan sets it only when a UI file changed (a docs page), so a lane with no
 //   UI file lands with the output it had before.
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
@@ -40,13 +40,13 @@ function failureOf(run, lines) {
  *   brief file (the request); matrix: the lane's coverage matrix (absolute), null for none
  * @returns {{ why: string|null, plan: { depth: string, followUps: string[] }|null, depth: string|null }} why: null when the plan is
  *   proved, else the line that says what is missing (for a visual or pixel plan the same line `ui-proof check --tip` gives); plan: the
- *   row's pointer (see the header); depth: the plan's depth as printed, null when the check printed today's visual-qa check
+ *   row's pointer (see the header); depth: the plan's depth as printed, null when the check printed today's pixel-qa check
  */
 export function runPlanCheck({ repoDir, baseSha, tip, brief = null, matrix = null }) {
   const run = spawnSync(process.execPath, [UI_PROOF, ...checkArgs({ repoDir, baseSha, tip, brief, matrix })],
     { encoding: 'utf8', timeout: PLAN_CHECK_TIMEOUT_MS, maxBuffer: MAX_OUTPUT_BYTES, shell: false });
   const lines = linesOf(run.stdout);
-  const depth = PLAN_LINE.exec(lines[0] ?? '')?.[1] ?? null; // null: a visual or pixel plan, printed as today's visual-qa check
+  const depth = PLAN_LINE.exec(lines[0] ?? '')?.[1] ?? null; // null: a visual or pixel plan, printed as today's pixel-qa check
   if (run.error !== undefined || run.status !== 0) return { why: failureOf(run, lines), plan: null, depth };
   if (!lines.some((line) => line.startsWith(VERDICT))) return { why: 'ui-proof check --plan printed no verdict line, so the plan is not proved', plan: null, depth };
   if (brief === null && depth !== 'none') {

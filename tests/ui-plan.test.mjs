@@ -1,6 +1,5 @@
 // Tests for home/tools/ui-proof/lib/ui-plan.mjs (planChecks, briefFloor, planProofProblem), the `ui-proof plan` and `check --plan`
-// commands and the hook's record tree (ui-proof-gate.mjs recordRun: the ledger root's worktree). Every repo is a throw-away cs-test git
-// repo; the screens cache, the proof store, the run folder and HOME are temp dirs (P8).
+// commands. Every repo is a throw-away cs-test git repo; the screens cache, the proof store, the run folder and HOME are temp dirs (P8).
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -8,7 +7,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { recordRun } from '../home/hooks/ui-proof-gate.mjs';
 import { readRecords, storeFile } from '../home/tools/ui-proof/lib/records.mjs';
 import { NO_UI_TREE, changedUiFiles, uiTreeAt, workingUiTree } from '../home/tools/ui-proof/lib/ui-files.mjs';
 import { briefFloor, planChecks, planProofProblem } from '../home/tools/ui-proof/lib/ui-plan.mjs';
@@ -196,10 +194,10 @@ test('plan --write-run writes the matrix and states of the reached screens under
 });
 
 let serial = 0;
-const record = (over) => ({ id: `r${(serial += 1)}`, createdAt: '2026-11-23T00:00:00Z', verdict: 'FAIL', agentType: 'runner', matrixHash: null, captures: [], same: null, ...over });
+const record = (over) => ({ id: `r${(serial += 1)}`, createdAt: '2026-11-23T00:00:00Z', verdict: 'FAIL', agentType: 'dev-run', matrixHash: null, captures: [], same: null, ...over });
 
 /** A base run and a tip run with --same of the plan's run matrix (`matrixHash` overrides it), both at their commits and UI trees. */
-function proofRecords({ dir, base, tip }, plan, { rows, captures = [], agentType = 'runner', tipHead = tip, matrixHash = plan.map.hash }) {
+function proofRecords({ dir, base, tip }, plan, { rows, captures = [], agentType = 'dev-run', tipHead = tip, matrixHash = plan.map.hash }) {
   const baseRun = record({ head: base, uiTree: uiTreeAt(dir, base), ledgerSha256: 'b'.repeat(64), agentType, matrixHash });
   const tipRun = record({ head: tipHead, uiTree: uiTreeAt(dir, tip), ledgerSha256: 'c'.repeat(64), agentType, captures, matrixHash,
     same: { ref: { sha256: 'b'.repeat(64) }, mismatch: null, refused: null, rows } });
@@ -211,7 +209,7 @@ const mapRows = (plan, verdict, extra = {}, ids = plan.surfaces.map((s) => s.id)
   plan.map.locales.flatMap((l) => plan.map.widths.map((width) => `${id} / ${state} / ${l.tag} @${width}`))))
   .map((key) => ({ key, verdict, newFindings: [], newPageErrors: [], ...(key === KEY_A ? extra : {}) }));
 const prove = (fixture, plan, records) => planProofProblem(plan, { records, repoDir: fixture.dir, base: fixture.base, tip: fixture.tip });
-const visualQaPass = (fixture) => record({ head: fixture.tip, uiTree: uiTreeAt(fixture.dir, fixture.tip), verdict: 'PASS', agentType: 'visual-qa' });
+const pixelQaPass = (fixture) => record({ head: fixture.tip, uiTree: uiTreeAt(fixture.dir, fixture.tip), verdict: 'PASS', agentType: 'pixel-qa' });
 
 test('noChange request with a changed row -> FAIL unexpected visual change; identical rows PASS', () => {
   const fixture = lane(LOGIC_IN_BUTTON);
@@ -231,20 +229,21 @@ test('old finding -> follow-up and PASS; new finding or more page errors -> FAIL
   assert.match(prove(fixture, plan, proofRecords(fixture, plan, { rows: mapRows(plan, 'equal', { newPageErrors: ['TypeError: x'] }) })).problem, /^more page errors: /);
 });
 
-test('implementer-run records, a stale tip head, zero rows, a missing row, a missing base or a new state -> FAIL', () => {
+test('dev-run records, a stale tip head, zero rows, a missing row, a missing base or a new state -> FAIL', () => {
   const fixture = lane(LOGIC_IN_BUTTON);
   const plan = planOf(fixture);
   const rows = mapRows(plan, 'identical');
-  assert.match(prove(fixture, plan, proofRecords(fixture, plan, { rows, agentType: 'implementer' })).problem, /^no runner or visual-qa run at /);
-  assert.match(prove(fixture, plan, proofRecords(fixture, plan, { rows, tipHead: fixture.base })).problem, /^no runner or visual-qa run at /);
+  assert.match(prove(fixture, plan, proofRecords(fixture, plan, { rows, agentType: 'dev' })).problem, /^no dev-run or pixel-qa run at /);
+  assert.match(prove(fixture, plan, proofRecords(fixture, plan, { rows, agentType: 'runner' })).problem, /^no dev-run or pixel-qa run at /, 'an old agent name proves nothing');
+  assert.match(prove(fixture, plan, proofRecords(fixture, plan, { rows, tipHead: fixture.base })).problem, /^no dev-run or pixel-qa run at /);
   assert.match(prove(fixture, plan, proofRecords(fixture, plan, { rows: [] })).problem, /^zero rows/);
   assert.match(prove(fixture, plan, proofRecords(fixture, plan, { rows: mapRows(plan, 'identical', {}, [B]) })).problem, /^missing row: /);
   assert.match(prove(fixture, plan, proofRecords(fixture, plan, { rows }).slice(1)).problem, /^the tip run's base ledger/);
   assert.match(prove(fixture, plan, proofRecords(fixture, plan, { rows: mapRows(plan, 'identical', { verdict: 'new' }) })).problem, /^new state with no base render \(the visual plan/);
-  const pass = visualQaPass(fixture);
-  assert.equal(prove(fixture, plan, [pass]).problem, null, 'a visual-qa PASS proves render');
+  const pass = pixelQaPass(fixture);
+  assert.equal(prove(fixture, plan, [pass]).problem, null, 'a pixel-qa PASS proves render');
   const same = planOf(fixture, { requestText: 'no visual change' });
-  assert.match(prove(fixture, same, [pass]).problem, /^no runner or visual-qa run/, 'never same');
+  assert.match(prove(fixture, same, [pass]).problem, /^no dev-run or pixel-qa run/, 'never same');
 });
 
 test('check --plan: a pixel plan prints exactly today\'s check; an unreadable store is FAIL', () => {
@@ -260,36 +259,6 @@ test('check --plan: a pixel plan prints exactly today\'s check; an unreadable st
   assert.match(broken.out, /^plan: render\nui-proof: FAIL - the proof records cannot be read/);
 });
 
-/** Run the hook's recordRun for a run whose ledger names `root`, from `cwd`; the record it wrote. */
-async function recordFrom(cwd, root) {
-  const runDir = makeTempDir('ui-plan-run-');
-  fs.writeFileSync(path.join(runDir, 'ledger.json'), JSON.stringify({ states: [], root, head: null, captures: [{ key: KEY_A, file: 'w360.png', sha256: null, findings: [], pageErrors: [] }] }));
-  fs.writeFileSync(path.join(runDir, 'results.json'), '[]');
-  const prior = process.env.UI_PROOF_STATE_DIR;
-  process.env.UI_PROOF_STATE_DIR = makeTempDir('ui-plan-store-');
-  try {
-    assert.equal(await recordRun({ cwd, agent_type: 'runner', tool_input: { command: 'ui-check run --matrix m.json' },
-      tool_response: { stdout: `result: PASS run - 1 state - results ${path.join(runDir, 'results.json')}` } }), true);
-    return readRecords(storeFile(cwd)).at(-1);
-  } finally {
-    if (prior === undefined) delete process.env.UI_PROOF_STATE_DIR;
-    else process.env.UI_PROOF_STATE_DIR = prior;
-  }
-}
-
-test('hook cwd = main checkout, ledger root = a linked worktree: the record\'s uiTree is the worktree\'s; another repo or no root: cwd\'s', async () => {
-  const { dir } = lane(LOOK_IN_BUTTON);
-  const worktree = path.join(fs.realpathSync.native(makeTempDir('ui-plan-wt-')), 'wt');
-  git(dir, ['worktree', 'add', '-q', '-b', 'lane', worktree, 'HEAD~1']);
-  assert.notEqual(workingUiTree(worktree), workingUiTree(dir));
-  const linked = await recordFrom(dir, worktree);
-  assert.equal(linked.uiTree, workingUiTree(worktree));
-  assert.match(linked.ledgerSha256, /^[0-9a-f]{64}$/);
-  assert.deepEqual(linked.captures, [{ key: KEY_A, sha256: null, findings: [], pageErrors: [] }]);
-  assert.equal((await recordFrom(dir, lane({ 'x.css': 'a{}\n' }).dir)).uiTree, workingUiTree(dir));
-  assert.equal((await recordFrom(dir, undefined)).uiTree, workingUiTree(dir));
-});
-
 // ---- Review round R1-R4 (the probes of the ui-plan review, as tests) ----
 
 test('R1: a floor or a design word never drops same: a deps-only change with a changed render fails under every request', () => {
@@ -297,9 +266,9 @@ test('R1: a floor or a design word never drops same: a deps-only change with a c
   for (const requestText of ['', 'UI-PLAN: render\n', 'UI-PLAN: visual\n', 'Bump react; keep it pixel perfect.\n']) {
     const plan = planOf(fixture, { requestText });
     assert.ok(plan.surfaces.length === 2 && plan.surfaces.every((s) => s.needs.includes('same')), `${JSON.stringify(requestText)}: ${JSON.stringify(needs(plan))}`);
-    const records = [...proofRecords(fixture, plan, { rows: mapRows(plan, 'identical', { verdict: 'changed' }) }), visualQaPass(fixture)];
+    const records = [...proofRecords(fixture, plan, { rows: mapRows(plan, 'identical', { verdict: 'changed' }) }), pixelQaPass(fixture)];
     assert.match(prove(fixture, plan, records).problem ?? 'PASS', /^unexpected visual change: react-router:\/a \/ rest \/ en @360$/, JSON.stringify(requestText));
-    assert.equal(prove(fixture, plan, [...proofRecords(fixture, plan, { rows: mapRows(plan, 'identical') }), visualQaPass(fixture)]).problem, null);
+    assert.equal(prove(fixture, plan, [...proofRecords(fixture, plan, { rows: mapRows(plan, 'identical') }), pixelQaPass(fixture)]).problem, null);
   }
   assert.deepEqual(needs(planOf(fixture, { requestText: 'UI-PLAN: visual\n' })), { [A]: 'same+visual', [B]: 'same+visual' });
   assert.deepEqual(needs(planOf(lane(LOGIC_IN_BUTTON), { requestText: 'UI-PLAN: same\n' })), { [A]: 'same+render' }, 'a same floor adds the identical-render proof');

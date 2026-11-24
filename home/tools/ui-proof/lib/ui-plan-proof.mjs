@@ -2,11 +2,11 @@
 // re-exported by ui-plan.mjs).
 // The map: the widths, locales and states a same or render proof covers (the lane matrix's widths and locales, else 360, 768, 1280 and
 // the repo's own locales, found as locale folder names, else en) and the sha256 of the run matrix `ui-proof plan --write-run` writes.
-// none: nothing to prove. visual and pixel: today's chain, a visual-qa PASS for the tip's UI tree. same and render: the newest runner or
-// visual-qa run at the tip (head and UI tree) that ran `ui-check run --matrix <the plan's matrix> --same <base run>`, whose base ledger
-// (by sha256) is a runner or visual-qa run at the base (head and UI tree): a row for every state, locale and width of the map on every
+// none: nothing to prove. visual and pixel: today's chain, a pixel-qa PASS for the tip's UI tree. same and render: the newest dev-run or
+// pixel-qa run at the tip (head and UI tree) that ran `ui-check run --matrix <the plan's matrix> --same <base run>`, whose base ledger
+// (by sha256) is a dev-run or pixel-qa run at the base (head and UI tree): a row for every state, locale and width of the map on every
 // planned surface; same needs identical or equal renders, render needs no new finding and no more page errors; a state with no base
-// render needs the visual plan; old findings are follow-up lines. A visual-qa PASS on the tip proves render, never same: a surface
+// render needs the visual plan; old findings are follow-up lines. A pixel-qa PASS on the tip proves render, never same: a surface
 // whose needs hold same is proved by identical renders whatever else it needs.
 // Invariants (P3, P14, F1, F2): zero rows, a missing row, a run of another matrix, a missing record at either end, a record of another
 // tree or head, a run by any other agent (a writer's own run, the lead's) or a refused or other-renderer base is a problem, never a
@@ -53,7 +53,7 @@ function laneLists(matrix) {
 }
 
 /**
- * The ui-coverage matrix and ui-check states of the surfaces a runner renders (a need of same or render, with a url), and the
+ * The ui-coverage matrix and ui-check states of the surfaces dev-run renders (a need of same or render, with a url), and the
  * sha256 of the matrix text: the exact bytes `--write-run` writes, so a run's matrixHash names this matrix.
  * @param {{id: string, needs: string[], url: string|null}[]} surfaces the plan's surfaces
  * @param {{widths: number[], locales: {tag: string, dir: string}[], states: string[]}} map the plan's render map
@@ -98,7 +98,7 @@ function proofPair(records, { tip, base, tipTree, baseTree, matrixHash }) {
   if (!tipRecord) {
     const other = newest(records, tipRun);
     if (other) return { why: `the tip run rendered matrix sha256 ${String(other.matrixHash).slice(0, SHORT_SHA)}, not the plan's ${matrixHash.slice(0, SHORT_SHA)}: render the matrix of ui-proof plan --write-run (the same --request and --matrix as the check)` };
-    return { why: `no ${RENDER_PROOF_AGENTS.join(' or ')} run at ${tip.slice(0, SHORT_SHA)} (UI tree ${tipTree.slice(0, SHORT_SHA)}) with --same <base run>: the runner runs ui-check run --same in the lane worktree (a record lost to a run at the same time: run it again)` };
+    return { why: `no ${RENDER_PROOF_AGENTS.join(' or ')} run at ${tip.slice(0, SHORT_SHA)} (UI tree ${tipTree.slice(0, SHORT_SHA)}) with --same <base run>: dev-run runs ui-check run --same in the lane worktree (a record lost to a run at the same time: run it again)` };
   }
   if (tipRecord.same.refused) return { why: `the tip run's --same base was refused: ${tipRecord.same.refused}` };
   if (tipRecord.same.mismatch) return { why: `the tip run's --same base used another renderer or comparator: ${tipRecord.same.mismatch}` };
@@ -111,7 +111,7 @@ function proofPair(records, { tip, base, tipTree, baseTree, matrixHash }) {
 /** Every row key the map asks of the surfaces: each state, locale and width. */
 const expectedKeys = (surfaces, map) => surfaces.flatMap((s) => map.states.flatMap((state) => map.locales.flatMap((l) => map.widths.map((width) => keyOf({ surface: s.id, state, locale: l.tag, width })))));
 
-/** Problems and follow-ups of the rows of the planned surfaces. `visualPass`: a visual-qa PASS on the tip covers new states. */
+/** Problems and follow-ups of the rows of the planned surfaces. `visualPass`: a pixel-qa PASS on the tip covers new states. */
 function judgeRows(surfaces, map, tipRecord, visualPass) {
   const rows = tipRecord.same.rows;
   if (rows.length === 0) return { problems: ['zero rows: the tip run rendered nothing to compare'], followUps: [] };
@@ -126,7 +126,7 @@ function judgeRows(surfaces, map, tipRecord, visualPass) {
     found.missing.length > 0 ? `missing: ${listed(found.missing)} (in the base run, not in the tip run)` : null,
     found.blocked.length > 0 ? `not compared: ${listed(found.blocked)}` : null,
     found.changed.length > 0 ? `unexpected visual change: ${listed(found.changed)}` : null,
-    found.fresh.length > 0 && !visualPass ? `new state with no base render (the visual plan: a visual-qa PASS on the tip): ${listed(found.fresh)}` : null,
+    found.fresh.length > 0 && !visualPass ? `new state with no base render (the visual plan: a pixel-qa PASS on the tip): ${listed(found.fresh)}` : null,
     found.findings.length > 0 ? `new finding: ${listed(found.findings)}` : null,
     found.pageErrors.length > 0 ? `more page errors: ${listed(found.pageErrors)}` : null,
   ].filter(Boolean);
@@ -165,9 +165,9 @@ export function planProofProblem(plan, { records, repoDir, base, tip }) {
   const tipTree = uiTreeAt(repoDir, tip);
   const visualPass = findPass(records, tipTree, [PROOF_AGENT]) !== null;
   if (['visual', 'pixel'].includes(plan.depth) && !visualPass) {
-    return { problem: `no ${PROOF_AGENT} PASS for the UI files of ${tip} (plan ${plan.depth}: a ui-implementer's own PASS, or a record without an agent type, does not count)`, followUps: [] };
+    return { problem: `no ${PROOF_AGENT} PASS for the UI files of ${tip} (plan ${plan.depth}: a dev-ui or dev-pixel's own PASS, or a record without an agent type, does not count)`, followUps: [] };
   }
-  // A visual-qa PASS proves every need up to render; a surface whose needs hold same is proved by identical renders only.
+  // A pixel-qa PASS proves every need up to render; a surface whose needs hold same is proved by identical renders only.
   const open = plan.surfaces.filter((s) => s.needs.includes('same') || (s.need === 'render' && !visualPass));
   if (open.length === 0) return { problem: null, followUps: [] };
   if (typeof plan.map?.hash !== 'string') return { problem: 'the plan has no render map to prove (no runnable surface): run ui-proof plan again', followUps: [] };

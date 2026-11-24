@@ -97,7 +97,7 @@ function runPrune(repo, options) {
 /**
  * The UI step of a full land (lib/ui-plan-check.mjs, which uses the ui-proof tool next to this one): `check(repoDir, baseSha, tip)` gives
  * null when the check plan is proved, else the reason; `outcome()` is the last check's `{ plan, depth }`: what it proved (`{ depth,
- * followUps }`, or null for no row pointer) and the depth it printed (null: today's visual-qa check). Always on, no waiver: when the step
+ * followUps }`, or null for no row pointer) and the depth it printed (null: today's pixel-qa check). Always on, no waiver: when the step
  * cannot be loaded every landing is refused with that reason (fail closed).
  */
 async function loadUiCheck(options) {

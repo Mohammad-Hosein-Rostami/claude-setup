@@ -56,15 +56,15 @@ function upstreamText(upstream) {
 
 /**
  * The refusal of a UI check plan that is not proved: a planned check (`uiDepth`) names its plan; a visual or pixel plan, which prints
- * today's visual-qa check, keeps today's line word for word (F5).
+ * today's pixel-qa check, keeps today's line word for word (F5).
  */
 function uiProofText({ tip, why, uiDepth }) {
   const short = tip.slice(0, 8);
-  if (typeof uiDepth !== 'string') return `ui-proof: the UI files changed and ${short} has no visual-qa PASS: ${why} (run visual-qa on the rebased tip, then land again)`;
+  if (typeof uiDepth !== 'string') return `ui-proof: the UI files changed and ${short} has no pixel-qa PASS: ${why} (run pixel-qa on the rebased tip, then land again)`;
   return `ui-proof: the ui check plan (${uiDepth}) of ${short} is not proved: ${why} (ui-proof plan --base <base> --tip ${short} --request <brief> shows what it needs; prove it on the rebased tip, then land again)`;
 }
 
-/** The lines of a proved check plan (the row pointer land-lane writes): `ui plan <depth>: proved`, then its `follow-up:` lines. */
+/** The lines of a proved check plan: `ui plan <depth>: proved`, then its `follow-up:` lines. */
 const planText = (uiPlan) => (uiPlan ? [`ui plan ${uiPlan.depth}: proved`, ...uiPlan.followUps] : []);
 
 /** `land` result as text (`tip` and `patches-changed` for a rebase; else what happened, what was removed, `check: clean` or the findings) or as JSON. */
