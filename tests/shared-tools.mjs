@@ -1,5 +1,5 @@
 // Fake executables written once and shared by every test file and every suite run. Exports: SHARED_TOOLS_PREFIX,
-// sharedToolDir(files), sharedTool(name, body), linkSharedTool(dir, name, body).
+// sharedToolDir(files), sharedTool(name, body), linkSharedTool(dir, name, body), sharedNodeToolDir(name, script).
 // Why: macOS checks each newly written executable on its first run (about 1 s, more on a loaded machine). A test that writes its
 // own fake per test pays that every time; a shared fake pays it once, when it is first written, and never again.
 // How: one fixed folder per user under testTempRoot() (`cs-test-shared-tools-<uid>`, like clean-env.mjs's quiet tools), and in it
@@ -91,3 +91,13 @@ export function linkSharedTool(dir, name, body) {
   symlinkSync(sharedTool(name, body), link);
   return link;
 }
+
+/**
+ * A shared folder holding the fake tool `name`: a sh wrapper that exits 0 under FAKE_WARM and otherwise runs `script` (kept beside
+ * it as fake.cjs) with node, passing its arguments on. `exec` keeps one process, so a pid the script writes is the tool's own.
+ * @param {string} name the tool's file name (e.g. osascript, zenity)
+ * @param {string} script the CommonJS text node runs
+ * @returns {string} the folder, to put first on PATH
+ */
+export const sharedNodeToolDir = (name, script) =>
+  sharedToolDir({ 'fake.cjs': script, [name]: '#!/bin/sh\n[ -n "$FAKE_WARM" ] && exit 0\nexec node "$(dirname "$0")/fake.cjs" "$@"\n' });

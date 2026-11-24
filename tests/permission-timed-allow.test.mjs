@@ -13,7 +13,7 @@ import { answeredCommandsDir, rememberAnswered, takeAnswered } from '../home/hoo
 import { dialogExecutable, MAX_ASK_TIMEOUT_S, permissionTimeoutSeconds } from '../home/hooks/lib/timed-ask.mjs';
 import { permissionReply } from '../home/hooks/permission-timed-allow.mjs';
 import { hookEnv, tempLogPath } from './hook-env.mjs';
-import { warmExec } from './warm-exec.mjs';
+import { sharedNodeToolDir } from './shared-tools.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 import { cleanEnv } from './clean-env.mjs';
 
@@ -318,14 +318,16 @@ test('M3: a store that turns read-only during the take: the record is not taken 
 /** A fake dialog tool on PATH that always answers Allow (the guard spawns it as a separate process). */
 function allowingDialogEnv() {
   const dir = makeTempDir('perm-dialog-');
-  const script = join(dir, 'fake.cjs');
   const out = { darwin: 'button returned:Allow, gave up:false', win32: '6', linux: '' }[process.platform];
-  writeFileSync(script, `process.stdout.write(${JSON.stringify(out)});`);
-  const bin = join(dir, dialogExecutable(process.platform) + (process.platform === 'win32' ? '.cmd' : ''));
-  writeFileSync(bin, process.platform === 'win32' ? `@node "${script}" %*\r\n` : `#!/bin/sh\n[ -n "$FAKE_WARM" ] && exit 0\nexec node "${script}" "$@"\n`);
-  chmodSync(bin, 0o755);
-  if (process.platform !== 'win32') warmExec(bin);
-  const env = cleanEnv({ ...privateEnv(), PATH: `${dir}${delimiter}${process.env.PATH}`, DISPLAY: ':0' });
+  const fake = `process.stdout.write(${JSON.stringify(out)});`;
+  // POSIX: one shared tool (a new executable is slow to start)
+  const tools = process.platform === 'win32' ? dir : sharedNodeToolDir(dialogExecutable(process.platform), fake);
+  if (process.platform === 'win32') {
+    const script = join(dir, 'fake.cjs');
+    writeFileSync(script, fake);
+    writeFileSync(join(dir, `${dialogExecutable(process.platform)}.cmd`), `@node "${script}" %*\r\n`);
+  }
+  const env = cleanEnv({ ...privateEnv(), PATH: `${tools}${delimiter}${process.env.PATH}`, DISPLAY: ':0' });
   for (const name of ['NODE_TEST_CONTEXT', 'SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY', 'CI']) delete env[name];
   return env;
 }
