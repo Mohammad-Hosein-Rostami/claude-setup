@@ -7,7 +7,7 @@
 // branch, then a `lanes` row of its other active branches (git-state.mjs rules a to e, at most MAX_LANES_SHOWN, then `+K more`);
 // outside one or with a second repository, one row each (at most GIT_LINE_ROWS, then `+K more repos`), lanes after ` │ `. A branch:
 // to push, to pull (yellow), conflicts (red), an operation (yellow), files (`changes ?` for refs only, `changes unknown` when git gave
-// no status), stash, last commit age; a
+// no status), stash, last commit age; `branches unknown` (never `clean`) when git gave no refs and none are cached; a
 // lane `ready to land` or `needs rebase` (yellow). Too wide: last commit drops first, then stash, never the rest. Below
 // LABEL_FROM_COLUMNS short forms (`↑2 +1 ~3 ?1`), no repository name when only one shows; branch names in the `branch` colour,
 // repository names bold. An old board without `active` draws its worktrees.
@@ -54,18 +54,21 @@ function filesPart(branch, refsOnly, look) {
   return { text: counts.map(([count, word, mark]) => (short ? `${mark}${count}` : `${count} ${word}`)).join(short ? ' ' : look.glyph.sep) };
 }
 
-/** The state parts of a repository's leading branch, in order: push, pull, conflicts, op, files or clean, stale, stash, age. */
+/** The state parts of a repository's leading branch, in order: refs unknown, push, pull, conflicts, op, files or clean, stale, stash, age. */
 function headStateParts(repo, head, look) {
   const short = look.columns < LABEL_FROM_COLUMNS;
   const a = arrows(look);
   const files = filesPart(head, repo.trust === 'refs', look);
   const moving = above(head.upAhead) || above(head.upBehind) || above(head.conflicts) || Boolean(head.op) || files.text !== '';
+  // git-state.mjs: without refs nothing says whether a branch is ahead, behind or ready to land, so the row never says clean
+  const refsUnknown = Boolean(repo.refsUnknown);
   const parts = [
+    refsUnknown ? { text: 'branches unknown', state: STATE.dim } : null,
     above(head.upAhead) ? { text: `${a.up}${head.upAhead}${short ? '' : ' to push'}` } : null,
     above(head.upBehind) ? { text: `${a.down}${head.upBehind}${short ? '' : ' to pull'}`, state: STATE.warn } : null,
     above(head.conflicts) ? { text: `${head.conflicts} conflict${head.conflicts === 1 ? '' : 's'}`, state: STATE.block } : null,
     head.op ? { text: opText(head, look), state: STATE.warn } : null,
-    files.text !== '' ? files : null, moving ? null : { text: `${a.clean} clean` },
+    files.text !== '' ? files : null, moving || refsUnknown ? null : { text: `${a.clean} clean` },
     repo.stale === true ? { text: 'stale', state: STATE.dim } : null,
     above(repo.stash) ? { text: `stash ${repo.stash}`, drop: 1 } : null,
     isCount(head.ageMin) ? { text: `last commit ${durationText(head.ageMin)} ago`, state: STATE.dim, drop: 3 } : null,
