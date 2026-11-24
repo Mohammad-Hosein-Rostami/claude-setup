@@ -2,11 +2,11 @@
 // (a temp HOME holds the session's mode file, so the real ~/.claude state is never read).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { chmodSync, copyFileSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { guardedAgentInput } from '../home/hooks/agent-model-guard.mjs';
+import { UNREADABLE_INPUT, guardedAgentInput } from '../home/hooks/agent-model-guard.mjs';
 import { FROM_AGENT, originOf } from './agent-call-origin.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -21,6 +21,13 @@ test('guardedAgentInput: Explore without model gets sonnet, Plan gets opus (the 
 test('guardedAgentInput: general-purpose and a call with no subagent_type get sonnet', () => {
   assert.deepEqual(guardedAgentInput({ ...BASE }), { ...BASE, model: 'sonnet' });
   assert.deepEqual(guardedAgentInput({ ...BASE, subagent_type: 'general-purpose' }), { ...BASE, subagent_type: 'general-purpose', model: 'sonnet' });
+});
+
+test('guardedAgentInput: the built-in types match in any case (`explore`, `plan`)', () => {
+  assert.equal(guardedAgentInput({ ...BASE, subagent_type: 'explore' }).model, 'sonnet');
+  assert.equal(guardedAgentInput({ ...BASE, subagent_type: 'EXPLORE' }).model, 'sonnet');
+  assert.equal(guardedAgentInput({ ...BASE, subagent_type: 'plan' }).model, 'opus');
+  assert.equal(guardedAgentInput({ ...BASE, subagent_type: 'General-Purpose' }).model, 'sonnet');
 });
 
 test('guardedAgentInput: an explicit model is kept', () => {
@@ -88,30 +95,41 @@ test('hook: a long non-ASCII prompt reaches the agent intact (stdin is decoded o
   assert.equal(JSON.parse(r.stdout).hookSpecificOutput.updatedInput.prompt, toolInput.prompt);
 });
 
-test('hook: explicit model, a fork, a pinned repo agent and bad JSON exit 0 with no output', () => {
+test('hook: an explicit model, and a fork or an unknown type that names one, exit 0 with no output', () => {
   const explore = { ...FROM_AGENT, session_id: 'sess1', tool_input: { ...BASE, subagent_type: 'Explore', model: 'haiku' } };
-  const asType = (subagent_type) => JSON.stringify({ ...explore, tool_input: { ...BASE, subagent_type } });
-  for (const [mode, stdin] of [['ultra-high', JSON.stringify(explore)], ['medium', asType('fork')], ['medium', asType('security-auditor')], ['ultra-high', 'not json']]) {
+  const asType = (subagent_type) => JSON.stringify({ ...explore, tool_input: { ...BASE, subagent_type, model: 'sonnet' } });
+  for (const [mode, stdin] of [['ultra-high', JSON.stringify(explore)], ['medium', asType('fork')], ['medium', asType('security-auditor')]]) {
     const r = run(mode, stdin);
-    assert.equal(r.status, 0);
-    assert.equal(r.stdout, '');
+    assert.deepEqual([r.status, r.stdout], [0, ''], stdin.slice(0, 80));
   }
+});
+
+test('hook: input that is not a JSON object denies the Agent call (the no-Fable gate fails closed)', () => {
+  for (const stdin of ['not json', '', 'null', '[]', '42', '{"agent_id": "agent-dev-1", "tool_input": "x"}']) {
+    const r = run('medium', stdin);
+    assert.equal(r.status, 0, stdin);
+    const out = JSON.parse(r.stdout).hookSpecificOutput;
+    assert.deepEqual([out.permissionDecision, out.permissionDecisionReason], ['deny', UNREADABLE_INPUT], stdin);
+  }
+  assert.equal(UNREADABLE_INPUT, 'agent-model-guard could not read its input');
 });
 
 // Pin floor (lib/agent-pins.mjs): the repo's own dev and dev-ui files are copied into a temp HOME, so the test reads
 // the pins that ship. No session_id: the launch-record gates stay out of these calls.
 const AGENTS = fileURLToPath(new URL('../home/agents/', import.meta.url));
 
-function runWithAgents(toolInput, prepare = () => {}) {
+function runWithAgents(toolInput, prepare = () => {}, { cwd, env: extraEnv = {} } = {}) {
   const home = makeTempDir('pin-floor-');
   const agents = join(home, '.claude', 'agents');
   mkdirSync(agents, { recursive: true });
   for (const name of ['dev', 'dev-ui']) copyFileSync(join(AGENTS, `${name}.md`), join(agents, `${name}.md`));
   prepare(agents);
-  const env = { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CODE_SUBAGENT_MODEL: 'claude-sonnet-5-5' };
+  const env = { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CODE_SUBAGENT_MODEL: 'claude-sonnet-5-5', ...extraEnv };
   delete env.CLAUDE_CONFIG_DIR; // the personal folder is the temp HOME's
   delete env.CLAUDE_CODE_SUBAGENT_EFFORT;
-  return spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ ...originOf(toolInput.subagent_type), tool_input: toolInput }), encoding: 'utf8', env, cwd: home });
+  for (const [name, value] of Object.entries(extraEnv)) if (value === undefined) delete env[name];
+  const input = { ...originOf(toolInput.subagent_type), tool_input: toolInput, ...(cwd ? { cwd } : {}) };
+  return spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), encoding: 'utf8', env, cwd: cwd ?? home });
 }
 
 test('hook: a per-call model or effort below the agent file pin is left out; an equal, unknown or unpinned value passes', () => {
@@ -122,7 +140,7 @@ test('hook: a per-call model or effort below the agent file pin is left out; an 
   });
   const effort = JSON.parse(runWithAgents({ ...BASE, subagent_type: 'dev-ui', effort: 'low', prompt: 'MATRIX: none: a one-file copy tweak' }).stdout);
   assert.deepEqual(effort.hookSpecificOutput.updatedInput, { ...BASE, subagent_type: 'dev-ui', prompt: 'MATRIX: none: a one-file copy tweak' });
-  for (const kept of [{ subagent_type: 'dev', model: 'opus' }, { subagent_type: 'dev', model: 'inherit' },
+  for (const kept of [{ subagent_type: 'dev', model: 'opus' },
     { subagent_type: 'dev', effort: 'max' }, { subagent_type: '../x', model: 'haiku' }, { subagent_type: 'lex-scout', model: 'haiku' }]) {
     const r = runWithAgents({ ...BASE, ...kept });
     assert.equal(r.status, 0, JSON.stringify(kept));
@@ -176,4 +194,62 @@ test('hook: a failure inside the pin floor lets the call run unchanged, with a s
   assert.equal(r.status, 0);
   assert.equal(r.stdout, '');
   assert.match(r.stderr, /^agent-model-guard: pin floor skipped: /);
+});
+
+// H2: the no-Fable gate fails closed. Each case names what the agent would run on when it is not known.
+const pinFile = (name, pins) => `---\nname: ${name}\ndescription: test agent\n${pins}---\nbody\n`;
+
+test('hook: an agent file that cannot be read (mode 000) denies with the reason; readable again, the call runs', (t) => {
+  if (typeof process.getuid === 'function' && process.getuid() === 0) return t.diagnostic('not run: root reads a mode 000 file');
+  const project = makeTempDir('fable-project-');
+  execFileSync('git', ['init', '-q', project]);
+  const agents = join(project, '.claude', 'agents');
+  mkdirSync(agents, { recursive: true });
+  const file = join(agents, 'worker.md');
+  writeFileSync(file, pinFile('worker', 'model: opus\n'));
+  chmodSync(file, 0);
+  const call = (cwd) => runWithAgents({ ...BASE, subagent_type: 'worker' }, () => {}, { cwd });
+  try {
+    const reason = deniedReason(call(project));
+    assert.ok(reason.startsWith(`${FABLE_REASON}: the pin of \`worker\` cannot be read (EACCES`), reason);
+    assert.ok(reason.endsWith('); fix the file, or name a model other than Fable in the Agent call (`model: "sonnet"` or `"opus"`).'), reason);
+  } finally {
+    chmodSync(file, 0o600);
+  }
+  assert.deepEqual([call(project).status, call(project).stdout], [0, ''], 'readable again: an opus pin runs');
+});
+
+test('hook: a plugin or unknown type from inside a subagent is denied with no model, and runs with a model other than Fable', () => {
+  for (const subagent_type of ['some-plugin:agent', 'no-such-agent', 'fork']) {
+    assert.match(deniedReason(runWithAgents({ ...BASE, subagent_type })), /has no agent file this gate reads \(a plugin, fork or unknown type\), so its model is unknown/, subagent_type);
+    const named = runWithAgents({ ...BASE, subagent_type, model: 'sonnet' });
+    assert.deepEqual([named.status, named.stdout, named.stderr], [0, '', ''], `${subagent_type} with model sonnet`);
+  }
+});
+
+test('hook: `inherit` in the call or the file, or no model with no CLAUDE_CODE_SUBAGENT_MODEL, is denied (the lead may be on Fable)', () => {
+  assert.match(deniedReason(runWithAgents({ ...BASE, subagent_type: 'dev', model: 'inherit' })), /`model: inherit` runs the agent on the lead's model, which may be Fable/);
+  assert.match(deniedReason(runWithAgents({ ...BASE, subagent_type: 'dev', model: 'Inherit' })), /`model: inherit`/);
+  const write = (pins) => (agents) => writeFileSync(join(agents, 'worker.md'), pinFile('worker', pins));
+  assert.match(deniedReason(runWithAgents({ ...BASE, subagent_type: 'worker' }, write('model: inherit\n'))), /the `worker` agent would run on the lead's model/);
+  assert.match(deniedReason(runWithAgents({ ...BASE, subagent_type: 'worker' }, write(''), { env: { CLAUDE_CODE_SUBAGENT_MODEL: undefined } })), /the `worker` agent would run on the lead's model/);
+  assert.match(deniedReason(runWithAgents({ ...BASE, subagent_type: 'worker' }, write(''), { env: { CLAUDE_CODE_SUBAGENT_MODEL: 'claude-fable-5' } })),
+    /the `worker` agent file pins no model and CLAUDE_CODE_SUBAGENT_MODEL is `claude-fable-5`/);
+  const plain = runWithAgents({ ...BASE, subagent_type: 'worker' }, write(''));
+  assert.deepEqual([plain.status, plain.stdout], [0, ''], 'no model line: CLAUDE_CODE_SUBAGENT_MODEL (sonnet) applies');
+});
+
+test('hook: an agent file Claude Code may or may not load (not certain) is denied unless the call names a model', () => {
+  const unsure = (agents) => writeFileSync(join(agents, 'other.md'), '---\nname: [worker]\ndescription: d\n---\n'); // not plain: may be any agent
+  assert.match(deniedReason(runWithAgents({ ...BASE, subagent_type: 'worker' }, unsure)), /which `worker` agent file Claude Code loads is not certain/);
+  const named = runWithAgents({ ...BASE, subagent_type: 'worker', model: 'opus' }, unsure);
+  assert.deepEqual([named.status, named.stdout], [0, '']);
+});
+
+test('hook: lower-case explore and plan are built-ins: routed to sonnet and opus, never denied for an unknown pin', () => {
+  for (const [subagent_type, model] of [['explore', 'sonnet'], ['plan', 'opus']]) {
+    const r = runWithAgents({ ...BASE, subagent_type });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(JSON.parse(r.stdout).hookSpecificOutput.updatedInput.model, model, subagent_type);
+  }
 });

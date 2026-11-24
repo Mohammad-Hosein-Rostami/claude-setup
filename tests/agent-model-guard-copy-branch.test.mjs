@@ -11,6 +11,7 @@ import { copyBranchBriefDeny } from '../home/hooks/agent-model-guard.mjs';
 import { git, makeRepo } from './git-tidy-helpers.mjs';
 import { FROM_AGENT, FROM_BOSS, originOf } from './agent-call-origin.mjs';
 import { hookEnv } from './hook-env.mjs';
+import { agentHomeEnv } from './agent-home-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const SEND_AGAIN = 'Send the same call again unchanged and it runs.';
@@ -30,7 +31,7 @@ function session({ skills = SKILLS, envExtra = {}, settings } = {}) {
     writeFileSync(join(home, '.claude', 'skills', name, 'SKILL.md'), `---\nname: ${name}\n---\n`);
   }
   if (settings !== undefined) writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify(settings));
-  const env = hookEnv({ HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: project, ...envExtra });
+  const env = hookEnv({ HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: project, ...agentHomeEnv(home), ...envExtra });
   const sessionId = `copy-brief-${process.pid}-${counter++}`;
   const log = () => readFileSync(env.CLAUDE_GUARD_LOG, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
   const send = (toolInput, extra = {}) => {

@@ -63,7 +63,8 @@ const parseOutput = ({ status, stdout, stderr }) => {
 };
 const guard = (s, toolInput, extra) => parseOutput(spawnSync(process.execPath, [GUARD], { input: hookInput(s, toolInput, extra), encoding: 'utf8', env: guardEnv(s), timeout: HOOK_TIMEOUT_MS }));
 const denied = (out) => out?.permissionDecision === 'deny';
-const scoutCall = (n) => ({ subagent_type: 'scout', description: 'look', prompt: `job ${n}` });
+// `scout` has no agent file, so the call names its model (the no-Fable gate denies a type whose model it cannot tell)
+const scoutCall = (n) => ({ subagent_type: 'scout', model: 'sonnet', description: 'look', prompt: `job ${n}` });
 
 // ---- the launch record (the guard caps main agents in agent-budget.mjs; this record has no cap) ----
 

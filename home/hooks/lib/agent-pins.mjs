@@ -1,5 +1,5 @@
 // The model and effort an agent file pins, and the floor they set: a per-call value may raise a pin, never lower it.
-// Exports: readPin(agentType, cwd, env), floorDrops(call, pin), flooredAgentInput(toolInput, cwd, env).
+// Exports: pinVerdict(agentType, cwd, env), readPin(agentType, cwd, env), floorDrops(call, pin), flooredAgentInput(toolInput, cwd, env).
 // Why: Claude Code ranks the Agent call's `model` above the agent file's frontmatter, so a lower per-call value silently
 // undoes the pin (recommendations item 2). agent-model-guard.mjs drops such a value from the call; it never adds one.
 // Which file: the one Claude Code loads. Read from the Claude Code 2.1.329 bundle (minified names), re-read in 2.1.330:
@@ -146,7 +146,30 @@ function projectFolders(sessionDir, personalDir) {
 }
 
 /**
- * The model and effort pinned by the agent file Claude Code loads for this type.
+ * What the agent files say about this type: the pin of the file Claude Code loads, no such file, or no certain answer.
+ * @param {string} agentType - the call's subagent_type (untrusted).
+ * @param {string} cwd - the session folder the project walk starts from.
+ * @param {Record<string, string | undefined>} env - CLAUDE_CONFIG_DIR (the personal folder).
+ * @returns {{ state: 'found', pin: { model: string | null, effort: string | null } } | { state: 'none' | 'unsure' }} `none`: a type
+ *   outside TYPE_PATTERN (a plugin agent `plugin:name`, a built-in such as `Explore`) or no file of that type in the folders read;
+ *   `unsure`: no certain answer (see the header); a null pin field when the file sets no such line.
+ * @throws when a file or folder cannot be read (the no-Fable gate then denies; the pin floor lets the call run).
+ */
+export function pinVerdict(agentType, cwd, env = process.env) {
+  if (typeof agentType !== 'string' || !TYPE_PATTERN.test(agentType)) return NOT_FOUND;
+  const personal = join(env.CLAUDE_CONFIG_DIR || join(homedir(), CONFIG_FOLDER), AGENTS_FOLDER);
+  const project = typeof cwd === 'string' && cwd !== '' ? projectFolders(cwd, personal) : { folders: [], unsure: false };
+  if (project === undefined) return UNSURE;
+  for (const folder of project.folders) {
+    const verdict = folderVerdict(folder, agentType);
+    if (verdict.state !== 'none') return verdict;
+  }
+  if (project.unsure) return UNSURE; // a project folder further up may hold the agent, and it would beat the personal one
+  return folderVerdict(personal, agentType);
+}
+
+/**
+ * The model and effort pinned by the agent file Claude Code loads for this type (pinVerdict's `found` pin).
  * @param {string} agentType - the call's subagent_type (untrusted).
  * @param {string} cwd - the session folder the project walk starts from.
  * @param {Record<string, string | undefined>} env - CLAUDE_CONFIG_DIR (the personal folder).
@@ -155,17 +178,8 @@ function projectFolders(sessionDir, personalDir) {
  * @throws when a file or folder cannot be read (the guard catches it and lets the call run).
  */
 export function readPin(agentType, cwd, env = process.env) {
-  if (typeof agentType !== 'string' || !TYPE_PATTERN.test(agentType)) return null;
-  const personal = join(env.CLAUDE_CONFIG_DIR || join(homedir(), CONFIG_FOLDER), AGENTS_FOLDER);
-  const project = typeof cwd === 'string' && cwd !== '' ? projectFolders(cwd, personal) : { folders: [], unsure: false };
-  if (project === undefined) return null;
-  for (const folder of project.folders) {
-    const verdict = folderVerdict(folder, agentType);
-    if (verdict.state !== 'none') return verdict.state === 'found' ? verdict.pin : null;
-  }
-  if (project.unsure) return null; // a project folder further up may hold the agent, and it would beat the personal one
-  const personalVerdict = folderVerdict(personal, agentType);
-  return personalVerdict.state === 'found' ? personalVerdict.pin : null;
+  const verdict = pinVerdict(agentType, cwd, env);
+  return verdict.state === 'found' ? verdict.pin : null;
 }
 
 /** @returns {number[] | null} [family, major, minor] of a model value (-1 for no version), or null when it is unknown */

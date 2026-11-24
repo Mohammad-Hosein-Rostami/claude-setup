@@ -4,9 +4,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { flooredAgentInput, floorDrops, readPin } from '../home/hooks/lib/agent-pins.mjs';
+import { flooredAgentInput, floorDrops, pinVerdict, readPin } from '../home/hooks/lib/agent-pins.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 /** An agent file's text: `pins` are the extra frontmatter lines. */
@@ -177,5 +177,24 @@ test('flooredAgentInput: a file without model or effort is floored at the subage
     assert.equal(flooredAgentInput({ subagent_type: 'worker', model: 'haiku' }, project, NO_ENV), null); // no default: the lead's model
     writeFileSync(join(projectAgents, 'worker.md'), agentText('worker', 'model: inherit\n'));
     assert.equal(flooredAgentInput({ subagent_type: 'worker', model: 'haiku' }, project, env), null); // inherit: the lead's, not known
+  });
+});
+
+test('pinVerdict: found, none (no file, a plugin type, a capitalised built-in) and unsure are told apart; an unreadable file throws', (t) => {
+  withFolders(({ homeAgents, projectAgents, project }) => {
+    writeFileSync(join(homeAgents, 'worker.md'), OPUS_HIGH);
+    assert.deepEqual(pinVerdict('worker', project, NO_ENV), { state: 'found', pin: { model: 'claude-opus-5-5', effort: 'high' } });
+    for (const type of ['nobody', 'some-plugin:agent', 'Explore', '../x', undefined]) assert.deepEqual(pinVerdict(type, project, NO_ENV), { state: 'none' }, String(type));
+    writeFileSync(join(projectAgents, 'odd.md'), '---\nname: [worker]\ndescription: d\n---\n');
+    assert.deepEqual(pinVerdict('worker', project, NO_ENV), { state: 'unsure' });
+    assert.equal(readPin('worker', project, NO_ENV), null, 'readPin keeps its answer: no pin');
+    if (typeof process.getuid === 'function' && process.getuid() === 0) return t.diagnostic('not run: root reads a mode 000 file');
+    writeFileSync(join(projectAgents, 'odd.md'), agentText('worker'));
+    chmodSync(join(projectAgents, 'odd.md'), 0);
+    try {
+      assert.throws(() => pinVerdict('worker', project, NO_ENV), { code: 'EACCES' });
+    } finally {
+      chmodSync(join(projectAgents, 'odd.md'), 0o600);
+    }
   });
 });

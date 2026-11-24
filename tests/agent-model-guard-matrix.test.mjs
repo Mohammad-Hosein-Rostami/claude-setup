@@ -16,6 +16,7 @@ import { MAX_MATRIX_BYTES, matrixLines, matrixPathToken, uiBriefDeny } from '../
 import { adviceOnce } from '../home/hooks/lib/bounce-once.mjs';
 import { originOf } from './agent-call-origin.mjs';
 import { hookEnv } from './hook-env.mjs';
+import { agentHomeEnv } from './agent-home-helpers.mjs';
 import { fastestCpuMs } from './timing.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -59,7 +60,7 @@ function gateSession(mode = 'medium') {
   writeFileSync(join(home, '.claude', 'state', 'modes', SESSION), `${mode}\n`);
   mkdirSync(join(project, 'docs'));
   writeFileSync(join(project, 'docs', 'matrix.json'), JSON.stringify({ surfaces: [{ id: 'signin' }] }));
-  const env = hookEnv({ HOME: home, USERPROFILE: home });
+  const env = hookEnv({ HOME: home, USERPROFILE: home, ...agentHomeEnv(home) });
   delete env.CLAUDE_MODE;
   const inputOf = (toolInput, options) => ({
     ...originOf(toolInput?.subagent_type), session_id: 'session' in options ? options.session : SESSION, cwd: 'cwd' in options ? options.cwd : project, tool_name: 'Agent', tool_input: toolInput,
@@ -265,8 +266,13 @@ test('other subagent types are untouched: the same output as before, no log line
     const call = { prompt: PROMPT, ...(type === undefined ? {} : { subagent_type: type }) };
     assert.deepEqual(s.send(call), withSonnet(call), `${type}: sonnet as before`);
   }
-  for (const type of ['dev', 'fork', 'lex-scout', 'some-plugin:dev-pixel', 'Dev-Pixel', 'dev-pixel ', 'dev-ui']) {
+  for (const type of ['dev', 'lex-scout', 'dev-ui']) {
     assert.equal(s.send({ prompt: PROMPT, subagent_type: type }), null, `${type}: untouched as before`);
+  }
+  // no agent file the no-Fable gate reads: denied by that gate when the call names no model, never by the UI gate; run with a model
+  for (const type of ['fork', 'some-plugin:dev-pixel', 'Dev-Pixel', 'dev-pixel ']) {
+    assert.match(s.send({ prompt: PROMPT, subagent_type: type }).permissionDecisionReason, /^Not started: Fable is never used for an agent/, type);
+    assert.equal(s.send({ prompt: PROMPT, subagent_type: type, model: 'sonnet' }), null, `${type} with a model: untouched as before`);
   }
   assert.deepEqual(s.log(), []);
   assert.equal(existsSync(s.store), false);

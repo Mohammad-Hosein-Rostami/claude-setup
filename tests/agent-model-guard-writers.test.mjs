@@ -11,6 +11,7 @@ import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { originOf } from './agent-call-origin.mjs';
 import { hookEnv } from './hook-env.mjs';
+import { agentHomeEnv } from './agent-home-helpers.mjs';
 import { IDLE_MS, PENDING_MS } from '../home/hooks/lib/agent-launches.mjs';
 import { callCounterPath, worktreeValues } from '../home/hooks/lib/writer-agents.mjs';
 import { fastestCpuMs } from './timing.mjs';
@@ -39,7 +40,7 @@ function writerSession({ cwd, env: extraEnv = {} } = {}) {
   const home = makeTempDir('writer-gate-home-');
   const project = cwd ?? makeTempDir('writer-gate-project-');
   const session = `writers-${process.pid}-${counter++}`;
-  const env = hookEnv({ HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: project, ...extraEnv });
+  const env = hookEnv({ HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: project, ...agentHomeEnv(home), ...extraEnv });
   const input = (toolInput) => JSON.stringify({ hook_event_name: 'PreToolUse', session_id: session, cwd: project, tool_name: 'Agent', tool_input: toolInput, ...originOf(toolInput.subagent_type) });
   const parse = ({ status, stdout, stderr }) => {
     assert.equal(status, 0, stderr);
@@ -98,11 +99,11 @@ test('a writer with isolation "worktree" runs next to running writers, and does 
 test('read-only agents are exempt and never count as running writers; an omitted type is general-purpose (a writer)', () => {
   const readOnlyTypes = ['lex', 'lex-scout', 'lex-web', 'pixel-qa', 'dev-run', 'tess', 'tess-review', 'Explore', 'Plan'];
   for (const type of readOnlyTypes) {
-    const s = writerSession(); // one session per type: the main-agent cap (6 at once) counts every launch of the main session
+    const s = writerSession(); // one session per type: the main-agent cap (3 at once) counts every launch of the main session
     // pixel-qa briefs name a matrix (the UI brief gate); `MATRIX: none:` with a reason passes it for the other types too
     const reader = (agentType, prompt) => writer(agentType, { prompt: `${prompt}\nMATRIX: none: a lookup with no visual part` });
     mkdirSync(join(s.home, '.claude', 'agents'), { recursive: true });
-    writeFileSync(join(s.home, '.claude', 'agents', 'lex.md'), '---\nname: lex\ntools: Read, Grep, Write\n---\n'); // lex writes plans, never product code
+    writeFileSync(join(s.home, '.claude', 'agents', 'lex.md'), '---\nname: lex\ndescription: test agent\ntools: Read, Grep, Write\n---\n'); // lex writes plans, never product code
     assert.ok(!denied(s.launch(reader(type, 'first'))), `${type} alone`);
     assert.ok(!denied(s.launch(reader(type, 'second'))), `${type} next to ${type}`);
     assert.ok(!denied(s.launch({ description: 'x', prompt: 'no type' })), `the first writer runs although ${type} ran`);
@@ -114,10 +115,12 @@ test('read-only agents are exempt and never count as running writers; an omitted
 test('an agent file whose tools include Write or Edit is a writer; one without, a fork and a plugin agent are not', () => {
   const s = writerSession();
   mkdirSync(join(s.home, '.claude', 'agents'), { recursive: true });
-  writeFileSync(join(s.home, '.claude', 'agents', 'doc-writer.md'), '---\nname: doc-writer\ntools: Read, Edit\n---\n');
-  writeFileSync(join(s.home, '.claude', 'agents', 'lister.md'), '---\nname: lister\ntools: Read, Grep\n---\n');
+  writeFileSync(join(s.home, '.claude', 'agents', 'doc-writer.md'), '---\nname: doc-writer\ndescription: test agent\ntools: Read, Edit\n---\n');
+  writeFileSync(join(s.home, '.claude', 'agents', 'lister.md'), '---\nname: lister\ndescription: test agent\ntools: Read, Grep\n---\n');
   assert.ok(!denied(s.launch(writer('doc-writer'))));
-  for (const type of ['lister', 'fork', 'some-plugin:helper']) assert.ok(!denied(s.launch(writer(type))), type);
+  assert.ok(!denied(s.launch(writer('lister'))), 'lister');
+  // a fork and a plugin agent have no agent file the no-Fable gate reads, so they run only with a model named in the call
+  for (const type of ['fork', 'some-plugin:helper']) assert.ok(!denied(s.launch(writer(type, { model: 'sonnet' }))), type);
   assert.ok(denied(s.launch(writer('doc-writer', { prompt: 'second doc job' }))), 'two doc-writers');
 });
 

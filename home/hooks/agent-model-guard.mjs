@@ -1,6 +1,7 @@
 // PreToolUse(Agent|Task) guard. Model routing: an Agent call with no `model` runs on the lead's own model and spends it silently, so a
 // call to a built-in type that pins no model (general-purpose, no subagent_type, Explore and the other built-ins) gets `sonnet` and a
-// Plan call gets `opus`. Forks (subagent_type "fork"), plugin agents, an explicit model and unreadable input are not routed.
+// Plan call gets `opus` (types matched in any case: `explore`, `plan`). Forks (subagent_type "fork"), plugin agents and an explicit
+// model are not routed. Input that is not a JSON object, and any crash of the guard, deny the call (the no-Fable gate fails closed).
 // Pin floor (lib/agent-pins.mjs): the agent file Claude Code loads sets a floor for its own model and effort, so a lower per-call
 // value is left out (haiku < sonnet < opus; low < ... < max); this is how each agent keeps the pin of the plan (lex, dev, dev-ui,
 // dev-pixel, dev-debug, tess-review, tess-write on Opus; lex-web, pixel-qa, tess on Sonnet; lex-scout, dev-run on Haiku: the frontmatter of
@@ -11,8 +12,10 @@
 //      A call from inside a subagent (`agent_id`) that starts lex, dev or tess is denied every time too: only the boss starts them,
 //      and the agent asks for one with a `needs:` line; its other calls (its helpers) are not routed. First, so a wrong route spends
 //      no deny-once gate.
-//   0. No Fable (owner rule: Fable is chosen by hand only, never for an agent): a call whose `model` is Fable (the alias or any id),
-//      or with no `model` and an agent file that pins Fable, is denied every time with a one-line reason (fableReason).
+//   0. No Fable (owner rule: Fable is chosen by hand only, never for an agent), denied every time with a one-line reason (fableReason),
+//      and fail closed: a call whose `model` is Fable (the alias or any id) or `inherit`; with no `model`, an agent file that pins Fable,
+//      `inherit` or nothing (with no CLAUDE_CODE_SUBAGENT_MODEL, or a Fable one); a pin that cannot be read or is not certain; a type
+//      with no agent file the gate reads (a plugin agent, a fork, an unknown type: it runs only with a non-Fable `model` in the call).
 //   1. Copy-branch brief (lib/copy-branch-brief.mjs): a writer brief that creates `<lane>-2` instead of continuing `<lane>` (deny once).
 //   2. UI brief (lib/ui-brief-gate.mjs): a dev-pixel or pixel-qa brief that names no usable coverage matrix (`MATRIX: <path>`, or
 //      `MATRIX: none: <reason>`) gets the ui-coverage init advice (deny once).
@@ -24,8 +27,9 @@
 //      holds) or read-only (a line starting `read-only:` or `scratchpad-only:`), else it is denied once with advice; a brief naming
 //      more than one worktree is denied once too. Who writes: lib/agent-roles.mjs isWriterRole (dev, dev-ui, dev-pixel, dev-debug, tess-write;
 //      never lex or the read-only agents; other types by their agent file). A record that cannot be read denies (fail closed).
-// Exports: guardedAgentInput (pure), fableReason, writerIsolationDeny, copyBranchBriefDeny.
-// Invariants: the routing never blocks; each deny-once gate denies an identical call at most once per session.
+// Exports: guardedAgentInput (pure), fableReason, UNREADABLE_INPUT, writerIsolationDeny, copyBranchBriefDeny.
+// Invariants: the routing never blocks; each deny-once gate denies an identical call at most once per session; the hook never lets an
+// Agent call through without the no-Fable gate's yes (bad input and a crash deny).
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { claimMainSlot, mainCapReason, mainRouteReason, releaseMainSlot } from './agent-budget.mjs';
@@ -35,13 +39,15 @@ import { copyBranchBriefAdvice } from './lib/copy-branch-brief.mjs';
 import { recordAgentLaunch } from './lib/agent-launches.mjs';
 import { isSessionId } from './lib/session-store.mjs';
 import { uiBriefDeny } from './lib/ui-brief-gate.mjs';
-import { isReadOnlyBrief, laneWorktreeOf, worktreeLineAdvice } from './lib/writer-agents.mjs';
+import { agentTypeOf, isReadOnlyBrief, laneWorktreeOf, worktreeLineAdvice } from './lib/writer-agents.mjs';
 
 const FORK_TYPE = 'fork';
 const DEFAULT_MODEL = 'sonnet';
 const PLAN_MODEL = 'opus';
-// Built-in agent types that pin no model; an omitted subagent_type means general-purpose.
-const UNPINNED_BUILTIN_TYPES = ['general-purpose', 'Explore', 'claude', 'claude-code-guide', 'statusline-setup'];
+// Built-in agent types that pin no model, in lower case (a type is matched in any case: `explore` is Explore); an omitted
+// subagent_type means general-purpose.
+const UNPINNED_BUILTIN_TYPES = ['general-purpose', 'explore', 'claude', 'claude-code-guide', 'statusline-setup'];
+const PLAN_TYPE = 'plan';
 const SEND_AGAIN = 'Send the same call again unchanged and it runs.';
 
 /**
@@ -52,9 +58,9 @@ const SEND_AGAIN = 'Send the same call again unchanged and it runs.';
 export function guardedAgentInput(toolInput) {
   if (toolInput === null || typeof toolInput !== 'object') return null;
   if (toolInput.model !== undefined && toolInput.model !== '') return null;
-  const type = toolInput.subagent_type;
+  const type = typeof toolInput.subagent_type === 'string' ? toolInput.subagent_type.toLowerCase() : toolInput.subagent_type;
   if (type === FORK_TYPE) return null;
-  if (type === 'Plan') return { ...toolInput, model: PLAN_MODEL };
+  if (type === PLAN_TYPE) return { ...toolInput, model: PLAN_MODEL };
   const unpinned = type === undefined || type === '' || UNPINNED_BUILTIN_TYPES.includes(type);
   return unpinned ? { ...toolInput, model: DEFAULT_MODEL } : null;
 }
@@ -138,30 +144,71 @@ export async function copyBranchBriefDeny(input, env = process.env) {
 }
 
 const FABLE_MODEL = /fable/i; // the alias `fable` and every Fable model id
+const INHERIT_MODEL = /^inherit$/i; // the agent runs on the lead's model, which the hook cannot see
 const FABLE_RULE = 'Not started: Fable is never used for an agent (the owner chooses it by hand only)';
+const NAME_A_MODEL = 'name a model other than Fable in the Agent call (`model: "sonnet"` or `"opus"`)';
+/** The deny reason for unreadable hook input (the guard denies the Agent call rather than let the no-Fable gate pass). */
+export const UNREADABLE_INPUT = 'agent-model-guard could not read its input';
+
+/** The reason for a call that names its model, or '' when that model is neither Fable nor `inherit`. */
+function callModelReason(model) {
+  if (typeof model !== 'string') return `${FABLE_RULE}: the call's \`model\` is not text, so the model is unknown; ${NAME_A_MODEL}.`;
+  if (FABLE_MODEL.test(model)) return `${FABLE_RULE}: leave \`model\` out of the Agent call (it was \`${quotedValue(model)}\`).`;
+  if (INHERIT_MODEL.test(model)) return `${FABLE_RULE}: \`model: inherit\` runs the agent on the lead's model, which may be Fable; ${NAME_A_MODEL}.`;
+  return '';
+}
+
+/** The reason for the pin of an agent file found for `type`, or '' when it runs on a known model other than Fable. */
+function foundPinReason(type, pin, env) {
+  const shown = quotedValue(type);
+  if (typeof pin.model === 'string' && FABLE_MODEL.test(pin.model)) {
+    return `${FABLE_RULE}: the \`${shown}\` agent file pins \`${quotedValue(pin.model)}\`; change its \`model\` line, and leave \`model\` out of the Agent call.`;
+  }
+  const fallback = env.CLAUDE_CODE_SUBAGENT_MODEL; // what Claude Code uses for a file with no model line (lib/agent-pins.mjs header)
+  const model = pin.model ?? (typeof fallback === 'string' && fallback !== '' ? fallback : null);
+  if (pin.model === null && model !== null && FABLE_MODEL.test(model)) {
+    return `${FABLE_RULE}: the \`${shown}\` agent file pins no model and CLAUDE_CODE_SUBAGENT_MODEL is \`${quotedValue(model)}\`; ${NAME_A_MODEL}.`;
+  }
+  if (model === null || INHERIT_MODEL.test(model)) {
+    return `${FABLE_RULE}: the \`${shown}\` agent would run on the lead's model (no model pinned, or \`inherit\`), which may be Fable; ${NAME_A_MODEL}, or pin one in its file.`;
+  }
+  return '';
+}
 
 /**
- * The no-Fable gate (see the header): the model the agent would run on is the call's `model` when set (it outranks the agent file),
- * else the agent file's pin (lib/agent-pins.mjs readPin, the file Claude Code loads).
+ * The no-Fable gate (see the header). It fails closed: whenever the model the agent would run on is not known, the call is denied.
+ * The model is the call's `model` when set (it outranks the agent file), else the built-in route's (guardedAgentInput: sonnet or
+ * opus), else the pin of the agent file Claude Code loads (lib/agent-pins.mjs pinVerdict), else CLAUDE_CODE_SUBAGENT_MODEL.
+ * Denied: a Fable model; `inherit` or no model at all (the lead's model, which may be Fable); a pin that cannot be read or is not
+ * certain; a type with no agent file this gate reads (a plugin agent, a fork, an unknown type). Plugin agent files are not read: a
+ * plugin agent runs only with a non-Fable `model` in the call.
  * @param {unknown} input the hook input: tool_input {subagent_type, model}, cwd
- * @param {Record<string, string | undefined>} env HOME / CLAUDE_CONFIG_DIR (where the agent files are)
- * @returns {Promise<string>} the one-line deny reason, or '' when the agent runs on another model; a pin that cannot be read is
- *   reported on stderr and lets the call run (the pin floor reports the same file)
+ * @param {Record<string, string | undefined>} env HOME / CLAUDE_CONFIG_DIR (where the agent files are), CLAUDE_CODE_SUBAGENT_MODEL
+ * @returns {Promise<string>} the one-line deny reason, or '' when the agent runs on a known model other than Fable
  */
 export async function fableReason(input, env = process.env) {
-  const { subagent_type: type, model } = input?.tool_input ?? {};
-  if (typeof model === 'string' && model !== '') {
-    return FABLE_MODEL.test(model) ? `${FABLE_RULE}: leave \`model\` out of the Agent call (it was \`${quotedValue(model)}\`).` : '';
-  }
+  const toolInput = input?.tool_input;
+  if (toolInput === null || typeof toolInput !== 'object') return UNREADABLE_INPUT;
+  const { subagent_type: type, model } = guardedAgentInput(toolInput) ?? toolInput;
+  if (model !== undefined && model !== '') return callModelReason(model);
+  const name = agentTypeOf(type);
+  const shown = quotedValue(name);
+  let verdict;
   try {
-    const { readPin } = await import('./lib/agent-pins.mjs');
-    const pin = readPin(type, typeof input?.cwd === 'string' ? input.cwd : process.cwd(), env);
-    return typeof pin?.model === 'string' && FABLE_MODEL.test(pin.model)
-      ? `${FABLE_RULE}: the \`${quotedValue(String(type))}\` agent file pins \`${quotedValue(pin.model)}\`; change its \`model\` line, and leave \`model\` out of the Agent call.`
-      : '';
+    const { pinVerdict } = await import('./lib/agent-pins.mjs');
+    verdict = pinVerdict(name, typeof input.cwd === 'string' ? input.cwd : process.cwd(), env);
   } catch (error) {
-    process.stderr.write(`agent-model-guard: fable check skipped: ${error.message}\n`);
-    return '';
+    return `${FABLE_RULE}: the pin of \`${shown}\` cannot be read (${quotedValue(String(error?.message))}); fix the file, or ${NAME_A_MODEL}.`;
+  }
+  switch (verdict.state) {
+    case 'found':
+      return foundPinReason(name, verdict.pin, env);
+    case 'unsure':
+      return `${FABLE_RULE}: which \`${shown}\` agent file Claude Code loads is not certain, so its model is unknown; ${NAME_A_MODEL}.`;
+    case 'none':
+      return `${FABLE_RULE}: \`${shown}\` has no agent file this gate reads (a plugin, fork or unknown type), so its model is unknown; ${NAME_A_MODEL}.`;
+    default:
+      return `${FABLE_RULE}: the pin of \`${shown}\` gave no answer; ${NAME_A_MODEL}.`;
   }
 }
 
@@ -181,25 +228,34 @@ async function gatesDeny(input) {
   return writerDeny;
 }
 
-async function main() {
+/** @returns {Promise<object | null>} the hook input from stdin, or null when it is not a JSON object */
+async function readHookInput() {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
-  let input;
   try {
-    input = JSON.parse(Buffer.concat(chunks).toString('utf8')); // decoded once: a character split across chunks stays whole
+    const input = JSON.parse(Buffer.concat(chunks).toString('utf8')); // decoded once: a character split across chunks stays whole
+    return input !== null && typeof input === 'object' && !Array.isArray(input) ? input : null;
   } catch {
-    return; // not hook JSON: stay silent, never block
+    return null; // not hook JSON: the caller denies (the no-Fable gate cannot run)
+  }
+}
+
+async function main() {
+  const input = await readHookInput();
+  if (input === null) {
+    process.stdout.write(denyOutput(UNREADABLE_INPUT));
+    return;
   }
   const deny = await gatesDeny(input);
   if (deny !== '') {
     process.stdout.write(deny);
     return;
   }
-  const routed = guardedAgentInput(input?.tool_input);
+  const routed = guardedAgentInput(input.tool_input);
   let floored = routed; // the pin floor fails open: a load or read error in lib/agent-pins.mjs leaves the input as it is
   try {
     const { flooredAgentInput } = await import('./lib/agent-pins.mjs');
-    floored = flooredAgentInput(routed ?? input?.tool_input, typeof input?.cwd === 'string' ? input.cwd : process.cwd()) ?? routed;
+    floored = flooredAgentInput(routed ?? input.tool_input, typeof input.cwd === 'string' ? input.cwd : process.cwd()) ?? routed;
   } catch (error) {
     process.stderr.write(`agent-model-guard: pin floor skipped: ${error.message}\n`);
   }
@@ -212,6 +268,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
   try {
     await main();
   } catch (error) {
-    process.stderr.write(`agent-model-guard: ${error.message}\n`);
+    // fail closed: an Agent call is never let through by a guard that broke before the no-Fable gate could decide
+    const message = String(error?.message).replace(/\s+/g, ' ');
+    process.stderr.write(`agent-model-guard: ${message}\n`);
+    process.stdout.write(denyOutput(`agent-model-guard failed (${quotedValue(message)}), so the call is denied; send it again, or fix the hook`));
   }
 }

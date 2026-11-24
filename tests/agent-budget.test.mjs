@@ -13,6 +13,7 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { hookEnv } from './hook-env.mjs';
+import { agentHomeEnv } from './agent-home-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 process.env.TMPDIR = makeTempDir('agent-budget-tmp-'); // the call counters (callCounterPath) go under the temp root of this process
@@ -52,7 +53,7 @@ function running(s) {
 
 // ---- the hooks, spawned the way Claude Code runs them ----
 
-const hookEnvOf = (s) => hookEnv({ HOME: s.home, USERPROFILE: s.home, CLAUDE_PROJECT_DIR: s.home });
+const hookEnvOf = (s) => hookEnv({ HOME: s.home, USERPROFILE: s.home, CLAUDE_PROJECT_DIR: s.home, ...agentHomeEnv(s.home) });
 const guardInput = (s, toolInput, extra = {}) => JSON.stringify({
   hook_event_name: 'PreToolUse', session_id: s.session, cwd: s.home, tool_name: 'Agent', tool_input: toolInput, ...extra,
 });
