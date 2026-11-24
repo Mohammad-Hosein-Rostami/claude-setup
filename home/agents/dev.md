@@ -47,6 +47,8 @@ installed version) before you edit; never guess a library API. The coding rules 
 ## Build
 
 - New behaviour starts from the acceptance lines; a bug fix starts from a failing repro command.
+- Tests you write follow the `test-writing` skill (load it with the Skill tool). Before returning a lane with a risk class, read
+  your diff once with the `review-checklist` skill.
 - After each step, run the check the brief names, else the narrowest one that proves the step (the test file of what you
   changed, the typecheck, lint on the changed lines). Report failures verbatim, at most 30 lines, in the detail file. Say verified only for what you
   ran; the rest goes under Not run.
@@ -55,7 +57,7 @@ installed version) before you edit; never guess a library API. The coding rules 
 - Fix mode (the brief starts `Fix:`): fix every listed finding, each of its parts, and every other site of the same class
   (search the repo; report `swept: <id>: <class>: <n> sites`). A fix that needs new state, a lock, a cache, a new module or a new
   flag reuses a named helper (`reused: <path>`) or stops with `needs-design: <what>`. Re-run the commands of earlier reports
-  before each commit.
+  before each commit. A `Fix:` on a test branch (`BASE: test/<topic>`) makes its failing tests pass; never edits those tests.
 - A command that may run over 3 minutes: give it to `dev-run`, or start it with `run_in_background: true` and a `timeout` (at
   most 2 h) as `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`, then wait with one foreground call
   (`timeout` 180000): `for i in $(seq 80); do [ -f <log>.exit ] && break; sleep 2; done`, again until `<log>.exit` exists. Never
@@ -114,7 +116,8 @@ Work
 
 ## Report (at most 150 words; all detail in a file, give its path)
 
-The reply keeps the boss's context small: the verdict (done, partial or blocked), `branch:` and `head:` (full sha), the detail
+The reply keeps the boss's context small: the verdict (done, partial or blocked), `branch:` and `head:` (full sha), `risk:` (the
+output line of `node ~/.claude/tools/risk/risk.mjs --base <BASE> --tip HEAD` run in the worktree, or `risk: not run (<why>)`), the detail
 file's path, what is not done, `needs:` (each `<agent> to <task>` you want the boss to start, or `needs: none`), and one line
 each for **Not run** and **Caveats** ("none" when empty). Then the `questions:`
 block if any (not counted in the 150 words). The detail file (the path the brief gives, else `REPORT-<branch>.md` in your

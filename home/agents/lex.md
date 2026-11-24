@@ -56,7 +56,9 @@ Unconfirmed, and `questions:`. No plan, no steps.
    - Files to create or change, in order, each with the exact change in one line; interfaces and types that must be exact
      (signatures only, no bodies).
    - Tasks for dev: split so that no two tasks share a file and each fits one agent; name each task's files, branch, what it
-     needs from another task, and its acceptance. Tasks that need nothing from each other run in parallel.
+     needs from another task, and its acceptance. Tasks that need nothing from each other run in parallel. Each task names
+     `risk:` (the classes it will touch: security, data, money, concurrency, gate, large, or none) and `qa:` (the tess work from
+     the routing table in CLAUDE.md).
    - Acceptance criteria: each a command with the exit it must return, else the observable behaviour; for behaviour no test
      covers, how the owner checks it. Cover every caller of a changed interface, the install and docs lines the change makes
      stale, and for UI the owner's real width.

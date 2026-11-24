@@ -77,7 +77,7 @@ test('lex.md attacks its own plan once and probes a platform fact before decidin
   assert.match(text, /Probe a platform fact[^.]*with a command or the installed docs/);
 });
 
-const COMMAND_AGENTS = ['dev', 'dev-run', 'tess'];
+const COMMAND_AGENTS = ['dev', 'dev-run', 'tess', 'tess-write'];
 
 test('agents that run commands: Bash timeout 600000 for installs and long runs, 60000 for probes, no polling, no wake-up promise', () => {
   for (const agent of COMMAND_AGENTS) {

@@ -10,7 +10,7 @@ import { WAIT_ADVICE, WAIT_CALL, WAIT_START_FORM } from '../home/hooks/lib/wait-
 const read = (path) => readFileSync(fileURLToPath(new URL(`../${path}`, import.meta.url)), 'utf8');
 const oneLine = (text) => text.replace(/\s+/g, ' ');
 // The agents that run builds, tests or loops that can pass 3 minutes.
-const LONG_RUNNERS = ['dev', 'dev-ui', 'dev-pixel', 'dev-debug', 'dev-run', 'tess', 'pixel-qa'];
+const LONG_RUNNERS = ['dev', 'dev-ui', 'dev-pixel', 'dev-debug', 'dev-run', 'tess', 'tess-write', 'pixel-qa'];
 // A background command of a foreground subagent stops when that agent's run ends and nobody is woken (Claude Code tools reference, Bash
 // tool), so no text may tell an agent that it will be woken.
 const WAKE_UP_PROMISE = /you are woken|woken (at|when)|you (are|will be|get) notified|wakes you|reported when it ends/i;

@@ -1,4 +1,4 @@
-// Tests for home/agents/*.md: exactly the eleven agents of the lex/dev/tess setup, each with frontmatter whose name matches its
+// Tests for home/agents/*.md: exactly the twelve agents of the lex/dev/tess setup, each with frontmatter whose name matches its
 // file, the model and effort pins the guard's floor reads (lib/agent-pins.mjs), the preloaded skills of the plan, the Agent tool
 // for the agents that start helpers, the browser servers only where the plan puts them, tess in the background, and no text
 // about the removed job machinery.
@@ -41,15 +41,16 @@ const PLAN = {
   'pixel-qa': { model: SONNET, effort: 'high', skills: ['figma-pixel-perfect'] },
   'dev-debug': { model: OPUS, effort: 'xhigh', skills: ['root-cause-debug'] },
   'dev-run': { model: HAIKU, effort: 'high', skills: [] },
-  tess: { model: SONNET, effort: 'high', skills: [] },
-  'tess-review': { model: OPUS, effort: 'high', skills: [] },
+  tess: { model: SONNET, effort: 'high', skills: ['qa-plan'] },
+  'tess-review': { model: OPUS, effort: 'high', skills: ['review-checklist'] },
+  'tess-write': { model: OPUS, effort: 'high', skills: ['test-writing'] },
 };
 const NAMES = Object.keys(PLAN);
 const HELPER_STARTERS = ['lex', 'dev', 'dev-ui', 'dev-pixel', 'dev-debug', 'tess'];
 const BROWSER_AGENTS = ['dev-ui', 'dev-pixel', 'pixel-qa'];
 const REMOVED_MACHINERY = /done-check|road\.mjs|status\.mjs|estimate|recall|ask\.mjs|ASK_QUEUE|land-lane|watch\.mjs|lead-rules|lead\.md/;
 
-test('home/agents holds exactly the eleven agents, each named like its file, with a description', () => {
+test('home/agents holds exactly the twelve agents, each named like its file, with a description', () => {
   assert.deepEqual(readdirSync(AGENTS_DIR).sort(), NAMES.map((name) => `${name}.md`).sort());
   for (const name of NAMES) {
     assert.ok(agent(name).startsWith('---\n'), `${name}: frontmatter opens the file`);
@@ -143,7 +144,7 @@ test('read-only agents cannot write files', () => {
 });
 
 test('the writers work in their own worktree and commit without a merge commit', () => {
-  for (const name of ['dev', 'dev-ui', 'dev-pixel', 'dev-debug']) {
+  for (const name of ['dev', 'dev-ui', 'dev-pixel', 'dev-debug', 'tess-write']) {
     assert.match(agent(name), /own worktree/, name);
     assert.match(agent(name), /never `--no-verify`/i, name);
     assert.match(agent(name), /never return with uncommitted work/i, name);

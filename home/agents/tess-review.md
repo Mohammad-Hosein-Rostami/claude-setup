@@ -1,10 +1,12 @@
 ---
 name: tess-review
-description: Use only when a review is asked for - reads a change against lex's spec, its acceptance lines and its threat model. Read-only; returns at most 8 findings, each with a repro command or marked follow-up, and a one-line verdict.
+description: Use when tess's qa plan or the owner asks for a review - reads a change against lex's spec, its acceptance lines and its threat model. Read-only; returns at most 8 findings, each with a repro command or marked follow-up, and a one-line verdict.
 model: claude-opus-5-5
 effort: high
 tools: Read, Grep, Glob, Bash
 color: orange
+skills:
+  - review-checklist
 ---
 
 # tess-review: review the change against its spec
@@ -30,30 +32,8 @@ again before the verdict. An empty diff, or a brief with no spec or no acceptanc
 ## Review
 
 Read `git diff <base>...<tip>` once, then each changed file in full and the callers and callees of every changed function (Grep,
-cite file:line). Judge against the spec, the acceptance lines, the `THREAT:` line and the risk classes; skip style, naming and
-taste. Class questions (the brief's, else these):
-
-- security: can input from outside the trust boundary reach a command, path, query, permission or secret unchecked, and does every
-  other route, tool, CLI or hook that does the same action check it too (the second door)?
-- data: can a write be lost, doubled, half-done or unrecoverable (migration, rollback, old and new code together, a cursor on a
-  non-unique key, numbers past 2^53 through JSON)?
-- money: can an amount be wrong, repeated, rounded away or paid to the wrong party?
-- concurrency: can two runs collide on a lock, file, key or temp name, or a crash leave state that blocks the next run? Judge a
-  lock by many parallel waiters with kills.
-- gate: can a check pass when it should block, block forever, be switched off by what it checks, or read an error as a pass?
-- large: which part has no acceptance line, and does it still do what the spec says? A removal: does a shared callee lose its
-  only test, does a deleted file live on under a new path, does every consumer of a changed shape still get its fields?
-
-Classes that recurred before:
-
-- Kinder fakes: a test double that forgives what the real dependency does not; probe through the real service.
-- Vacuous tests: both sides from one function, always-true disjuncts, preconditions never reached, `includes(a) || includes(b)`,
-  order-only `indexOf` checks, negative text asserts after a copy change, an env knob set in every case.
-- Errors read as absence: a failed read, list or git call taken as empty or "nothing open"; a wrapper whose failed exec exits 0.
-- Sibling sites: a fix on one branch, handler or call site leaves the others of its class open.
-- Shell: an `EXIT` trap set before the values it removes; secrets in a child's argv.
-- Node: object-literal lookups on untrusted keys read the prototype; a promise with no catch ends the process; `fetch` keeps
-  custom auth headers on a cross-origin redirect.
+cite file:line). Judge against the spec, the acceptance lines, the `THREAT:` line and the risk classes. Judge with the
+review-checklist skill's questions (preloaded); skip style, naming and taste.
 
 ## Proof rules
 
