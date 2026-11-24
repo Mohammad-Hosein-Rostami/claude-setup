@@ -5,7 +5,7 @@
 // Also the child's billing variables and claudePlan (moved here from the removed recall-checkpoint tests with the lib).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AccountError } from '../home/tools/account/lib/names.mjs';
 import { HAIKU_ARGS, callHaiku, claudePlan } from '../home/tools/account/lib/claude-call.mjs';
@@ -198,11 +198,12 @@ const FAKE_LOG_CALL = 'JSON.stringify({ args: process.argv.slice(2), stdin })';
 const FAKE_LOG_CALL_WITH_BILLING = 'JSON.stringify({ args: process.argv.slice(2), stdin, leaked: Object.keys(process.env).filter((n) => /^(ANTHROPIC_|CLAUDE_CODE_USE_|AWS_BEARER_TOKEN_BEDROCK)/.test(n)) })';
 
 test('the Haiku child gets no ANTHROPIC_*, Bedrock or Vertex variables and loads no settings sources, so it stays on the subscription', async () => {
-  const { bin, env, claudeCalls } = fakeStack();
-  const fake = join(bin, 'claude');
-  const patched = readFileSync(fake, 'utf8').replace(FAKE_LOG_CALL, FAKE_LOG_CALL_WITH_BILLING);
-  assert.ok(patched.includes('leaked:'), 'the fake claude of claude-fakes.mjs changed: its log line was not patched');
-  writeFileSync(fake, patched);
+  const withBilling = (script) => {
+    const patched = script.replace(FAKE_LOG_CALL, FAKE_LOG_CALL_WITH_BILLING);
+    assert.ok(patched.includes('leaked:'), 'the fake claude of claude-fakes.mjs changed: its log line was not patched');
+    return patched;
+  };
+  const { env, claudeCalls } = fakeStack({ patch: withBilling });
   const dirty = { ...env, ANTHROPIC_API_KEY: 'sk-test', ANTHROPIC_AUTH_TOKEN: 't', ANTHROPIC_BASE_URL: 'http://x', ANTHROPIC_FOUNDRY_API_KEY: 'f', CLAUDE_CODE_USE_BEDROCK: '1', CLAUDE_CODE_USE_VERTEX: '1', AWS_BEARER_TOKEN_BEDROCK: 'b' };
   await callHaiku({ ...CALL, env: dirty });
   const calls = claudeCalls();

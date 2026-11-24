@@ -45,16 +45,15 @@ if (mode === 'slow') { writeFileSync('/dev/tty', 'CHECK-STARTED\\n'); await new 
  * Teaches the fake `claude` of claude-fakes.mjs to log who it ran as and to answer as a revoked or limited account;
  * `invalid` answers a plain 401 (no word "revoked", as probe ACC-9a saw); `leak-at` prints FAKE_LEAK_AT characters, then
  * its token (or FAKE_LEAK_TEXT), on stderr or (FAKE_LEAK_IN=result) in its error reply; `slow` says CHECK-STARTED on
- * the terminal and then waits a minute (a check to interrupt with Ctrl-C).
+ * the terminal and then waits a minute (a check to interrupt with Ctrl-C). Takes the fake's script, returns the patched one.
  */
-function patchFakeClaude(path) {
-  const original = readFileSync(path, 'utf8');
+function patchFakeClaude(original) {
   const patched = original
     .replace("import { appendFileSync", "import { createHash } from 'node:crypto';\nimport { appendFileSync")
     .replace(FAKE_LOG_LINE, FAKE_LOG_LINE_WITH_LOGIN)
     .replace(FAKE_ERROR_MODE, `${FAKE_LOGIN_MODES}${FAKE_ERROR_MODE}`);
   for (const part of ["from 'node:crypto'", 'tokenHash', "mode === 'revoked'"]) assert.ok(patched.includes(part), `the fake claude of claude-fakes.mjs changed: ${part} not patched in`);
-  writeFileSync(path, patched);
+  return patched;
 }
 
 /**
@@ -63,8 +62,7 @@ function patchFakeClaude(path) {
  * @returns {object} `fakeStack`'s fields plus `home`, `storeDir`, `envPrint` and an `env` to pass to every child.
  */
 export function accountSandbox({ claudeMode = 'ok' } = {}) {
-  const stack = fakeStack({ claudeMode });
-  patchFakeClaude(join(stack.bin, 'claude'));
+  const stack = fakeStack({ claudeMode, patch: patchFakeClaude });
   const home = join(stack.dir, 'home');
   const tmp = join(stack.dir, 'tmp');
   mkdirSync(home);

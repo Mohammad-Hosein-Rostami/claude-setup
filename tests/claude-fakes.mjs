@@ -1,10 +1,13 @@
 // A fake `claude` for the account tests (not a test file), installed on a private PATH so no real Haiku call is ever made.
-// Exports: fakeStack({ claudeMode }) -> { dir, bin, env, claudeCalls }.
+// Exports: fakeStack({ claudeMode, patch }) -> { dir, bin, env, claudeCalls }.
 // `claude` behaviour is chosen per call with FAKE_CLAUDE_MODE (ok | bad | error); every call is appended to $FAKE_CLAUDE_LOG as
 // one JSON line {args, stdin}. The env points ACCOUNT_STATE_DIR (usage log, the call's working folder) into the sandbox.
+// On POSIX `bin/claude` is a symlink to one shared, read-only copy of the (patched) script (shared-tools.mjs: no first-run check
+// per test); everything per test reaches it through the env. win32 writes the file per test, as before.
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { linkSharedTool } from './shared-tools.mjs';
 import { cleanEnv } from './clean-env.mjs';
 
 // A made-up token (built from parts, so no secret scanner sees a literal): `callHaiku` starts no `claude` without a login.
@@ -27,15 +30,19 @@ reply('ok');
 
 /**
  * A sandbox: the fake claude on a private PATH, a state folder and the terminal's (made-up) login.
- * @param {{ claudeMode?: string }} [options] the FAKE_CLAUDE_MODE of every call.
+ * @param {{ claudeMode?: string, patch?: (script: string) => string }} [options] the FAKE_CLAUDE_MODE of every call; `patch` turns
+ *   the fake's script into the one this test runs (default: unchanged).
  * @returns {{dir: string, bin: string, env: object, claudeCalls: () => object[]}}
  */
-export function fakeStack({ claudeMode = 'ok' } = {}) {
+export function fakeStack({ claudeMode = 'ok', patch = (script) => script } = {}) {
   const dir = makeTempDir('claude-stack-');
   const bin = join(dir, 'bin');
   mkdirSync(bin);
-  writeFileSync(join(bin, 'claude'), FAKE_CLAUDE);
-  chmodSync(join(bin, 'claude'), 0o755);
+  const script = patch(FAKE_CLAUDE);
+  if (process.platform === 'win32') {
+    writeFileSync(join(bin, 'claude'), script);
+    chmodSync(join(bin, 'claude'), 0o755);
+  } else linkSharedTool(bin, 'claude', script);
   const claudeLog = join(dir, 'claude.log');
   writeFileSync(claudeLog, '');
   const env = cleanEnv({
