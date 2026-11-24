@@ -18,7 +18,8 @@
 //      and fail closed: a call whose `model` is Fable (the alias or any id), `inherit` or an alias resolved at run time (`best`,
 //      `default`, `opusplan`); with no `model`, an agent file that pins Fable, such an alias, `inherit` or nothing (with no
 //      CLAUDE_CODE_SUBAGENT_MODEL, or a Fable or alias one); with CLAUDE_CODE_SUBAGENT_MODEL_FORCE on, a CLAUDE_CODE_SUBAGENT_MODEL
-//      that is unset, `inherit`, Fable or such an alias (it then decides every agent's model); a pin that cannot be read or is not certain; a type
+//      that is unset, `inherit`, Fable or such an alias (it then decides every agent's model), or a Fable or alias call model; any call
+//      while ANTHROPIC_DEFAULT_OPUS_MODEL, _SONNET_, _HAIKU_ or ANTHROPIC_DEFAULT_MODEL names Fable (it re-points an alias); a pin that cannot be read or is not certain; a type
 //      with no agent file the gate reads (a plugin agent, a fork, an unknown type: it runs only with a non-Fable `model` in the call).
 //   1. Copy-branch brief (lib/copy-branch-brief.mjs): a writer brief that creates `<lane>-2` instead of continuing `<lane>` (deny once).
 //   2. UI brief (lib/ui-brief-gate.mjs): a dev-pixel or pixel-qa brief that names no usable coverage matrix (`MATRIX: <path>`, or
@@ -32,8 +33,9 @@
 //      more than one worktree is denied once too. Who writes: lib/agent-roles.mjs isWriterRole (dev, dev-ui, dev-pixel, dev-debug, tess-write;
 //      never lex or the read-only agents; other types by their agent file). A record that cannot be read denies (fail closed).
 // SendMessage (its own PreToolUse entry) runs none of the gates above: its only gate is the main-agent cap for a message that would resume a stopped lex,
-//      dev or tess (agent-budget.mjs resumeCapReason), denied every time while 3 of its type run, and when the record cannot be read.
-// Exports: guardedAgentInput (pure), fableReason, UNREADABLE_INPUT, writerIsolationDeny, copyBranchBriefDeny, runGuard.
+// dev or tess (agent-budget.mjs resumeCapReason), denied every time while 3 of its type run. It fails open: a record it cannot read,
+// a target it cannot classify and a crash let the message go (a message starts no new agent, so it cannot start Fable).
+// Exports: guardedAgentInput (pure), parseHookInput (pure), fableReason, UNREADABLE_INPUT, writerIsolationDeny, copyBranchBriefDeny, runGuard.
 // Invariants: the routing never blocks; each deny-once gate denies an identical call at most once per session; the hook never lets an
 // Agent call through without the no-Fable gate's yes (bad input and a crash deny).
 import { claimMainSlot, mainCapReason, releaseMainSlot, resumeCapReason } from '../agent-budget.mjs';
@@ -43,7 +45,7 @@ import { mainRouteReason } from './agent-route.mjs';
 import { copyBranchBriefAdvice } from './copy-branch-brief.mjs';
 import { recordAgentLaunch } from './agent-launches.mjs';
 import { isSessionId } from './session-store.mjs';
-import { FABLE_RULE, NAME_A_MODEL, callModelReason, forcedModelReason, foundPinReason, isModelForced } from './fable-model-reasons.mjs';
+import { FABLE_RULE, NAME_A_MODEL, callModelReason, forcedModelReason, foundPinReason, isModelForced, remappedAliasReason } from './fable-model-reasons.mjs';
 import { uiBriefDeny } from './ui-brief-gate.mjs';
 import { agentTypeOf, isReadOnlyBrief, laneWorktreeOf, worktreeLineAdvice } from './writer-agents.mjs';
 
@@ -155,7 +157,8 @@ export const UNREADABLE_INPUT = 'agent-model-guard could not read its input';
 
 /**
  * The no-Fable gate (see the header). It fails closed: whenever the model the agent would run on is not known, the call is denied.
- * With CLAUDE_CODE_SUBAGENT_MODEL_FORCE on, the model is CLAUDE_CODE_SUBAGENT_MODEL alone (lib/fable-model-reasons.mjs header).
+ * While an ANTHROPIC_DEFAULT_*_MODEL alias variable names Fable, every call is denied. With CLAUDE_CODE_SUBAGENT_MODEL_FORCE on (as
+ * Claude Code reads it), the model is CLAUDE_CODE_SUBAGENT_MODEL, and the call's own model is checked too (lib/fable-model-reasons.mjs).
  * Otherwise the model is the call's `model` when set (it outranks the agent file), else the built-in route's (guardedAgentInput: sonnet or
  * opus), else the pin of the agent file Claude Code loads (lib/agent-pins.mjs pinVerdict), else CLAUDE_CODE_SUBAGENT_MODEL.
  * Denied: a Fable model; an alias resolved only at run time (`best`, `default`, `opusplan`); `inherit` or no model at all (the lead's model, which may be Fable); a pin that cannot be read or is not
@@ -169,7 +172,9 @@ export const UNREADABLE_INPUT = 'agent-model-guard could not read its input';
 export async function fableReason(input, env = process.env) {
   const toolInput = input?.tool_input;
   if (toolInput === null || typeof toolInput !== 'object') return UNREADABLE_INPUT;
-  if (isModelForced(env)) return forcedModelReason(toolInput.model, env); // the call's model and the pin are ignored then
+  const remapped = remappedAliasReason(env); // an alias env value that names Fable: every alias may be Fable
+  if (remapped !== '') return remapped;
+  if (isModelForced(env)) return forcedModelReason(toolInput.model, env); // Claude Code ignores the pin then
   const { subagent_type: type, model } = guardedAgentInput(toolInput) ?? toolInput;
   if (model !== undefined && model !== '') return callModelReason(model);
   const name = agentTypeOf(type);
@@ -210,12 +215,10 @@ async function gatesDeny(input) {
   return writerDeny;
 }
 
-/** @returns {Promise<object | null>} the hook input from stdin, or null when it is not a JSON object */
-async function readHookInput() {
-  const chunks = [];
-  for await (const chunk of process.stdin) chunks.push(chunk);
+/** @returns {object | null} the hook input, or null when the text is not a JSON object */
+export function parseHookInput(text) {
   try {
-    const input = JSON.parse(Buffer.concat(chunks).toString('utf8')); // decoded once: a character split across chunks stays whole
+    const input = JSON.parse(text);
     return input !== null && typeof input === 'object' && !Array.isArray(input) ? input : null;
   } catch {
     return null; // not hook JSON: the caller denies (the no-Fable gate cannot run)
@@ -223,17 +226,18 @@ async function readHookInput() {
 }
 
 /**
- * Runs the guard once: reads the hook input from stdin and prints the deny, the allow with the routed input, or nothing.
+ * Runs the guard once on the hook input and prints the deny, the allow with the routed input, or nothing.
+ * @param {string} text the hook input as read from stdin by the entry (agent-model-guard.mjs)
  * @returns {Promise<void>}
- * @throws on any failure the gates do not catch themselves (the entry turns it into a deny)
+ * @throws on any failure the gates do not catch themselves (the entry turns it into a deny, or for SendMessage lets it pass)
  */
-export async function runGuard() {
-  const input = await readHookInput();
+export async function runGuard(text) {
+  const input = parseHookInput(text);
   if (input === null) {
     process.stdout.write(denyOutput(UNREADABLE_INPUT));
     return;
   }
-  if (input.tool_name === SEND_MESSAGE_TOOL) { // a resume of a stopped main agent counts against the cap; no other gate applies
+  if (input.tool_name === SEND_MESSAGE_TOOL) { // only the resume cap; it fails open (a message starts no new agent, so no Fable)
     const capped = resumeCapReason(input);
     if (capped !== '') process.stdout.write(denyOutput(capped));
     return;
@@ -243,7 +247,7 @@ export async function runGuard() {
     process.stdout.write(deny);
     return;
   }
-  // with the force on, Claude Code drops `model` from the Agent tool and ignores it, so the routing adds none
+  // with the force on (as Claude Code reads it), Claude Code drops `model` from the Agent tool and ignores it, so the routing adds none
   const routed = isModelForced(process.env) ? null : guardedAgentInput(input.tool_input);
   let floored = routed; // the pin floor fails open: a load or read error in lib/agent-pins.mjs leaves the input as it is
   try {

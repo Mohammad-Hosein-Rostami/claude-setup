@@ -4,23 +4,29 @@
 // see: `inherit` (the lead's model, which may be Fable) and the aliases Claude Code resolves only at run time (RUN_TIME_ALIAS).
 // CLAUDE_CODE_SUBAGENT_MODEL_FORCE: when it is on, Claude Code ignores the call's `model` (all but `inherit`) and the agent file's
 // pin, and runs every agent on CLAUDE_CODE_SUBAGENT_MODEL, else on the lead's model (read in the 2.1.330 bundle: cht() and aJo(),
-// the subagent model resolution; the Agent tool then has no `model` field at all). So with it on, only that env value counts.
+// the subagent model resolution; the Agent tool then has no `model` field at all). It is on exactly as Claude Code reads a boolean
+// env value (the registry's `L.bool()`, Ne(): `1`, `true`, `yes` or `on`, any case, trimmed); any other value leaves it off, and
+// then the call's model and the pin decide as usual. With it on, the call's model is still checked too (a Fable call is denied in
+// every case), and CLAUDE_CODE_SUBAGENT_MODEL must be a concrete model other than Fable.
+// ANTHROPIC_DEFAULT_OPUS_MODEL, _SONNET_, _HAIKU_ and ANTHROPIC_DEFAULT_MODEL re-point the aliases (`opus`, `sonnet`, `haiku`,
+// `default`) to another model (2.1.330 names them in its model env list); one that names Fable turns every agent on that alias into
+// a Fable agent, so while one does, every Agent call is denied (remappedAliasReason).
 // Exports: FABLE_RULE, NAME_A_MODEL, callModelReason(model), foundPinReason(type, pin, env, isPlainModelName), isModelForced(env),
-// forcedModelReason(callModel, env).
+// forcedModelReason(callModel, env), remappedAliasReason(env).
 // Invariants: pure (reads only its arguments); each reason is one line of fixed text plus quoted values.
 import { quotedValue } from './agent-brief.mjs';
 
 const FABLE_MODEL = /fable/i; // the alias `fable` and every Fable model id
-const INHERIT_MODEL = /^inherit$/i; // the agent runs on the lead's model, which the hook cannot see
+const INHERIT_MODEL = /^\s*inherit\s*$/i; // the agent runs on the lead's model, which the hook cannot see
 // Aliases Claude Code resolves at run time to a model the hook cannot see (2.1.330 bundle, yW() and Xd()): `best` is the account's
 // most capable model, which may be Fable; `default` is the account's default model; `opusplan` is Opus in plan mode and Sonnet
 // otherwise. An agent names a concrete model instead. `[1m]` asks for the 1M context window of the same model.
 const RUN_TIME_ALIAS = /^(best|default|opusplan)(\[1m\])?$/i;
 const ALIAS_NOTE = 'an alias Claude Code resolves only at run time (`best` may be Fable; `default` and `opusplan` depend on the account and mode)';
 const FORCE_ENV = 'CLAUDE_CODE_SUBAGENT_MODEL_FORCE';
-// Values that leave the force off. Anything else counts as on: a wrong guess then only asks for a non-Fable
-// CLAUDE_CODE_SUBAGENT_MODEL, which the shipped settings set.
-const FORCE_OFF = /^(|0|false|no|off)$/i;
+const FORCE_ON_VALUES = ['1', 'true', 'yes', 'on']; // Claude Code's Ne(), after lower case and trim
+// The env variables that re-point a model alias, with no Fable one (the `fable` alias is denied already)
+const ALIAS_TARGET_ENV = /^ANTHROPIC_DEFAULT_(?:(?:OPUS|SONNET|HAIKU)_)?MODEL$/;
 const isRunTimeAlias = (model) => RUN_TIME_ALIAS.test(model.trim());
 export const FABLE_RULE = 'Not started: Fable is never used for an agent (the owner chooses it by hand only)';
 // Names the model the agent should run on, never a lower one: the shipped pins are opus for lex and dev, sonnet for tess
@@ -59,25 +65,40 @@ export function foundPinReason(type, pin, env, isPlainModelName) {
 }
 
 /**
- * Whether CLAUDE_CODE_SUBAGENT_MODEL_FORCE is on (see the header): then only CLAUDE_CODE_SUBAGENT_MODEL decides the agent's model.
+ * Whether CLAUDE_CODE_SUBAGENT_MODEL_FORCE is on, read as Claude Code reads it (see the header): then CLAUDE_CODE_SUBAGENT_MODEL
+ * decides the agent's model.
  * @param {Record<string, string | undefined>} env the hook's environment (Claude Code passes the settings `env` to it)
- * @returns {boolean} true unless the variable is unset, empty, `0`, `false`, `no` or `off`
+ * @returns {boolean} true only for `1`, `true`, `yes` or `on` (any case, trimmed)
  */
 export function isModelForced(env) {
   const value = env[FORCE_ENV];
-  return typeof value === 'string' && !FORCE_OFF.test(value.trim());
+  return typeof value === 'string' && FORCE_ON_VALUES.includes(value.toLowerCase().trim());
+}
+
+/**
+ * The no-Fable reason while an alias env variable (see the header) names Fable, else ''.
+ * @param {Record<string, string | undefined>} env the hook's environment
+ * @returns {string} one line naming the variables and the first value
+ */
+export function remappedAliasReason(env) {
+  const names = Object.keys(env).filter((name) => ALIAS_TARGET_ENV.test(name) && typeof env[name] === 'string' && FABLE_MODEL.test(env[name]));
+  if (names.length === 0) return '';
+  return `${FABLE_RULE}: ${names.join(', ')} points a model alias at \`${quotedValue(env[names[0]])}\`, so an agent on that alias would run on Fable; `
+    + 'remove it from the environment or the settings `env`, then launch again.';
 }
 
 /**
  * The no-Fable reason while CLAUDE_CODE_SUBAGENT_MODEL_FORCE is on: the agent runs on CLAUDE_CODE_SUBAGENT_MODEL, or on the lead's
  * model when that is unset or `inherit`, or when the call asks for `model: inherit` (the one call value Claude Code still honours).
- * @param {unknown} callModel the Agent call's `model`
+ * A Fable or alias call model is denied too, though Claude Code would ignore it: a Fable call is never let through.
+ * @param {unknown} callModel the Agent call's `model` (undefined or '' when it names none)
  * @param {Record<string, string | undefined>} env CLAUDE_CODE_SUBAGENT_MODEL
  * @returns {string} the one-line deny reason, or '' when the forced model is a concrete model other than Fable
  */
 export function forcedModelReason(callModel, env) {
   const turnOff = `set CLAUDE_CODE_SUBAGENT_MODEL to a concrete model other than Fable, or turn ${FORCE_ENV} off`;
-  if (typeof callModel === 'string' && INHERIT_MODEL.test(callModel.trim())) return callModelReason(callModel);
+  const callReason = callModel === undefined || callModel === '' ? '' : callModelReason(callModel);
+  if (callReason !== '') return callReason;
   const model = typeof env.CLAUDE_CODE_SUBAGENT_MODEL === 'string' ? env.CLAUDE_CODE_SUBAGENT_MODEL.trim() : '';
   if (model === '' || INHERIT_MODEL.test(model)) {
     return `${FABLE_RULE}: ${FORCE_ENV} is on and CLAUDE_CODE_SUBAGENT_MODEL names no model, so every agent runs on the lead's model, which may be Fable; ${turnOff}.`;

@@ -25,8 +25,8 @@
 // The main-agent route (which types the boss and the subagents may start) is lib/agent-route.mjs, the guard's first gate.
 // Exports: MAX_AGENTS_PER_TYPE, PENDING_MS and STALE_MS (lib/main-agents-store.mjs's), MAIN_AGENT_TYPES (lib/agent-route.mjs's),
 // claimMainSlot, releaseMainSlot, mainCapReason, resumeCapReason, recordMainStart, recordMainStop.
-// Invariants: never throws; the hook's own events fail open (exit 0, no output); a gate that cannot read the store denies; output
-// is fixed text, types, agent ids and the store path.
+// Invariants: never throws; the hook's own events and the resume cap fail open; claimMainSlot's caller denies on an unusable store;
+// output is fixed text, types, agent ids and the store path.
 import { appendFileSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
@@ -165,10 +165,12 @@ function messageTarget(to) {
  * Why here: SubagentStart fires on a resume (2.1.330, seen 2026-11-24: the resumed agent's start was recorded at the send's time)
  * but cannot block, so the cap is checked before the send, like a launch. A message to a running agent (queued, no resume), to
  * `main`, or to an id the record holds no type for (a helper, an agent stopped before types were kept) passes. The resume takes
- * no slot here: its SubagentStart does (recordMainStart).
+ * no slot here: its SubagentStart does (recordMainStart). It fails open: a record that cannot be read or stays locked, and any
+ * failure, let the message go, since a message starts no new agent (the no-Fable rule cannot be broken by it) and blocking it
+ * would cut the lead off from its agents.
  * @param {unknown} input the PreToolUse(SendMessage) hook input: session_id, transcript_path, tool_input.to
  * @param {Record<string, string | undefined>} env HOME / USERPROFILE (the store)
- * @returns {string} the cap text, the fail-closed text when the record cannot be read or stays locked, else ''
+ * @returns {string} the cap text when the resume would exceed the cap, else ''
  */
 export function resumeCapReason(input, env = process.env) {
   try {
@@ -186,12 +188,11 @@ export function resumeCapReason(input, env = process.env) {
     });
     const { state, type, running } = done ?? NO_STORE;
     const storePath = join(mainAgentsDir(env), `${session}.json`);
-    if (state === 'unusable') return `agent cap: the main-agent record ${storePath} cannot be read or stays locked; fix or delete it, then send again`;
-    if (state !== 'full') return '';
+    if (state !== 'full') return ''; // an unusable record too: the message goes (fail open, see the doc comment)
     return `agent cap: ${MAX_AGENTS_PER_TYPE} ${quotedValue(type)} agents of this session run (${runningIds(running)}); this message would resume `
       + `${quotedValue(target)} as one more; wait for one of them to return, then send it again (store: ${storePath})`;
   } catch {
-    return `agent cap: the main-agent record could not be checked, so the message is not sent; send it again`;
+    return ''; // fail open, as for an unusable record
   }
 }
 

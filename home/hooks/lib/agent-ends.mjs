@@ -4,8 +4,11 @@
 // lead's transcript, one JSON line per end:
 //   {"type":"queue-operation","operation":"enqueue","timestamp":"<ISO time>","content":"<task-notification>\n<task-id>ID</task-id>
 //    ... <status>failed</status> ..."}
-// with the status completed, failed, killed or stopped. This shape is Claude Code's own and undocumented: a transcript that cannot
-// be read, or a line in another shape, shows no end, so the caller falls back to its stale age (never a wrong free slot).
+// with the status completed, failed, killed or stopped. Only the harness's own structure counts: the content starts with the
+// notice tag, then the task id, then only the header fields Claude Code writes before the status (tool-use-id, output-file), then
+// the status. A queued message that quotes such text anywhere else (a user's or an agent's message) is no end. This shape is
+// Claude Code's own and undocumented: a transcript that cannot be read, or a line in another shape, shows no end, so the caller
+// falls back to its stale age.
 // Exports: agentEndTimes(transcriptPath, agentIds).
 // Invariants: read-only; at most MAX_READ_BYTES from the end of the file are read (the ends that matter are the recent ones);
 // never throws.
@@ -15,26 +18,35 @@ const MAX_READ_BYTES = 16 * 1024 * 1024; // the tail read: a day of heavy lead w
 // matters is newer than the running launch it frees; a bigger read only slows the gate
 const ENDED_STATUSES = ['completed', 'failed', 'killed', 'stopped'];
 const NOTICE_MARK = '<task-notification>';
-const TASK_ID = /<task-id>([^<]*)<\/task-id>/;
-const STATUS = /<status>([^<]*)<\/status>/;
+// The notice header as Claude Code 2.1.330 writes it: `<task-notification>\n<task-id>ID</task-id>\n<tool-use-id>..</tool-use-id>\n
+// <output-file>..</output-file>\n<status>S</status>\n` (the two middle fields may be absent), anchored at the start of the content.
+const NOTICE_HEADER = /^<task-notification>\n<task-id>([\w-]+)<\/task-id>\n(?:<(tool-use-id|output-file)>[^<\n]*<\/\2>\n)*<status>([a-z_]+)<\/status>\n/;
 
-/** The last MAX_READ_BYTES of a regular file as text (its first, cut line dropped), or '' when it cannot be read. */
+/**
+ * The last MAX_READ_BYTES of a regular file as text, whole lines only, or '' when it cannot be read. One byte more is read before
+ * the tail: when it is a newline the tail starts on a line and is kept whole; otherwise the cut first line is dropped.
+ */
 function transcriptTail(path) {
   let fd;
   try {
     fd = openSync(path, 'r');
     const info = fstatSync(fd);
     if (!info.isFile()) return '';
-    const length = Math.min(info.size, MAX_READ_BYTES);
-    const bytes = Buffer.alloc(length);
-    readSync(fd, bytes, 0, length, info.size - length);
-    const text = bytes.toString('utf8');
-    return length < info.size ? text.slice(text.indexOf('\n') + 1) : text;
+    if (info.size <= MAX_READ_BYTES) return readBytes(fd, info.size, 0);
+    const text = readBytes(fd, MAX_READ_BYTES + 1, info.size - MAX_READ_BYTES - 1);
+    return text.slice(text.indexOf('\n') + 1); // from the first whole line (index 0: the byte before the tail ends a line)
   } catch {
     return ''; // no transcript to read: the caller keeps its stale age
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
+}
+
+/** `length` bytes of an open file from `position`, as text. */
+function readBytes(fd, length, position) {
+  const bytes = Buffer.alloc(length);
+  readSync(fd, bytes, 0, length, position);
+  return bytes.toString('utf8');
 }
 
 /** The agent id and end time (epoch ms) of one transcript line, or null when the line is no agent's end notice. */
@@ -47,11 +59,10 @@ function endOfLine(line) {
     return null; // a line in another shape shows no end
   }
   if (row?.type !== 'queue-operation' || row.operation !== 'enqueue' || typeof row.content !== 'string') return null;
-  const id = TASK_ID.exec(row.content)?.[1];
-  const status = STATUS.exec(row.content)?.[1];
+  const header = NOTICE_HEADER.exec(row.content);
   const at = Date.parse(row.timestamp);
-  if (id === undefined || !ENDED_STATUSES.includes(status) || !Number.isFinite(at)) return null;
-  return { id, at };
+  if (header === null || !ENDED_STATUSES.includes(header[3]) || !Number.isFinite(at)) return null;
+  return { id: header[1], at };
 }
 
 /**
