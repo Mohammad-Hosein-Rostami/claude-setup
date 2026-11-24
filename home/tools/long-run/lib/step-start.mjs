@@ -4,7 +4,8 @@
 // Invariants: the journal names the session id and the start before the child exists, so a crash between the two resumes or
 //   starts fresh without losing count; the boss's agents are written to the journal as the stream names them, and the worktrees
 //   that appeared since the step's first start before and after each start, so a resumed boss is told what was in flight
-//   (RESUME-STATE, in-flight.mjs) even after a SIGKILL of the driver; the token is read from the store for the recorded account at each start and goes only to
+//   (RESUME-STATE, in-flight.mjs) even after a SIGKILL of the driver; a session with no transcript is started fresh, never
+//   `--resume`d; the token is read from the store for the recorded account at each start and goes only to
 //   the child env; the usage row and the journal hold the account name and token counts, never the token; check output is scrubbed.
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -13,6 +14,7 @@ import { logUsage } from '../../account/lib/usage.mjs';
 import { claudeArgs, classify, scrub, startClaude } from './claude-run.mjs';
 import { readJournal, writeJournal } from './run-store.mjs';
 import { accountToken } from './run-account.mjs';
+import { hasTranscript } from './control.mjs';
 import { openAgents, resumeStateBlock, trackAgent } from './in-flight.mjs';
 import { WORKTREES_MAX, commitsSince, listWorktrees, newWorktrees, worktreeState } from './worktrees.mjs';
 
@@ -183,6 +185,10 @@ async function runChild(ctx, unit, begun, { args, prompt, token, logBase, fresh 
  */
 export async function startOnce(ctx, unit, journal, { reply, told }) {
   const token = accountToken(journal.account, { env: ctx.env, store: ctx.store });
+  if (journal.sessionId !== null && !hasTranscript({ sessionId: journal.sessionId, env: ctx.env })) {
+    // A crash between the journal write and the spawn, or the transcript cleanup, leaves nothing to resume (audit H14).
+    journal = { ...journal, sessionId: null, notes: [...journal.notes, `session ${journal.sessionId} has no transcript: fresh start`] };
+  }
   const fresh = journal.sessionId === null;
   const { begun, args, logBase } = beginJournal(ctx, unit, journal, fresh);
   const prompt = promptFor(ctx, unit, { ...begun, last: journal.last }, { fresh, reply, told });

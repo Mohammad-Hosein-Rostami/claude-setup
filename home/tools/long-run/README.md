@@ -35,6 +35,7 @@ running (pause or stop it first) or the folder is used by another live run.
 | `resume --stale [--delay <s>]` | resume every run whose driver died (what autostart runs) |
 | `rerun <run> --from <step> [--reload-job <f>]` | run again from an earlier step (fresh sessions; files are not rolled back) |
 | `summary <run>` | print `summary.md` |
+| `prune [--older-than <days>]` | remove the folders (checkpoints, logs, journals) of done and abandoned runs that ended at least that many days ago (default 30); a running, held, paused, stopped or stale run is never removed |
 | `events [--run <id>] [--since <n>] [--follow] [--after <n>] [--wait-next [--max-wait <s>]]` | the numbered event lines |
 | `notify setup [--server <url>] \| test \| off` | phone push through ntfy (desktop notes need no setup) |
 | `autostart on \| off \| status` | resume stale runs after login (launchd agent / Task Scheduler) |
@@ -114,7 +115,7 @@ you started") and must end with one line `STEP-RESULT: done`, `STEP-RESULT: bloc
     run.json                              account, startedBy (terminal | session | schedule), createdAt
     checkpoints.sqlite                    LangGraph checkpoints (thread_id = run id)
     driver.json, driver.lock, driver.log  the driver: pid, host, heartbeat (30 s), status, waits, holds
-    control/                              PAUSE, STOP, <id>.pause, <id>.stop, <id>.takeover, <id>.tell
+    control/                              PAUSE, STOP, <id>.pause, <id>.stop, <id>.takeover, <id>.<time>-<n>-<uuid>.tell (one per message)
     steps/<id>.json, steps/.rerun-<n>/    one journal per step or item; journals a rerun set aside
     logs/<id>.<start>.jsonl, .stderr.log  each start's stream, token-shaped text scrubbed, cut at 50 MB
     events.jsonl, summary.md              this run's events; the report (steps, starts, tokens, branches)
@@ -124,7 +125,9 @@ you started") and must end with one line `STEP-RESULT: done`, `STEP-RESULT: bloc
 ```
 
 A run whose driver pid is gone or whose heartbeat is over 120 s old is `stale`; `resume` (or autostart) continues it. A child a
-dead driver left running is ended first, and only when its command line holds the step's session id.
+dead driver left running is ended first, and only when its command line holds the step's session id. A session with no
+transcript (the driver died before the boss started, or Claude Code's 30-day cleanup removed it) is started fresh, and the
+journal says so. Nothing prunes finished runs by itself: `long-run prune` does, when you run it.
 
 ## How you control a run
 

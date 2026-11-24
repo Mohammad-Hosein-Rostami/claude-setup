@@ -15,6 +15,7 @@ import { NotFound, Refusal, UsageError, driverDeps, openRun } from './lib/cli-co
 import { checkCommand, resumeCommand, resumeStale, rerunCommand, startCommand } from './lib/cli-run.mjs';
 import { pauseOrStop, takeoverCommand, tellCommand } from './lib/cli-control.mjs';
 import { drive } from './lib/driver.mjs';
+import { pruneCommand } from './lib/prune.mjs';
 import { followEvents, readEventLines, waitNextEvents } from './lib/events.mjs';
 import { notify, removeNtfy, setupNtfy } from './lib/notify.mjs';
 import { addSchedule, autostart, listSchedules, readSchedule, removeSchedule } from './lib/os-schedule.mjs';
@@ -24,7 +25,7 @@ import { runView, statusLines, writeSummary } from './lib/view.mjs';
 import { LOG_TAIL_DEFAULT, logLines, watchRun } from './lib/watch.mjs';
 
 const EXIT = { ok: 0, refused: 1, usage: 2, notFound: 3, busy: 4 };
-const VALUE_FLAGS = new Set(['answer', 'answer-file', 'item', 'reload-job', 'from', 'run', 'since', 'after', 'tail', 'server', 'at', 'on', 'schedule', 'delay', 'message-file', 'max-wait']);
+const VALUE_FLAGS = new Set(['answer', 'answer-file', 'item', 'reload-job', 'from', 'run', 'since', 'after', 'tail', 'server', 'at', 'on', 'schedule', 'delay', 'message-file', 'max-wait', 'older-than']);
 const STATUS_RUNS = 20;
 const EVENTS_SINCE_DEFAULT = 20;
 const WAIT_NEXT_DEFAULT_SECONDS = 2 * 60 * 60;
@@ -43,6 +44,7 @@ const HELP = `long-run <command>
   resume --stale [--delay <s>]          resume every run whose driver died (autostart)
   rerun <run> --from <step> [--reload-job <f>]
   summary <run>                         print summary.md
+  prune [--older-than <days>]           remove done and abandoned runs that ended that long ago (default 30 days)
   events [--run <id>] [--since <n>] [--follow] [--after <n>] [--wait-next [--max-wait <s>]]
   notify setup [--server <url>] | test | off
   autostart on | off | status
@@ -164,6 +166,7 @@ const COMMANDS = {
     writeSummary(paths, { nextCommand: `long-run status ${paths.runId}` });
     write(readFileSync(paths.summary, 'utf8').trimEnd());
   },
+  prune: pruneCommand,
   events: eventsCommand,
   notify: notifyCommand,
   autostart: ({ positional, env, write }) => {
