@@ -9,11 +9,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, cpSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CLEAN_ENV, git, makeRepo } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { sharedToolDir } from './shared-tools.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const skip = process.platform === 'win32' && 'bash hooks';
@@ -28,25 +29,23 @@ function write(repo, files) {
   }
 }
 
-/** A folder holding a gitleaks stub that exits with `exitCode`, to put first on PATH. */
-function stubGitleaks(exitCode) {
-  const bin = realpathSync(makeTempDir('githooks-bin-'));
-  writeFileSync(join(bin, 'gitleaks'), `#!/bin/sh\nexit ${exitCode}\n`);
-  chmodSync(join(bin, 'gitleaks'), 0o755);
-  return bin;
-}
+/** A folder holding a gitleaks stub that exits with `exitCode`, to put first on PATH (shared: a new executable is slow to start). */
+const stubGitleaks = (exitCode) => realpathSync(sharedToolDir({ gitleaks: `#!/bin/sh\nexit ${exitCode}\n` }));
+
+/** A shared copy of this repo's .githooks folder (both hooks), with no scripts/ beside it. */
+const hooksCopy = () =>
+  realpathSync(sharedToolDir(Object.fromEntries(['pre-commit', 'commit-msg'].map((name) => [name, readFileSync(join(ROOT, '.githooks', name), 'utf8')]))));
 
 /** A repo on branch feat with the hook installed (core.hooksPath), two hook files and a test file that fails if it ever runs. */
 function makeHookRepo({ gitleaksExit = 0 } = {}) {
   const repo = makeRepo();
   const bin = stubGitleaks(gitleaksExit);
-  cpSync(join(ROOT, '.githooks'), join(repo, '.githooks'), { recursive: true });
   write(repo, {
     'home/hooks/a.mjs': 'export const a = 1;\n',
     'home/hooks/lib/b.mjs': 'export const b = 1;\n',
     'tests/a.test.mjs': "import test from 'node:test';\ntest('a', () => { throw new Error('a test ran in the commit hook'); });\n",
   });
-  git(repo, 'config', 'core.hooksPath', '.githooks');
+  git(repo, 'config', 'core.hooksPath', hooksCopy());
   git(repo, 'add', '.');
   git(repo, 'commit', '-q', '--no-verify', '-m', 'seed');
   git(repo, 'switch', '-q', '-c', 'feat');
@@ -119,8 +118,7 @@ function makeLiveHookRepo({ list = `${WORD}\n`, gitleaks = 'stub', seed = {} } =
   if (gitleaks === 'real') copyFileSync(join(ROOT, '.gitleaks.toml'), join(repo, '.gitleaks.toml'));
   git(repo, 'add', '--', ...Object.keys(files), ...(gitleaks === 'real' ? ['.gitleaks.toml'] : []));
   git(repo, 'commit', '-q', '--no-verify', '-m', 'seed');
-  const hooks = realpathSync(makeTempDir('githooks-live-'));
-  writeFileSync(join(hooks, 'pre-commit'), `#!/usr/bin/env bash\nexec bash ${JSON.stringify(join(ROOT, '.githooks', 'pre-commit'))} "$@"\n`, { mode: 0o755 });
+  const hooks = realpathSync(sharedToolDir({ 'pre-commit': `#!/usr/bin/env bash\nexec bash ${JSON.stringify(join(ROOT, '.githooks', 'pre-commit'))} "$@"\n` }));
   git(repo, 'config', 'core.hooksPath', hooks);
   const path = gitleaks === 'real' ? process.env.PATH : `${stubGitleaks(0)}:${process.env.PATH}`;
   const sh = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8', env: { ...OUTSIDE_A_TEST_RUN, PATH: path } });
