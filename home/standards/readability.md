@@ -71,7 +71,7 @@ Documents are for people, in proportion to the change. Use the repo's existing p
 
 - A small fix needs a clear commit message and nothing else. A new module needs its README section.
   If the repo keeps no decision records, put the why in a comment or the commit body; do not start a new `docs/` tree.
-- Working notes (`STATUS.md`, `HANDOFF.md`) are not committed unless the team wants them.
+- Working notes (`HANDOFF.md`) are not committed unless the team wants them.
 
 ## Configs
 - A comment says why a value is what it is and its unit (`# 30 s: the vendor times out at 45 s`, `timeoutMs`).

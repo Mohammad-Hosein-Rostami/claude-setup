@@ -4,68 +4,44 @@ How to work with this setup day to day. Editing the repo itself is in [usage.md]
 [setup.md](setup.md); every file is listed in [catalog.md](catalog.md).
 
 ## Start
-Start a session with `claude --model <m> --effort <e>`, for example `claude --model opus --effort high` (the usual lead);
+Start a session with `claude --model <m> --effort <e>`, for example `claude --model opus --effort high` (the usual boss);
 add `-c` to continue this folder's last conversation. With several accounts, run `claude-as <name>` in the terminal first.
-Keep the lead model all session (a model switch rebuilds the cache); raise the effort for one hard turn with `/effort`.
+Keep the model all session (a model switch rebuilds the cache); raise the effort for one hard turn with `/effort`.
 Keep extra usage off in claude.ai so nothing can bill credits.
 
 ## A normal task
 - One task per session. For an unrelated next task, `/clear` or start a new session first.
-- The lead plans, decides and delegates: `scout` reads, `runner` runs commands, `implementer` writes code. Technical
-  choices are made and stated in one line; owner decisions are asked.
-- The lead picks the form by the job (the rule is in `home/lead.md`, "Job form and order"). Inline, no agent: lookups
-  (`/quick` for a read-only one), reading code, one command, a one-file or under-30-line edit. Everything else runs as steps of at most 5 agents at a time: build batch (lanes that share no
-  file), then a fix batch when the gate finds something. A job of several steps is a road (`road-<id>.json` beside `STATUS.md`): each step ends
-  with a gate (`road.mjs gate`) and one update to you. Fixed sequences are one script call, not an agent: `land-lane` lands a
-  lane (the only way to land, one at a time), and a machine sync, where your setup has one, brings your other machines along
-  (`docs/setup.md`, "Sync the machines").
+- The main session is the boss: it routes the work, asks you what only you can decide and lands branches; it does no work
+  itself. It starts three main agents, at most 6 at once:
+  - `lex` clarifies, researches, compares, designs and plans, and writes the acceptance lines. It asks you its questions at
+    the start of a job. Its helpers: `lex-scout` (code and doc lookups) and `lex-web` (web research with sources).
+  - `dev` writes code, config and fixes in its own worktree. Its helpers: `dev-ui` (screens, components, forms), `dev-pixel`
+    (Figma to code; its final gate is `pixel-qa`), `dev-debug` (hard bugs, root cause) and `dev-run` (installs, builds, long
+    logs, returned as a short summary).
+  - `tess` runs tests, type check, lint, build and edge cases, in the background, only when you ask; `tess-review` reviews
+    the code against lex's spec when you ask for a review.
+- Helpers are not counted in the 6. Technical choices are made and stated in one line; your decisions are asked.
+- Landing is one script call, not an agent: the `land` script (`home/tools/land`) rebases the branch, fast-forwards it with
+  `git merge --ff-only` and removes the landed branch and worktree. A machine sync, where your setup has one, brings your
+  other machines along (`docs/setup.md`, "Sync the machines").
 - UI work is checked as closely as the change needs, by the check plan (`node ~/.claude/tools/ui-proof/ui-proof.mjs plan`, rules
   in `home/standards/ui-checks.md`): nobody labels the work; the request, the diff and the screens it reaches decide. A docs page,
   tests or config need no UI proof (none); a dependency bump or a "no visual change" request needs identical renders before and
   after (same); logic, text or look on a screen with no design needs before and after renders with no new problem (render); a new
-  screen or state takes the `ui-implementer` loop and the `visual-qa` final gate (visual). A design word in the request, or a look
-  change on a screen with a Figma frame, takes the full pixel-perfect path, unchanged: `figma-pixel-perfect`, `ui-check run` rounds
-  until every state passes, then the `visual-qa` final gate on the tree that lands (pixel). `ui-quality-pass` runs before done at
-  every depth but none (under same as a review that lists `follow-up:` lines).
-  The code check described under "The done-check" below runs by itself and has no category switch. The other guards stay: the Bash
-  guard, gitleaks and `node --check` of hook files at commit, and the `git-tidy` gate.
-- While agents run you can keep talking to the lead: it answers questions and asks yours without stopping the
-  agents. A command that runs over about 5 minutes goes to the background with its `timeout` set (at most 2 h); `watch.mjs` is for waiting on a
-  session or an agent, not on a command.
+  screen or state takes the `dev-pixel` compare loop and the `pixel-qa` final gate (visual). A design word in the request, or a
+  look change on a screen with a Figma frame, takes the full pixel-perfect path, unchanged: `figma-pixel-perfect`, `ui-check run`
+  rounds until every state passes, then the `pixel-qa` final gate on the tree that lands (pixel). `ui-quality-pass` runs before
+  done at every depth but none (under same as a review that lists `follow-up:` lines).
+- The guards stay on: the Bash guard, gitleaks and `node --check` of hook files at commit, and the `git-tidy` check at session start.
+- While agents run you can keep talking to the boss: it answers and asks without stopping the agents. A command that may run
+  over 3 minutes goes to the background with its `timeout` set (at most 2 h).
 - The final answer says what changed and what was not run. No recap of the process.
 
-## The done-check (what runs when an agent says done)
-- **What runs.** When an agent or the main session stops after changing code, the setup runs the project's own type check, lint of
-  the changed lines and only the tests that relate to the changed files, plus a scan for tests that were deleted, skipped or loosened.
-  It costs no model tokens when green and usually takes 10-60 seconds (at most 90). Nothing runs when no code changed, and it never
-  runs a whole test suite at a stop.
-- **The line.** Under the reply you see one line, for example
-  `checks: types ok · lint ok · tests 6 ok, 1 old fail · 41 s · not run: build · review: needed (security)`.
-  `old fail` is a failure the base commit already had: listed, never blocking. `not run (why)` means a check could not run; it is
-  never shown as ok. `FAIL left open` means a failure stayed after the agent was sent back.
-- **When it blocks.** A new failure or a weakened test sends the agent back once, in the same conversation, with a few lines of
-  errors. The same unchanged state passes (and the line says `left open`); after two blocks in a row it says `change approach`.
-  A stop that is blocked is never blocked again for the same state.
-- **Risky changes.** A change in security, stored data, money, locking, the setup's own guards or a very large change adds
-  `review: needed (<classes>)`. The lead then runs the `reviewer` agent once, one fix follows, then the check again; there is no
-  second review round. The classes are data in `home/tools/done-check/risk-rules.json`.
-- **Landing.** `land-lane` runs the same check on the landed tip after its rebase (reused in 0 s when nothing changed), refuses a
-  failed check (exit 4) and a risky lane without `--reviewed <sha>` or `--skip-review "<reason>"` (exit 10). `--accept-open`
-  lands a lane whose failure you accept.
-- **A false alarm.** Get the run id with `node ~/.claude/tools/done-check/done-check.mjs last --json` (the `id` in `row`), then
-  `node ~/.claude/tools/done-check/done-check.mjs label <run-id> --as false-alarm --check <types|lint|tests|tests-weakened>`
-  (`--as real` or `--as missed` for the other two verdicts; `--note "<text>"` is optional). Labels are counted in `stats`.
-- **Skip it.** `DONE_CHECK_SKIP=all` in the environment skips every check (the line says so, and one ledger row is written);
-  `DONE_CHECK_SKIP=types,lint` (a comma list of `types`, `lint`, `tests`) skips those kinds.
-- **The ledger.** `~/.claude/state/done-check/ledger.jsonl` holds one row per run and per label: kinds, counts, times and a hashed
-  repository id, the model and effort of the agent that stopped, never a file name, code or a secret. `done-check.mjs stats [--days n]`
-  shows per check the runs, blocks, how many the agent acted on, how many it ignored and the false-alarm rate, then the runs and blocks
-  per model and effort (older rows show as `unknown`). `scripts/doctor.sh` runs `stats --doctor` and prints a `WARN` for a
-  check whose false-alarm rate is over 10% after 10 blocks, or when the ledger is full; with no runs yet it prints only an ok line
-  (shown with `--all`). Whether to change `risk-rules.json` or a project's skip list is your decision.
-- **What it does not catch.** Wrong behaviour no test covers, and what only you see on screen. The UI checks are separate: the
-  check plan (above) decides them, and the pixel-perfect path is unchanged.
-- Tool details: `home/tools/done-check/README.md`.
+## Questions
+- `lex` asks at the start of a job. Any other agent that needs you stops and returns a `questions:` block: each question in
+  plain words, what it blocks, 2-4 options with the recommended one first, and a preview when the choice is a layout.
+- The boss asks them as popups in one batch and sends your answers back to the agent.
+- With no answer in time, a small, reversible choice takes the recommended option; a big or deleting one waits for you.
 
 ## Long or unattended runs
 - Run long or unattended sessions in a plain terminal app (or tmux), not an editor's built-in terminal: closing or
@@ -100,33 +76,15 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   `sleep` loop or one long `sleep`) is advice, not a dialog: Claude gets the fix once (let the package manager write the lockfile;
   rebase or `--ff-only`; run the long command in the background with a `timeout`), and the same
   command sent again runs. Every ask and its outcome is in `~/.claude/logs/guard.jsonl`.
-- Watch a run from a second session: `node ~/.claude/tools/watch/watch.mjs <session-id>` under the Monitor tool; it
-  prints one line per event that needs action and flags a stall. See its README (`home/tools/watch/README.md`).
-  With `--exit-on-event` in a background command it prints the first such event and exits, so a quiet hour costs the
-  lead no turns (in an unattended run set the command's `timeout`, at most 2 h: without one it stops after 30 min). A session that only finished its turn and waits for its owner is not a stall: add `idle` to the
-  class list (`--exit-on-event owner,idle`) to be told, otherwise it stays quiet. Idle is only told for a session whose process is registered
-  (watch by session id, not by file path); in any doubt the silence is still a stall.
-- A run that must survive a dropped connection starts a watch on its own session id with
-  `--exit-on-event api-error,stall,limit`, as a background command with `timeout` 7200000 (an unattended run stops one without it after 30 min); when the watch exits, the run is woken and carries on.
-- Long jobs run as background agents in steps of at most 5. Landing is `land-lane` (it checks free disk and the tip, rebases, proves the UI check plan of the rebased diff, then
-  fast-forwards; a lane that changes the app needs `--brief <brief file>`, the request the plan reads, and there are no UI waivers).
-  To bring your other machines along after the last landing, run the machine sync on the machine you landed on, in the repo folder,
-  as `docs/setup.md` ("Sync the machines") gives it; it never pushes.
-- Background agents hand decisions to the lead through the ask queue: `node ~/.claude/tools/ask/ask.mjs init` prints
-  the queue path, and the lead runs Monitor on `node ~/.claude/tools/ask/ask.mjs watch --queue <path>`. See
-  `home/tools/ask/README.md` and the `ask-owner` skill.
+- `tess` always runs in the background and reports to the boss (or the agent that asked); nobody waits for it.
+- To bring your other machines along after the last landing, run the machine sync on the machine you landed on, in the repo
+  folder, as `docs/setup.md` ("Sync the machines") gives it; it never pushes.
 
 ## What to expect from agents
 - Agents get one full brief (acceptance lines, failure cases, defaults) and finish it instead of stopping to ask about
   technical details; each default they took is listed in the report. Only your decisions (scope, money, irreversible,
   credentials) reach you. Expect fewer status messages.
-- Before reporting, an agent re-reads its own diff against the spec. A finding you or the lead raise goes back in one message. An agent that has been idle over 5 minutes is replaced by a fresh one that
-  gets the spec and the diff, because resuming bills its old context again.
-- Agents commit what is green at 80 tool calls and must return a status report by 120. An agent that ends without one is
-  continued once, not restarted.
-- An instruction that holds for the whole job ("always", "keep", "from now on") is written to `STATUS.md` under
-  `## Standing rules`, so it survives a compaction or a resume. When `STATUS.md` is created or a session resumes, the
-  lead backfills it from your own earlier messages with `recall.mjs --owner --session current`.
+- Before reporting, an agent re-reads its own diff against the spec. A finding you or the boss raise goes back in one message.
 - Saying that a fix did not hold ("still wrong", "i told you before", "third time") makes the agent reproduce the exact
   symptom first and check it before it replies.
 
@@ -140,9 +98,9 @@ Say what to remove or merge ("remove Nx", "merge the apps into one project") and
   `node ~/.claude/tools/env-names/env-names.mjs diff <saved-file> .` (env names added or removed).
 
 ## Clean git history
-History stays one straight line (rule C37): no merge commits, no branch merged into another.
-- Agents commit on their own branch; the lead rebases each lane onto main and lands it with `git merge --ff-only`, one
-  lane at a time, then removes the landed branch and worktree.
+History stays one straight line: no merge commits, no branch merged into another.
+- Agents commit on their own branch; the boss lands each branch with the `land` script (rebase onto main, then
+  `git merge --ff-only`), one at a time, which then removes the landed branch and worktree.
 - Ask "clean up the git tree" and the `git-linear-history` skill loads; it backs up first and proves the tree is unchanged.
 - The two commands: `node ~/.claude/tools/git-tidy/git-tidy.mjs check` (what is left to clean) and `... prune --apply`.
 - Pushes and remote branch deletes still ask you.
@@ -150,31 +108,27 @@ History stays one straight line (rule C37): no merge commits, no branch merged i
 ## Keeping context
 - Auto-compaction runs at a 400000-token window (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`); the status line shows the
   context size. Run `/compact` at a natural seam, not mid-step.
-- Multi-day work: keep `STATUS.md` (decisions, vocabulary, a `## Work items` table); the lead re-reads its first 60 lines
-  after a compaction, lists the job's rows first and edits them only with `status.mjs add|start|done|deliver`; a hand-over is recorded by itself (the `status-deliver.mjs` Stop hook) when a turn ends with no open row, and `status.mjs deliver "<what>"` records one while rows stay open. The lead pastes the `Finish:` block of `node ~/.claude/tools/estimate/estimate.mjs STATUS.md` as every estimate; the status
-  line shows the same committed time as `done by 21:40`, `all rows done`, `handed over 17:54`, `work left ~99 h` for a job longer than any finished one, or `done ? <cause>` when the tool refuses or fails (nothing only when STATUS.md is missing; the forms are in the estimate README).
-- A detail from an earlier session or before a compaction: `recall`
-  (`node ~/.claude/tools/recall/recall.mjs "<terms>"`, add `--session current` after a compaction).
 - Phase change, repeated compactions or `/clear`: run the `handoff` skill, then `/clear` and say
   "continue from HANDOFF.md".
 - Start a fresh session for an unrelated task, or when context is large and the next step is a new phase.
 
 ## Resume after an exit or an account switch
-The state of a job is on disk, in files, so an exit, a usage-limit stop or a switch of account loses no finished work:
-the rows of `STATUS.md`, the branch tips, a `HANDOFF-<row>.md` note per lane and the road file.
-1. Start the session again: `claude --model <m> --effort <e> -c` (or `claude --resume <session id>`) in the same folder. After a switch of account, start it in the same folder with the other account.
-2. The start notice (`resume-notice.mjs`) lists what was left open: writer agents with no recorded finish (their STATUS row, the folder's dirty-file count), open owner questions of the ask queues, and the "Don't redo" list of the `HANDOFF.md`.
-3. The lead reads the `STATUS.md` rows and the notes, then runs `node ~/.claude/tools/road/road.mjs next <road.json> --budget 5` to find the next step. A stopped writer is continued once with SendMessage; if that fails, a fresh agent gets the brief, `git diff <base>...<branch>` and the lane's `HANDOFF-<row>.md`. Say "continue" and the lead does this.
+Finished work is on disk, so an exit, a usage-limit stop or a switch of account loses none of it: the branch tips, the
+commits on them and any `HANDOFF.md` note.
+1. Start the session again: `claude --model <m> --effort <e> -c` (or `claude --resume <session id>`) in the same folder. After a
+   switch of account, start it in the same folder with the other account.
+2. Say "continue": the boss reads the hand-over note and the branches, continues a stopped agent once with SendMessage, and
+   otherwise starts a fresh one with the brief and `git diff <base>...<branch>`.
 
 ## At a usage limit
 Wait for the subscription reset. Never turn on credits, `/fast`, or `/code-review ultra`. A Fable cap means a new start
 on Opus (`claude --model opus --effort high -c`), not credits.
 
 ## After changing the setup
-- Skills, agents, rules, standards, hooks, tools and the lead rules are live through symlinks: new edits apply at once, and
-  hook scripts run fresh on each call.
-- Settings, hooks config, CLAUDE.md, agents and plugins are read when a session starts, and the lead rules load at
-  start: restart open sessions (`/exit`, then `claude -c`).
+- Skills, agents, rules, standards, hooks and tools are live through symlinks: new edits apply at once, and hook scripts
+  run fresh on each call.
+- Settings, hooks config, CLAUDE.md, agents and plugins are read when a session starts: restart open sessions (`/exit`,
+  then `claude -c`).
 - `~/.claude/settings.json` is a merged copy: change `settings/base.json`, then re-run `scripts/install.sh`.
 - Because the repo is live in every session, edit hooks and tools in a git worktree (`scripts/lane-new.sh <name>` makes one on `lane/<name>` and installs the tool dependencies); when the suite is green, rebase onto main and
   fast-forward (`git merge --ff-only`).

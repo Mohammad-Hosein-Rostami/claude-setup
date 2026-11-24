@@ -6,10 +6,10 @@ live in every running session at once. A half-written hook breaks Bash everywher
 - Shared text (`home/`, `docs/`, this file) holds no one's private facts (name, machines, accounts, billing, own standing
   rules); those go in `personal/CLAUDE.md` (git-ignored, its own git repo; template in `personal.example/`).
 - Edit hooks, the guard and tools in a git worktree (`scripts/lane-new.sh <name>`). To land: rebase onto main, then
-  fast-forward (`git merge --ff-only`), through `land-lane`. Parallel agents each use their own worktree; never edit the main
-  checkout while others work.
-- Tests: `node --test tests/*.test.mjs` (never bare `node --test`). The done-check runs the tests that relate to a change when an agent or the session stops, and `land-lane` runs
-  it again when a lane lands; the commit hook and a push run none. Run the whole suite by hand when you want to know everything still works.
+  fast-forward (`git merge --ff-only`), through the `land` script (`home/tools/land`). Parallel agents each use their own
+  worktree; never edit the main checkout while others work.
+- Tests: `node --test tests/*.test.mjs` (never bare `node --test`). No test runs by itself: the commit hook and a push run
+  none. Run the whole suite by hand (or ask `tess`) when you want to know everything still works.
 - The pre-commit hook runs gitleaks on the staged changes and `node --check` on each staged hook file.
 - Commit only your own paths: `git commit -m "<conventional message>" -- <paths>`. Never `--no-verify`.
 - `~/.claude/settings.json` is a merged copy: change `settings/base.json` (or an OS file) and re-merge with

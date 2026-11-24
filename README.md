@@ -7,13 +7,12 @@ repo. `settings.json` is generated from `settings/` (it holds machine paths).
 ## Contents
 | Path | What |
 | ---- | ---- |
-| `home/CLAUDE.md` | Global rules: checks, token discipline, worker rules, safety (model routing is in `home/lead-rules.md`) |
+| `home/CLAUDE.md` | Short global rules: language, who does what (boss, lex, dev, tess), questions, git, safety |
 | `home/rules`, `home/standards` | One-line rules (path-scoped) and the longer reference behind them |
-| `home/skills`, `home/agents` | Skills and subagents (the Opus session plans, decides and delegates; Opus 5.5 high implements; Opus reviews risky changes; Sonnet runs the visual check; Haiku looks up and runs) |
-| `home/hooks`, `home/statusline.mjs` | Bash guard, post-edit formatter, token audit, status line |
+| `home/skills`, `home/agents` | Skills and agents (the Opus session is the boss and delegates; `lex` plans, `dev` builds, `tess` tests and reviews when asked; Haiku helpers look up and run commands) |
+| `home/hooks`, `home/statusline.mjs` | Bash guard, post-edit formatter, status line |
 | `home/tools/ui-check` | Figma baseline pull, visual compare, responsive and column checks |
 | `settings/`, `plugins/` | Settings layers (base, OS, local) and the plugin list |
-| `home/lead-rules.md`, `home/lead.md` | The lead's rules, printed to the main session at start |
 | `tests/`, `tools/`, `.githooks` | Repo tests (`node:test`), Brewfile and Windows tool script, pre-commit (gitleaks, `node --check` of hook files) |
 | `scripts/` | `install.mjs` (the one installer; `install/`), `install.sh`, `install.ps1`, `doctor.sh` (+ `doctor/`), `doctor-accounts.mjs`, `lane-new.sh`, `merge-settings.jq` |
 
@@ -29,7 +28,7 @@ Update, roll back, remove, sync:
     git pull --ff-only && scripts/install.sh --update   # update (safe to repeat: a second run changes nothing)
     scripts/install.sh --update --to <tag>              # roll back to a git tag (`git tag` lists them); plain --update comes back
     scripts/install.sh --uninstall                      # remove what the installer made, restore the backups
-    node scripts/sync-machines.mjs --repo "$PWD"         # sync the machines in settings/local.json (bundle + ff-only pull, never a push); run it on the MacBook in this folder
+    node scripts/sync-machines.mjs --repo "$PWD"         # sync the machines in settings/local.json (bundle + ff-only pull, never a push); run it on the machine you landed on, in this folder
 
 `scripts/install.sh --dry-run` previews any of these. The sync targets, the phase's CLI pin and the values the sync copies
 to every machine live in the git-ignored `settings/local.json` under `claudeSetup` (see `settings/local.json.example`).
@@ -43,7 +42,7 @@ Run tests (the second needs the ui-check deps that `install.sh` installs):
     node --test tests/*.test.mjs
     pnpm --dir home/tools/ui-check test
 
-The done-check runs the tests that relate to your change when an agent or the session stops, and `land-lane` runs it again when a lane lands. The commit hook and a push run no tests; run the whole suite by hand when you want to know everything still works.
+No test runs by itself: the commit hook and a push run none. Run the whole suite by hand (or ask `tess`) when you want to know everything still works.
 
 Windows: `powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-Update [-To <tag>]] [-Uninstall]` (not verified on Windows yet). Needs git (Git for Windows).
 Existing targets are moved to

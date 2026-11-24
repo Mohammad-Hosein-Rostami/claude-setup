@@ -10,8 +10,8 @@ Keep every file valid at each commit: the files are live in every Claude session
 
 ## Add a skill
 1. `home/skills/<name>/SKILL.md` with frontmatter `name` and a one-line `description` that starts "Use when ..."
-   (the description is loaded in every session: keep it short), except explicit-invoke skills (`escalate`, `quick`,
-   `handoff`, `token-audit`), which describe the command instead. Optional: `model`, `disable-model-invocation: true`
+   (the description is loaded in every session: keep it short), except explicit-invoke skills (`handoff`),
+   which describe the command instead. Optional: `model`, `disable-model-invocation: true`
    for slash-command-only skills.
 2. Body: numbered steps, a done-gate, rule ids it enforces; link a `standards/` file instead of inlining long reference.
 3. Add the row to `docs/catalog.md` (edit by hand, copying the description verbatim from the frontmatter).

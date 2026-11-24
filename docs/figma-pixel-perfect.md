@@ -2,8 +2,8 @@
 
 Goal: exact at each Figma frame size, valid by invariants at every width in between, with few MCP calls and no
 screenshots in the model's context. Skill: `figma-pixel-perfect`. Rules and tolerances: `home/standards/figma.md`.
-Tool: `home/tools/ui-check/` (README beside it). Agent for the build and fix loop: `ui-implementer`; independent final gate on the
-tree that lands: `visual-qa` (read-only, only its PASS counts).
+Tool: `home/tools/ui-check/` (README beside it). Agent for the build and fix loop: `dev-pixel`; independent final gate on the
+tree that lands: `pixel-qa` (read-only, only its PASS counts; `dev-pixel` starts it).
 
 When this path runs: the check plan (`node ~/.claude/tools/ui-proof/ui-proof.mjs plan`, rules in `home/standards/ui-checks.md`) is
 pixel when the request has a design word or Figma link, or a look change reaches a screen with a Figma frame. Then every step
@@ -74,5 +74,5 @@ without ellipsis), tap targets >= 24x24 (WCAG 2.5.8; inline links exempt), text 
 `w<width>.png` stay on disk. `columns` checks body cells against header cells (left <= 1px, width <= 2px).
 
 ## Delegating
-Give the `ui-implementer` agent the build and the fix loop (it runs until every state passes), then the `visual-qa` agent the
-URL, root, cache dir, map and project for the final gate. `visual-qa` never fixes; it returns <= 20 lines and the report path.
+Give the `dev-pixel` agent the build and the fix loop (it runs until every state passes); it then gives the `pixel-qa` agent the
+URL, root, cache dir, map and project for the final gate. `pixel-qa` never fixes; it returns <= 20 lines and the report path.

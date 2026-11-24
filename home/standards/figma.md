@@ -51,7 +51,7 @@ The 0.5 % default stays; strict applies when the owner says exact or pixel perfe
 
 `spec.json` keeps `absoluteBoundingBox` (x, y, w, h: element rows) and `absoluteRenderBounds` (`render`: the capture of strokes outside, shadows and blur) for every node, and `strokeAlign`, `strokeWeight` and the effect radii in `style`.
 
-Plateau (two rounds, no gain): change approach, never lower the bar; see `agents/visual-qa.md`.
+Plateau (two rounds, no gain): change approach, never lower the bar; see `agents/pixel-qa.md`.
 
 Tune `--max-diff` up only for a documented cause (live images, video); never to hide layout. Raise per-run, not in the tool. A larger frame with the same defect diffs less, so keep the element gate on.
 

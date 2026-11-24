@@ -21,7 +21,7 @@ Both call `scripts/install.mjs`, the one installer (Node 22+, jq); `scripts/inst
 Symlinks need Developer Mode on Windows; otherwise items are copied (a warning is printed) and do not follow later
 edits. `install.ps1` runs on Windows PowerShell 5.1 and 7 (not verified on Windows yet). On Windows the installer stops without Git Bash; `settings/windows.json` turns the PowerShell tool off (`CLAUDE_CODE_USE_POWERSHELL_TOOL=0`) and every Bash hook matches `Bash|PowerShell`, so a PowerShell command is off or guarded; doctor checks both. `install.ps1 -ClaudeVersion <x.y.z>` installs that Claude Code, runs `claude --version` right after, and puts the old binary back when the version is not the one asked for.
 
-The installer links `home/*` (lead.md, lead-rules.md, rules, skills, agents, standards, hooks, tools, statusline.mjs, and `commands` when it has files) into
+The installer links `home/*` (rules, skills, agents, standards, hooks, tools, statusline.mjs, and `commands` when it has files) into
 `~/.claude`, makes `personal/` from `personal.example/` when it is missing (git-ignored, its own git repo with a first commit),
 links `~/.claude/project-notes` to `personal/project-notes`, and writes `~/.claude/CLAUDE.md` as a marker line plus
 `@<repo>/home/CLAUDE.md` and `@<repo>/personal/CLAUDE.md` (and removes the launcher, `modes` and `workflows` links an older install made for the retired session modes and workflows; a copy or the owner's own file at those paths goes to the backup folder instead), builds `~/.claude/settings.json`, installs `home/tools/ui-check` dependencies (lockfile if present,
@@ -41,7 +41,7 @@ want shared into `settings/*.json` and re-run the installer. `doctor.sh` reports
 `env.BASH_DEFAULT_TIMEOUT_MS` is `"300000"` (milliseconds, 5 minutes; the CLI default is 120000): a Bash call that runs longer is moved to the background, and the longest test suite takes about 4 minutes. A call can ask for more with its own `timeout` (at most `BASH_MAX_TIMEOUT_MS`, 600000 by default).
 
 ## Sync the machines
-Run on the MacBook, in the repo folder, once after the last land (the PC is the default target; others come from `claudeSetup.syncTargets`):
+Run on the machine you landed on, in the repo folder, once after the last land (the targets come from the script default and `claudeSetup.syncTargets`):
 `node scripts/sync-machines.mjs --repo "$PWD"`. Add `--tag <tag>` to move the targets to a phase tag, `--targets <name,...>` to sync only
 some, `--json` for one JSON row per machine (the old `--checks` is refused with exit 2).
 - First it checks the base branch is checked out, no tracked file changed and `git-tidy check` is clean (exit 3 with `verify: <check> failed: <why>`).
@@ -70,7 +70,7 @@ digits, `.`, `_`, `-`) is refused. If the CLI lacks the plugin subcommands, use 
 plugins the install output names. `gitkraken` is installed by the GitKraken app.
 
 ## Updating
-`git pull`. Linked content (skills, agents, rules, standards, hooks, tools, lead rules) is live on disk. Re-run `scripts/install.sh`
+`git pull`. Linked content (skills, agents, rules, standards, hooks, tools) is live on disk. Re-run `scripts/install.sh`
 when `settings/`, `plugins/` or a tool's `package.json` changed.
 
 A running Claude Code session reads settings, hooks config, CLAUDE.md, agents and plugins only at start: after any change,
@@ -88,5 +88,5 @@ A second, character-level parser runs behind the first (a reason only it found e
 Every ask and its outcome (allow, deny, timeout, no-gui, dialog-failed) is appended without secrets to `~/.claude/logs/guard.jsonl` (`CLAUDE_GUARD_LOG` overrides the path); the file is set to mode 0600 and its directory to 0700 on every write (a shared directory such as `$HOME` or the temp dir is left alone). Masked before logging: `-u user:pass` (curl-like commands), URL passwords (up to the last `@`), `Authorization:`/`X-*-Key:`/`X-*-Token:`/`Cookie:` header values, `--token`/`--api-key`/`--password`/`--secret`/`--client-secret` values, `NAME_TOKEN=`/`*_KEY=`/`*PASS=`/`*SECRET=` assignments, `?api_key=`/`?token=` query values, `redis-cli -a`, `PRIVATE-TOKEN:` headers and `_authToken=`.
 Production hosts: any name containing `prod`, plus the private list `~/.claude/private/prod-hosts` (one name or `*` glob per line; never committed). Copy `settings/prod-hosts.example` to start; `doctor.sh` reports whether the list exists.
 
-Doctor accepted list: `~/.claude/private/doctor-accepted` (or the file `CLAUDE_DOCTOR_ACCEPTED_FILE` names; one id per line, `#` starts a comment; never committed) lists machine facts you have seen and accept, so `doctor.sh` prints them as INFO, which its summary does not count, instead of WARN. Doctor knows two ids: `ollama-off` (Ollama not reachable, so recall search is lexical only) and `apple-terminal-notes` (Apple Terminal shows no desktop notes). Copy `settings/doctor-accepted.example` to start; it lists both, so delete a line you do not accept. Doctor only reads the file; without it every WARN stays a WARN. A list that is a link or not a plain file accepts nothing, and it or an id doctor does not know gives one WARN. The missing production-host list WARN can never be accepted.
+Doctor accepted list: `~/.claude/private/doctor-accepted` (or the file `CLAUDE_DOCTOR_ACCEPTED_FILE` names; one id per line, `#` starts a comment; never committed) lists machine facts you have seen and accept, so `doctor.sh` prints them as INFO, which its summary does not count, instead of WARN. Doctor knows the id `apple-terminal-notes` (Apple Terminal shows no desktop notes). Copy `settings/doctor-accepted.example` to start; delete a line you do not accept. Doctor only reads the file; without it every WARN stays a WARN. A list that is a link or not a plain file accepts nothing, and it or an id doctor does not know gives one WARN. The missing production-host list WARN can never be accepted.
 
