@@ -6,6 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { userInfo } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CLEAN_ENV, git } from './git-tidy-helpers.mjs';
@@ -16,6 +17,7 @@ const posix = { skip: process.platform === 'win32' && 'stub tools are shebang sc
 const TRUST_ENV = 'CLAUDE_POST_EDIT_TRUST_FORMAT';
 const EDITED = 'src/a.ts';
 const EVIL_SCRIPT = 'node evil.js';
+const RELATIVE_PROJECT_DIRS = ['.', 'proj']; // never a session folder: not absolute ('.' is the repo, the hook's cwd)
 const PACKAGE_MANAGERS = ['npm', 'pnpm', 'yarn']; // any of them may be picked from a lockfile above the temp folder; each is a stub
 // Our variables a test sets itself; the runner's own values must not leak into a hook run.
 const OUR_VARIABLES = [TRUST_ENV, 'CLAUDE_POST_EDIT_SKIP', 'CLAUDE_PROJECT_DIR'];
@@ -59,12 +61,12 @@ cp.execSync([script, ...args.slice(3)].join(' '), { stdio: 'inherit' });`);
   return { dir, marks, pathBin };
 }
 
-/** Runs the hook once on the edited file of `repo` with session `session`; `env`: more hook environment. */
-function edit(repo, session, env = {}) {
+/** Runs the hook once on the edited file of `repo` with session `session`; `env`: more hook environment; `cwd`: the session's cwd. */
+function edit(repo, session, env = {}, cwd = repo.dir) {
   const tmp = makeTempDir('post-edit-trust-tmp-');
   const hookEnv = { ...BASE_ENV, HOME: tmp, USERPROFILE: tmp, TMPDIR: tmp, TEMP: tmp, TMP: tmp, CLAUDE_GUARD_LOG: join(tmp, 'guard.jsonl'), PATH: `${repo.pathBin}${delimiter}${process.env.PATH}`, ...env };
-  const input = JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: join(repo.dir, EDITED) }, cwd: repo.dir, session_id: session });
-  return spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env: hookEnv, cwd: repo.dir });
+  const input = JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: join(repo.dir, EDITED) }, cwd, session_id: session });
+  return spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env: hookEnv, cwd });
 }
 
 /** The lines a stub wrote to `mark`, parsed; [] when it never ran. */
@@ -130,4 +132,49 @@ test('a committed team .claude/settings.json that sets the trust switch is ignor
   const warning = JSON.parse(run.stdout).systemMessage;
   assert.match(warning, new RegExp(`team switch ${TRUST_ENV} ignored: the team file .*\\.claude/settings\\.json sets it`));
   assert.ok(warning.includes(`${repo.dir}/package.json was not run`), warning);
+});
+
+/** Asserts that the run of `repo`'s hook ran neither its format script nor a package manager, and warned that it was not run. */
+function assertNotRun(repo, run, label) {
+  assert.equal(run.status, 0, `${label}: ${run.stderr}`);
+  assert.equal(existsSync(repo.marks.evil), false, `${label}: evil.js ran`);
+  assert.deepEqual(ranWith(repo.marks.pm), [], `${label}: the package manager ran`);
+  const warning = JSON.parse(run.stdout).systemMessage;
+  assert.ok(warning.includes(`${repo.dir}/package.json was not run`), `${label}: ${warning}`);
+}
+
+/** Asserts that the run of `repo`'s hook ran its format script through the package manager on the edited file. */
+function assertRanThroughPackageManager(repo, run) {
+  assert.deepEqual([run.status, run.stdout], [0, ''], run.stderr);
+  assert.deepEqual(ranWith(repo.marks.pm).map(({ args }) => args), [['run', 'format', '--', EDITED]]);
+  assert.equal(readFileSync(repo.marks.evil, 'utf8'), 'ran');
+}
+
+test('trusted in the shell for CLAUDE_PROJECT_DIR, a session cwd in a clone elsewhere: the clone\'s script never runs and is warned about', posix, () => {
+  const project = realpathSync(makeTempDir('post-edit-trust-project-'));
+  const clone = formatRepo(EVIL_SCRIPT, {}, 'init');
+  assertNotRun(clone, edit(clone, 'trust-clone', { [TRUST_ENV]: '1', CLAUDE_PROJECT_DIR: project }), 'cwd in the clone');
+});
+
+test('trusted in the shell, a package inside CLAUDE_PROJECT_DIR runs through the package manager while the session cwd is elsewhere', posix, () => {
+  const repo = formatRepo(EVIL_SCRIPT, {}, 'init');
+  const elsewhere = realpathSync(makeTempDir('post-edit-trust-elsewhere-'));
+  assertRanThroughPackageManager(repo, edit(repo, 'trust-project-dir', { [TRUST_ENV]: '1', CLAUDE_PROJECT_DIR: repo.dir }, elsewhere));
+});
+
+test('trusted in the shell, an empty CLAUDE_PROJECT_DIR falls back to the session cwd: the repo\'s script runs through the package manager', posix, () => {
+  const repo = formatRepo(EVIL_SCRIPT, {}, 'init');
+  assertRanThroughPackageManager(repo, edit(repo, 'trust-empty-project-dir', { [TRUST_ENV]: '1', CLAUDE_PROJECT_DIR: '' }));
+});
+
+test('trusted in the shell, a relative CLAUDE_PROJECT_DIR trusts nothing, also with the session cwd the repo: not run, warned', posix, () => {
+  for (const projectDir of RELATIVE_PROJECT_DIRS) {
+    const repo = formatRepo(EVIL_SCRIPT, {}, 'init');
+    assertNotRun(repo, edit(repo, 'trust-relative-project-dir', { [TRUST_ENV]: '1', CLAUDE_PROJECT_DIR: projectDir }), projectDir);
+  }
+});
+
+test('trusted in the shell, CLAUDE_PROJECT_DIR as the account\'s real home trusts nothing, also with the session cwd the repo: not run, warned', posix, () => {
+  const repo = formatRepo(EVIL_SCRIPT, {}, 'init'); // a temp folder: the real home is only named, never written to
+  assertNotRun(repo, edit(repo, 'trust-home-project-dir', { [TRUST_ENV]: '1', CLAUDE_PROJECT_DIR: userInfo().homedir }), 'home');
 });

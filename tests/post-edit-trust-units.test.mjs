@@ -5,6 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { userInfo } from 'node:os';
 import { join } from 'node:path';
 import { formatterCall, plannedChecks, trustedFormat } from '../home/hooks/post-edit.mjs';
 import { git } from './git-tidy-helpers.mjs';
@@ -17,6 +18,7 @@ const LOCAL = '.claude/settings.local.json';
 const trustFile = (value = '1') => JSON.stringify({ env: { [TRUST_ENV]: value } });
 const binOf = (tool) => `/bin/${tool}`; // a found node_modules/.bin binary
 const IGNORED_BY_TEAM = new RegExp(`team switch ${TRUST_ENV} ignored: the team file .*settings\\.json sets it`);
+const RELATIVE_PROJECT_DIRS = ['.', 'proj']; // never a session folder: not absolute
 const IGNORED_TRACKED_LOCAL = new RegExp(`team switch ${TRUST_ENV} ignored: .*settings\\.local\\.json sets it but git tracks that file`);
 
 // Scripts that are more than one plain call of a known formatter (a chain, substitution, quote, pipe), or no known formatter call.
@@ -120,4 +122,35 @@ test('trustedFormat: a package folder reached through a link that points outside
   const outside = project({ 'package.json': '{}' });
   symlinkSync(outside, join(session, 'linked'), process.platform === 'win32' ? 'junction' : 'dir'); // a junction needs no admin right on Windows
   assert.equal(trustedFormat({ [TRUST_ENV]: '1' }, session, join(session, 'linked')).trusted, false);
+});
+
+test('trustedFormat: CLAUDE_PROJECT_DIR set, a package in the hook cwd outside it is not trusted (a session that cd\'d into a clone)', () => {
+  const session = project({}, 'init');
+  const clone = project({ 'package.json': '{}' }, 'init');
+  assert.deepEqual(trustedFormat({ [TRUST_ENV]: '1', CLAUDE_PROJECT_DIR: session }, clone, clone), { trusted: false, ignored: null });
+});
+
+test('trustedFormat: CLAUDE_PROJECT_DIR set, a package inside it is trusted while the hook cwd is another folder', () => {
+  const session = project({ 'pkg/package.json': '{}' }, 'init');
+  const elsewhere = project({}, 'init');
+  assert.deepEqual(trustedFormat({ [TRUST_ENV]: '1', CLAUDE_PROJECT_DIR: session }, elsewhere, join(session, 'pkg')), { trusted: true, ignored: null });
+});
+
+test('trustedFormat: CLAUDE_PROJECT_DIR unset or empty, the hook cwd is the project folder and its package is trusted', () => {
+  const dir = project({ 'package.json': '{}' }, 'init');
+  for (const env of [{ [TRUST_ENV]: '1' }, { [TRUST_ENV]: '1', CLAUDE_PROJECT_DIR: undefined }, { [TRUST_ENV]: '1', CLAUDE_PROJECT_DIR: '' }]) {
+    assert.deepEqual(trustedFormat(env, dir, dir), { trusted: true, ignored: null }, JSON.stringify(env));
+  }
+});
+
+test('trustedFormat: a relative CLAUDE_PROJECT_DIR trusts nothing and does not fall back to the hook cwd', () => {
+  const dir = project({ 'package.json': '{}' }, 'init');
+  for (const projectDir of RELATIVE_PROJECT_DIRS) {
+    assert.deepEqual(trustedFormat({ [TRUST_ENV]: '1', CLAUDE_PROJECT_DIR: projectDir }, dir, dir), { trusted: false, ignored: null }, projectDir);
+  }
+});
+
+test('trustedFormat: CLAUDE_PROJECT_DIR as the account\'s real home folder trusts nothing and does not fall back to the hook cwd', () => {
+  const dir = project({ 'package.json': '{}' }, 'init'); // a temp folder: nothing is written under the real home
+  assert.deepEqual(trustedFormat({ [TRUST_ENV]: '1', CLAUDE_PROJECT_DIR: userInfo().homedir }, dir, dir), { trusted: false, ignored: null });
 });
