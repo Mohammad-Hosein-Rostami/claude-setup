@@ -4,7 +4,7 @@
 // that sources home/shell/claude-as.sh (FAIL when missing), `fastMode: true` and a forced Fable subagent model (FAIL), per
 // stored account: revoked at its last check (FAIL), the last 30 days of its one-year token (WARN), its plan and whether
 // usage credits are confirmed off (WARN until the owner says so), then one tiny login call on the account a hook job
-// would spend (home/tools/recall/lib/claude-call.mjs: CLAUDE_ACCOUNT, else the default): FAIL when it is refused, WARN
+// would spend (home/tools/account/lib/claude-call.mjs: CLAUDE_ACCOUNT, else the default): FAIL when it is refused, WARN
 // when no account is found; a locked Keychain is a WARN, with a WARN for Claude Code's own ~/.claude/.credentials.json.
 // The Keychain is asked once (`security show-keychain-info`: no item and no token is read), before the account checks, so a
 // locked one is named even when no account is named (CLAUDE_ACCOUNT unset, no default); the login call is then skipped.

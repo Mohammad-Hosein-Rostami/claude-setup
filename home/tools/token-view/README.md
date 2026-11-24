@@ -1,7 +1,7 @@
 # token-view
 
 Where the tokens of a period went, read from this machine's Claude Code transcripts (`~/.claude/projects`) and the per-account
-7-day limit logs the status line writes (`~/.claude/state/limits/<account>.jsonl`). Read-only. The `token-audit` skill runs it.
+7-day limit logs the status line writes (`~/.claude/state/limits/<account>.jsonl`). Read-only; run it by hand.
 
 ```sh
 node ~/.claude/tools/token-view/token-view.mjs            # the last 7 days

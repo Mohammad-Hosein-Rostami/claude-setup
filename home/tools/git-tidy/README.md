@@ -18,7 +18,7 @@ It must be a local branch; when none is found the exit code is 2 and the message
 exits 2, deleting nothing, when the base was not given with `--base` and more than one of `main`, `master`, `develop`
 exists here: a wrong base would call work "merged" that is not on the branch you work against.
 
-`land` has its own codes (0 landed and clean, 1 landed with findings, 2 not ready or no `--tip`, 3 conflict, 5 base moved, 6 ui-proof, 7 new-file-size, 8 upstream-moved, 9 tip-moved). Land through `land-lane` (`tools/land-lane/README.md`): it adds the disk check and the row close around this command. Landing has no test run and no review record; `--checks` and the old UI waiver flag are refused (exit 2).
+`land` has its own codes (0 landed and clean, 1 landed with findings, 2 not ready or no `--tip`, 3 conflict, 5 base moved, 6 ui-proof, 7 new-file-size, 8 upstream-moved, 9 tip-moved). The plain landing route is the `land` tool (`tools/land/README.md`: rebase, `merge --ff-only`, then the branch and its worktree removed). Landing has no test run and no review record; `--checks` and the old UI waiver flag are refused (exit 2).
 
 | Code | `check` | `prune` |
 | ---- | ------- | ------- |

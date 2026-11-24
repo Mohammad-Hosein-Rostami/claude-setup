@@ -122,7 +122,7 @@ test('check honours the env override of the fail threshold', async () => {
   assert.match(result.stdout, /^FAIL\s+disk free 8\.0 GB is below 10 GB/);
 });
 
-test('check output is one line, so a land-lane run reports it whole', async () => {
+test('check output is one line, so a caller that quotes it reports it whole', async () => {
   const result = check(await fakeHome({ caches: 2048, npm: 64 }), 2);
   assert.equal(result.stdout.trimEnd().split('\n').length, 1);
 });

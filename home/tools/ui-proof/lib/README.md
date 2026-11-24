@@ -3,10 +3,10 @@
 The parts of the `ui-proof` tool, which records whether the UI of a tree was checked and shows the proof to the owner.
 `../ui-proof.mjs` is the command and `../README.md` has the options.
 
-- `ui-files.mjs`: the one definition of "UI files" (used by the stop hook, `git-tidy land`, the road gate and the check plan) and the
+- `ui-files.mjs`: the one definition of "UI files" (used by `git-tidy land`, the proof records and the check plan) and the
   hash of a tree's UI files: markup, `.astro`, `.svelte`, `.vue`, `.mdx` and style files by path, and a `.js` file by its text (a JSX
   tag or a react, react-native or expo import; one it does not read counts as UI).
-- `ui-evidence.mjs`: the one vocabulary of UI check evidence, shared by the check plan and the skill router (pure, imports nothing): the
+- `ui-evidence.mjs`: the one vocabulary of UI check evidence of the check plan (pure, imports nothing): the
   plan depths `none < same < render < visual < pixel` and the stricter-wins rule, the class of each changed file and line (test, docs
   page, dev config, deps, global look, look, text, logic; a line or file type it does not know counts as look); it re-exports the
   request part from `ui-request.mjs`, so callers import either file.
@@ -17,8 +17,9 @@ The parts of the `ui-proof` tool, which records whether the UI of a tree was che
   only when it governs it directly (only light words between: "don't make it pixel perfect", not "never ship it unless it is pixel
   perfect"); in a talk clause a design phrase counts when a request verb asks for it ("implement the figma frame ... with full ui
   checks"). `requestEvidence` returns `partial: true` for a request over 1 MB (the rest is not read): plan the full checks for it.
-  `uiClauses(text, maxBytes?)` and `ownClauseMatches(text, patterns, maxBytes?)` tell the skill router whether design and UI work are
-  asked for and which of its own route patterns match outside talk and negated clauses; a text over `maxBytes` counts as everything.
+  `uiClauses(text, maxBytes?)` and `ownClauseMatches(text, patterns, maxBytes?)` told the skill router (removed 2026-11-24; they have
+  no caller now, only their tests) whether design and UI work are asked for and which route patterns match outside talk and negated
+  clauses; a text over `maxBytes` counts as everything.
 - `ui-plan.mjs`: `planChecks`, the check plan of a change (a set of needs of none, same, render, visual and pixel per reached surface;
   `same` stays beside any raised need) from the request, the diff and the reached screens, and `briefFloor` (the `UI-PLAN:` line,
   which only adds); `ui-plan-proof.mjs`: `renderMap` (the widths, locales and states a same or render proof covers, and the sha256 of

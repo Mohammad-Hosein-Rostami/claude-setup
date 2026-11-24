@@ -13,7 +13,7 @@ const OPEN_KEPT = 50;
 const MAX_TEXT_CHARS = 200;
 const MAX_PATH_CHARS = 1000;
 const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029<>]/g;
-// A STATUS row named in the brief: `row <id>` or `row: <id>`, the id in status.mjs's id form.
+// A STATUS row named in the brief: `row <id>` or `row: <id>`, the id in the STATUS row id form.
 const ROW_IN_BRIEF = /\brow:?\s+`?([A-Za-z0-9][\w.:-]{0,39})`?/i;
 
 const cleanText = (value, max) => (typeof value === 'string' && value !== '' ? value.replace(CONTROL, ' ').slice(0, max) : undefined);

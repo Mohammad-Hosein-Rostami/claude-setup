@@ -92,7 +92,7 @@ function appendRecord(env, input, text) {
 
 /**
  * Counts one block of a Stop or SubagentStop gate (see the header) and appends `gate overridden` at the first block past the cap.
- * @param {string} hook the gate's name (e.g. `commit-gate`)
+ * @param {string} hook the gate's name (e.g. `agent-budget`)
  * @param {{session_id?: string, agent_id?: string, stop_hook_active?: boolean, last_assistant_message?: string}} input the hook JSON
  * @param {Record<string, string | undefined>} [env] HOME
  * @param {number} [startedAt] epoch ms the gate process started (default: now); a gate started before the chain's last block is of the

@@ -11,12 +11,15 @@ The command is `../account.mjs`; the shell functions are in `home/shell/`. No np
 - Where tokens live: `store.mjs` (picks by system), `keychain-store.mjs` (macOS, `/usr/bin/security -i` on stdin),
   `file-store.mjs` (Linux, 0600 files), `dpapi-store.mjs` (Windows, not verified).
 - What callers use: `accounts.mjs` (add, remove, list, the owner's answers, and `accountForCall`: which account a hook
-  job may spend), `check.mjs` (valid / revoked: one Haiku call through recall's `claude-call.mjs`).
+  job may spend), `check.mjs` (valid / revoked: one Haiku call through `claude-call.mjs`).
+- The Haiku child: `claude-call.mjs` (`callHaiku`: one `claude -p --model haiku` call on the account `accountForCall`
+  picks, no billing variables in its environment), `usage.mjs` (its usage rows, `~/.claude/state/account` or
+  `ACCOUNT_STATE_DIR`), `private-fs.mjs`. They came from the removed recall tool (2026-11-24).
 
 ## Who imports it
 
-`home/tools/recall/lib/claude-call.mjs` imports `accounts.mjs` and `names.mjs` in process (the login of a hook job).
-`check.mjs` imports `claude-call.mjs` back, so nothing in `accounts.mjs` or below may import `check.mjs`.
+`claude-call.mjs` imports `accounts.mjs` and `names.mjs` in process (the login of a call). `check.mjs` imports
+`claude-call.mjs`, so nothing in `accounts.mjs` or below may import `check.mjs`.
 
 ## Watch out for
 

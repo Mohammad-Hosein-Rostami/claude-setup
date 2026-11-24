@@ -75,12 +75,12 @@ or a command line, or committing it, is not.
 - **Names and tokens** (`lib/names.mjs`). A name matches `^[a-z0-9][a-z0-9_-]{0,31}$`; a token is one line
   `sk-ant-...` with no space, quote or newline. Both are checked before anything reaches the store, a path or the
   `security` command text.
-- **Valid or revoked** (`lib/check.mjs`). One call through `callHaiku` of `home/tools/recall/lib/claude-call.mjs`
+- **Valid or revoked** (`lib/check.mjs`). One call through `callHaiku` of `lib/claude-call.mjs`
   (`--model haiku`, never `--bare`, hooks off, no session kept) on that token. "Revoked" is a reply holding "revoked" or
   "401". Anything else is `check failed: <class>`: the token is stored anyway and the line says so. `claude auth status`
   is never the proof: it says "logged in" for any token without asking the server (probe ACC-3).
 - **Hook jobs** (`claude-call.mjs`). Claude Code removes `CLAUDE_CODE_OAUTH_TOKEN` from the environment of its hooks
-  (probe ACC-9a, CLI 2.1.329; issue #101890), which is why the recall checkpoint had no login. A `claude -p` child that
+  (probe ACC-9a, CLI 2.1.329; issue #101890), which is why a hook job (the removed recall checkpoint was one) had no login. A `claude -p` child that
   is given the variable does use it (probe (a2)). So a hook job reads the token from the store: the account named by
   `CLAUDE_ACCOUNT` (hooks do see that variable), else the default account, else none. With none it starts no `claude`
   at all, because a token-less child would spend whatever login is stored in the Keychain, and it writes one `auth` row. A
@@ -91,7 +91,7 @@ or a command line, or committing it, is not.
 
 Limits are per account. After a usage limit: switch with `claude-as <name>` and continue the session with
 `claude --resume` (pick it from the list; not `--continue`, which may pick another terminal's session). Accounts share
-one history, so resume, recall and memory keep working. One condition (`research3/ALIGN-2.md` A060):
+one history, so resume and memory keep working. One condition (`research3/ALIGN-2.md` A060):
 
 - A login change ends Claude Code's own wait for the limit reset, and the wait does not restart on resume
   (interactive-mode docs; `research3/changes.md` L1).
