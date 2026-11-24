@@ -1,4 +1,4 @@
-// Tests for home/agents/*.md: exactly the fifteen agents of the lex/dev/tess setup, each with frontmatter whose name matches its
+// Tests for home/agents/*.md: exactly the seventeen agents of the lex/dev/tess setup, each with frontmatter whose name matches its
 // file, the model and effort pins the guard's floor reads (lib/agent-pins.mjs), the preloaded skills of the plan, the Agent tool
 // for the agents that start helpers, the browser servers only where the plan puts them, tess in the background, and no text
 // about the removed job machinery.
@@ -49,13 +49,16 @@ const PLAN = {
   'dev-part': { model: SONNET, effort: 'high', skills: ['clean-code'] },
   'tess-simple': { model: SONNET, effort: 'high', skills: ['clean-code'] },
   'tess-edge': { model: SONNET, effort: 'high', skills: [] },
+  // owner decisions: dev-docs writes a job's docs on Sonnet, high; max ships on Opus, high
+  'dev-docs': { model: SONNET, effort: 'high', skills: ['docs-writing'] },
+  max: { model: OPUS, effort: 'high', skills: ['ship-readiness', 'clean-code', 'git-linear-history'] },
 };
 const NAMES = Object.keys(PLAN);
-const HELPER_STARTERS = ['lex', 'dev', 'dev-part', 'dev-ui', 'dev-pixel', 'dev-debug', 'tess'];
+const HELPER_STARTERS = ['lex', 'dev', 'dev-part', 'dev-ui', 'dev-pixel', 'dev-debug', 'tess', 'max'];
 const BROWSER_AGENTS = ['dev-ui', 'dev-pixel', 'pixel-qa'];
 const REMOVED_MACHINERY = /done-check|road\.mjs|status\.mjs|estimate|recall|ask\.mjs|ASK_QUEUE|land-lane|watch\.mjs|lead-rules|lead\.md/;
 
-test('home/agents holds exactly the fifteen agents, each named like its file, with a description', () => {
+test('home/agents holds exactly the seventeen agents, each named like its file, with a description', () => {
   assert.deepEqual(readdirSync(AGENTS_DIR).sort(), NAMES.map((name) => `${name}.md`).sort());
   for (const name of NAMES) {
     assert.ok(agent(name).startsWith('---\n'), `${name}: frontmatter opens the file`);
@@ -120,8 +123,8 @@ test('tess runs in the background; no other agent does', () => {
 
 // omitClaudeMd and autoCompactWindow are documented subagent frontmatter fields (code.claude.com/docs/en/sub-agents.md);
 // the window is a plain integer, since frontmatter reads `200k` as 200.
-test('only lex-scout, lex-web, dev-run, dev-part, tess-simple and tess-edge skip CLAUDE.md, and each carries the global rules it needs', () => {
-  const skipping = ['lex-scout', 'lex-web', 'dev-run', 'dev-part', 'tess-simple', 'tess-edge'];
+test('only lex-scout, lex-web, dev-run, dev-part, dev-docs, tess-simple and tess-edge skip CLAUDE.md, and each carries the global rules it needs', () => {
+  const skipping = ['lex-scout', 'lex-web', 'dev-run', 'dev-part', 'dev-docs', 'tess-simple', 'tess-edge'];
   for (const name of NAMES) assert.equal(field(name, 'omitClaudeMd') === 'true', skipping.includes(name), name);
   for (const name of skipping) {
     const text = agent(name);
@@ -149,7 +152,7 @@ test('read-only agents cannot write files', () => {
 });
 
 test('the writers work in their own worktree and commit without a merge commit', () => {
-  for (const name of ['dev', 'dev-part', 'dev-ui', 'dev-pixel', 'dev-debug', 'tess-write']) {
+  for (const name of ['dev', 'dev-part', 'dev-docs', 'dev-ui', 'dev-pixel', 'dev-debug', 'tess-write', 'max']) {
     assert.match(agent(name), /own worktree/, name);
     assert.match(agent(name), /never `--no-verify`/i, name);
     assert.match(agent(name), /never return with uncommitted work/i, name);
@@ -175,12 +178,12 @@ test('dev-ui and dev-pixel carry the UI rules; dev-pixel loops with ui-check and
   assert.match(agent('pixel-qa'), /ui-proof\.mjs review-page/);
 });
 
-// Owner rule: only the boss starts lex, dev and tess; an agent asks for one with a `needs:` line (by SendMessage to main while it runs
+// Owner rule: only the boss starts lex, dev, tess and max; an agent asks for one with a `needs:` line (by SendMessage to main while it runs
 // in the background, and in its report). "starts `lex`" is allowed only as "the boss starts"; `dev-run` and the like are helpers.
-const STARTS_MAIN_AGENT = /(?<!boss )\b(?:start|starts|launch|launches|spawn|spawns)\s+`?(?:lex|dev|tess)`?(?![\w-])/i;
-const MAIN_AGENTS = ['lex', 'dev', 'tess'];
+const STARTS_MAIN_AGENT = /(?<!boss )\b(?:start|starts|launch|launches|spawn|spawns)\s+`?(?:lex|dev|tess|max)`?(?![\w-])/i;
+const MAIN_AGENTS = ['lex', 'dev', 'tess', 'max'];
 
-test('no agent file tells an agent to start lex, dev or tess; each asks the boss with a needs: line', () => {
+test('no agent file tells an agent to start lex, dev, tess or max; each asks the boss with a needs: line', () => {
   for (const name of NAMES) assert.doesNotMatch(agent(name), STARTS_MAIN_AGENT, name);
   for (const name of [...MAIN_AGENTS, 'dev-ui', 'dev-pixel', 'dev-debug']) assert.match(agent(name), /Only the boss starts `/, name);
   for (const name of MAIN_AGENTS) {
