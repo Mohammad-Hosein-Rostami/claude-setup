@@ -11,7 +11,8 @@
 // guard.jsonl takes its place in one rename, so the path never goes missing. It runs under withSessionLock (lib/session-lock.mjs) in the log's
 // folder, and the size is checked again under the lock, so two writers that both see a full log rotate it once. Lost-line case: a writer
 // that opened the old file before the swap appends to it, which is then guard.1.jsonl; one that opens it between the link and the
-// last rename finds two names on one file and writes nothing (lib/plain-file.mjs refuses a hard-linked file). Old-reader case: a
+// last rename finds two names on one file (lib/plain-file.mjs refuses a hard-linked file), so it tries once more under the rotation
+// lock, which that rotation holds until the new log is in place; a second refusal (a link planted at the path) writes nothing. Old-reader case: a
 // reader that follows guard.jsonl (`tail -F`) sees a new file and reads it from its start; the lines written after its last read and before the swap are in guard.1.jsonl.
 // Crash case: the two temp names (`guard.1.jsonl.part`, `guard.jsonl.new`) a rotation killed half-way leaves are removed by the next one,
 // and a log left full is rotated by the next write.
@@ -77,6 +78,17 @@ function rotateIfFull(path) {
 }
 
 /**
+ * Appends one log line. A refusal is most often another writer's rotation in its link-to-rename window (the log has two names for
+ * a moment), so the line is tried once more under the rotation lock, after that rotation has put the new log in place.
+ * @param {string} path the log
+ * @param {string} text one JSON line with its newline
+ */
+function appendLine(path, text) {
+  if (appendPlainFile(path, text, { mode: LOG_FILE_MODE })) return;
+  withSessionLock(dirname(path), ROTATE_LOCK.name, () => appendPlainFile(path, text, { mode: LOG_FILE_MODE }), { lockFile: ROTATE_LOCK.file });
+}
+
+/**
  * @param {{hook: string, tool: string, decision: string, outcome: string, reason: string, command?: string, cwd?: string, session?: string}} record what was decided
  * @param {Record<string, string | undefined>} env process environment
  * @returns {void}
@@ -86,7 +98,7 @@ export function logDecision(record, env = process.env) {
     const path = guardLogPath(env);
     mkdirSync(dirname(path), { recursive: true, mode: LOG_DIR_MODE });
     const line = { ts: new Date().toISOString(), ...record, reason: safe(record.reason), command: safe(record.command) };
-    appendPlainFile(path, `${JSON.stringify(line)}\n`, { mode: LOG_FILE_MODE });
+    appendLine(path, `${JSON.stringify(line)}\n`);
     if (!isSharedDir(dirname(path))) chmodSync(dirname(path), LOG_DIR_MODE);
     rotateIfFull(path);
   } catch {
