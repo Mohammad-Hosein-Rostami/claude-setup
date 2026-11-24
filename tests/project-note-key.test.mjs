@@ -12,7 +12,7 @@ import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const POSIX = process.platform !== 'win32';
 const TOKEN = 't0k';
-const AZURE_REMOTE = `https://u:${TOKEN}@dev.azure.com/Org/P/_git/ice-web-app`;
+const AZURE_REMOTE = `https://u:${TOKEN}@dev.azure.com/Org/P/_git/example-web-app`;
 const git = (cwd, args) => runGit(cwd, args, 5000);
 const gitOk = (cwd, ...args) => {
   const result = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'init.defaultBranch=main', ...args], { cwd, encoding: 'utf8' });
@@ -29,18 +29,18 @@ function homeWith(...parts) {
 }
 
 test('slugKey: NFKC, lower case, runs of other characters one dash, trimmed, at most 64', () => {
-  assert.equal(slugKey('Pejvak_Frontend'), 'pejvak-frontend');
-  assert.equal(slugKey('ＩＣＥ  Web\nApp'), 'ice-web-app');
+  assert.equal(slugKey('Owner_Frontend'), 'owner-frontend');
+  assert.equal(slugKey('ＥＸＡＭＰＬＥ  Web\nApp'), 'example-web-app');
   assert.equal(slugKey('--'), '');
   assert.equal(slugKey(undefined), '');
   assert.equal(slugKey(`${'a'.repeat(63)}-b`), 'a'.repeat(63));
 });
 
 test('urlKeys: scheme, userinfo, host, port, .git and _git are dropped; never any part of a token', () => {
-  assert.deepEqual(urlKeys(AZURE_REMOTE), ['p-ice-web-app', 'ice-web-app']);
+  assert.deepEqual(urlKeys(AZURE_REMOTE), ['p-example-web-app', 'example-web-app']);
   assert.deepEqual(urlKeys('git@github.com:Org/Repo.git'), ['org-repo', 'repo']);
   assert.deepEqual(urlKeys('ssh://git@host.example:2222/team/tool.git'), ['team-tool', 'tool']);
-  assert.deepEqual(urlKeys('git@ssh.dev.azure.com:v3/Org/P/ice-web-app'), ['p-ice-web-app', 'ice-web-app']);
+  assert.deepEqual(urlKeys('git@ssh.dev.azure.com:v3/Org/P/example-web-app'), ['p-example-web-app', 'example-web-app']);
   assert.deepEqual(urlKeys('/srv/git/only.git'), ['git-only', 'only']);
   assert.deepEqual(urlKeys('https://host.example/solo'), ['solo']);
   assert.deepEqual(urlKeys('https://host.example/'), []);
@@ -54,7 +54,7 @@ test('repoIdentity: the remote name of a repository, its userinfo never kept', (
   gitOk(dir, 'init', '-q');
   gitOk(dir, 'remote', 'add', 'origin', AZURE_REMOTE);
   const identity = repoIdentity(dir, { git, home });
-  assert.deepEqual(identity, { top: dir, keys: ['p-ice-web-app', 'ice-web-app'], source: 'remote' });
+  assert.deepEqual(identity, { top: dir, keys: ['p-example-web-app', 'example-web-app'], source: 'remote' });
   assert.ok(!JSON.stringify(identity).includes(TOKEN));
 });
 
@@ -71,10 +71,10 @@ test('repoIdentity: a worktree maps to its main checkout (folder name when there
 });
 
 test('repoIdentity: an SVN checkout is keyed by its highest folder below HOME', () => {
-  const { home, dir } = homeWith('code', 'Pejvak_Frontend', 'src', 'app');
-  mkdirSync(join(home, 'code', 'Pejvak_Frontend', '.svn'));
-  mkdirSync(join(home, 'code', 'Pejvak_Frontend', 'src', '.svn'));
-  assert.deepEqual(repoIdentity(dir, { git, home }), { top: join(home, 'code', 'Pejvak_Frontend'), keys: ['pejvak-frontend'], source: 'svn' });
+  const { home, dir } = homeWith('code', 'Owner_Frontend', 'src', 'app');
+  mkdirSync(join(home, 'code', 'Owner_Frontend', '.svn'));
+  mkdirSync(join(home, 'code', 'Owner_Frontend', 'src', '.svn'));
+  assert.deepEqual(repoIdentity(dir, { git, home }), { top: join(home, 'code', 'Owner_Frontend'), keys: ['owner-frontend'], source: 'svn' });
 });
 
 test('repoIdentity: no git and no SVN gives the folder name; HOME itself is no project', () => {
@@ -114,17 +114,17 @@ function notesDir(files = {}) {
 }
 
 test('findNotes: the first key with a note in each folder; one real folder read once', () => {
-  const shared = notesDir({ 'ice-web-app.md': 'shared text' });
-  const personal = notesDir({ 'p-ice-web-app.md': 'specific', 'ice-web-app.md': 'short' });
-  const notes = findNotes(['p-ice-web-app', 'ice-web-app'], [shared, personal]);
+  const shared = notesDir({ 'example-web-app.md': 'shared text' });
+  const personal = notesDir({ 'p-example-web-app.md': 'specific', 'example-web-app.md': 'short' });
+  const notes = findNotes(['p-example-web-app', 'example-web-app'], [shared, personal]);
   assert.deepEqual(notes.map(({ key, dir, text, cut }) => ({ key, dir, text, cut })), [
-    { key: 'ice-web-app', dir: shared, text: 'shared text', cut: false },
-    { key: 'p-ice-web-app', dir: personal, text: 'specific', cut: false },
+    { key: 'example-web-app', dir: shared, text: 'shared text', cut: false },
+    { key: 'p-example-web-app', dir: personal, text: 'specific', cut: false },
   ]);
   if (POSIX) {
     const link = join(realTemp('notes-link-'), 'project-notes');
     symlinkSync(shared, link);
-    assert.equal(findNotes(['ice-web-app'], [shared, link]).length, 1, 'the same real folder is not read twice');
+    assert.equal(findNotes(['example-web-app'], [shared, link]).length, 1, 'the same real folder is not read twice');
   }
 });
 

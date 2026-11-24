@@ -32,7 +32,7 @@ function project(files, ourSkills = ['handoff', 'tdd-flow']) {
 const scan = ({ top, personalSkillsDir }, options = {}) => scanProjectSetup(top, top, { personalSkillsDir, ours: OURS, ...options });
 const settings = (value) => ({ '.claude/settings.json': JSON.stringify(value) });
 
-test('an ICE-like project: CLAUDE.md importing AGENTS.md, skills with a hidden one, a Stop hook', () => {
+test('a team project:CLAUDE.md importing AGENTS.md, skills with a hidden one, a Stop hook', () => {
   const setup = scan(project({
     'CLAUDE.md': '# CLAUDE.md\n\n@AGENTS.md\n', 'AGENTS.md': '# Agents\n', '.claude/skills/Handoff/SKILL.md': 'x',
     '.claude/skills/grill-me/SKILL.md': 'x', '.claude/skills/no-skill-file/README.md': 'x', '.claude/rules/a.md': 'x', '.claude/rules/sub/b.md': 'x',

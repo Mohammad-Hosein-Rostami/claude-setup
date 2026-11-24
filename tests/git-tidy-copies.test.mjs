@@ -1,7 +1,7 @@
 // Tests for the copy finder of git-tidy: branches that repeat the work of a newer branch (superseded-copy) and the leftover
 // branch of a workflow agent (agent-leftover), in `check` (findings) and in `prune --apply` (removal).
 // Each test builds a repo in a temp folder (git-tidy-helpers.mjs) and runs the real CLI; the shapes are the real ones that
-// piled up in bill&gin (a lane X, X-2, X-3 and three worktree-agent branches) and in mission-control (five identical tips).
+// piled up in two real repos (in one, a lane X, X-2, X-3 and three worktree-agent branches; in the other, five identical tips).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -86,7 +86,7 @@ test('prune keeps a copy whose worktree has uncommitted files', () => {
   assert.ok(existsSync(worktrees[0]));
 });
 
-test('five identical tips (mission-control): four are copies, the checked-out one stays', () => {
+test('five identical tips: four are copies, the checked-out one stays', () => {
   const dir = makeRepo();
   git(dir, 'checkout', '-q', '-b', 'work-one');
   commit(dir, 'w.txt');
