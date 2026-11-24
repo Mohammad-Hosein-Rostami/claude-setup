@@ -57,7 +57,7 @@ Asking and remembering:
 - `timed-ask-async.mjs`: the same dialog as a promise that an abort signal (or `closeLiveDialogs`, run when the hook is stopped) can close; used by the question popups.
 - `question-reply.mjs`: AskUserQuestion for `permission-timed-allow.mjs`, one popup per question with its own wait.
 - `question-answered.mjs`: the mark that the owner answered a question in the terminal (hashes of session, agent and question texts only), so the open popup closes.
-- `notify-note.mjs`: the texts and terminal sequences of `notify.mjs` (a question note shows the marker's short header: `a question (Scope)`), the effective channel, and the per-session queue of notes no hook event carries (`queueNote`, `takeNotes`).
+- `notify-note.mjs`: the texts and terminal sequences of `notify.mjs` (a question note shows the marker's short header: `a question (Scope)`) and the effective channel.
 - `question-rejected.mjs`: notices in the session transcript that the owner turned the question down in the terminal ("Chat about this", Esc), which runs no tool and leaves no mark, so the open popup closes.
 - `remembered-ask.mjs`: bounce once, else ask the owner (`askOrBounce`), and the one log line for a literal secret (`logSecretKind`:
   its kind, no command, no value). `allowed-literals.mjs`: the per-session store of secrets allowed before R22-G1 (hashes only); the
@@ -80,7 +80,7 @@ Asking and remembering:
   linked back. If the stale lock's holder releases in that instant and two callers take the name, the moved lock is deleted: a lock
   is not guaranteed to survive a take-over. A caller may name the lock file (`lockFile`).
 - `guard-log.mjs`: the decision log, one JSON line per decision.
-- `plain-file.mjs`: the one safe open (no waiting, no link followed, regular files only, no append to a hard-linked file, a size cap) for the host list, the decision logs and the session transcript (`readPlainFileTail` reads only its end).
+- `plain-file.mjs`: the one safe open (no waiting, no link followed, regular files only, no append to a hard-linked file, a size cap) for the host list, the decision logs and the session transcript.
 - `asking-marker.mjs`: the small file `~/.claude/state/asking/<session>.json` that says a question or permission prompt waits for the owner; one writer here, read by the status line, `notify.mjs` and the board. It holds the first question's short header label (`header`, cut and cleaned by `cleanHeader` at `MAX_HEADER_CHARS` by the writer and by `readAsking`: control, format (bidi overrides and isolates, zero-width) and line-separator characters and `;` are dropped (`UNSAFE_TEXT`, also used for every note text); a marker without one reads as empty) and no question text. It expires by age.
 
 Other hooks:

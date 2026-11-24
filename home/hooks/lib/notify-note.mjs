@@ -1,8 +1,9 @@
-// The desktop notes of display design 7.10, only for "needs you", "agent failed" and "limit stopped work" (owner, 2026-11-19):
+// The desktop notes of display design 7.10, only for "needs you" and "limit stopped work" (owner, 2026-11-19; the "agent failed"
+// note and its queue were removed on 2026-11-24, nothing queued one):
 // their texts, the terminal sequence that carries them (a hook's `terminalSequence` output: OSC 9, 99 or 777, or a bare BEL;
-// hooks docs "Emit terminal notifications"), the channel the owner picked, and a small queue for the note no hook event carries.
+// hooks docs "Emit terminal notifications") and the channel the owner picked.
 // Exports: needsYouText(type, marker, now), stoppedText(sample), quotaText(type), noteSequence(text, channel),
-// effectiveChannel(env), terminalName(env), queueNote(session, text, env), takeNotes(session, env); NOTE_TITLE.
+// effectiveChannel(env), terminalName(env); NOTE_TITLE.
 // Channel: `preferredNotifChannel` of Claude Code's global config (`$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`);
 // `notifications_disabled` gives no note; `auto` (or none) picks by the terminal: Ghostty OSC 777, Kitty OSC 99, Apple Terminal a
 // bell only (it shows no desktop note), else OSC 9 (iTerm2, WezTerm, Windows Terminal).
@@ -15,15 +16,12 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readPlainFile } from './plain-file.mjs';
 import { cleanHeader, STALE_MARGIN_S, UNSAFE_TEXT } from './asking-marker.mjs';
-import { isSessionId, readSessionFile, writeSessionFile } from './session-store.mjs';
 
 export const NOTE_TITLE = 'Claude';
 const ESC = '\u001b';
 const BEL = '\u0007';
 const MAX_TEXT_CHARS = 160;
 const MAX_CONFIG_BYTES = 16 * 1024 * 1024; // the global config holds every project's history; a bigger file is not read
-const MAX_QUEUE_BYTES = 4096;
-const MAX_QUEUED = 5;
 const MS_PER_S = 1000;
 const S_PER_MIN = 60;
 const FULL_PERCENT = 100;
@@ -124,31 +122,4 @@ export function effectiveChannel(env = process.env) {
   if (terminal === 'kitty') return 'kitty';
   if (terminal === 'apple_terminal') return 'bell';
   return 'iterm2';
-}
-
-const queueDir = (env) => join(env.HOME || homedir(), '.claude', 'state', 'notify');
-
-/** Queues a note for the session's next Stop (agent failed has no hook event of its own). @returns {boolean} true when stored */
-export function queueNote(session, text, env = process.env) {
-  if (!isSessionId(session)) return false;
-  const notes = [...readQueue(session, env), clean(text)].slice(-MAX_QUEUED);
-  return writeSessionFile(queueDir(env), session, JSON.stringify({ notes }));
-}
-
-function readQueue(session, env) {
-  try {
-    const text = readSessionFile(queueDir(env), session, MAX_QUEUE_BYTES);
-    const notes = typeof text === 'string' ? JSON.parse(text)?.notes : null;
-    return Array.isArray(notes) ? notes.filter((note) => typeof note === 'string') : [];
-  } catch {
-    return [];
-  }
-}
-
-/** @returns {string[]} the session's queued notes, oldest first; the queue is emptied */
-export function takeNotes(session, env = process.env) {
-  if (!isSessionId(session)) return [];
-  const notes = readQueue(session, env);
-  if (notes.length > 0) writeSessionFile(queueDir(env), session, '{}');
-  return notes;
 }

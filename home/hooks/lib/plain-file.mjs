@@ -1,5 +1,5 @@
 // Opens for a file whose path someone else may have planted: the guard's host list, the decision log, the edit log and a session transcript.
-// Exports: readPlainFile(path, maxBytes) -> string (throws); readPlainFileTail(path, tailBytes) -> string (throws);
+// Exports: readPlainFile(path, maxBytes) -> string (throws);
 //   readPlainFileWith(path, read) -> what read returns (throws), for a caller that picks its own range from the size;
 //   appendPlainFile(path, text, {mode, maxBytes}) -> boolean; NOT_PLAIN_FILE.
 // A hook must answer before its timeout, so no open here waits and none follows a link: the file is opened with O_NONBLOCK and O_NOFOLLOW,
@@ -8,7 +8,7 @@
 // An append also refuses a file with a second hard link (fstat nlink > 1, as tools/ask/lib/store.mjs does): O_NOFOLLOW stops only a
 // symlink, and a hard link planted at the path (`ln ~/owner-file <log>`) would send the line into one of the owner's own files.
 // Invariants: never blocks, never follows a link at the last path part, never appends to a file with more than one hard link, never
-// reads more than its cap (maxBytes or tailBytes), closes what it opens.
+// reads more than its cap, closes what it opens.
 // O_NOFOLLOW and O_NONBLOCK are POSIX only (Windows has neither, and no FIFO to block on).
 import { closeSync, constants, fchmodSync, fstatSync, openSync, readSync, writeFileSync } from 'node:fs';
 
@@ -59,21 +59,6 @@ export function readPlainFile(path, maxBytes) {
   return readPlainFileWith(path, (fd, size) => {
     if (size > maxBytes) throw notPlain(path, `larger than ${maxBytes} bytes`);
     return readText(fd, size, 0);
-  });
-}
-
-/**
- * The last `tailBytes` of a regular file (all of it when smaller), read without waiting and without following a link. For a log that
- * grows past any cap (a session transcript), where only the newest lines matter; the first line may start mid-line or mid-character.
- * @param {string} path the file
- * @param {number} tailBytes the most bytes read, from the end
- * @returns {string} the tail as UTF-8
- * @throws {Error} the open error (`ENOENT` when missing, `ELOOP` for a link), or one with code NOT_PLAIN_FILE for a FIFO, device or folder
- */
-export function readPlainFileTail(path, tailBytes) {
-  return readPlainFileWith(path, (fd, size) => {
-    const length = Math.min(size, tailBytes);
-    return readText(fd, length, size - length);
   });
 }
 

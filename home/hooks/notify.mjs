@@ -1,8 +1,8 @@
-// Notification, StopFailure and Stop hook: a desktop note only when work waits on the owner or stopped (display design 7.10;
+// Notification and StopFailure hook: a desktop note only when work waits on the owner or stopped (display design 7.10;
 // spec-p5 `r9-notify`). Notification `permission_prompt` and `elicitation_*` give `Needs you: ...` (with the asking marker's
 // count and time to the default), `quota_auto_resume_stale|disabled` give `Stopped: ...`; StopFailure `rate_limit` gives
-// `Stopped: 5-hour limit, resumes 17:40` from this account's last limit sample (CLAUDE_ACCOUNT, limits-store.mjs); Stop sends the
-// notes queued for the session (lib/notify-note.mjs queueNote; nothing queues one today).
+// `Stopped: 5-hour limit, resumes 17:40` from this account's last limit sample (CLAUDE_ACCOUNT, limits-store.mjs); a Stop event
+// gives no note (the queued agent-failed note was removed on 2026-11-24).
 // The note goes out as `terminalSequence` (hooks docs, "Emit terminal notifications": kept on Notification and StopFailure, whose
 // other output is discarded; written only in an interactive session); no other output field is printed.
 // Exports: noteFor(input, env, now) -> text | null, hookOutput(text, env) -> stdout string. `--channel` prints the terminal and the
@@ -12,11 +12,10 @@
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { readAsking } from './lib/asking-marker.mjs';
-import { effectiveChannel, needsYouText, noteSequence, quotaText, stoppedText, takeNotes, terminalName } from './lib/notify-note.mjs';
+import { effectiveChannel, needsYouText, noteSequence, quotaText, stoppedText, terminalName } from './lib/notify-note.mjs';
 import { latestSample, readLimits } from './lib/limits-store.mjs';
 
 const MAX_INPUT_BYTES = 1024 * 1024;
-const MORE_SEPARATOR = ' · ';
 
 /**
  * @param {{ hook_event_name?: string, notification_type?: string, error?: string, session_id?: string }} input the hook JSON
@@ -32,10 +31,6 @@ export function noteFor(input, env = process.env, now = Date.now()) {
   }
   if (event === 'StopFailure') {
     return input.error === 'rate_limit' ? stoppedText(latestSample(readLimits(env.CLAUDE_ACCOUNT))) : null;
-  }
-  if (event === 'Stop') {
-    const queued = takeNotes(input.session_id, env);
-    return queued.length > 0 ? queued.join(MORE_SEPARATOR) : null;
   }
   return null;
 }
