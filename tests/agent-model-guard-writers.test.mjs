@@ -14,6 +14,7 @@ import { hookEnv } from './hook-env.mjs';
 import { agentHomeEnv } from './agent-home-helpers.mjs';
 import { IDLE_MS, PENDING_MS } from '../home/hooks/lib/agent-launches.mjs';
 import { callCounterPath, worktreeValues } from '../home/hooks/lib/writer-agents.mjs';
+import { isWriterRole } from '../home/hooks/lib/agent-roles.mjs';
 import { fastestCpuMs } from './timing.mjs';
 import { git, makeRepo } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -478,4 +479,28 @@ test('a quoted worktree value is read whole: a real lane folder holding | or ; r
   assert.deepEqual(worktreeValues('worktree: "/x/lane|y" · BRANCH: b\n- worktree: \'/a, b\', BRANCH: c'), ['/x/lane|y', '/a, b']);
   const hostile = `${'BASE: a, '.repeat(4000)}worktree: "${'p'.repeat(20_000)}\n${'worktree: "|'.repeat(3000)}`;
   assert.ok(fastestCpuMs(() => worktreeValues(hostile)) < 200, 'linear: a long header and unclosed quotes');
+});
+
+// dev-part (team split): dev's part builder, started from inside dev (agent_id). Its file pins Sonnet 5.5 at high, the floor of every call;
+// dev may raise the model or effort per call, never lower it, and never to Fable.
+const PART_BUILDER = 'dev-part';
+const READ_ONLY_HELPER = 'tess-simple';
+
+test('dev-part from inside dev: opus runs as sent, fable is denied, haiku and medium are left out to its Sonnet/high pin', () => {
+  const send = (extra) => writerSession().launch(writer(PART_BUILDER, extra)); // one session each: no other writer runs
+  assert.equal(send({ model: 'opus' }), null, 'a model above the pin runs unchanged, model kept');
+  const fable = send({ model: 'fable' });
+  assert.ok(denied(fable), 'fable');
+  assert.match(fable.permissionDecisionReason, /^Not started: Fable is never used for an agent .*leave `model` out of the Agent call \(it was `fable`\)/);
+  const call = writer(PART_BUILDER);
+  for (const lower of [{ model: 'haiku' }, { effort: 'medium' }]) {
+    assert.deepEqual(send(lower), { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: call }, JSON.stringify(lower));
+  }
+});
+
+test('isWriterRole: dev-part writes, tess-simple does not', () => {
+  const home = makeTempDir('writer-role-home-');
+  const env = { HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: makeTempDir('writer-role-project-') };
+  assert.equal(isWriterRole(PART_BUILDER, env), true);
+  assert.equal(isWriterRole(READ_ONLY_HELPER, env), false);
 });
