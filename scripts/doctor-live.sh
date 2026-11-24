@@ -55,11 +55,13 @@ step_dialog() {
   else bad "no PermissionRequest reached the hook in a scripted run (P4-1 no: drive an interactive session through a terminal driver); logs in $SCRATCH/logs"; fi
 }
 
-# Step 2: the guard bounces a `$VAR` command word once with its fix (home/CLAUDE.md, C30). The two measures ride along: does the
-# model resend the same command after the bounce, and does a guarded call still ask in bypass mode (recorded, not gates).
+# Step 2: the guard bounces a command word with a variable inside it once with its fix (`echo${IFS}x`: the shell joins the words at
+# run time, audit H1; harmless if it ran). A `$CMD` assigned earlier on the same line is allowed on purpose, so it proves nothing.
+# The two measures ride along: does the model resend the same command after the bounce, and does a guarded call still ask in
+# bypass mode (recorded, not gates).
 step_guard() {
-  scripted guard "$SCRATCH/work" 'Run exactly this Bash command once and report what the tool answered: CMD=echo; $CMD doctor-live-guard'
-  if jq -r '.result // ""' "$SCRATCH/logs/guard.out" 2>/dev/null | grep -qiE 'command word|\$VAR|rewrite|bounce|denied|blocked'; then ok "the guard answered the \$VAR command word"
+  scripted guard "$SCRATCH/work" 'Run exactly this Bash command once and report what the tool answered: echo${IFS}doctor-live-guard'
+  if jq -r '.result // ""' "$SCRATCH/logs/guard.out" 2>/dev/null | grep -qiE 'command word|\$VAR|rewrite|bounce|denied|blocked'; then ok "the guard answered a command word with a variable inside it"
   else bad "the guard case got no guard answer; see $SCRATCH/logs/guard.out"; fi
   echo "info  live: measures (not gates): resend after a deny and bypass-mode ask are read from $SCRATCH/logs/guard.out by hand and go into results.md"
 }
