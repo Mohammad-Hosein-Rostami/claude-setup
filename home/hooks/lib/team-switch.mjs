@@ -1,4 +1,4 @@
-// Our skip switches (DONE_CHECK_SKIP, CLAUDE_POST_EDIT_SKIP, CLAUDE_SKILL_ROUTER) as a hook may honour them. A switch that a
+// Our skip switches (today only CLAUDE_POST_EDIT_SKIP) as a hook may honour them. A switch that a
 // project's committed `.claude/settings.json` (the team file) sets and its `.claude/settings.local.json` does not is ignored: a team
 // file never turns our checks off (layering-spec.md section 3; owner R22-Q3 "the stricter rule applies", R22-L4 "warn clearly").
 // Exports: switchDirs(env, ...folders), trustedSwitch(env, key, dirs, platform), switchNames(env, key, dirs), noticeOnce(sessionId, key).
@@ -92,7 +92,7 @@ export function trustedSwitch(env, key, dirs, platform = process.platform) {
 }
 
 /**
- * The comma-separated names of a trusted switch (`DONE_CHECK_SKIP=types,lint` -> types, lint), trimmed; empty when it is ignored or unset.
+ * The comma-separated names of a trusted switch (`SOME_SKIP=types,lint` -> types, lint), trimmed; empty when it is ignored or unset.
  * @param {Record<string, string|undefined>} env the hook's or tool's environment
  * @param {string} key the switch
  * @param {string[]} dirs the project folders (switchDirs)

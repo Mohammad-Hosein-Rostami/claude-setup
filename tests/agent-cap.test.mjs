@@ -259,6 +259,10 @@ test('settings/base.json turns workflows off by setting, env and deny rule, and 
   assert.ok(!(base.permissions.additionalDirectories ?? []).some((dir) => dir.endsWith('/workflows')));
 });
 
+test('settings/base.json refuses agent forks: a fork runs on the main session\'s model, not an agent\'s pinned one (owner, 2026-11-24)', () => {
+  assert.ok(base.permissions.deny.includes('Agent(fork)'));
+});
+
 test('the CLI subagent cap stays far above the hook caps and the CLI default, so helpers are not capped', () => {
   const cap = Number(base.env.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS);
   assert.ok(cap > CLI_DEFAULT_SUBAGENT_CAP && cap > MAX_RUNNING_AGENTS, String(cap));

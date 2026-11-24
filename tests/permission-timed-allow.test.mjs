@@ -176,13 +176,6 @@ test('settings/base.json registers the hook for every tool, with a timeout above
   assert.ok(ours[0].hooks[0].timeout > MAX_QUESTIONS * MAX_ASK_TIMEOUT_S, 'one popup per question: the hook must outlive all of them');
 });
 
-test('settings/base.json registers the PostToolUse hook that marks a terminal answer, for AskUserQuestion only', () => {
-  const entries = JSON.parse(readFileSync(BASE_SETTINGS, 'utf8')).hooks.PostToolUse;
-  const ours = entries.filter((entry) => entry.hooks.some((hook) => hook.command.includes('question-answered.mjs')));
-  assert.equal(ours.length, 1);
-  assert.equal(ours[0].matcher, 'AskUserQuestion');
-});
-
 test('a Bash command the guard already asked about is allowed once without a second dialog', () => {
   const env = privateEnv();
   const input = promptInput({ tool_input: { command: 'git push origin main' } }); // the guard asks, but not as DESTRUCTIVE

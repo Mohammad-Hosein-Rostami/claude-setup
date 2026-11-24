@@ -2,8 +2,8 @@
 // each with its own CLAUDE_QUESTION_TIMEOUT_S wait (default 2 min), asked one after the other. No answer in the wait or "Use recommended"
 // takes that question's "(Recommended)" option, else its first option; only a timeout adds a note for that answer (UNCONFIRMED).
 // "Answer in terminal", a failed dialog or no GUI stop the loop and print nothing, so Claude Code's own question UI shows every question.
-// When the owner answers in the terminal (the PostToolUse mark of lib/question-answered.mjs) the open popup is closed and no later one opens.
-// The dialog is injected (questionReply's `ask`) or, for the hook process tests, a fake dialog tool sits first on PATH. No real popup.
+// When the owner turns the question down in the terminal (the transcript watch of lib/question-rejected.mjs) the open popup is closed and no
+// later one opens; once the popups answered every question the asking marker is cleared. The dialog is injected (questionReply's `ask`) or, for the hook process tests, a fake dialog tool sits first on PATH. No real popup.
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -11,7 +11,7 @@ import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { markQuestionAnswered } from '../home/hooks/lib/question-answered.mjs';
+import { readAsking } from '../home/hooks/lib/asking-marker.mjs';
 import { TERMINAL_AUTO_CONTINUE_S, questionReply, questionTimeoutSeconds } from '../home/hooks/lib/question-reply.mjs';
 import { hookEnv, tempLogPath } from './hook-env.mjs';
 import { fakePopup } from './fake-dialog-tool.mjs';
@@ -155,43 +155,35 @@ const openUntilAborted = (onOpen) => async (request, _env, { signal }) => {
   return { decision: 'ask', outcome: 'closed', reason: 'closed' };
 };
 
-test('the owner answers in the terminal while a popup is open: it is aborted, nothing is printed, no later popup opens', async () => {
+test('the asking marker shows while the popups are open and is cleared once they answered every question', async () => {
   const env = privateEnv();
-  const opened = [];
-  const ask = openUntilAborted(() => {
-    opened.push(Date.now());
-    markQuestionAnswered({ session: SESSION, agentId: undefined, questions: ['Where should the watcher run?', 'Which format?'] }, env); // PostToolUse did this
-  });
-  assert.equal(await reply(askInput([WATCHER, FORMAT]), env, ask), undefined);
-  assert.equal(opened.length, 1);
+  const seen = [];
+  const ask = async () => {
+    seen.push(readAsking(SESSION, env)?.kind);
+    return { decision: 'allow', outcome: 'allow', reason: 'click' };
+  };
+  assert.equal((await reply(askInput([WATCHER, FORMAT]), env, ask)).behavior, 'allow');
+  assert.deepEqual(seen, ['question', 'question']);
+  assert.equal(readAsking(SESSION, env), null, 'nothing waits on the owner any more');
 });
 
-test('a terminal answer that lands as a popup ends is seen before the next popup opens', async () => {
+test('a question handed back to the terminal keeps its asking marker: the terminal question still waits', async () => {
   const env = privateEnv();
-  const mark = () => markQuestionAnswered({ session: SESSION, agentId: undefined, questions: ['Where should the watcher run?', 'Which format?'] }, env);
+  assert.equal(await reply(askInput([WATCHER]), env, fakeAsk('deny')), undefined);
+  assert.equal(readAsking(SESSION, env)?.kind, 'question');
+});
+
+test('a turn-down that lands as a popup ends is seen before the next popup opens', async () => {
+  const transcriptPath = join(makeTempDir('question-transcript-'), 'session.jsonl');
+  writeFileSync(transcriptPath, '');
   const calls = [];
   const ask = async (request) => {
     calls.push(request);
-    mark();
+    appendFileSync(transcriptPath, `${JSON.stringify({ type: 'user', toolDenialKind: 'user-rejected', message: { role: 'user', content: [] } })}\n`);
     return { decision: 'allow', outcome: 'allow', reason: 'click' };
   };
-  assert.equal(await reply(askInput([WATCHER, FORMAT]), env, ask, { pollMs: 60_000 }), undefined);
-  assert.equal(calls.length, 1, 'question 2 never opens after the terminal answered');
-});
-
-test('a mark for another session, agent or question set leaves the popups alone', async () => {
-  const env = privateEnv();
-  markQuestionAnswered({ session: 'session-other', agentId: undefined, questions: ['Where should the watcher run?'] }, env, () => Date.now() + 1000);
-  markQuestionAnswered({ session: SESSION, agentId: 'agent-1', questions: ['Where should the watcher run?'] }, env, () => Date.now() + 1000);
-  markQuestionAnswered({ session: SESSION, agentId: undefined, questions: ['Something else?'] }, env, () => Date.now() + 1000);
-  const decision = await reply(askInput([WATCHER]), env, fakeAsk('allow'));
-  assert.equal(decision.behavior, 'allow');
-});
-
-test('a mark from before this popup opened (an earlier identical question) does not close it', async () => {
-  const env = privateEnv();
-  markQuestionAnswered({ session: SESSION, agentId: undefined, questions: ['Where should the watcher run?'] }, env, () => Date.now() - 60_000);
-  assert.equal((await reply(askInput([WATCHER]), env, fakeAsk('allow'))).behavior, 'allow');
+  assert.equal(await reply({ ...askInput([WATCHER, FORMAT]), transcript_path: transcriptPath }, privateEnv(), ask, { pollMs: 60_000 }), undefined);
+  assert.equal(calls.length, 1, 'question 2 never opens after the terminal turned the question down');
 });
 
 test('the owner turns the question down in the terminal (Chat about this, Esc): the open popup closes and no later one opens', async () => {
@@ -271,11 +263,13 @@ async function until(check) {
   return check();
 }
 
-test('hook process: a terminal answer closes the real popup within the poll interval and the hook prints nothing', async () => {
+test('hook process: a turn-down in the terminal closes the real popup within the poll interval and the hook prints nothing', async () => {
   const popup = fakePopup('hang');
-  const { done } = startHook(askInput([WATCHER, FORMAT]), popup);
+  const transcriptPath = join(makeTempDir('question-transcript-'), 'session.jsonl');
+  writeFileSync(transcriptPath, '');
+  const { done } = startHook({ ...askInput([WATCHER, FORMAT]), transcript_path: transcriptPath }, popup);
   assert.ok(await until(popup.alive), 'the popup opened');
-  markQuestionAnswered({ session: SESSION, agentId: undefined, questions: ['Where should the watcher run?', 'Which format?'] }, popup.env);
+  appendFileSync(transcriptPath, `${JSON.stringify({ type: 'user', toolDenialKind: 'user-rejected', message: { role: 'user', content: [] } })}\n`);
   const result = await done;
   assert.equal(result.code, 0);
   assert.equal(result.stdout, '');

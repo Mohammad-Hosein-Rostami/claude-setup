@@ -5,7 +5,8 @@
 // CLAUDE_QUESTION_TIMEOUT_S (default 120 s, questionTimeoutSeconds; cut so that all popups end before the terminal question
 // auto-continues at 600 s, askUserQuestionTimeout "10m"). The body is display design 7.5: the question, all options with the recommended
 // one first, and what happens with no answer; no tool, directory or session line. While the question is open the asking marker
-// (lib/asking-marker.mjs, with the first question's `header` label) is written; question-answered.mjs clears it on PostToolUse or PostToolUseFailure, and it ages out. "Use recommended" or no answer in the wait takes that question's
+// (lib/asking-marker.mjs, with the first question's `header` label) is written; it is cleared once the popups answered every question, and
+// otherwise ages out (the PostToolUse hook that cleared it was removed, plan 2026-11-24). "Use recommended" or no answer in the wait takes that question's
 // "(Recommended)" option, else its first; a multiSelect question gets that single option. Only a timeout adds `annotations` {question text:
 // {notes}} saying the answer was taken by default, not chosen by the owner (UNCONFIRMED), for that question alone. After the last question
 // the result is an allow with updatedInput = the input plus `answers` {question text: option label} (hooks docs, AskUserQuestion input and
@@ -13,16 +14,15 @@
 // Popup 1 has "Use recommended" as its default (Enter) button; popups 2..N have "Answer in terminal" (a stray Enter typed into the terminal question must not answer).
 // "Answer in terminal" (Esc on macOS), a failed dialog or no GUI on any question stop the loop: undefined, so Claude Code's own question UI
 // (which already shows every question) takes over; answers already collected are dropped, never an invented answer.
-// Terminal answer: Claude Code shows its own question and runs this hook side by side and never says when the owner answers there. The
-// PostToolUse hook question-answered.mjs leaves a mark (lib/question-answered.mjs); it is polled every pollMs while a popup is open and
-// checked before each next one. Turning the question down in the terminal ("Chat about this", Esc) runs no tool and leaves no mark, so the
-// session transcript is watched for it too (lib/question-rejected.mjs). A mark or a rejection closes the open popup (abort signal, lib/timed-ask-async.mjs) and the loop ends with undefined.
+// Terminal: Claude Code shows its own question and runs this hook side by side and never says when the owner answers there. Turning the
+// question down in the terminal ("Chat about this", Esc) is seen in the session transcript (lib/question-rejected.mjs), polled every pollMs
+// while a popup is open and checked before each next one: it closes the open popup (abort signal, lib/timed-ask-async.mjs) and the loop
+// ends with undefined. An answer typed in the terminal is not seen (its PostToolUse hook was removed): the open popup runs to its end.
 // Invariants: never two popups at once; every popup is logged (guard log) without secrets; no exception leaves this function for a bad input.
 import { logDecision } from './guard-log.mjs';
-import { wasQuestionAnswered } from './question-answered.mjs';
 import { watchTerminalRejection } from './question-rejected.mjs';
 import { answerAskAsync } from './timed-ask-async.mjs';
-import { markAsking } from './asking-marker.mjs';
+import { clearAsking, markAsking } from './asking-marker.mjs';
 import { MAX_ASK_TIMEOUT_S, formatDuration } from './timed-ask.mjs';
 
 const HOOK_NAME = 'permission-timed-allow';
@@ -47,7 +47,7 @@ const RECOMMENDED = /\(Recommended\)\s*$/i; // how Claude marks the option it wo
 // 120 s each fits up to 4 questions: min(120, floor((600 - 30) / N)), so 5 questions get 114 s and 6 get 95 s.
 export const TERMINAL_AUTO_CONTINUE_S = 600;
 const POPUP_MARGIN_S = 30;
-const TERMINAL_POLL_MS = 250; // how often the open popup looks for the terminal answer mark: a closing popup is seen within this
+const TERMINAL_POLL_MS = 250; // how often the open popup looks for a turn-down in the terminal: a closing popup is seen within this
 
 /** @returns {boolean} true for a non-empty list of questions, each with question text and options that all have a label */
 const isQuestionList = (questions) => Array.isArray(questions) && questions.length > 0 && questions.every((item) =>
@@ -108,17 +108,14 @@ export async function questionReply(input, env, { ask = answerAskAsync, pollMs =
   const questions = toolInput.questions;
   const timeoutS = Math.min(questionTimeoutSeconds(env), Math.floor((TERMINAL_AUTO_CONTINUE_S - POPUP_MARGIN_S) / questions.length));
   markAsking({ session: input.session_id, kind: 'question', tool: QUESTION_TOOL, count: questions.length, openedAt: Date.now(), waitS: timeoutS, header: questions[0].header }, env);
-  const terminalMark = { session: input.session_id, agentId: input.agent_id, questions: questions.map((item) => item.question) };
-  const openedAt = Date.now();
   const turnedDownInTerminal = watchTerminalRejection(input.transcript_path);
-  const answeredInTerminal = () => wasQuestionAnswered(terminalMark, openedAt, env) || turnedDownInTerminal();
   const closePopup = new AbortController();
-  const watch = setInterval(() => { if (answeredInTerminal()) closePopup.abort(); }, pollMs);
+  const watch = setInterval(() => { if (turnedDownInTerminal()) closePopup.abort(); }, pollMs);
   const answers = {};
   const timedOut = [];
   try {
     for (const [index, item] of questions.entries()) {
-      if (answeredInTerminal()) return undefined;
+      if (turnedDownInTerminal()) return undefined;
       const answer = recommendedLabel(item.options);
       const request = popupRequest({ item, index, count: questions.length, answer, timeoutS, input });
       const result = await ask(request, env, { signal: closePopup.signal });
@@ -131,6 +128,7 @@ export async function questionReply(input, env, { ask = answerAskAsync, pollMs =
   } finally {
     clearInterval(watch);
   }
+  clearAsking(input.session_id, env, 'question'); // every question is answered: nothing waits on the owner any more
   const annotations = timedOut.length > 0 ? { annotations: timeoutAnnotations(toolInput, timedOut, timeoutS) } : {};
   return { behavior: 'allow', updatedInput: { ...toolInput, answers, ...annotations } };
 }

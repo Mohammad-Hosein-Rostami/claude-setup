@@ -1,24 +1,20 @@
-// The folder whose git state a Stop or SubagentStop gate looks at, and the hardened git calls that read it. Shared by commit-gate.mjs and
-// git-tidy-gate.mjs.
+// The folder whose git state a hook looks at (git-tidy-gate.mjs at session start), and the hardened git calls that read it; also used
+// by project-merge.mjs and the project scan.
 // Exports: runGit, gitOut, gitSucceeds, gitText (git in a folder, hardened), startFolder(transcriptPath), gatedFolder(input, env),
-// worktreeOf(folder, timeoutMs), namesFilterProgram(top), readHead(path, maxBytes), editedWorktrees(session, env, options).
+// worktreeOf(folder, timeoutMs), namesFilterProgram(top), readHead(path, maxBytes).
 // Invariants:
 // - gatedFolder is the session's own worktree folder: for the main session CLAUDE_PROJECT_DIR, for a subagent the first `cwd` of its
 //   transcript (null for an agent that cannot write files). Never the hook input's cwd: a folder the session only cd'd into may be
 //   someone else's repo, and its git config is not trusted.
 // - git never runs a program the repository names: every call has core.fsmonitor off, core.hooksPath empty, log.showSignature off and bare-repo discovery off,
 //   and the variables that point git at another repository are removed.
-// - editedWorktrees is the worktrees of the files the session itself edited (lib/own-edits.mjs records): the only other folders a lead's
-//   gate may look at, for a session started where there is no repo (~). git runs only in the folder of a recorded file, never elsewhere.
-//   Each repository counts once however many of its worktrees were edited in (they share one git folder).
 // - Finding a worktree is time-bound: a folder whose git state never answers (a stale network mount, a pipe where HEAD should be) is given
 //   up on after DISCOVERY_TIMEOUT_MS and counts as no worktree, so a stop is never held by it.
 // - Nothing here throws: a missing or unreadable input gives null.
 import { spawnSync } from 'node:child_process';
-import { existsSync, readSync } from 'node:fs';
+import { readSync } from 'node:fs';
 import { devNull } from 'node:os';
-import { dirname, isAbsolute, sep } from 'node:path';
-import { LEAD, recordedPaths } from './own-edits.mjs';
+import { isAbsolute } from 'node:path';
 import { readPlainFileWith } from './plain-file.mjs';
 import { agentFileWrites } from './writer-agents.mjs';
 
@@ -30,9 +26,7 @@ const HARDENED = [
   '-c', 'core.fsmonitor=false', '-c', 'safe.bareRepository=explicit', '-c', `core.hooksPath=${devNull}`, '-c', 'log.showSignature=false',
 ];
 const REPOSITORY_SCOPES = new Set(['local', 'worktree']); // config that comes with the repository, not the owner's own
-const MAX_EDITED_WORKTREES = 5; // repos one stop looks at; a session that edited in more is not held up by all of them
 const DISCOVERY_TIMEOUT_MS = 3000; // one `rev-parse` that finds a folder's worktree; it normally takes a few ms
-const MAX_FOLDERS_PROBED = 30; // folders of recorded files asked for their worktree, newest edit first
 const READ_ONLY_BUILT_INS = new Set(['Explore', 'Plan']);
 
 /**
@@ -113,28 +107,4 @@ export function namesFilterProgram(top) {
     const [scope, key = ''] = line.split('\t');
     return REPOSITORY_SCOPES.has(scope) && key.toLowerCase().startsWith('filter.');
   });
-}
-
-/**
- * The worktrees holding the files this session (the lead and its agents) edited, newest edit first, one per repository.
- * A folder of a file that is already inside a found worktree is not asked again; a file whose folder is gone is skipped.
- * @param {string} session the session id
- * @param {Record<string, string | undefined>} env HOME (the edit records)
- * @param {{deadlineMs?: number, except?: {top: string, commonDir: string} | null}} [options] `deadlineMs`: epoch ms after which no
- *   further folder is asked (the first always is); `except`: a worktree whose repository is already looked at, so it is left out
- * @returns {{top: string, gitDir: string, commonDir: string, branch: string}[]} at most MAX_EDITED_WORKTREES
- */
-export function editedWorktrees(session, env, { deadlineMs = Infinity, except = null } = {}) {
-  const found = [];
-  let probed = 0;
-  for (const file of [...recordedPaths(env, session, LEAD)].reverse()) {
-    if (found.length >= MAX_EDITED_WORKTREES || probed >= MAX_FOLDERS_PROBED || (probed > 0 && Date.now() >= deadlineMs)) break;
-    const folder = dirname(file);
-    const looked = except === null ? found : [except, ...found];
-    if (looked.some(({ top }) => folder === top || folder.startsWith(top + sep)) || !existsSync(folder)) continue;
-    probed += 1;
-    const tree = worktreeOf(folder);
-    if (tree !== null && !looked.some(({ commonDir }) => commonDir === tree.commonDir)) found.push(tree);
-  }
-  return found;
 }

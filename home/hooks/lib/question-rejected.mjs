@@ -1,5 +1,5 @@
-// Notices that the owner turned an AskUserQuestion down in the terminal ("Chat about this", or Esc): the tool then never runs, so the
-// PostToolUse hook (question-answered.mjs) never leaves its mark and the popups would keep opening one after the other.
+// Notices that the owner turned an AskUserQuestion down in the terminal ("Chat about this", or Esc): the tool then never runs, and
+// without this watch the popups would keep opening one after the other.
 // Exports: watchTerminalRejection(transcriptPath) -> () => boolean.
 // How: Claude Code appends every turned-down tool call to the session transcript (JSONL, `transcript_path` of the hook input) as a `user`
 // entry with the top-level field toolDenialKind "user-rejected" (stated in the CLI's own transcript notes, read from 2.1.326); "Chat about

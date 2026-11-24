@@ -6,8 +6,8 @@
 // behaviour (its prompt, or a deny where nobody can be asked).
 // Exports: permissionReply(input, env, answer) -> hook stdout (every tool except AskUserQuestion).
 // AskUserQuestion (the owner: "nothing should wait for me") is answered by lib/question-reply.mjs from main: one timed popup PER question,
-// each with its own CLAUDE_PERMISSION_TIMEOUT_S wait, closed at once when the owner answers in the terminal (the PostToolUse hook
-// question-answered.mjs leaves the mark) or when Claude Code stops this hook. Its decision is an allow with updatedInput = the input plus
+// each with its own CLAUDE_QUESTION_TIMEOUT_S wait, closed at once when the owner turns the question down in the terminal
+// (lib/question-rejected.mjs) or when Claude Code stops this hook. Its decision is an allow with updatedInput = the input plus
 // `answers`; "Answer in terminal" (or Esc on macOS), no GUI or a failed dialog print nothing: Claude Code's own question UI
 // (settings askUserQuestionTimeout still applies there), never an invented answer.
 // ExitPlanMode needs updatedInput with an allow (hooks docs), so its allow echoes the plan input back.

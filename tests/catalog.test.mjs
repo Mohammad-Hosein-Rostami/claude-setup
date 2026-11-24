@@ -80,24 +80,23 @@ test('every file a catalog row names exists', () => {
   assert.deepEqual(missingFiles(readTables(readFileSync(CATALOG, 'utf8')), REPO), []);
 });
 
-test('the settings hooks row names only hook files that exist, and the session-notes hook', () => {
+/** The hook script names settings/base.json registers (`.../hooks/<name>.mjs` in each command). */
+function registeredHooks() {
+  const { hooks } = JSON.parse(readFileSync(join(REPO, 'settings', 'base.json'), 'utf8'));
+  const commands = Object.values(hooks).flat().flatMap((entry) => entry.hooks.map((hook) => hook.command));
+  return [...new Set(commands.map((command) => /\/hooks\/([\w.-]+\.mjs)/.exec(command)?.[1]).filter(Boolean))];
+}
+
+test('the settings hooks row names only hook files that exist, and every hook settings/base.json registers', () => {
   const settings = readTables(readFileSync(CATALOG, 'utf8')).find((table) => table.section === 'Settings keys');
   const hooksRow = settings?.rows.find(([key]) => key === '`hooks`');
   assert.ok(hooksRow, 'the Settings keys table has a `hooks` row');
   const scripts = namesOf(hooksRow[1]).filter((name) => name.endsWith('.mjs'));
   assert.deepEqual(scripts.filter((name) => !existsSync(join(REPO, 'home', 'hooks', name))), [], 'hook files the row names but home/hooks lacks');
-  assert.ok(scripts.includes('session-notes.mjs'), 'the row names session-notes.mjs');
-});
-
-// Review R3 of agents-note: the project-agents child moved to project-merge.mjs, so session-notes' 4 s deadline bounds only the prune.
-test('the session-notes catalog row and hooks README entry give its deadline the prune only, not the project-agents child', () => {
-  const sessionNotesRow = readTables(readFileSync(CATALOG, 'utf8')).flatMap((table) => table.rows).find(([key]) => key === '`session-notes.mjs`');
-  assert.ok(sessionNotesRow, 'the catalog has a session-notes.mjs row');
-  assert.match(sessionNotesRow.join('|'), /One deadline of 4,000 ms from the hook's start \(`HOOK_BUDGET_MS`, below the 5 s timeout of its two entries in `settings\/base\.json`\) bounds the prune\./);
-  const readmeEntry = readFileSync(join(REPO, 'home', 'hooks', 'README.md'), 'utf8').split('\n').find((line) => line.startsWith('- `session-notes.mjs`'));
-  assert.ok(readmeEntry, 'home/hooks/README.md has a session-notes.mjs entry');
-  assert.match(readmeEntry, /One 4 s deadline below the hook timeout covers the prune of its state files \(`lib\/state-files\.mjs`\);/);
-  assert.doesNotMatch(readmeEntry, /deadline[^.;]*covers the project-agents child/);
+  const registered = registeredHooks();
+  assert.ok(registered.length > 0, 'the settings parser found the hooks');
+  assert.deepEqual(registered.filter((name) => !scripts.includes(name)), [], 'hooks settings/base.json registers but the row leaves out');
+  assert.deepEqual(scripts.filter((name) => !registered.includes(name)), [], 'hooks the row names but settings/base.json does not register');
 });
 
 test('the key check finds a row that was added twice, and the path check finds a row whose file is gone', () => {
