@@ -4,16 +4,19 @@ This folder holds the UI proof record tool: `node ~/.claude/tools/ui-proof/ui-pr
 
 ## Records (F7, P8)
 
-The `ui-proof-gate` hook wrote one record per `ui-check run`, whatever its verdict; that hook was removed (2026-11-24), so no
-new record is written and `check` reads only the records already stored. A record lives in
+`ui-proof record --as <dev-run|pixel-qa> -- <ui-check run arguments>` runs `ui-check run` itself, passes its output through
+and writes one record per run, whatever its verdict (`lib/record-run.mjs`; the `ui-proof-gate` hook did this until 2026-11-24).
+dev-run and pixel-qa start their runs this way, so their PASS can be checked. A record lives in
 `~/.claude/state/ui-proof/<repo>-<hash>.json` (`UI_PROOF_STATE_DIR` overrides the folder; worktrees of one clone share the file;
 the newest 200 records are kept): the hash of the UI files of the working tree, HEAD, the verdict, the rule, the viewing conditions,
 the matrix hash, the `--step` label, the widths and frames, and the batch reference from the run's `ledger.json` (per state the
 capture sha256, pixels, colour-metric pixels, rows and pixel ratio; the comparator and renderer). It also keeps the sha256 of the
 ledger (`ledgerSha256`, how a later `--same` run names this run as its base), the ledger's `same` section and its captures (key,
 sha256, finding ids, page errors). The working tree is the one of the ledger's `root` (the folder `ui-check run` started in) when
-that is a worktree of the same repository as the hook's folder, else the hook's folder. The agent type is taken from the
-hook input (`agent_type`), never from the command line; a record without one is nobody's. Only a PASS made by pixel-qa on the tree
+that is a worktree of the same repository as the folder `record` ran in, else that folder. The verdict and the results folder
+come from the run's own `result:` line, never from a flag; the agent type is the `--as` kind (no hook names the agent any more:
+it is the caller's word); a record without one (an older record) is nobody's. A run file that is a FIFO, device or folder is
+refused and nothing is written. Only a PASS made by pixel-qa on the tree
 that lands is the final gate of a visual or pixel plan; a same or render plan is proved by dev-run or pixel-qa runs (below).
 
 UI files (`lib/ui-files.mjs`, the one definition): markup and style files plus `.ts`/`.js` style scripts under a
@@ -23,6 +26,7 @@ styles/theme/sx folder or named `*.styles.ts`, `*.theme.ts`, `*.sx.ts`, minus fo
 
 | Command | Exit |
 | ------- | ---- |
+| `record --as <dev-run\|pixel-qa> [--repo DIR] -- <ui-check run arguments>` | Runs `ui-check run` with those arguments in DIR (default: the current folder), passes its output through and writes its record as that kind. The run's own exit code; 2: usage, or the run ended but its record could not be written (an unreadable or non-plain run file: no record). A run that ends before its `result:` line (a setup problem) leaves no record and says so. |
 | `check --tip <sha> [--against <sha>] [--repo DIR]` | 0: a pixel-qa PASS for the tip's UI tree and, with `--against`, no state worse than the record taken at that sha; a state with no reference row prints `new` (INFO). 1: no such PASS, a state worse, another comparator or renderer (fail closed), or no record with that sha. 2: usage. `git-tidy land` calls it with `--against`. |
 | `changed --from <sha> --to <sha> [--repo DIR]` | Lists the UI files that differ: 0 none, 1 some, 2 usage. |
 | `plan --base <sha> --tip <sha> \| --files <path>... [--request <file>]... [--matrix <path>] [--json] [--write-run <dir>] [--repo DIR]` | The check plan (`lib/ui-plan.mjs`, rules in `home/standards/ui-checks.md`): `plan: <depth>`, a `tests:` line when logic changed, `surface <id>: <needs> (<why>)` (a set such as `same + pixel`: `same` stays beside any raised need), a `map:` line (the widths, locales and states a same or render proof covers, where they came from, and the run matrix's sha256), `exempt <file> (<why>)` and one line per safe path taken. `--files` judges the expected files of a brief by path at HEAD. `--request` files are the request itself (the brief): a STATUS.md is not read, and the `## Standing rules` and `## Owner decisions` sections of any other file are cut, each with a reason line. The map takes the lane matrix's widths and locales, else 360, 768, 1280 and the repository's locale folder names (`locales/fa/`, `i18n/fa.json`), else `en`. `--write-run <dir>` writes `matrix.json` (the map's run matrix, byte for byte, so a run of it carries the plan's matrix hash) and `states.json` of the surfaces that need same or render under `~/.claude/state/ui-plan-runs/` (`UI_PLAN_STATE_DIR` overrides; a folder inside the repository is refused). Exit 0, 2 usage. |

@@ -25,6 +25,8 @@ The parts of the `ui-proof` tool, which records whether the UI of a tree was che
   the run matrix), `runFiles` (that run matrix and its states) and `planProofProblem`, whether the records prove a plan. Rules:
   `home/standards/ui-checks.md`.
 - `records.mjs`: the proof records, one JSON file per repository, one record per `ui-check run`, and the finders that look a record up by tree or commit.
+- `record-run.mjs`: writes the record of one finished `ui-check run` for `ui-proof record`, from the run's own `result:` line, its
+  ledger and results (read as plain files only) and the `--as` kind (dev-run or pixel-qa).
 - `review-html.mjs`: builds the HTML of the owner's review page from the review model (pure; every text is HTML-escaped).
 
 Screens and reach (which screens of a project a change can show on), read at a commit with git plumbing, nothing written in the project:

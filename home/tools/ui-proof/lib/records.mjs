@@ -1,13 +1,13 @@
 // Purpose: the UI proof records (F7, P8): one JSON file per repository under ~/.claude/state/ui-proof (override:
 // UI_PROOF_STATE_DIR), one record per `ui-check run`, whatever its verdict. Exports: MAX_RECORDS, PROOF_AGENT, RENDER_PROOF_AGENTS,
-// storeFile, readRecords, appendRecord, buildRecord, findPass, findAtCommit, newestForTree. appendRecord and buildRecord have no
-// caller since the ui-proof-gate hook was removed (kept until the owner decides whether runs are recorded again).
+// storeFile, readRecords, appendRecord, buildRecord, findPass, findAtCommit, newestForTree. The writer is `ui-proof record`
+// (record-run.mjs), which runs `ui-check run` itself.
 // A record: {id, createdAt, head, uiTree, verdict, rule, conditions, matrixHash, agentType, step, widths, frames, results,
 // reference: {comparator, renderer, states: [{key, sha256, pixels, drift, rows, scale, status}]}, ledgerSha256, same, captures}.
 // ledgerSha256 is the sha256 of the run's ledger.json as read (a later run's `--same` names its base by it); same is the ledger's
 // `same` section (null without `--same`); captures are the ledger's responsive captures without their file paths ([] in an older
-// ledger). The agent type comes from the hook input only (never from the command line); a record without one is nobody's (it never
-// counts as pixel-qa's or dev-run's: fail closed). Diagnostic records never enter `reference` (ui-check's ledger leaves them out).
+// ledger). The agent type is the kind `ui-proof record --as` names (dev-run or pixel-qa); a record without one (an older record) is
+// nobody's (it never counts as pixel-qa's or dev-run's: fail closed). Diagnostic records never enter `reference` (ui-check's ledger leaves them out).
 // Invariants: the file is replaced atomically (temp name unique to this process) with mode 0600; a missing file reads as no records, an
 // unreadable or malformed one throws (callers fail closed); the newest MAX_RECORDS records are kept.
 import crypto from 'node:crypto';

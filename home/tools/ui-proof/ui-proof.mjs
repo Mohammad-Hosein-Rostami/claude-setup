@@ -1,6 +1,9 @@
 #!/usr/bin/env node
-// Purpose: CLI of the UI proof records (F7, P8): `check`, `plan`, `changed`, `review-page`. The records were written by the
-// ui-proof-gate hook after every `ui-check run`; that hook is removed, so `check` reads only the records already stored.
+// Purpose: CLI of the UI proof records (F7, P8): `record`, `check`, `plan`, `changed`, `review-page`.
+//   ui-proof record --as <dev-run|pixel-qa> [--repo DIR] -- <ui-check run arguments>
+//     runs `ui-check run` with those arguments in DIR (default: here), passes its output through, and writes the proof record of the
+//     run from its own `result:` line (lib/record-run.mjs), whatever its verdict. Exit: the run's own code; 2 = usage, or the run
+//     ended but its record could not be written (no record then).
 //   ui-proof check --tip <sha> [--against <sha>] [--repo DIR]
 //     0 = a pixel-qa PASS for the tip's UI tree and (with --against) no state worse than that record; a state with no
 //     reference row prints `new` (INFO), never worse. 1 = no such PASS, a state worse, another comparator or renderer, or no record with
@@ -14,19 +17,23 @@
 //   ui-proof check --tip <sha> --plan --base <sha> [--request <file>]... [--matrix <path>] [--repo DIR]
 //     the plan of base..tip and its proof: 0 PASS (with `follow-up:` lines for old findings), 1 FAIL, 2 usage. A visual or pixel plan
 //     with no `same` need prints exactly what `check --tip` prints. An unreadable record store is FAIL.
-// Exports: none. Invariants: reads records only (never writes them); any read or git failure is exit 2 with the reason (`check --plan`:
-// FAIL), never a PASS; a request file is the request itself: a STATUS.md is not read, and the `## Standing rules` and `## Owner
+// Exports: none. Invariants: only `record` writes a record, and only from a run it started itself; any read or git failure is exit 2
+// with the reason (`check --plan`: FAIL), never a PASS; a request file is the request itself: a STATUS.md is not read, and the `## Standing rules` and `## Owner
 // decisions` sections of any other request file are cut (each with a plan reason line).
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { compareReference, formatReference } from '../ui-check/lib/ledger.mjs';
+import { RECORD_KINDS, recordRun } from './lib/record-run.mjs';
 import { PROOF_AGENT, findAtCommit, findPass, readRecords, storeFile } from './lib/records.mjs';
 import { changedUiFiles, git, uiTreeAt } from './lib/ui-files.mjs';
 import { planChecks, planProofProblem, runFiles } from './lib/ui-plan.mjs';
 
-const USAGE = 'usage: ui-proof <check --tip <sha> [--against <sha> | --plan --base <sha> [--request <file>]... [--matrix <path>]] | plan (--base <sha> --tip <sha> | --files <path>...) [--request <file>]... [--matrix <path>] [--json] [--write-run <dir>] | changed --from <sha> --to <sha> | review-page --results <dir> --out <dir> [--matrix <file>]> [--repo DIR]';
+const UI_CHECK_CLI = path.join(import.meta.dirname, '..', 'ui-check', 'cli.mjs');
+const ARGS_END = '--'; // `record`: the ui-check run arguments follow it
+const USAGE = 'usage: ui-proof <record --as <dev-run|pixel-qa> -- <ui-check run arguments> | check --tip <sha> [--against <sha> | --plan --base <sha> [--request <file>]... [--matrix <path>]] | plan (--base <sha> --tip <sha> | --files <path>...) [--request <file>]... [--matrix <path>] [--json] [--write-run <dir>] | changed --from <sha> --to <sha> | review-page --results <dir> --out <dir> [--matrix <file>]> [--repo DIR]';
 const EXIT_USAGE = 2;
 const REQUEST_MAX_BYTES = 4 << 20; // a request file read for evidence; requestEvidence reads its first 1 MB
 const OWNER_SECTIONS = /^## (?:Standing rules|Owner decisions)\b/; // rules about the work, never request evidence (R4)
@@ -213,7 +220,38 @@ async function reviewPage(argv) {
   return page.run(argv);
 }
 
-const COMMANDS = { check, plan, changed, 'review-page': reviewPage };
+/** Run `ui-check run` in `cwd`; its stdout is passed through and kept, its stderr goes straight to ours. */
+function runUiCheck(args, cwd) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [UI_CHECK_CLI, 'run', ...args], { cwd, stdio: ['inherit', 'pipe', 'inherit'] });
+    let output = '';
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      output += chunk;
+      process.stdout.write(chunk);
+    });
+    child.on('error', reject);
+    child.on('close', (code, signal) => resolve({ code: code ?? (signal ? 1 : 0), output }));
+  });
+}
+
+/** record: run `ui-check run` and write its proof record as the kind `--as` names. */
+async function record(argv) {
+  const end = argv.indexOf(ARGS_END);
+  if (end === -1) throw new UsageError(USAGE);
+  const values = flags(argv.slice(0, end), ['as']);
+  if (!RECORD_KINDS.includes(values.as)) throw new UsageError(`--as must be one of ${RECORD_KINDS.join(', ')}`);
+  const cwd = path.resolve(values.repo ?? '.');
+  const runArgs = argv.slice(end + 1);
+  const { code, output } = await runUiCheck(runArgs, cwd);
+  const written = recordRun({ output, args: runArgs, cwd, kind: values.as });
+  console.log(written
+    ? `ui-proof: recorded ${written.verdict} ${written.id} as ${values.as} (UI tree ${written.uiTree.slice(0, 12)}, head ${written.head ?? 'none'})`
+    : 'ui-proof: no record (the run printed no result line)');
+  return code;
+}
+
+const COMMANDS = { record, check, plan, changed, 'review-page': reviewPage };
 
 const [name, ...rest] = process.argv.slice(2);
 try {
