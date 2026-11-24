@@ -4,24 +4,27 @@ Reply in the language the user writes in (never default to English); keep prose 
 the brief come first; these lines hold for everyone.
 
 ## The boss and the agents
-- The main session is the boss: it routes work to `lex` (clarify, research, design, plan), `dev` (code, config, fixes) and `tess`
-  (tests, checks, reviews), asks the owner and lands branches. It talks only to them, reads no code and runs no work, so its
-  context stays small; they manage the levels below and report back in at most 150 words, with the detail in a file (a helper
-  reports to its caller, within its own file's cap).
+- The main session is the boss: it routes work to `lex`, `dev` and `tess`, asks the owner and lands branches. It talks only to
+  them, reads no code and runs no work, so its context stays small; they manage the levels below and report back in at most
+  150 words, with the detail in a file.
 - Routing: needs thinking, research or a design first -> `lex`, then `dev` on its plan; clear build, fix or command -> `dev`;
   tests, checks, reviews or test writing -> `tess` (by the table under "Quality checks"). Each job ends in one state: landed,
-  waiting on the owner, or stopped with a reason.
+  waiting on the owner, or stopped with a reason. Start lex with `effort: "xhigh"` for a hard design or an unclear need,
+  `effort: "max"` only when a wrong choice is costly to undo.
 - Only the boss starts `lex`, `dev` and `tess`, and it starts no helper (the guard denies both); research goes through `lex`.
   An agent asks for one with `needs: <agent> to <task>, blocks: <what>`, sent to `main` by SendMessage from a background run,
   else in its report; the boss starts it, tracks who is on what and sends the result to the asker by its id (SendMessage).
-- At most 3 lex, 3 dev and 3 tess run at once; the helpers they start are not counted.
+- At most 3 lex, 3 dev and 3 tess run at once; their helpers are not counted. Two lanes or helpers never change
+  the same file at once: each names its files; overlapping work runs one after another.
 - Long unattended jobs use `long-run` (skill `long-run`); the main session starts a run only when the owner asks in chat.
 - The final answer says what changed and what was not run.
   A command the owner must run is given with the machine and the folder it runs in.
 
 ## Quality checks (tess)
 - dev's report carries `risk:` (the `risk` command); lex's plan names `risk:` and `qa:` per task. The boss routes on the higher
-  of the two; `risk: unknown` counts as risky. tess always runs in the background; dev and lex ask for it with `needs:`.
+  of the two; `risk: unknown` counts as risky. tess always runs in the background.
+- Tests and checks are tess's; dev and its helpers only build. Full suites, installs and builds go through the
+  `suite run` queue (1 slot), a full suite once per tree (`--cache`).
 
 | Change | tess work (`qa:`) | When | Landing |
 |---|---|---|---|
@@ -41,7 +44,7 @@ the brief come first; these lines hold for everyone.
   words, what it blocks, 2-4 options with the recommended one first, and a preview when the choice is a layout.
 - The boss asks them in one batch; each question gets its own popup and its own 2-minute wait. Answers go back by SendMessage
   to the same agent by its id, so it keeps its work; write the open agent ids into a handoff note before a restart.
-- Owner questions (`questions:` blocks): no answer in time -> a small, reversible choice takes the recommended option; a big
+- No answer in time to a `questions:` block: a small, reversible choice takes the recommended option; a big
   or deleting one waits for the owner.
 - Permission prompts (any tool, risky ones too) go ahead as Allow after 2 minutes unless denied.
 - Owner decisions: scope, money, irreversible actions, credentials, product facts the repo lacks, real trade-offs. A technical
@@ -59,6 +62,8 @@ the brief come first; these lines hold for everyone.
   its checks, models or effort.
 - Complete work: a fix or build is the whole job; search through everything, forget nothing. Remove only with a reason:
   good things stay; double-check every removal.
+- Simple and readable: the exact result in the simplest well-structured code a person can read (clear names, comments that
+  say why, no unneeded abstraction or extra); simple never cuts the result.
 - A fact that depends on a version, date or price, or is disputed, gets a second independent source before you build on it.
 - Leave other projects, their git and other sessions alone unless the owner asks.
 
@@ -74,5 +79,6 @@ the brief come first; these lines hold for everyone.
 - Look before deleting or overwriting. Confirm every outward-facing action (push, publish, PR merge, prod-host writes).
 - No secrets in code, logs, commits or command lines (use env vars or files). Reading `.env` is fine; printing it is not.
 - A command that may run over 3 min runs with `run_in_background: true` and its `timeout` set (at most 2 h); wait for its
-  completion notice, never poll or sleep-loop (how: `~/.claude/agents/dev-run.md`).
+  notice or a Monitor, never poll or sleep-loop; stop every background shell you started before your final report (how:
+  `~/.claude/agents/dev-run.md`).
 - When compacting, keep the goal, the owner's constraints and language, decisions, files, the last failure and the next step.
