@@ -2,7 +2,7 @@
 // (count and the newest one's time).
 // Run only by the detached board refresh (refresh.mjs), never by the status line.
 // Exports: repoStats({ common, base, cache, nowMs, startMs }) -> { stats, cache }.
-// Commands (git-state.mjs gitIn: fixed flags, GIT_COMMON_DIR pinned, a timeout each, inside the refresh's one git budget `startMs`,
+// Commands (git-call.mjs gitIn: fixed flags, GIT_COMMON_DIR pinned, a timeout each, inside the refresh's one git budget `startMs`,
 // checked before each call: gitBudgetSpent), at most every
 // STATS_EVERY_MS, all on the trusted repository's shared git folder (`--git-dir=<common>`, from trusted-repos.mjs, never a path from
 // the cache: review SEC-10): `rev-parse --verify --end-of-options <base>^{commit}` and `log --first-parent
@@ -11,7 +11,7 @@
 // Landed today = commits on the base's first-parent line with a committer time since local midnight (lands are fast-forward, so a
 // landed commit keeps the time it was committed or rebased).
 // Invariants: never throws (a failure keeps the cached stats); no text from a file reaches a command.
-import { gitBudgetSpent, gitIn } from './git-state.mjs';
+import { gitBudgetSpent, gitIn } from './git-call.mjs';
 
 const STATS_EVERY_MS = 60_000;
 const MAX_LANDED = 500;

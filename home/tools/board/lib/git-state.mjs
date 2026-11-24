@@ -2,10 +2,10 @@
 // with its branch, ahead/behind the base branch, staged, changed, new and conflicted files, last commit age and an operation in
 // progress; the repository's stash count; and its active branches (at most MAX_ACTIVE, the rest counted). Run only by the detached
 // board refresh, never by the status line.
-// Exports: repoState({ cwd, sessionFolder, common, liveDirs, cache, nowMs, startMs }) -> { repo, git, cache }; gitIn(common, args);
-// gitBudgetSpent(startMs); cleanName(text); GIT_SAFETY; OPS.
-// Commands (fixed flags, GIT_SAFETY, GIT_TIMEOUT_MS each, GIT_BUDGET_MS of git per refresh, shared by every repository through
-// `startMs` and checked before every call (gitBudgetSpent); past it the cached values stay with their age), only in the worktrees
+// Exports: repoState({ cwd, sessionFolder, common, liveDirs, cache, nowMs, startMs }) -> { repo, git, cache }; cleanName(text); OPS;
+// GIT_SAFETY (from git-call.mjs).
+// Commands (git-call.mjs gitIn: fixed flags, GIT_SAFETY, a time limit each, one git budget per refresh, shared by every repository
+// through `startMs` and checked before every call (gitBudgetSpent); past it the cached values stay with their age), only in the worktrees
 // the repository records (trusted-repos.mjs worktreeRecords, read fresh, never from the cache):
 //   `--git-dir=<common> for-each-ref` with the upstream, its track and %(ahead-behind:<base>) (git >= 2.41; REFS_EVERY_MS); per
 //   worktree, when its index or HEAD changed or STATUS_EVERY_MS passed, first `config --list --name-only --show-scope` and then, only
@@ -15,7 +15,7 @@
 // (probed on git 2.54: an `include.path` filter ran), and no flag turns filters off; such a worktree gets refs only (`trust: 'refs'`,
 // its counts null). Every other program a repository's config can name is off on the command line (GIT_SAFETY beats the repository's
 // config), and GIT_NO_LAZY_FETCH stops a partial clone from fetching (a fetch would run the repository's ssh command).
-// Every call (gitIn) runs without the inherited GIT_* variables and with GIT_COMMON_DIR=<common>, so a git folder's `commondir` file
+// Every call (git-call.mjs gitIn) runs without the inherited GIT_* variables and with GIT_COMMON_DIR=<common>, so a git folder's `commondir` file
 // cannot send git elsewhere (review N-11).
 // File-system facts: stash = lines of `<common>/logs/refs/stash`; op = the first of OPS present in the worktree's git folder, with
 // `rebase 2/3` from rebase-merge msgnum/end or rebase-apply next/last, and the branch being rebased from its head-name; the base
@@ -23,18 +23,20 @@
 // never past its byte cap (read-part.mjs).
 // Current and own: the deepest worktree holding the session folder (a lane in `.claude/worktrees/` lies inside the main checkout, so
 // only the lane is current and counts new files); a live agent's folder makes only its deepest worktree active (rule b).
+// Unknown, never null (P3): a git call that times out, fails or is skipped for the budget leaves the last good answer with its age;
+// with none, the worktree's counts are `unknown` and its `unknown` field (or the repository's `refsUnknown`) says why.
 // Invariants: never throws; branch and upstream names are stored through cleanName (no control or bidi character) and reach the
 // terminal only through the render's cleanText; no command takes text from a file as a flag (paths only as `-C`, `--git-dir=` and
 // `--work-tree=` values from worktreeRecords, a ref only as the `<base>` inside `--format=`, and only when it passes SAFE_REF).
-import { execFileSync } from 'node:child_process';
 import { lstatSync } from 'node:fs';
-import { devNull } from 'node:os';
 import { basename, join, sep } from 'node:path';
+import { BUDGET_USED, gitBudgetSpent, gitIn } from './git-call.mjs';
 import { readPart } from './read-part.mjs';
 import { worktreeRecords } from './trusted-repos.mjs';
 
-const GIT_TIMEOUT_MS = 250;
-const GIT_BUDGET_MS = 250;
+// disk-free's clean-scan.mjs takes the board's git flags from here; they live in git-call.mjs with the call itself.
+export { GIT_SAFETY } from './git-call.mjs';
+
 const REFS_EVERY_MS = 15_000;
 const STATUS_EVERY_MS = 15_000;
 const UNTRACKED_EVERY_MS = 60_000; // new files are counted on the session's own worktree only, at most this often (a big tree is slow)
@@ -50,13 +52,6 @@ const MS_PER_S = 1000;
 const BASE_NAMES = ['main', 'master'];
 const REPOSITORY_SCOPES = new Set(['local', 'worktree']); // config that comes with the repository, not the owner's own
 const UNKNOWN = 'unknown'; // a count git could not give this refresh (no earlier answer cached); the entry's `unknown` says why
-const BUDGET_USED = `git budget of ${GIT_BUDGET_MS} ms for this refresh used up`;
-/**
- * Before every git call, on the command line so it beats the repository's own config: no fsmonitor hook, no hook from the
- * repository's hooks path, no signature program, no repository found by discovery inside a folder unless named (review SEC-7).
- */
-export const GIT_SAFETY = ['-c', 'core.fsmonitor=false', '-c', 'safe.bareRepository=explicit', '-c', `core.hooksPath=${devNull}`,
-  '-c', 'log.showSignature=false'];
 /** The operations a worktree's git folder can be in the middle of: [file, name, step files (done, total)]. */
 export const OPS = [['rebase-merge', 'rebase', ['msgnum', 'end']], ['rebase-apply', 'rebase', ['next', 'last']], ['MERGE_HEAD', 'merge'],
   ['CHERRY_PICK_HEAD', 'cherry-pick'], ['REVERT_HEAD', 'revert'], ['BISECT_LOG', 'bisect']];
@@ -71,41 +66,9 @@ const isInside = (dir, path) => typeof dir === 'string' && (dir === path || dir.
 /** The deepest of `worktrees` holding `dir` (a lane nested in the main checkout, not the main checkout); undefined when none does. */
 const holderOf = (dir, worktrees) => worktrees.filter((wt) => isInside(dir, wt.path)).sort((a, b) => b.path.length - a.path.length)[0];
 
-/** @returns {boolean} whether more than GIT_BUDGET_MS passed since `startMs` (the refresh's git start): asked before every git call */
-export const gitBudgetSpent = (startMs) => Date.now() - startMs > GIT_BUDGET_MS;
-
 /** @returns {string | null} a branch or upstream name as the board stores it: no control or bidi character, at most MAX_NAME_CHARS */
 export const cleanName = (text) => (typeof text === 'string' && text !== '' ? text.replace(UNSHOWN_CHARS, ' ').slice(0, MAX_NAME_CHARS) : null);
 
-/** The environment of a board git call: no inherited GIT_* variable (GIT_DIR, GIT_INDEX_FILE, ...), the verified shared folder pinned. */
-function gitEnv(common) {
-  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
-  // git reads `commondir` of the git folder it is given and would take config, objects and attributes from wherever that file
-  // points; GIT_COMMON_DIR overrides it with the folder trusted-repos.mjs verified (review N-11). No lazy fetch, no optional lock.
-  return { ...env, GIT_COMMON_DIR: common, GIT_NO_LAZY_FETCH: '1', GIT_OPTIONAL_LOCKS: '0' };
-}
-
-/** Why a git call gave no output, in words the board file keeps (an unknown fact always says why: principle P3). */
-function failureOf(error) {
-  if (error?.code === 'ETIMEDOUT') return `timed out after ${GIT_TIMEOUT_MS} ms`;
-  if (Number.isInteger(error?.status)) return `failed with exit ${error.status}`;
-  return `could not run (${error?.code ?? error?.message ?? 'no error code'})`;
-}
-
-/**
- * One git call of the board with fixed flags, on the repository whose shared git folder is `common`.
- * @param {string} common the verified shared git folder (trusted-repos.mjs)
- * @param {string[]} args the arguments after GIT_SAFETY (always with an explicit `--git-dir=`)
- * @returns {{ text: string | null, why: string | null }} stdout and null; or null and why git gave none (timeout, exit code)
- */
-export function gitIn(common, args) {
-  try {
-    const text = execFileSync('git', [...GIT_SAFETY, ...args], { encoding: 'utf8', timeout: GIT_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, env: gitEnv(common) });
-    return { text, why: null };
-  } catch (error) {
-    return { text: null, why: failureOf(error) };
-  }
-}
 
 /** The base branch: main, else master, else the main worktree's branch; null when none is a safe name. */
 function baseOf(common, worktrees) {
@@ -293,10 +256,11 @@ function worktreeEntry(wt, refs, state, nowMs) {
  *   one whose new files are counted), the repository's shared git folder (trusted-repos.mjs), the live agents' folders (active rule
  *   b), the last git cache (results only: it never names a folder git runs in, review SEC-11), and when the refresh's git budget started
  * @returns {{ repo: object | null, git: object | null, cache: object }} repo = { base, branches, unlanded, trust ('full' | 'refs'),
- *   stash, active: [{ name, current, upstream, upAhead, upBehind, ahead, behind, ageMin, worktree, agents, staged, changed,
+ *   stash, refsUnknown (why there are no refs, else null), active: [{ name, current, upstream, upAhead, upBehind, ahead, behind, ageMin, worktree, agents, staged, changed,
  *   untracked, conflicts, op, opStep }], activeMore, worktrees: [{ name, path, branch, main, ahead, behind, changed (tracked entries),
- *   staged, conflicts, untracked, trust, op, opStep, ageMin, agents, checkedMs, upAhead, upBehind }] }; git = the `cwd` worktree's
- *   { branch, ahead, behind, changed } (vs its upstream); null outside a repository
+ *   staged, conflicts, untracked, trust, unknown, op, opStep, ageMin, agents, checkedMs, upAhead, upBehind }] }; a count is `unknown`
+ *   when git gave that worktree no status and none is cached, and the worktree's `unknown` says why (else null); git = the `cwd`
+ *   worktree's { branch, ahead, behind, changed } (vs its upstream); null outside a repository or while its counts are unknown
  */
 export function repoState({ cwd, sessionFolder = null, common, liveDirs = [], cache, nowMs, startMs = Date.now() }) {
   const old = cache !== null && typeof cache === 'object' ? cache : {};

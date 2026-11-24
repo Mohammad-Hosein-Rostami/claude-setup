@@ -27,7 +27,8 @@ The agents row (RC8) is one summary whatever the number of agents: running count
 
 The git rows (RC15, RC19) come from the board's detached refresh only (render under 50 ms). In the session's repository: its name
 (bold), the current branch, what to push and to pull (yellow), conflicts (red), an operation (`rebase 3/7`, yellow), staged,
-changed and new files (`changes ?` where the refresh had refs only), the stash and the last commit's age; then a `lanes` row of
+changed and new files (`changes ?` where the refresh had refs only; `changes unknown` while git has not answered for that
+worktree yet, with the reason in the board file's `unknown`), the stash and the last commit's age; then a `lanes` row of
 its other active branches (checked out where an agent works, with changes, ahead of the base with a commit in the last 24 h, or
 the base while not level with its upstream), at most 4 and then `+K more`, each with `↑2` ahead, `~3` changed, its agents,
 `ready to land` or `↓5 needs rebase` (yellow). Outside a repository, or with a second one, one row per used repository (at most

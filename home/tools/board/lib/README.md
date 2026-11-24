@@ -13,6 +13,8 @@ Collecting (run only by the detached refresh):
 - `trusted-repos.mjs`: places a folder in its repository by the file system alone and lists the worktrees the repository records.
 - `git-state.mjs`: per worktree branch, ahead/behind the base, staged, changed, new and conflicted files, an operation in progress,
   last commit age; the stash count; and the active branches (at most 4 per repository).
+- `git-call.mjs`: one git call with the board's fixed flags, clean environment, time limit and per-refresh budget; a failed call
+  says why (timed out, exit code), so its facts show `unknown`.
 - `repo-stats.mjs`: the base branch's tip commit and the commits landed on it today.
 - `read-part.mjs`: a bounded read of a plain file (never a link, a folder or a FIFO, never more than a set number of bytes), also for a repository's own files.
 - `cache-file.mjs`: the refresher's own cache files per session (transcript cursors, git cache).
