@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The setup's own checks: its settings, plugins, hooks, accounts, caps and desktop notes (sourced by scripts/doctor.sh, which
 # holds the helpers ok, bad, warn and warn_unless_accepted, the variables REPO, CLAUDE_DIR, LINK_ROOT and BAD, and the run order in run_checks).
-# Defines functions only; nothing runs when this file is sourced, so no output comes from it. Exports: check_settings, check_deny_rules, check_plugins, check_plugin_parity, check_effort_env, check_projects, check_env_names, check_plugin_session_start, check_workflows_gone, check_project_agents, check_accounts, check_agent_cap, check_notify.
+# Defines functions only; nothing runs when this file is sourced, so no output comes from it. Exports: check_settings, check_deny_rules, check_plugins, check_plugin_parity, check_effort_env, check_projects, check_env_names, check_plugin_session_start, check_workflows_gone, check_project_agents, check_accounts, check_agent_cap, check_notify, check_share_deny.
 # Invariants: read-only, as doctor.sh is; every line is `ok`, `WARN`, `FAIL` or `INFO` text on stdout; a check that fails calls bad (BAD=1).
 
 # Drift: rebuild the expected settings.json in memory and compare with the live one.
@@ -182,4 +182,20 @@ check_notify() {
     passthrough="$(tmux show -gv allow-passthrough 2>/dev/null || true)"
     [ "$passthrough" = on ] || warn "notify: tmux without allow-passthrough drops the desktop notes (tmux set -g allow-passthrough on)"
   fi
+}
+
+# share-check (scripts/share-check.mjs) refuses only the words of the person's own personal/share-deny.txt: a missing list or one
+# with comments only protects nothing, so it is one WARN. The words are counted with share-check's own parser (parseDenyList).
+check_share_deny() {
+  local list="$INSTALL_REPO/personal/share-deny.txt" count
+  count="$(node --input-type=module -e '
+    import { readFileSync } from "node:fs";
+    import { pathToFileURL } from "node:url";
+    const { parseDenyList } = await import(pathToFileURL(process.argv[1]).href);
+    let text = "";
+    try { text = readFileSync(process.argv[2], "utf8"); } catch (error) { if (error.code !== "ENOENT") throw error; }
+    console.log(parseDenyList(text).length);' "$REPO/scripts/share-check/match.mjs" "$list" 2>/dev/null)" \
+    || { bad "share-check deny list $list is not readable"; return; }
+  if [ "$count" -gt 0 ]; then ok "share-check deny list: $count words"
+  else warn "add your private names to personal/share-deny.txt so share-check can protect them"; fi
 }
