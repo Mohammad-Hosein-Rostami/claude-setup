@@ -41,9 +41,10 @@ const PLAN = {
   'pixel-qa': { model: SONNET, effort: 'high', skills: ['figma-pixel-perfect'] },
   'dev-debug': { model: OPUS, effort: 'xhigh', skills: ['root-cause-debug'] },
   'dev-run': { model: HAIKU, effort: 'high', skills: [] },
-  tess: { model: SONNET, effort: 'high', skills: ['qa-plan'] },
+  // team-split plan: tess manages its helpers on Opus, and its test writer runs on Sonnet
+  tess: { model: OPUS, effort: 'high', skills: ['qa-plan'] },
   'tess-review': { model: OPUS, effort: 'high', skills: ['review-checklist'] },
-  'tess-write': { model: OPUS, effort: 'high', skills: ['test-writing'] },
+  'tess-write': { model: SONNET, effort: 'high', skills: ['test-writing'] },
   // team-split plan, 5.1 and 5.6: dev's part builder (dev may raise its model or effort per call) and two of tess's helpers
   'dev-part': { model: SONNET, effort: 'high', skills: ['clean-code'] },
   'tess-simple': { model: SONNET, effort: 'high', skills: ['clean-code'] },
