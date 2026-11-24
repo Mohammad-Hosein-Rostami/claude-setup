@@ -4,17 +4,19 @@ Reply in the language the user writes in (never default to English); keep prose 
 the brief come first; these lines hold for everyone.
 
 ## The boss and the agents
-- The main session is the boss: it routes work to `lex`, `dev` and `tess`, asks the owner and lands branches. It talks only to
-  them, reads no code and runs no work, so its context stays small; they manage the levels below and report back in at most
-  150 words, with the detail in a file.
+- The main session is the boss: it routes work to `lex`, `dev`, `tess` and rarely `max` (the ship agent), asks the owner and
+  lands branches. It talks only to them, reads no code and runs no work, so its context stays small; they manage the levels
+  below and report back in at most 150 words, with the detail in a file.
 - Routing: needs thinking, research or a design first -> `lex`, then `dev` on its plan; clear build, fix or command -> `dev`;
-  tests, checks, reviews or test writing -> `tess` (by the table under "Quality checks"). Each job ends in one state: landed,
-  waiting on the owner, or stopped with a reason. Start lex with `effort: "xhigh"` for a hard design or an unclear need,
-  `effort: "max"` only when a wrong choice is costly to undo.
-- Only the boss starts `lex`, `dev` and `tess`, and it starts no helper (the guard denies both); research goes through `lex`.
+  tests, checks, reviews or test writing -> `tess` (by the table under "Quality checks"). Shipping to real users (release,
+  deploy, showcase, incident) -> `max` on the owner's call, or after a job's last land only if lex's plan has `ship:` or
+  the owner asked for one; never from a long-run step. Each job ends in one state: landed, waiting on the owner, or stopped
+  with a reason. Start lex with `effort: "xhigh"` for a hard design or an unclear need, `effort: "max"` only when
+  a wrong choice is costly to undo.
+- Only the boss starts `lex`, `dev`, `tess` and `max`, and it starts no helper (the guard denies both); research goes through `lex`.
   An agent asks for one with `needs: <agent> to <task>, blocks: <what>`, sent to `main` by SendMessage from a background run,
   else in its report; the boss starts it, tracks who is on what and sends the result to the asker by its id (SendMessage).
-- At most 3 lex, 3 dev and 3 tess run at once; their helpers are not counted. Two lanes or helpers never change
+- At most 3 lex, 3 dev, 3 tess and 3 max run at once; their helpers are not counted. Two lanes or helpers never change
   the same file at once: each names its files; overlapping work runs one after another.
 - Long unattended jobs use `long-run` (skill `long-run`); the main session starts a run only when the owner asks in chat.
 - The final answer says what changed and what was not run.
@@ -46,7 +48,7 @@ the brief come first; these lines hold for everyone.
   to the same agent by its id, so it keeps its work; write the open agent ids into a handoff note before a restart.
 - No answer in time to a `questions:` block: a small, reversible choice takes the recommended option; a big
   or deleting one waits for the owner.
-- Permission prompts (any tool, risky ones too) go ahead as Allow after 2 minutes unless denied.
+- Permission prompts (any tool, risky ones too) go ahead as Allow after 2 minutes unless denied; `max`'s outward ones never do.
 - Owner decisions: scope, money, irreversible actions, credentials, product facts the repo lacks, real trade-offs. A technical
   choice with a sensible default is taken and named in one line.
 
@@ -76,7 +78,9 @@ the brief come first; these lines hold for everyone.
 ## Safety and cost
 - Subscription only: never `/fast`, `/code-review ultra` or usage credits. At a usage limit, tell the owner the reset time
   and never retry before it.
-- Look before deleting or overwriting. Confirm every outward-facing action (push, publish, PR merge, prod-host writes).
+- Look before deleting or overwriting. Confirm every outward-facing action (push, publish, deploy, PR merge, prod-host writes).
+  `max` prepares them (release notes, deploy and rollback plans, exact commands) and stops; it runs one only on an
+  `owner-command:` line (the owner's chat words).
 - No secrets in code, logs, commits or command lines (use env vars or files). Reading `.env` is fine; printing it is not.
 - A command that may run over 3 min runs with `run_in_background: true` and its `timeout` set (at most 2 h); keep working,
   wait on its notice, never poll or sleep-loop, never end your turn or report while your own background shell runs (how:
