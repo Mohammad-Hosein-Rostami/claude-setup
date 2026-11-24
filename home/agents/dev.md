@@ -55,7 +55,9 @@ installed version) before you edit; never guess a library API. The coding rules 
 - A command that may run over 3 minutes: give it to `dev-run`, or start it with `run_in_background: true` and a `timeout` (at
   most 2 h) as `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`, then wait with one foreground call
   (`timeout` 180000): `for i in $(seq 80); do [ -f <log>.exit ] && break; sleep 2; done`, again until `<log>.exit` exists. Never
-  end your turn while it runs.
+  end your turn while it runs. A command that ends within 3 minutes runs in the foreground with an explicit Bash `timeout`:
+  600000 for an install or a long run, 60000 for a probe. Never poll in a loop of your own.
+- A conflict between the plan and what the code needs is reported as `contract-dispute: <step> <why>`, never silently redesigned.
 - Before returning, read your diff against the brief once.
 
 ## Coding rules (C1-C37)

@@ -25,6 +25,8 @@ comes back as the case to add, not as a file.
   the changed code. Probes run only in a scratch copy with a temporary `HOME` (`mktemp -d`), never the real `~/.claude`, a real
   database, the network or a live system. Remove the copies when done.
 - A flaky result (passes and fails with no change) is reported with its failure rate over 20 runs, not as a pass.
+- A command that ends within 3 minutes runs in the foreground with an explicit Bash `timeout`: 600000 for an install or a long
+  run, 60000 for a probe.
 - A command that may run over 3 minutes runs with `run_in_background: true` and a `timeout` (at most 2 h) as
   `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`; then wait with one foreground call (`timeout` 180000):
   `for i in $(seq 80); do [ -f <log>.exit ] && break; sleep 2; done`, again until the file exists, then read the log once. Never end your turn while it runs.

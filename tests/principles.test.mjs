@@ -1,11 +1,12 @@
-// Text checks of the guidance files: the principle table P1-P16, the architect's contract block and self-attack list, the
-// agent timeout / no-poll lines, and the home/CLAUDE.md long-command and lead.md job-order lines.
+// Text checks of the guidance files: the principle table P1-P16, lex's plan lists and self-attack, the long-command and timeout
+// lines of the agents that run commands, dev's contract-dispute line, and the lead.md job-order line.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const read = (path) => readFileSync(fileURLToPath(new URL(`../${path}`, import.meta.url)), 'utf8');
+const flat = (text) => text.replace(/\s+/g, ' ');
 
 const PRINCIPLE_IDS = Array.from({ length: 16 }, (_, index) => `P${index + 1}`);
 
@@ -57,65 +58,51 @@ test('each principle keeps the words of the replay it was written from', () => {
   for (const [id, pattern] of Object.entries(expected)) assert.match(byId[id], pattern, `${id} text`);
 });
 
-test('architect.md asks for a Contract block per lane: files, principles and checkpoints as notes, with the sizing guidance', () => {
-  const text = read('home/agents/architect.md');
-  assert.match(text, /\*\*Contract\*\*/);
-  for (const field of ['`files`', '`principles`', '`checkpoints`', '`appendOnly`']) {
-    assert.ok(text.includes(field), `architect.md must name ${field}`);
+test('lex.md plans tasks that share no file, with the two lists, acceptance commands and the callers of a changed interface', () => {
+  const text = flat(read('home/agents/lex.md'));
+  for (const list of ['**Reuse inventory**', '**Contract facts**', '**Unconfirmed**']) assert.ok(text.includes(list), `lex.md names ${list}`);
+  assert.match(text, /no two tasks share a file/i);
+  assert.match(text, /each a command with the exit it must return/i);
+  assert.match(text, /every caller of a changed interface/i);
+  assert.match(text, /Edge cases dev must keep in mind: the trust boundary, two runs at once/);
+});
+
+test('lex.md attacks its own plan once and probes a platform fact before deciding on it', () => {
+  const text = flat(read('home/agents/lex.md'));
+  const attack = text.slice(text.indexOf('Attack your own plan once'));
+  assert.ok(attack.length > 0, 'lex.md has the self-attack step');
+  for (const topic of [/no measurement/i, /unprobed platform fact/i, /owner's real layout/i, /empty input counted as clean/i, /hides a failed part/i]) {
+    assert.match(attack, topic, `the self-attack covers ${topic}`);
   }
-  assert.match(text, /changes an interface notes its callers in `checkpoints`/i);
-  assert.match(text, /nothing runs them/i);
-  assert.match(text, /about 120 tool calls/);
-  assert.match(text, /no two lanes share a file/i);
+  assert.match(text, /Probe a platform fact[^.]*with a command or the installed docs/);
 });
 
-test('architect.md carries the critic-class self-attack list and the probe-first rule', () => {
-  const text = read('home/agents/architect.md');
-  const selfAttack = text.split('\n').filter((line) => /^\s*\d+\. /.test(line) && /\?/.test(line));
-  assert.ok(selfAttack.length >= 7, `self-attack list needs 7 questions, found ${selfAttack.length}`);
-  for (const topic of [/measurement/i, /unprobed platform/i, /owner'?s? (real )?layout/i, /writer-supplied/i, /empty input/i, /aggregate/i, /fix regression/i]) {
-    assert.match(selfAttack.join('\n'), topic, `self-attack list must cover ${topic}`);
+const COMMAND_AGENTS = ['dev', 'dev-run', 'tess'];
+
+test('agents that run commands: Bash timeout 600000 for installs and long runs, 60000 for probes, no polling, no wake-up promise', () => {
+  for (const agent of COMMAND_AGENTS) {
+    const text = flat(read(`home/agents/${agent}.md`));
+    assert.match(text, /runs in the foreground with an explicit Bash `timeout`: 600000 for an install or a long run, 60000 for a probe/, agent);
+    assert.match(text, /Never end your turn while it runs/, `${agent}.md never ends the turn while a background command runs`);
+    assert.doesNotMatch(text, /dies when you reply/, agent);
+    assert.doesNotMatch(text, /you are woken|woken (at|when)|you (are|will be|get) notified|wakes you|reported when it ends/i, `${agent}.md promises no wake-up`);
+    assert.doesNotMatch(text, /until <test>; do sleep/, `${agent}.md has no sleep-loop recipe`);
   }
-  assert.match(text, /probe[^.]*before (you )?(design|decid)/i);
+  assert.match(flat(read('home/agents/dev.md')), /Never poll in a loop of your own/);
+  assert.match(flat(read('home/agents/dev-run.md')), /Never start a watcher, a poller or a dev server/);
 });
 
-const LANE_AGENTS = ['implementer', 'ui-implementer'];
+test('dev: a design conflict with the plan is reported as a contract-dispute line', () => {
+  assert.match(read('home/agents/dev.md'), /contract-dispute: <step> <why>/);
+});
 
-test('lane agents: Bash timeout 600000 for suite and commit, 60000 for probes, no polling, no fixed sleep loop', () => {
-  for (const agent of [...LANE_AGENTS, 'runner']) {
-    // r9-dedupe part 2: the Waiting paragraph lives once in home/CLAUDE.md "Agents (workers)"; each agent points there.
-    assert.match(read(`home/agents/${agent}.md`), /CLAUDE\.md "Agents \(workers\)"/, `${agent}.md points to the worker lines`);
-    const text = read('home/CLAUDE.md');
-    assert.match(text, /timeout.{0,40}600000/s, `${agent}.md names the 600000 timeout`);
-    assert.match(text, /\b60000 for a probe/, `${agent}.md names the 60000 probe timeout`);
-    const flat = text.replace(/\s+/g, ' ');
-    assert.match(flat, /Never end your turn while the command runs: a background command of a foreground subagent stops when that agent's run ends and nobody is woken/, `${agent}.md says whose background command stops, and never to end the turn while one runs`);
-    assert.doesNotMatch(flat, /dies when you reply/, `${agent}.md drops the line that is true for a foreground subagent only`);
-    assert.doesNotMatch(flat, /you are woken|woken (at|when)|you (are|will be|get) notified|wakes you/i, `${agent}.md promises no wake-up: a foreground subagent never gets one`);
-    assert.doesNotMatch(text, /reported when it ends/, `${agent}.md drops the false wait-for-notice line`);
-    assert.match(text, /never poll/i, `${agent}.md forbids polling`);
-    assert.doesNotMatch(text, /until <test>; do sleep/, `${agent}.md drops the sleep-loop recipe`);
-    assert.doesNotMatch(text, /Start long commands in the background/, `${agent}.md no longer backgrounds long commands`);
+test('the long-command line: over 3 minutes runs in the background with a timeout of at most 2 h; P10 keeps its fix', () => {
+  for (const agent of COMMAND_AGENTS) {
+    assert.match(flat(read(`home/agents/${agent}.md`)), /over 3 minutes[^.]*`run_in_background: true` and a `timeout` \([^)]*at most 2 h\)/, agent);
   }
-});
-
-test('implementer: a design conflict with the spec is reported as a contract-dispute line', () => {
-  assert.match(read('home/agents/implementer.md'), /contract-dispute: <id> <why>/);
-});
-
-test('home/CLAUDE.md names the 600000 timeout for land and installs; P10 keeps its fix', () => {
-  assert.match(read('home/CLAUDE.md'), /600000 for a long run the owner asked for,\s+an install or `git-tidy land`/);
+  assert.doesNotMatch(read('docs/daily-use.md'), /over about 2 minutes|with a timeout and `watch\.mjs`/, 'the daily-use page says the same as the rule');
   assert.match(read('home/rules/principles.md'), /Enter never acts as a click/);
   assert.doesNotMatch(read('home/rules/principles.md'), /never consent/);
-  assert.match(read('home/lead.md'), /a lane that reads a probe waits for it/);
-});
-
-test('home/CLAUDE.md: long-command line says ~5 min, not ~2 min', () => {
-  const claude = read('home/CLAUDE.md');
-  assert.match(claude, /A command over ~5 min runs with `run_in_background: true` and its `timeout` set \(at most 2 h\); `watch\.mjs` waits on a session or an agent, never on a command\./);
-  assert.doesNotMatch(claude, /with a timeout and `watch\.mjs`/, 'watch.mjs is not a way to run or bound a command');
-  assert.doesNotMatch(read('docs/daily-use.md'), /over about 2 minutes|with a timeout and `watch\.mjs`/, 'the daily-use page says the same as the rule');
-  assert.doesNotMatch(claude, /A command over ~2 min/);
 });
 
 test('home/lead.md job-order bullet: contract first, probes beside lanes, repos apart; the sync is personal', () => {

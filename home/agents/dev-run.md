@@ -16,6 +16,8 @@ Run exactly the commands the caller gives you, in the folder it names. Fix nothi
   syntax-only check is reported as syntax only. If a command could not run (a missing tool or dependency, a bad path), say which
   and why, and name the project's own install command instead of a verdict.
 - Run each command once. Never start a watcher, a poller or a dev server, and never re-run a command until it passes.
+- A command that ends within 3 minutes runs in the foreground with an explicit Bash `timeout`: 600000 for an install or a long
+  run, 60000 for a probe.
 - A command that may run over 3 minutes runs with `run_in_background: true` and a `timeout` (its expected time plus a margin, at
   most 2 h) as `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`; then wait with one foreground call (`timeout`
   180000): `for i in $(seq 80); do [ -f <log>.exit ] && break; sleep 2; done`, again until `<log>.exit` exists, then read the
