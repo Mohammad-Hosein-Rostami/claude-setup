@@ -1,7 +1,8 @@
 // Tests for the doctor check check_share_deny (scripts/doctor/checks-setup.sh, DOCTOR_ONLY mode): no personal/ at all, or a list with
 // comments only, is one WARN telling the person to fill it; a missing list beside an existing personal/ (a folder, a link, even a
 // dangling one) is a FAIL with the cp fix, because the commit hooks refuse every commit then; a list with words is ok and counts them as
-// share-check's parser does.
+// share-check's parser does. The list is read as share-check reads it: a link (to a file or dangling) or a list over the cap is the
+// not-readable FAIL; a list of exactly the cap is still read.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -17,6 +18,15 @@ const EMPTY_LIST_WARN = /^WARN\s+add your private names to personal\/share-deny\
 // What the clone's personal/ is: a folder (the default), nothing, a link to a path that does not exist, or a plain file.
 const PERSONAL = { folder: 'folder', none: 'none', danglingLink: 'dangling link', file: 'file' };
 const noSymlinks = process.platform === 'win32' && 'symlinks need extra rights on Windows';
+const NOT_READABLE_FAIL = /^FAIL\s+share-check deny list .*share-deny\.txt is not readable$/m;
+const DENY_LIST_OK = /^ok\s+share-check deny list:/m;
+const ANY_WARN = /^WARN/m;
+// share-check's cap on the list (DENY_MAX_BYTES in scripts/share-check/match.mjs), spelled out so the test pins the number itself.
+const DENY_MAX_BYTES = 1024 * 1024;
+// Words a followed link would count, so a doctor that follows the link says ok instead of the FAIL.
+const LINKED_LIST = 'Quokka Ltd\nZebracorp\n';
+// What personal/share-deny.txt is when it is a link: one to a real list with words, or one to a path that does not exist.
+const LIST_LINK = { toFile: 'link to a file', dangling: 'dangling link' };
 
 /**
  * The FAIL line doctor prints for a list missing beside personal/ in `clone`, as a whole-line regexp. The paths are joined with `/`, as
@@ -30,9 +40,9 @@ const missingBesidePersonal = (clone) => {
 
 /**
  * Runs the check with a temp HOME whose install record names a temp clone; `list` is its personal/share-deny.txt (none when undefined),
- * `personal` what its personal/ is (PERSONAL). Returns the spawnSync result with `clone`, the clone's path.
+ * `personal` what its personal/ is (PERSONAL), `listLink` the list as a link instead (LIST_LINK). Returns the spawnSync result with `clone`, the clone's path.
  */
-function checkShareDeny(list, { personal = PERSONAL.folder } = {}) {
+function checkShareDeny(list, { personal = PERSONAL.folder, listLink } = {}) {
   const home = makeTempDir('doctor-share-deny-');
   const clone = join(home, 'clone');
   mkdirSync(clone);
@@ -42,6 +52,11 @@ function checkShareDeny(list, { personal = PERSONAL.folder } = {}) {
   mkdirSync(join(home, '.claude'));
   writeFileSync(join(home, '.claude', '.claude-setup-install.json'), JSON.stringify({ repo: clone }));
   if (list !== undefined) writeFileSync(join(clone, 'personal', 'share-deny.txt'), list);
+  if (listLink === LIST_LINK.toFile) {
+    writeFileSync(join(home, 'real-share-deny.txt'), LINKED_LIST);
+    symlinkSync(join(home, 'real-share-deny.txt'), join(clone, 'personal', 'share-deny.txt'));
+  }
+  if (listLink === LIST_LINK.dangling) symlinkSync(join(home, 'gone-share-deny.txt'), join(clone, 'personal', 'share-deny.txt'));
   const result = spawnSync('bash', [DOCTOR], { env: cleanEnv({ HOME: home, DOCTOR_ONLY: 'check_share_deny' }), encoding: 'utf8' });
   return { ...result, clone };
 }
@@ -93,4 +108,31 @@ test('a list with words is ok and counts each word once, as share-check does', {
   const result = checkShareDeny('# my words\nQuokka Ltd\n\n  quokka ltd  \nZebracorp\r\n');
   assert.match(result.stdout, /^ok\s+share-check deny list: 2 words$/m);
   assert.doesNotMatch(result.stdout, /WARN/);
+});
+
+/** Asserts the not-readable FAIL and that doctor neither counted the list (ok) nor called it empty (WARN). */
+function assertNotReadableFail(result) {
+  assert.match(result.stdout, NOT_READABLE_FAIL);
+  assert.doesNotMatch(result.stdout, DENY_LIST_OK);
+  assert.doesNotMatch(result.stdout, ANY_WARN);
+  assert.equal(result.status, 1, 'a FAIL fails doctor');
+}
+
+test('a list that is a link to a file with words is the not-readable FAIL, as share-check refuses a link', { skip: skip || noSymlinks }, () => {
+  assertNotReadableFail(checkShareDeny(undefined, { listLink: LIST_LINK.toFile }));
+});
+
+test('a list that is a dangling link is the not-readable FAIL, never the empty-list WARN', { skip: skip || noSymlinks }, () => {
+  assertNotReadableFail(checkShareDeny(undefined, { listLink: LIST_LINK.dangling }));
+});
+
+test('a list one byte over the cap is the not-readable FAIL, even when it holds a word', { skip }, () => {
+  assertNotReadableFail(checkShareDeny('a'.repeat(DENY_MAX_BYTES + 1)));
+});
+
+test('a list of exactly the cap is read and its word counted', { skip }, () => {
+  const result = checkShareDeny(`${'a'.repeat(DENY_MAX_BYTES - 1)}\n`);
+  assert.match(result.stdout, /^ok\s+share-check deny list: 1 words$/m);
+  assert.doesNotMatch(result.stdout, ANY_WARN);
+  assert.equal(result.status, 0);
 });
