@@ -52,7 +52,8 @@ test('the catalog line for pre-bash-guard describes the sleep loop bounce', () =
   assert.match(row, /run_in_background/);
 });
 
-test('the catalog rows name timeout with the 2-h maximum, and watch.mjs only for waiting on a session or an agent', () => {
+// The watch tool was removed (lex-dev-tess plan): the advice row no longer names it at all.
+test('the catalog rows name timeout with the 2-h maximum, and the advice row names no removed watcher tool', () => {
   const rows = read('docs/catalog.md').split('\n');
   const guardRow = rows.find((text) => text.startsWith('| `pre-bash-guard.mjs`'));
   const adviceRow = rows.find((text) => text.startsWith('| `lib/wait-advice.mjs`'));
@@ -62,7 +63,7 @@ test('the catalog rows name timeout with the 2-h maximum, and watch.mjs only for
     assert.doesNotMatch(row, /bounded wait/);
   }
   assert.match(adviceRow, /unattended run \(`-p`, Agent SDK, CI, cloud\)[^.]*30 min \(10 min for a text `-p` prompt\)/);
-  assert.match(adviceRow, /`watch\.mjs` is named only for waiting on a session or an agent/);
+  assert.doesNotMatch(adviceRow, /watch\.mjs/, 'the watch tool was removed');
   assert.ok(adviceRow.includes(`\`${WAIT_START_FORM}\``) && adviceRow.includes(`\`${WAIT_CALL}\``), 'the row names the start form and the wait call');
   assert.match(adviceRow, /`\$\(\.\.\.\)` and backtick bodies are not looked into/);
 });
