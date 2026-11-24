@@ -1,13 +1,14 @@
 // Tests of the owner's control through the CLI with a detached driver (spec 7.8, 9; acceptance 3, 4, 5, 6): crash resume, pause,
 // stop of one step, takeover (lines, open-session refusal, --force), status of the boss sessions, watch, and a crash mid-group.
 import test from 'node:test';
+import { once } from 'node:events';
 import assert from 'node:assert/strict';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 import { join } from 'node:path';
 import { endOrphan, KILL_AFTER, startClaude } from '../home/tools/long-run/lib/claude-run.mjs';
 import { takeoverLines } from '../home/tools/long-run/lib/control.mjs';
 import { isPidAlive, readJson, runPaths } from '../home/tools/long-run/lib/run-store.mjs';
-import { TOKEN_A, cli, journalOf, makeSandbox, readCalls, startCli, waitFor } from './long-run-helpers.mjs';
+import { TOKEN_A, cli, journalOf, killRunProcesses, makeSandbox, readCalls, startCli, waitFor } from './long-run-helpers.mjs';
 
 const flagValue = (args, flag) => args[args.indexOf(flag) + 1];
 
@@ -66,10 +67,16 @@ test('a child that ignores SIGINT and SIGTERM is gone after the SIGKILL step (KI
   const logs = makeTempDir('logs-', box.dir);
   const handle = startClaude({ args: ['-p', '--session-id', 'deaf-session'], prompt: 'x', cwd: box.work('d'), env: box.env, token: TOKEN_A,
     added: { LONG_RUN_STEP: 'deaf' }, logBase: join(logs, 'deaf.1'), killAfter: { term: 300, kill: 600 } });
-  await waitFor(() => readCalls(box).length === 1, 10000, 'fake started');
-  handle.end('pause');
-  const run = await handle.done;
-  assert.deepEqual([run.endedBy, run.endedHow, run.signal], ['pause', 'SIGKILL', 'SIGKILL']);
+  try {
+    await waitFor(() => readCalls(box).length === 1, 10000, 'fake started');
+    handle.end('pause');
+    const run = await handle.done;
+    assert.deepEqual([run.endedBy, run.endedHow, run.signal], ['pause', 'SIGKILL', 'SIGKILL']);
+  } finally {
+    // a `deaf` child never exits by itself: a failed wait or assertion must not leave it running (end is a no-op once it ended)
+    handle.end('test cleanup');
+    await handle.done;
+  }
 });
 
 test('endOrphan leaves a pid alone whose command line does not name the session (a reused pid)', async () => {
@@ -122,11 +129,20 @@ test('watch prints the new lines of a growing log and ends on SIGINT with exit 0
   box.script({ one: ['tool:2500'] });
   const paths = await startRunning(box, { name: 'watch', cwd: box.work('repo'), steps: [{ id: 'one', prompt: 'One.' }] }, 'one');
   const watcher = startCli(box, ['watch', paths.runId, 'one']);
-  await waitFor(() => watcher.output.includes('tool result'), 20000, 'a new line in watch');
-  watcher.kill('SIGINT');
-  const code = await new Promise((resolve) => { watcher.once('close', resolve); });
-  assert.equal(code, 0);
-  await waitFor(() => readJson(paths.driver)?.status === 'done', 20000, 'run done');
+  try {
+    await waitFor(() => watcher.output.includes('tool result'), 20000, 'a new line in watch');
+    watcher.kill('SIGINT');
+    const code = await new Promise((resolve) => { watcher.once('close', resolve); });
+    assert.equal(code, 0);
+    await waitFor(() => readJson(paths.driver)?.status === 'done', 20000, 'run done');
+  } finally {
+    // a failed wait or assertion must not leave the watcher, the detached driver or its fake claude running
+    if (watcher.exitCode === null && watcher.signalCode === null) {
+      watcher.kill('SIGKILL');
+      await once(watcher, 'close');
+    }
+    killRunProcesses(box, paths);
+  }
 });
 
 test('SIGKILL mid-group, then resume: only the unfinished items run again', async () => {

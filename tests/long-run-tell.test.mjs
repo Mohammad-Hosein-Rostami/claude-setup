@@ -43,10 +43,16 @@ test('safe point: a child that never reaches one is ended after the wait cap (12
   box.script({ hang: ['hang'] });
   const handle = startClaude({ args: ['-p', '--session-id', 'cap-session'], prompt: 'x', cwd: box.work('h'), env: box.env, token: TOKEN_A,
     added: { LONG_RUN_STEP: 'hang' }, logBase: join(makeTempDir('logs-', box.dir), 'hang.1') });
-  await waitFor(() => readCalls(box).length === 1, 10000, 'fake started');
-  handle.endAtSafePoint('tell', 300);
-  const run = await handle.done;
-  assert.deepEqual([run.endedBy, run.endedHow], ['tell', 'SIGINT']);
+  try {
+    await waitFor(() => readCalls(box).length === 1, 10000, 'fake started');
+    handle.endAtSafePoint('tell', 300);
+    const run = await handle.done;
+    assert.deepEqual([run.endedBy, run.endedHow], ['tell', 'SIGINT']);
+  } finally {
+    // a `hang` child never exits by itself: a failed wait or assertion must not leave it running (end is a no-op once it ended)
+    handle.end('test cleanup');
+    await handle.done;
+  }
 });
 
 test('waiting step: the message comes first in the next prompt, and a backoff wait does not hold it back', async () => {

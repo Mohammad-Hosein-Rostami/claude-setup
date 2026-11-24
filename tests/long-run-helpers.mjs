@@ -1,6 +1,7 @@
 // Helpers for the long-run tests (not a test file): a sandbox with the fake claude on PATH, stored test accounts in the file store,
 // a temp state folder and HOME; runs made in process (with a fake clock) or through the CLI.
-// Exports: CLI, TOKEN_A, TOKEN_B, makeSandbox, fakeClock, createRun, driveRun, cli, startCli, waitFor, readCalls, journalOf, stdinsOf.
+// Exports: CLI, TOKEN_A, TOKEN_B, makeSandbox, fakeClock, createRun, driveRun, cli, startCli, waitFor, killRunProcesses, readCalls,
+// journalOf, stdinsOf.
 // Invariants: no real token, account, Keychain item, state folder, launchd or Task Scheduler entry is touched (CLAUDE_ACCOUNT_STORE=file,
 // LONG_RUN_STATE_DIR, HOME, CLAUDE_CONFIG_DIR and ACCOUNT_STATE_DIR all point into the sandbox); tokens are built from parts.
 import { spawn, spawnSync } from 'node:child_process';
@@ -8,7 +9,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { delimiter, join, resolve } from 'node:path';
 import { addAccount, setCreditsOff } from '../home/tools/account/lib/accounts.mjs';
 import { freezeJob, loadJob } from '../home/tools/long-run/lib/job.mjs';
-import { ensureRunDirs, newRunId, readJournal, readJsonLines, runPaths, writeJson } from '../home/tools/long-run/lib/run-store.mjs';
+import { ensureRunDirs, isPidAlive, newRunId, readJournal, readJson, readJsonLines, runPaths, writeJson } from '../home/tools/long-run/lib/run-store.mjs';
 import { drive } from '../home/tools/long-run/lib/driver.mjs';
 import { installFakeClaude } from './long-run-fake-claude.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -121,6 +122,24 @@ export async function waitFor(check, ms = 30000, what = 'condition') {
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
     await new Promise((done) => { setTimeout(done, WAIT_SLICE_MS); });
   }
+}
+
+const killIfAlive = (pid) => {
+  if (!isPidAlive(pid)) return;
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch (error) {
+    if (error.code !== 'ESRCH') throw error; // it ended between the check and the kill
+  }
+};
+
+/**
+ * The cleanup of a test that drives a detached run through the CLI: SIGKILL of its driver, then of every fake claude call that has
+ * no `end` record yet, so a failed wait or assertion leaves no `long-run.mjs drive` or fake running. A no-op once the run ended.
+ */
+export function killRunProcesses(box, paths) {
+  killIfAlive(readJson(paths.driver)?.pid);
+  for (const call of readCalls(box)) if (call.end === null) killIfAlive(call.pid);
 }
 
 /** The journal of a step. */
