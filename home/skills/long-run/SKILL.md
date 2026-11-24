@@ -17,8 +17,8 @@ crashes, reboots and usage limits. You only talk with the owner and drive the CL
 ## Start a run
 
 1. From the owner's words, write the job file to `~/.claude/state/long-run/jobs/<name>.json` (format below). Ask for the
-   project folder if they did not name it. Model: leave it out (the default is Opus 5.5) unless the owner names one; never
-   Fable (the runner refuses it). No account field: the runner uses the selected account and records it.
+   project folder if they did not name it. Model: leave it out (the default is Opus 5.5) unless the owner names one; then
+   write its full id (`claude-sonnet-5-5`, not `sonnet`: the runner refuses aliases); never Fable (the runner refuses it). No account field: the runner uses the selected account and records it.
 2. Run `LR check ~/.claude/state/long-run/jobs/<name>.json` and show the owner the plan lines it prints.
 3. Ask in plain text whether to start. **Start only on the owner's typed yes in the chat.** Never ask through
    AskUserQuestion or any popup: a timed popup takes its default after 2 minutes, and that is not a yes.
@@ -84,10 +84,18 @@ Events: `run-started`, `step-started`, `step-done`, `step-failed`, `waiting-limi
 | run this every night / on a date | `LR schedule <job.json> --at HH:MM --daily` or `--on YYYY-MM-DD`; `schedule list`, `schedule remove <name>` |
 | resume runs after a restart | `LR autostart on` (`off`, `status`) |
 | send me a phone note | `LR notify setup`, then `LR notify test` (`notify off` stops it) |
+| clean up old runs | `LR prune` (done and abandoned runs older than 30 days; `--older-than <days>`) |
 
 `tell` reaches a running step at its next safe point (the end of its current tool use, at most about 2 minutes), then the same
 session continues with the message. On a waiting, held or paused step it is sent with the next resume. On a done step it is
 refused: offer `rerun --from <step>`.
+
+## When a run stopped while its boss had agents working
+
+A resumed boss is told which agents did not finish and which worktrees its step made (`RESUME-STATE`), and resumes them
+itself. If `LR status` prints `warning: boss pid <n> of a lost driver is still running`, tell the owner and offer
+`LR resume <run>` (it ends that boss first). `--abandon`, `--skip` and `--retry` work only on a held step; on a stopped or
+paused run they are refused. The tool README's section "What survives a stop" has the details.
 
 ## A question for the owner (`needs-owner`)
 

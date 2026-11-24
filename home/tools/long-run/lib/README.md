@@ -12,6 +12,10 @@ The modules of `long-run.mjs`. The tool's own README has the commands, the job f
 | `step.mjs` | one step or item from its first start to its outcome: journal, outcome table, waits, retries, worktree claim |
 | `step-start.mjs` | one `claude` start: fresh or resume, the prompt (wrapper, follow-ups, a told message), the step check, usage row |
 | `claude-run.mjs` | the child process: arguments, environment, scrubbed log, graceful end, result classification, orphan end |
+| `process-tree.mjs` | a boss's process tree: the group signal, the descendants seen before each signal, the end of those that outlive it |
+| `in-flight.mjs` | the boss's agents read from its stream, and the `RESUME-STATE` block of a resumed start |
+| `worktrees.mjs` | the worktrees a step made: list, state, and the end-of-run removal of the ones with no work |
+| `prune.mjs` | `prune`: removes finished runs older than a number of days |
 | `limit-time.mjs` | when a usage limit resets, from the printed text or the limit samples |
 | `control.mjs` | the control files (pause, stop, takeover, tell), the open-session check, the takeover lines per shell |
 | `events.mjs` | the per-run and global event lines, rotation, `events --follow` / `--wait-next`, `driver-lost` |

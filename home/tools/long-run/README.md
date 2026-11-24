@@ -130,6 +130,30 @@ dead driver left running is ended first, and only when its command line holds th
 transcript (the driver died before the boss started, or Claude Code's 30-day cleanup removed it) is started fresh, and the
 journal says so. Nothing prunes finished runs by itself: `long-run prune` does, when you run it.
 
+## What survives a stop
+
+When a run stops (a pause, a stop, a reboot, a crash or a killed driver) while a boss has subagents working:
+
+- **Nothing in flight continues by itself.** The boss and everything it started end: on SIGTERM, SIGINT or SIGHUP the driver
+  pauses the run cleanly, and it also ends what is left of each boss's process tree (a subagent's Bash runs in its own process
+  group, so ending the boss's group alone would miss it). A SIGKILL of the driver cannot be caught: the boss keeps working with
+  nobody reading it, `long-run status` warns `boss pid <n> of a lost driver is still running`, and `long-run resume` ends it
+  and its tree before it continues.
+- **The boss conversation survives**: the step continues the same session with `--resume`, so the boss sees its own Agent
+  calls and their ids. A session that was never written (the driver died before the boss started) or that Claude Code's 30-day
+  cleanup removed is started fresh instead.
+- **The runner tells the resumed boss what was in flight.** The step journal records each agent the boss started (from its
+  stream) and each git worktree that appeared during the step. Every resumed start begins with a `RESUME-STATE` block: the
+  agents that did not finish (id, type, description, worktree), the worktrees with their uncommitted changes and new commits,
+  and the commits the step already made. The boss is told to resume each unfinished agent with SendMessage (the agent keeps its
+  history but restarts its last tool call), to start a new one only when SendMessage fails, to check each worktree first and
+  never start a duplicate. Values from the stream are cut and quoted, so they read as data.
+- **Worktrees and half-made work stay on disk.** At the end of a run, a worktree a boss made is removed when it has no
+  uncommitted change and no commit that is not on the step folder's HEAD or a remote; any other is kept and named in
+  `summary.md`. Branches are never deleted.
+- Each permission prompt inside a headless step shows the timed dialog on the desktop and waits up to 2 minutes before it goes
+  ahead, so a step can stall that long while nobody watches.
+
 ## How you control a run
 
 - Start: in a plain terminal, `claude-as <account>` (once per terminal), then `node ~/.claude/tools/long-run/long-run.mjs start job.json`.
@@ -215,6 +239,10 @@ for a Node in use, C replaces only `lib/graph.mjs`.
 
 - The `-p` result shape on a usage limit: the limit text is searched in the result, its errors and stderr.
 - Whether `-p` waits for background subagents before exiting: the prompt wrapper asks the boss to wait for every agent.
+- Agent records come from the stream shapes of Claude Code 2.1.330 (an `Agent` tool use, `task_started`, the tool result's
+  `agentId`, `task_notification`); another version may name them differently. A `stopped` notification is counted as not
+  finished, so an agent the boss stopped on purpose is listed too.
+- Windows: the tree of a boss is ended by `taskkill /T` only; the sweep of processes that outlive it is POSIX only.
 - Windows: the detached driver after the terminal closes, `taskkill /T` through `claude.cmd`, the toast, keep-awake and
   `schtasks` are untested on a real Windows machine.
 - Whether `Send` obeys `maxConcurrency`: the runner also holds its own semaphore.
