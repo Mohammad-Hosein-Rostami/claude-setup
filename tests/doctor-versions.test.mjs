@@ -73,7 +73,7 @@ test('doctor ties the CLI version to the re-read: ok on VERIFIED_ON_CLI, a WARN 
     assert.ok(warn?.includes(`claude ${version} is not 2.1.330`) && warn.includes(`set VERIFIED_ON_CLI=${version}`), out);
     const files = out.split('\n').filter((line) => /^ {6}home\/(hooks|tools)\//.test(line)).map((line) => line.trim());
     assert.ok(warn.includes(`these ${files.length} files`), out);
-    // Two files that stay: agent-pins and the shared timed-ask library (the hardening plan keeps it untouched; token-view goes).
+    // Two files that stay: agent-pins and the shared timed-ask library (the hardening plan keeps it untouched).
     assert.ok(files.includes('home/hooks/lib/agent-pins.mjs') && files.includes('home/hooks/lib/timed-ask.mjs'), out);
     assert.ok(files.length >= 16, `the re-read list shrank to ${files.length} files`);
   }

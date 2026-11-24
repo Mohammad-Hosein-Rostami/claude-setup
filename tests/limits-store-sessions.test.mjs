@@ -1,7 +1,7 @@
 // Tests for home/hooks/lib/limits-store.mjs when many sessions on one account write the limits (fixes-spec X12): a sample
 // behind the newest is dropped (per window), each sample names its session, the log is appended, capped and trimmed and never
-// written through a link, the account lock is tried once and never waited for, the status line passes its session id, and the
-// token view reads the log within the same cap (node:test, no dependencies).
+// written through a link, the account lock is tried once and never waited for, and the status line passes its session id
+// (node:test, no dependencies).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -9,7 +9,6 @@ import { existsSync, linkSync, mkdirSync, readFileSync, statSync, symlinkSync, u
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LOG_KEEP_MS, MAX_LOG_BYTES, readLimits, recordSample } from '../home/hooks/lib/limits-store.mjs';
-import { readLimitLogs } from '../home/tools/token-view/lib/limits.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const STORE_URL = new URL('../home/hooks/lib/limits-store.mjs', import.meta.url).href;
@@ -232,20 +231,6 @@ test('8 sessions storing at once: under the lock the log never steps back and th
   assert.equal(resets.filter((value, i) => i > 0 && value < resets[i - 1]).length, 0, 'steps back in the log');
   const key = (s) => `${s.t}:${s.session}`;
   assert.deepEqual(readLimits(ACCOUNT, { dir }).samples.map(key), lines.slice(-12).map(key));
-});
-
-test('the token view reads a log only within MAX_LOG_BYTES and never through a link', NO_LINK_SKIP, () => {
-  const dir = makeTempDir('limits-reader-');
-  const lineAt = (t) => `${JSON.stringify({ t, five_hour: win(1), seven_day: null })}\n`;
-  let big = '';
-  for (let t = T0; Buffer.byteLength(big) <= MAX_LOG_BYTES; t += 1) big += lineAt(t);
-  writeFileSync(join(dir, 'big.jsonl'), big, { mode: 0o600 });
-  writeFileSync(join(dir, 'small.jsonl'), lineAt(T0) + lineAt(T0 + 1), { mode: 0o600 });
-  const elsewhere = join(makeTempDir('limits-reader-target-'), 'elsewhere.jsonl');
-  writeFileSync(elsewhere, lineAt(T0), { mode: 0o600 });
-  symlinkSync(elsewhere, join(dir, 'link.jsonl'));
-  const counts = Object.fromEntries(readLimitLogs(dir, 0).map((log) => [log.account, log.samples.length]));
-  assert.deepEqual(counts, { big: 0, link: 0, small: 2 });
 });
 
 test('the status line stores its session id with the sample', () => {

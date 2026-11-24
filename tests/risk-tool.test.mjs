@@ -63,7 +63,7 @@ const SECURITY_PATHS = [
   'src/usePermissions.ts', 'src/RouteGuard.tsx', 'src/fileUpload.ts', 'src/auth.service.ts',
   'src/JWTService.ts', 'src/CSRFProtection.ts', 'src/CORSConfig.ts', 'src/OAUTHClient.ts', 'src/OAuth2Client.ts',
   'src/test/authServer.ts', 'src/tests/session.ts', 'src/__tests__/session.ts', 'pages/login.mdx', '.claude/agents/auth-reviewer.md',
-  'home/tools/token-view/lib/summary.mjs', 'home/hooks/pre-bash-guard.mjs',
+  'home/tools/disk-free/lib/live-sessions.mjs', 'home/hooks/pre-bash-guard.mjs',
   'src/crypto.ts', 'hooks/guard.mjs', 'src/sandbox.ts', 'src/sanitize.ts', 'api/upload.ts', 'api/webhook.ts', 'src/jwt.ts', 'src/cookie.ts',
 ];
 for (const path of SECURITY_PATHS) {
@@ -150,7 +150,7 @@ test('a version 1 rule file still reads and keeps its substring meaning, with no
   const { rules, warning } = loadRiskRules(file);
   assert.equal(warning, null);
   assert.deepEqual(rules, VERSION_1);
-  assert.deepEqual(await classesOf(['home/tools/token-view/lib/summary.mjs'], rules), ['security']);
+  assert.deepEqual(await classesOf(['home/tools/disk-free/lib/live-sessions.mjs'], rules), ['security']);
   assert.deepEqual(await classesOf(['tests/auth.test.mjs'], rules), ['security']);
   assert.deepEqual(await classesOf(['home/hooks/README.md'], rules), ['gate']);
 });
