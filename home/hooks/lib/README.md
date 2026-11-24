@@ -56,7 +56,10 @@ Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
 - `verdict.mjs`: shared wording of the reasons.
 
 Asking and remembering:
-- `timed-ask.mjs`: the timed dialog (osascript, PowerShell or zenity); an outward ask from agent type `max` runs only after a click on Allow.
+- `timed-ask.mjs`: the timed dialog (osascript, PowerShell or zenity); an outward ask from agent type `max`, or any outward ask while a
+  max runs on this machine, runs only after a click on Allow (`click-only.mjs`: who the rule covers, and why the dialog says so).
+- `claude-starts.mjs`: whether a command line starts a Claude Code session or a long-run (pure); `claude-start-deny.mjs`: the guard's
+  one deny, of such a line from max's work (max's own calls, or a subagent's while a max runs).
 - `timed-ask-text.mjs`: the dialog's text for `timed-ask.mjs`: masked, visible values, detail lines, the timeout rule.
 - `timed-ask-async.mjs`: the same dialog as a promise that an abort signal (or `closeLiveDialogs`, run when the hook is stopped) can close; used by the question popups.
 - `question-reply.mjs`: AskUserQuestion for `permission-timed-allow.mjs`, one popup per question with its own wait.
@@ -111,7 +114,7 @@ Other hooks:
   with `unreadableCause`; an empty file is no settings, a BOM is dropped), `mixedEnvs` (the force and the model variable taken from
   different envs too).
 - `main-agents-store.mjs`: the main-agent record of `agent-budget.mjs` (`withRecord` under the session lock, `peekRecord` without it,
-  `PENDING_MS`, `STALE_MS`). `agent-ends.mjs`: when the lead's transcript shows a background agent ended (its task notice), for an
+  `PENDING_MS`, `STALE_MS`; `anyRunning(type)` reads the 64 newest session files without the lock, for max's rules). `agent-ends.mjs`: when the lead's transcript shows a background agent ended (its task notice), for an
   agent that died with no SubagentStop.
 - `agent-launches.mjs`: the launch record of every agent of a session, read by the guard's writer isolation gate (it has no cap; the main-agent cap is `agent-budget.mjs`'s):
   `agent-model-guard.mjs` records each launch (writers with the `isolated` and `readOnly` flags), `agent-budget.mjs` marks it started and

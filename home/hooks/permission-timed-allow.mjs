@@ -20,8 +20,8 @@
 // prompt like any other and gets the dialog. A JSON input (MCP and other tools) is shown and logged with its secret-named fields masked
 // (lib/secrets.mjs maskSecretFields). CLAUDE_GUARD_ASK=allow (lib/timed-ask.mjs) allows a prompt at once, destructive ones too, except an
 // MCP tool, an Artifact publish or delete and a Bash command the guard calls outward or hidden (lib/reason-classes.mjs keepsDialog).
-// Such an outward prompt from max (the input's agent_type) runs only after a click on Allow: no answer, a failed dialog and no GUI deny
-// (lib/timed-ask.mjs needsClickedAllow).
+// Such an outward prompt from max (the input's agent_type), or any of them while a max runs, runs only after a click on Allow: no
+// answer, a failed dialog and no GUI deny (lib/click-only.mjs).
 // Invariants: never throws out of main; every answered prompt is logged to the guard log.
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';

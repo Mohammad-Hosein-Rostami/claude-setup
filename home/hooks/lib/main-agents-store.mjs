@@ -10,14 +10,17 @@
 // write. Clock (H16): the order of `launches` is the order of the launches (each is appended), never their times; a launch dated
 // ahead of the clock (the clock stepped back, or a planted record) is re-dated to now and stored so, so it keeps its slot and ages
 // from now instead of being dropped.
-// Exports: PENDING_MS, STALE_MS, SAFE_ID, NO_STORE, mainAgentsDir(env), withRecord(session, env, change), peekRecord(session, env).
-// Invariants: every write of the file goes through withRecord, under the lock (peekRecord only reads, and its caller decides again
-// under the lock); stopped ids are kept to STOPPED_KEPT.
-import { statSync } from 'node:fs';
+// Across sessions (plan M2b): anyRunning(type) reads every session's record without the lock, by the same running rules, so a
+// max that died unseen counts only until STALE_MS passes with no tool call of its own (never for good).
+// Exports: PENDING_MS, STALE_MS, SAFE_ID, NO_STORE, MAX_SESSION_FILES, mainAgentsDir(env), withRecord(session, env, change),
+// peekRecord(session, env, now), anyRunning(type, env, now).
+// Invariants: every write of the file goes through withRecord, under the lock (peekRecord and anyRunning only read, and a caller of
+// peekRecord decides again under the lock); stopped ids are kept to STOPPED_KEPT.
+import { readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { withSessionLock } from './session-lock.mjs';
-import { readSessionFile, writeSessionFile } from './session-store.mjs';
+import { isSessionId, lstatOrNull, readSessionFile, writeSessionFile } from './session-store.mjs';
 import { callCounterPath } from './writer-agents.mjs';
 
 export const PENDING_MS = 2 * 60 * 1000; // a launch the permission dialog, Esc or another hook stops gets no SubagentStart
@@ -28,6 +31,9 @@ export const SAFE_ID = /^[\w-]{1,128}$/;
 export const NO_STORE = { state: 'unusable', running: [] };
 const MAX_STORE_BYTES = 64 * 1024;
 const STOPPED_KEPT = 200; // stopped main agent ids kept for a resume
+/** Session files anyRunning reads at most, newest first: a hook has a 5 s budget, and old sessions hold no running agent. */
+export const MAX_SESSION_FILES = 64;
+const SESSION_FILE = /^(.+)\.json$/;
 
 /** The folder of the main-agent records, one file per session. */
 export const mainAgentsDir = (env) => join(env.HOME || env.USERPROFILE || homedir(), '.claude', 'state', 'main-agents');
@@ -113,7 +119,51 @@ export function withRecord(session, env, change) {
  * decides again under it: the lock waits only 1 s (lib/session-lock.mjs), so no slow read happens while it is held.
  * @returns {{launches: object[], stopped: string[], stoppedTypes: object} | null} null when the store cannot be read or parsed
  */
-export function peekRecord(session, env) {
+export function peekRecord(session, env, now = Date.now()) {
   const text = readSessionFile(mainAgentsDir(env), session, MAX_STORE_BYTES);
-  return text === undefined ? null : (parseRecord(text, Date.now(), session)?.record ?? null);
+  return text === undefined ? null : (parseRecord(text, now, session)?.record ?? null);
+}
+
+/**
+ * The session ids of the store's plain `<session>.json` files, newest first, at most MAX_SESSION_FILES. A name that is no session id
+ * (a planted or hostile name) is skipped; a link or a folder is no plain file, so it is skipped too.
+ * @returns {string[] | null} the ids ([] when the store folder does not exist yet); null when the folder is no real folder
+ */
+function newestSessions(dir) {
+  const folder = lstatOrNull(dir);
+  if (folder === null) return [];
+  if (!folder.isDirectory()) return null;
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => ({ session: SESSION_FILE.exec(entry.name)?.[1], name: entry.name }))
+    .filter(({ session }) => isSessionId(session))
+    .map(({ session, name }) => ({ session, at: statSync(join(dir, name)).mtimeMs }))
+    .sort((first, second) => second.at - first.at)
+    .slice(0, MAX_SESSION_FILES)
+    .map(({ session }) => session);
+}
+
+/**
+ * Whether a main agent of `type` runs in any session on this machine (the record of every session, read without the lock).
+ * Why: max's outward rule (lib/click-only.mjs) and the guard's Claude-start deny must see a max of another session, and a helper of
+ * max has its own agent_type, so the record of the cap is the one place that knows a max runs.
+ * @param {string} type the main agent type ('max')
+ * @param {Record<string, string | undefined>} env process environment (HOME, USERPROFILE)
+ * @param {number} now clock in epoch ms (a test passes its own)
+ * @returns {'yes' | 'no' | 'unusable'} 'unusable' when the folder or any file read cannot be read or parsed: the caller fails closed
+ */
+export function anyRunning(type, env, now = Date.now()) {
+  const dir = mainAgentsDir(env);
+  try {
+    const sessions = newestSessions(dir);
+    if (sessions === null) return 'unusable';
+    for (const session of sessions) {
+      const record = peekRecord(session, env, now);
+      if (record === null) return 'unusable';
+      if (record.launches.some((launch) => launch.type === type)) return 'yes';
+    }
+    return 'no';
+  } catch {
+    return 'unusable'; // the folder changed under the listing, or a file went away: fail closed
+  }
 }

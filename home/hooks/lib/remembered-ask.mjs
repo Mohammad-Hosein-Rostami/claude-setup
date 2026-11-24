@@ -21,7 +21,7 @@ export const SECRET_OUTCOME = 'secret'; // the log outcome of a secret's kind li
  * identical retry included) get the timed dialog.
  * @param {{reason: string, reasons?: string[], advice?: string[], errorClass?: string}} ask the ask from decideSafely
  * @param {{command: string, cwd: string, input: {session_id?: string, agent_id?: string, agent_type?: string}}} call the Bash call being guarded
- *   (agent_type: an outward ask from max runs only after a click on Allow, lib/timed-ask.mjs needsClickedAllow)
+ *   (agent_type: an outward ask from max, or any while a max runs, runs only after a click on Allow, lib/click-only.mjs)
  * @param {Record<string, string | undefined>} env process environment (HOME, dialog, log)
  * @returns {string} hook stdout ('' for allow; a deny line for a bounce or a Deny click)
  */

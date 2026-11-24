@@ -1,5 +1,6 @@
 // The text of a timed-ask dialog (timed-ask.mjs shows it): what is asked, why, the masked target, detail lines, directory, session,
-// and the timeout rule (a request with `timeoutDenies`, max's outward ask, says no answer does not run it); a question popup (a request with `body`, display design 7.5) shows only its own lines and the default button.
+// and the timeout rule (a request with `clickOnlyNote`, an outward ask under max's rule (lib/click-only.mjs), says no answer does not
+// run it, and why); a question popup (a request with `body`, display design 7.5) shows only its own lines and the default button.
 // Exports: dialogText(request, timeoutS, platform) -> string; formatDuration(seconds) -> '2 min' | '45 s'; ALLOW_DENY_BUTTONS.
 // Invariants: every shown value is masked with its real line breaks before it is flattened or cut, so no secret reaches the dialog;
 // line breaks become a visible mark and control, format, bidi, zero-width and other default-ignorable characters are dropped, so no
@@ -60,10 +61,10 @@ function plainBody(body, buttons, platform) {
 
 /**
  * @returns {string} the dialog body: tool, why, the labelled target (head and tail), detail lines, directory, session/agent, the timeout
- *   rule (timeoutDenies: no answer does not run it, for max's outward asks); a request with `body` (the question popups) shows only
+ *   rule (clickOnlyNote, fixed text of lib/click-only.mjs: no answer does not run it, and why); a request with `body` (the question popups) shows only
  *   those lines and the default button
  */
-export function dialogText({ tool, reason, command, targetLabel = 'Command', details = [], cwd, sessionId, agentId, buttons = ALLOW_DENY_BUTTONS, body, timeoutDenies = false }, timeoutS, platform) {
+export function dialogText({ tool, reason, command, targetLabel = 'Command', details = [], cwd, sessionId, agentId, buttons = ALLOW_DENY_BUTTONS, body, clickOnlyNote = '' }, timeoutS, platform) {
   if (Array.isArray(body)) return plainBody(body, buttons, platform);
   const target = shownValue(command);
   const who = [sessionId && `session ${visible(String(sessionId).slice(0, 8))}`, agentId && `agent ${visible(String(agentId).slice(0, 8))}`].filter(Boolean).join(', ');
@@ -76,7 +77,7 @@ export function dialogText({ tool, reason, command, targetLabel = 'Command', det
   if (who) lines.push(`From: ${who}`);
   const yesNo = platform === 'win32' ? ` (Yes = ${buttons.accept}, No = ${buttons.decline})` : '';
   const goesAhead = buttons.defaultButton === 'decline' ? `${buttons.accept} is taken.` : 'it goes ahead.';
-  const timeoutRule = timeoutDenies ? `it does not run: only a click on ${buttons.accept} runs it.` : goesAhead;
+  const timeoutRule = clickOnlyNote ? `it does not run (${clickOnlyNote}).` : goesAhead;
   const defaultLabel = buttons.defaultButton === 'decline' ? buttons.decline : buttons.accept;
   lines.push('', `${defaultLabel} is the default${yesNo}. With no answer in ${formatDuration(timeoutS)} ${timeoutRule}`);
   return lines.join('\n');

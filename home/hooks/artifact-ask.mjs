@@ -2,7 +2,8 @@
 // (lib/timed-ask.mjs: Allow by default, auto-allow after 2 min, Deny only on a click), falling back to the CLI's own ask
 // (a prompt even in bypassPermissions mode, verified on CLI 2.1.323) when there is no GUI. Read, list, open, pin, unpin and
 // quickstart pass. Publish and delete are outward, so CLAUDE_GUARD_ASK=allow does not skip this dialog (lib/timed-ask.mjs), and from agent
-// type max (the input's agent_type) they run only after a click on Allow: no answer, a failed dialog and no GUI deny.
+// type max (the input's agent_type), or from anyone while a max runs (lib/click-only.mjs), they run only after a click on Allow: no
+// answer, a failed dialog and no GUI deny.
 // Exports: decideArtifact(toolInput) -> reason | undefined.
 // `action` omitted means publish (the tool's default). Fails open: bad input or an unknown action is not asked about.
 import { realpathSync } from 'node:fs';

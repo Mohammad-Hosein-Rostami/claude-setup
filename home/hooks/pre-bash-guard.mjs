@@ -1,6 +1,7 @@
 // PreToolUse guard for Bash calls, and PowerShell calls too (the matcher is `Bash|PowerShell` in settings/base.json). Reads the hook JSON from stdin, never
 // evaluates the command. Parsing lives in lib/shell-words.mjs and lib/command-of.mjs. Exports: decide(command, {cwd, project, prodHosts}) -> {allow: true,
-// advice?} | {allow: false, ask: true, reason, reasons, advice?}; segments(command) -> string[][]. Nothing is denied for good. Every safety rule hit is an
+// advice?} | {allow: false, ask: true, reason, reasons, advice?}; segments(command) -> string[][]. Nothing is denied for good but a Claude session or
+// long-run started from max's work (plan M2b, lib/claude-start-deny.mjs: max's own calls, and a subagent's while a max runs). Every other safety rule hit is an
 // ASK, and the hook answers it with a timed native dialog (lib/timed-ask.mjs: Allow is the default, no answer in 2 min (CLAUDE_ASK_TIMEOUT_S) goes ahead as
 // Allow, only a click on Deny denies); with no GUI (ssh, CI, no display) or a failing dialog it falls back to the CLI's own "ask" prompt, which also appears
 // in bypassPermissions mode (verified on CLI 2.1.323). Bounce once (lib/bounce-once.mjs): when a reason can be fixed by rewriting the command (a variable
@@ -83,6 +84,7 @@ import {
 } from './lib/command-checks.mjs';
 import { withoutCapturedPrints } from './lib/captured-read.mjs';
 import { commandOf } from './lib/command-of.mjs';
+import { claudeStartDeny } from './lib/claude-start-deny.mjs';
 import { checkCredentialSend } from './lib/credential-send.mjs';
 import { dockerRmAdvice } from './lib/docker-advice.mjs';
 import { scanWrapped } from './lib/dangerous-scan.mjs';
@@ -252,6 +254,8 @@ const cwdOf = (input) => (typeof input.cwd === 'string' ? input.cwd : process.cw
 
 /** The hook's answer for one Bash call: '' lets it run, anything else is the ask, deny or rewrite (lib/output-trim.mjs) line for stdout. */
 function answerFor(command, input) {
+  const startDeny = claudeStartDeny(command, input); // max prepares only: denied every time, before any dialog or bounce
+  if (startDeny) return startDeny;
   const cwd = cwdOf(input);
   const project = process.env.CLAUDE_PROJECT_DIR || cwd;
   const rules = (text, ctx) => decide(text, { ...ctx, prodHosts: readProdHosts() }); // reading the host list is inside the guard too
