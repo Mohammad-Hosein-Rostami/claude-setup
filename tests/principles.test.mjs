@@ -1,9 +1,11 @@
 // Text checks of the guidance files: the principle table P1-P16, lex's plan lists and self-attack, the long-command and timeout
-// lines of the agents that run commands, dev's contract-dispute line, and the home/CLAUDE.md long-command line.
+// lines of the agents that run commands, dev's contract-dispute line, the home/CLAUDE.md long-command line, and the owner's
+// decisions on the agent cap, the suite queue and Fable.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { MAX_AGENTS_PER_TYPE } from '../home/hooks/agent-budget.mjs';
 
 const read = (path) => readFileSync(fileURLToPath(new URL(`../${path}`, import.meta.url)), 'utf8');
 const flat = (text) => text.replace(/\s+/g, ' ');
@@ -125,6 +127,32 @@ test('home/CLAUDE.md: long-command line says over 3 min, with a timeout, wait fo
   assert.match(claude, /A command that may run over 3 min runs with `run_in_background: true` and its `timeout` set \(at most 2 h\); wait for its\s+notice or a Monitor, never poll or sleep-loop; stop every background shell you started before your final report \(how:\s+`~\/\.claude\/agents\/dev-run\.md`\)\./);
   assert.doesNotMatch(claude, /watch\.mjs/, 'watch.mjs is removed and never a way to run or bound a command');
   assert.doesNotMatch(claude, /A command over ~2 min/);
+});
+
+const listDir = (path) => readdirSync(fileURLToPath(new URL(`../${path}`, import.meta.url)));
+const SUITE_SLOTS = 1; // the owner's default for the machine-wide suite queue (home/tools/suite DEFAULT_CONFIG)
+// The files of the no-Fable gate itself (agent-model-guard.mjs and its libs, with their READMEs): the only hook text that names Fable.
+const FABLE_GATE_FILES = ['README.md', 'agent-model-guard.mjs', 'lib/README.md', 'lib/agent-model-gates.mjs', 'lib/agent-pins.mjs'];
+
+test('home/CLAUDE.md names the owner\'s cap of 3 lex, 3 dev and 3 tess (the guard\'s cap) and the 1-slot suite run queue', () => {
+  const claude = flat(read('home/CLAUDE.md'));
+  const cap = MAX_AGENTS_PER_TYPE;
+  assert.ok(claude.includes(`- At most ${cap} lex, ${cap} dev and ${cap} tess run at once; their helpers are not counted.`), `the cap line names ${cap} of each`);
+  assert.ok(claude.includes(`Full suites, installs and builds go through the \`suite run\` queue (${SUITE_SLOTS} slot)`), 'the suite queue line');
+});
+
+test('agent files name Fable only to forbid it, and only the no-Fable gate\'s own hook files name it', () => {
+  let named = 0;
+  for (const file of listDir('home/agents')) {
+    for (const sentence of flat(read(`home/agents/${file}`)).split(/(?<=[.:])\s+/).filter((line) => /fable/i.test(line))) {
+      named += 1;
+      assert.match(sentence, /never Fable/, `${file}: ${sentence}`);
+    }
+  }
+  assert.ok(named > 0, 'the agents still carry the never-Fable rule');
+  const hookFiles = [...listDir('home/hooks'), ...listDir('home/hooks/lib').map((file) => `lib/${file}`)];
+  const naming = hookFiles.filter((file) => /\.(mjs|md)$/.test(file) && /fable/i.test(read(`home/hooks/${file}`)));
+  assert.deepEqual(naming.sort(), [...FABLE_GATE_FILES].sort());
 });
 
 test('docs/catalog.md lists principles.md among the rules', () => {
