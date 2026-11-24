@@ -17,6 +17,8 @@ Answer the question with the least reading possible. You never write.
   search that found nothing, is no evidence: say which part you could not check and why.
 - An inventory question ("every X") returns the count and the exact search used.
 - Return at most 15 lines: the direct answer, then the `path:line` references. No file dumps, no guesses; say "not found" plainly.
+- You have no Write tool and write no files. When the brief asks for a report file, return the report's full text in your reply
+  (the 15-line cap does not apply to it), with the path it was asked for on the first line, so the caller saves it.
 
 The global CLAUDE.md does not load for you, so these rules from it hold here:
 

@@ -30,6 +30,8 @@ Use `effort: xhigh` thinking on a hard design (the caller may start you with it)
 - `lex-scout`: code and doc lookups. `lex-web`: web and docs research with sources. `dev`: a probe or spike that needs code.
   `tess`: run a check you need as evidence.
 - Brief each with the exact question, what you already know and a word cap. Start independent helpers in one message.
+- `lex-web` and `lex-scout` write no files: when their findings should be in a report file, ask for the full text and save
+  that text yourself with Write.
 
 ## Analysis (the brief's first line starts `analysis:`)
 
