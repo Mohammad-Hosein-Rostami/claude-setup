@@ -1,55 +1,30 @@
-// Stop, SubagentStop and PreCompact: keeps git on one line (C37). A lead's Stop is blocked once per repository state while the repo holds
-// leftovers `git-tidy check` finds (an unpublished merge commit, an older copy of a re-done lane, a workflow agent's leftover branch, a
-// merged branch or worktree), or while an old unmerged lane is named by no open row of the session's STATUS.md. It never asks for a test run. A SubagentStop is blocked once when the agent left its own empty `worktree-agent-<id>` branch.
-// PreCompact prints one line per open lane so the summary keeps them. SessionStart (`r9-git-line`) names the lanes of the session's repo
-// not yet landed; PostToolUse(Bash) after a `git worktree add` locks the new lane worktree (lib/lane-lock.mjs), and after `git worktree add`,
-// `merge` or `branch` reuses the cached check and, above 5
-// unlanded lanes or prunable items, says to run `git-tidy prune`; both put `additionalContext` inside `hookSpecificOutput`.
-// Exports: decide(input, env, deps) -> Promise<{block: false} | {block: true, reason}>, openLanes(input, env, deps) -> Promise<string[]>,
-//   contextFor(event, input, env, deps) -> Promise<string> (SessionStart / PostToolUse additionalContext, '' for none).
+// SessionStart only (plan 2026-11-24: "git-tidy check at session start only"): names the lanes of the session's repo that are not
+// yet landed (lib/tidy-gate-notes.mjs unlandedText), so a new or resumed session sees leftover work at once. It never blocks; the
+// pre-bash guard keeps refusing merge commits and update-ref, and `land` (home/tools/land) lands a lane.
+// Exports: contextFor(input, env, deps) -> Promise<string> (the SessionStart additionalContext, '' for none).
 //   deps (tests): runCheck(top, timeoutMs, env), checkTimeoutMs, now (ms, for the cache age).
 //   Env: GIT_TIDY_GATE_CHECK_TIMEOUT_MS overrides CHECK_TIMEOUT_MS (a loaded machine, the test suite).
 // Invariants:
-// - The gated folder is the session's own worktree (lib/gated-folder.mjs). A lead also gates the worktrees of files the session itself
-//   edited (one per repository, up to 5, newest first; one stop spends at most one check budget in all, finding them included, and each
-//   check gets only the time left; PreCompact keeps to the same budget), so a session started in a folder that is no repo (~) is still
-//   checked; a repo the session did not edit in is never touched. A subagent gates its start folder only. The check runs as a child of
-//   `git-tidy.mjs check --json` with
-//   core.fsmonitor and log.showSignature off and bare repositories off, and never in a repo where any worktree's own config view names a
-//   filter (`git status` there would run it): there only a cached verdict is read, so such a repo is never judged.
-// - A finding blocks only when the advised `prune` would act on it (a dry run in the same child, so a fresh worktree at the base, which
-//   prune protects, never blocks), or is a merge commit; names and subjects reach the reason quoted and capped (they are data).
-// - State: ~/.claude/state/git-tidy-gate/<session>.json holds the check verdict per (repo, fingerprint) and the states already blocked. The
-//   fingerprint is a hash of all refs and the worktree list, so a repo unchanged for under 10 minutes is a cache hit: two git calls and no
-//   child (the age bound is because findings such as "unlanded for 2 h" change with time alone).
-//   A miss runs the child with a CHECK_TIMEOUT_MS bound; on a timeout the stop passes and one detached refresh fills the cache.
-// - Blocks at most once per state (agent + repo + the problems found); a continued stop (stop_hook_active) gets at most
-//   MAX_CHAINED_BLOCKS blocks in a row (lib/tidy-gate-store.mjs), so the gate can never loop. A state that cannot be stored is not blocked.
-// - Without a linked STATUS.md no lane is called unnamed.
+// - The folder looked at is the session's own worktree (lib/gated-folder.mjs). The check runs as a child of
+//   `git-tidy.mjs check --json` with core.fsmonitor and log.showSignature off and bare repositories off, and never in a repo where any
+//   worktree's own config view names a filter (`git status` there would run it): there only a cached verdict is read.
+// - State: ~/.claude/state/git-tidy-gate/<session>.json holds the check verdict per (repo, fingerprint). The fingerprint is a hash of
+//   all refs and the worktree list, so a repo unchanged for under 10 minutes is a cache hit: two git calls and no child.
+//   A miss runs the child with a CHECK_TIMEOUT_MS bound; on a timeout nothing is said and one detached refresh fills the cache.
 // - Any internal error is one stderr line and exit 0: a session is never trapped.
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { editedWorktrees, gatedFolder, gitOut, gitText, namesFilterProgram, worktreeOf } from './lib/gated-folder.mjs';
+import { gatedFolder, gitOut, namesFilterProgram, worktreeOf } from './lib/gated-folder.mjs';
 import { isSessionId } from './lib/session-store.mjs';
-import { statusFileOf } from './lib/status-file-of.mjs';
-import { cachedVerdict, recordOnce, storeVerdict } from './lib/tidy-gate-store.mjs';
-import { pruneNoteText, unlandedText, wantsPruneNote } from './lib/tidy-gate-notes.mjs';
-import { lockNewLaneWorktrees } from './lib/lane-lock.mjs';
-import { MERGE_COMMIT, OPEN_LANE, PRUNE_KINDS, runCheckChild, UNLANDED } from './lib/tidy-check-child.mjs';
-import { parseWorkItems } from '../tools/estimate/lib/items.mjs';
-import { isAgentBranch } from '../tools/git-tidy/lib/copies.mjs';
-import { readStatusFile } from '../tools/status/status-file.mjs';
-import { countedGate } from './lib/stop-block-count.mjs';
+import { cachedVerdict, storeVerdict } from './lib/tidy-gate-store.mjs';
+import { unlandedText } from './lib/tidy-gate-notes.mjs';
+import { runCheckChild } from './lib/tidy-check-child.mjs';
 
-const PASS = Object.freeze({ block: false });
-const CHECK_TIMEOUT_MS = 4000; // a Stop hook must answer fast; a slower check is finished by the detached refresh
+const CHECK_TIMEOUT_MS = 4000; // a SessionStart hook must answer fast; a slower check is finished by the detached refresh
 const REFRESH_TIMEOUT_MS = 60_000;
-const AGENT_BRANCH_PREFIX = 'worktree-agent-';
-const homeOf = (env) => env.HOME || env.USERPROFILE || homedir();
+const EVENT = 'SessionStart';
 const sha256 = (text) => createHash('sha256').update(text).digest('hex');
 
 /** A hash of every ref and the worktree list: equal while nothing a check looks at changed; null when git cannot be read. */
@@ -96,150 +71,22 @@ function verdictFor(env, session, top, deps, timeoutMs) {
   return fresh;
 }
 
-/** Open rows of the session's STATUS.md as lower-case text, or null when no STATUS.md is linked. */
-function openRowTexts(input, env) {
-  const found = statusFileOf(input, { stateDir: join(homeOf(env), '.claude', 'state', 'estimate'), projectDir: env.CLAUDE_PROJECT_DIR });
-  if (found?.path === undefined) return null;
-  const read = readStatusFile(found.path);
-  if (read.text === undefined) return null;
-  return parseWorkItems(read.text).items.filter((row) => row.kind !== 'deliver' && row.done === null).map((row) => `${row.id} ${row.item}`.toLowerCase());
-}
-
-const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-// the whole word: `ui` is not named by "build the docs", while `r4-x` is named by "lane r4-x: implement it"
-const namesWord = (row, word) => new RegExp(`(?<![a-z0-9_-])${escapeRegExp(word.toLowerCase())}(?![a-z0-9_-])`).test(row);
-
-// words that a shell reads as one argument stay as they are; any other value is single-quoted
-const shellWord = (value) => (/^[A-Za-z0-9._/@%+=:,-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`);
-
-/** The unlanded-lane hints that no open row names by the branch or its last path segment. */
-function unnamedLanes(hints, input, env) {
-  const unlanded = hints.filter(({ kind }) => kind === UNLANDED);
-  const rows = unlanded.length === 0 ? null : openRowTexts(input, env);
-  if (rows === null) return [];
-  return unlanded.filter(({ subject }) => !rows.some((row) => namesWord(row, subject) || namesWord(row, subject.split('/').at(-1))));
-}
-
-function verdictProblems(verdict, input, env, top) {
-  const problems = verdict.findings.map(({ kind, subject, detail }) => ({
-    key: `${kind}:${subject}`,
-    text: kind === MERGE_COMMIT ? `${kind} ${subject} ${JSON.stringify(detail)}: rebase it away (git-linear-history skill), never merge` : `${kind} ${subject}: ${detail}`,
-  }));
-  for (const { subject } of unnamedLanes(verdict.hints, input, env)) {
-    problems.push({ key: `${UNLANDED}:${subject}`, text: `${UNLANDED} ${subject} is named by no open row of STATUS.md: land it with land-lane (\`node ~/.claude/tools/land-lane/land-lane.mjs --branch ${shellWord(subject)} ...\`, the other flags are in tools/land-lane/README.md) or start its row` });
-  }
-  const prune = verdict.findings.some(({ kind }) => PRUNE_KINDS.has(kind));
-  return { problems, pruneLine: prune ? `node ~/.claude/tools/git-tidy/git-tidy.mjs prune ${shellWord(top)} --apply --include-recent` : null };
-}
-
-/** The hygiene reason for one tree, or null. */
-function leadReason(input, env, deps, { top, timeoutMs }) {
-  const verdict = verdictFor(env, input.session_id, top, deps, timeoutMs);
-  if (verdict === null) return null;
-  const { problems, pruneLine } = verdictProblems(verdict, input, env, top);
-  if (problems.length === 0) return null;
-  const lines = problems.map(({ text }) => `- ${text}`);
-  const fix = pruneLine === null ? '' : `\nClean up what prune can remove (only proven patch-equal or merged work): ${pruneLine}`;
-  return { state: problems.map(({ key }) => key).join('\0'), reason: `Git hygiene in ${top}:\n${lines.join('\n')}${fix}` };
-}
-
-/** The agent's own empty `worktree-agent-<id>` branch that nothing uses any more, as a reason; null when there is none. */
-function agentReason(input, top) {
-  if (!isSessionId(input.agent_id)) return null;
-  const name = `${AGENT_BRANCH_PREFIX}${input.agent_id}`;
-  const tip = gitText(top, ['rev-parse', '--verify', '--quiet', `refs/heads/${name}`]);
-  if (tip === '' || (gitOut(top, ['worktree', 'list', '--porcelain']) ?? '').includes(`branch refs/heads/${name}`)) return null;
-  const holders = gitText(top, ['for-each-ref', '--contains', tip, '--format=%(refname:short)', 'refs/heads']).split('\n');
-  if (holders.every((holder) => holder === name || isAgentBranch(holder))) return null; // it holds a commit of its own
-  return { state: name, reason: `Your leftover branch ${name} holds no work of its own and no worktree uses it: delete it: \`git branch -d ${name}\`` };
-}
-
-/** The tree of this event's gated folder, or null when the gate does not apply (not a git worktree, an unusable session). */
-function gatedTree(input, env) {
-  if (input === null || typeof input !== 'object' || !isSessionId(input.session_id)) return null;
-  const folder = gatedFolder(input, env);
-  return folder === null ? null : worktreeOf(folder);
-}
-
 /**
- * The trees a lead's stop looks at: its project folder's worktree, then one worktree of each other repository the session edited a file
- * in (a session started in ~ has no project repo of its own). Empty for an unusable session. Finding them stops at `deadlineMs`.
- */
-function leadTrees(input, env, deadlineMs) {
-  if (input === null || typeof input !== 'object' || !isSessionId(input.session_id)) return [];
-  const project = gatedTree(input, env);
-  const edited = editedWorktrees(input.session_id, env, { deadlineMs, except: project });
-  return project === null ? edited : [project, ...edited];
-}
-
-/**
- * Runs `inspect(tree, timeoutMs)` on each of a lead's trees until the one check budget is spent: each call gets only the time left, and
- * no tree after the first is started once none is left. `inspect` returns a stop value to end the loop with, else undefined.
- */
-async function inspectWithinBudget(input, env, deps, inspect) {
-  const deadlineMs = Date.now() + checkBudgetMs(env, deps);
-  for (const [index, tree] of leadTrees(input, env, deadlineMs).entries()) {
-    const timeLeftMs = deadlineMs - Date.now();
-    if (index > 0 && timeLeftMs <= 0) break; // one stop never waits for several slow repos
-    const done = await inspect(tree, Math.max(timeLeftMs, 1));
-    if (done !== undefined) return done;
-  }
-  return undefined;
-}
-
-/**
- * The gate decision for one Stop or SubagentStop event.
- * @param {object} input the hook JSON (session_id, agent_id?, agent_type?, agent_transcript_path?, transcript_path?, stop_hook_active?)
+ * The SessionStart additionalContext: the unlanded lanes of the session's repo, '' when there are none or the gate does not apply.
+ * @param {object} input the hook JSON (session_id, cwd, agent_id?)
  * @param {Record<string, string | undefined>} [env] HOME (the state folder), CLAUDE_PROJECT_DIR and the environment the check child gets
  * @param {object} [deps] see the header
- * @returns {Promise<{block: false} | {block: true, reason: string}>}
+ * @returns {Promise<string>}
  */
-export async function decide(input, env = process.env, deps = {}) {
-  const agent = typeof input?.agent_id === 'string' && input.agent_id !== '' ? input.agent_id : null;
-  if (agent !== null) {
-    const tree = gatedTree(input, env);
-    return tree === null ? PASS : blockOnce(input, env, agent, tree, agentReason(input, tree.top));
-  }
-  const blocked = await inspectWithinBudget(input, env, deps, (tree, timeoutMs) => {
-    const result = blockOnce(input, env, agent, tree, leadReason(input, env, deps, { top: tree.top, timeoutMs }));
-    return result.block ? result : undefined;
-  });
-  return blocked ?? PASS;
-}
-
-/** The block for `found` (a reason or null) the first time its state is seen in this session, else PASS. */
-function blockOnce(input, env, agent, tree, found) {
-  if (found === null) return PASS;
-  const state = sha256(`${agent ?? ''}\0${tree.top}\0${found.state}`);
-  const allowed = recordOnce(env, input.session_id, { agent: agent ?? '', state, continued: input.stop_hook_active === true });
-  return allowed ? { block: true, reason: found.reason } : PASS;
-}
-
-/**
- * One line per open lane (an unmerged branch) for the compaction summary; [] for a subagent or when the check cannot be read.
- * @returns {Promise<string[]>}
- */
-export async function openLanes(input, env = process.env, deps = {}) {
-  if (typeof input?.agent_id === 'string' && input.agent_id !== '') return [];
-  const lines = [];
-  await inspectWithinBudget(input, env, deps, ({ top }, timeoutMs) => {
-    const verdict = verdictFor(env, input.session_id, top, deps, timeoutMs);
-    for (const { kind, subject, detail } of verdict?.hints ?? []) if (kind === OPEN_LANE) lines.push(`open lane ${subject}: ${detail}`);
-  });
-  return lines;
-}
-
-/** SessionStart and PostToolUse(Bash): the additionalContext text of `event` (lib/tidy-gate-notes.mjs), '' when there is none. */
-export async function contextFor(event, input, env = process.env, deps = {}) {
-  if (event === 'PostToolUse' && !wantsPruneNote(input)) return '';
-  const tree = gatedTree(input, env);
+export async function contextFor(input, env = process.env, deps = {}) {
+  if (input === null || typeof input !== 'object' || !isSessionId(input.session_id)) return '';
+  const folder = gatedFolder(input, env);
+  const tree = folder === null ? null : worktreeOf(folder);
   if (tree === null) return '';
-  if (event === 'PostToolUse') lockNewLaneWorktrees(tree.top, input) // a new lane worktree is locked first (r9-wt-lock); land unlocks it
-  const verdict = verdictFor(env, input.session_id, tree.top, deps, checkBudgetMs(env, deps));
-  return event === 'SessionStart' ? unlandedText(tree.top, verdict) : pruneNoteText(tree.top, verdict);
+  return unlandedText(tree.top, verdictFor(env, input.session_id, tree.top, deps, checkBudgetMs(env, deps)));
 }
 
-/** The detached job: check `top` for as long as it takes and store the verdict for the next stop. */
+/** The detached job: check `top` for as long as it takes and store the verdict for the next session start. */
 function refresh(top, session, env) {
   const fingerprint = fingerprintOf(top);
   const verdict = fingerprint === null || !isSessionId(session) || anyWorktreeNamesFilter(top) ? undefined : runCheckChild(top, REFRESH_TIMEOUT_MS, env);
@@ -258,20 +105,10 @@ async function main() {
     return;
   }
   const input = JSON.parse(await readStdin());
-  const event = input?.hook_event_name;
-  if (event === 'SessionStart' || event === 'PostToolUse') {
-    const context = await contextFor(event, input);
-    // A top-level additionalContext is dropped (hooks docs, #96193): it goes inside hookSpecificOutput.
-    if (context !== '') process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: context } })}\n`);
-    return;
-  }
-  if (input?.hook_event_name === 'PreCompact') {
-    const lines = await openLanes(input);
-    if (lines.length > 0) process.stdout.write(`${lines.join('\n')}\n`);
-    return;
-  }
-  const result = await countedGate('git-tidy-gate', input, () => decide(input)); // lib/stop-block-count.mjs: the cap record
-  if (result.block) process.stdout.write(`${JSON.stringify({ decision: 'block', reason: result.reason })}\n`);
+  if (input?.hook_event_name !== EVENT) return;
+  const context = await contextFor(input);
+  // A top-level additionalContext is dropped (hooks docs, #96193): it goes inside hookSpecificOutput.
+  if (context !== '') process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: EVENT, additionalContext: context } })}\n`);
 }
 
 // ~/.claude/hooks is a symlink into this repo and import.meta.url is the resolved path, so compare real paths.

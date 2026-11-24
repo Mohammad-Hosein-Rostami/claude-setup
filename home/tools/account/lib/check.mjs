@@ -1,10 +1,10 @@
 // Purpose: say whether a token still works: one tiny Haiku call on that token.
 // Exports: checkToken, CHECK_VALID, CHECK_REVOKED.
-// Invariants: the call goes through `callHaiku` of recall's claude-call.mjs, so it has the same fixed flags (`--model
+// Invariants: the call goes through `callHaiku` of claude-call.mjs, so it has the fixed flags (`--model
 // haiku`, never `--bare`, hooks off, no session kept) and writes its usage row with the account name; one call, no second
 // attempt and never another account; `claude auth status` is not used: it answers "logged in" for any token without
 // asking the server (probe ACC-3). The result is a class, never the reply text.
-import { callHaiku } from '../../recall/lib/claude-call.mjs';
+import { callHaiku } from './claude-call.mjs';
 
 export const CHECK_VALID = 'valid';
 export const CHECK_REVOKED = 'revoked';

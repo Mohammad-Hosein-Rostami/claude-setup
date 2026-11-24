@@ -1,6 +1,0 @@
-src\cart.ts(5,36): error TS2345: Argument of type '{ cents: number; }[]' is not assignable to parameter of type 'Line[]'.
-  Property 'quantity' is missing in type '{ cents: number; }' but required in type 'Line'.
-src\cart.ts(6,9): error TS2322: Type 'string' is not assignable to type 'number'.
-src\label.ts(2,16): error TS2339: Property 'name' does not exist on type '{ id: number; }'.
-src\label.ts(5,23): error TS7006: Parameter 'text' implicitly has an 'any' type.
-src\two words\note.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.

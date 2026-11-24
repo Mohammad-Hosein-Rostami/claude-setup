@@ -59,15 +59,6 @@
         ]
       },
       {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/commit-gate.mjs\"",
-            "timeout": 10
-          }
-        ]
-      },
-      {
         "matcher": "Artifact",
         "hooks": [
           {
@@ -91,72 +82,7 @@
         ]
       }
     ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/skill-router.mjs\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/session-notes.mjs\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
     "SessionStart": [
-      {
-        "matcher": "compact",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/skill-router.mjs\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "startup|compact|resume",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/recall-digest.mjs\" --part rules",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "compact|resume",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/recall-digest.mjs\"",
-            "timeout": 15
-          },
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/recall-digest.mjs\" --part state",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "startup|resume|compact",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/resume-notice.mjs\"",
-            "timeout": 10
-          }
-        ]
-      },
       {
         "matcher": "startup|resume",
         "hooks": [
@@ -178,24 +104,6 @@
         ]
       },
       {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/session-notes.mjs\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/lead-text.mjs\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
         "matcher": "startup|resume|clear|compact",
         "hooks": [
           {
@@ -208,36 +116,12 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "AskUserQuestion",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/question-answered.mjs\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
           {
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/post-edit.mjs\"",
             "timeout": 20
-          },
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/skill-router.mjs\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/commit-gate.mjs\"",
-            "timeout": 5
           }
         ]
       },
@@ -247,58 +131,6 @@
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/agent-budget.mjs\"",
             "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/checkpoint.mjs\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Bash|PowerShell",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/ui-proof-gate.mjs\"",
-            "timeout": 15
-          },
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/git-tidy-gate.mjs\"",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "PostToolUseFailure": [
-      {
-        "matcher": "AskUserQuestion",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/question-answered.mjs\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/commit-gate.mjs\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "PostToolBatch": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/commit-gate.mjs\"",
-            "timeout": 5
           }
         ]
       }
@@ -306,41 +138,6 @@
     "Stop": [
       {
         "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/commit-gate.mjs\"",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/git-tidy-gate.mjs\"",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/ask-gate.mjs\"",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/final-reply-cap.mjs\"",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/status-deliver.mjs\"",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/ui-proof-gate.mjs\"",
-            "timeout": 15
-          },
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/done-check.mjs\"",
-            "timeout": 150
-          },
           {
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/notify.mjs\"",
@@ -358,15 +155,6 @@
             "timeout": 5
           }
         ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/project-merge.mjs\"",
-            "timeout": 5
-          }
-        ]
       }
     ],
     "SubagentStop": [
@@ -374,54 +162,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/commit-gate.mjs\"",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/git-tidy-gate.mjs\"",
-            "timeout": 10
-          },
-          {
-            "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/agent-budget.mjs\"",
             "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/ui-proof-gate.mjs\"",
-            "timeout": 15
-          },
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/done-check.mjs\"",
-            "timeout": 150
-          }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/checkpoint.mjs\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/git-tidy-gate.mjs\"",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/recall-digest.mjs\" --part rules",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/recall-digest.mjs\" --part state",
-            "timeout": 10
           }
         ]
       }

@@ -1,7 +1,7 @@
 // Helpers for the account tests and tests/claude-call.test.mjs (not a test file).
 // Exports: fakeToken, tokenHash, accountSandbox, memoryStore, filesHolding, assertNoLeak, runInPty, SHELLS, PTY_PLATFORM.
 // What they give: made-up tokens of the real shape (built from parts, so no secret scanner sees a literal), a sandbox on
-// top of `fakeStack` of recall-fakes.mjs (a temp HOME and TMPDIR, the 0600 file store, a fake `claude` that also logs a
+// top of `fakeStack` of claude-fakes.mjs (a temp HOME and TMPDIR, the 0600 file store, a fake `claude` that also logs a
 // hash of the token it was given, never the token), an in-memory store that records its reads, a scan that finds a token
 // in any file of the sandbox (K10: after every test the token is only in the store), and a pseudo-terminal runner
 // (`script`) for the hidden prompt and the terminal refusals.
@@ -11,7 +11,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fakeStack } from './recall-fakes.mjs';
+import { fakeStack } from './claude-fakes.mjs';
 
 const TOKEN_PREFIX = ['sk', 'ant', 'oat01', ''].join('-');
 const TOKEN_BODY_CHARS = 80;
@@ -42,7 +42,7 @@ if (mode === 'slow') { writeFileSync('/dev/tty', 'CHECK-STARTED\\n'); await new 
 `;
 
 /**
- * Teaches the fake `claude` of recall-fakes.mjs to log who it ran as and to answer as a revoked or limited account;
+ * Teaches the fake `claude` of claude-fakes.mjs to log who it ran as and to answer as a revoked or limited account;
  * `invalid` answers a plain 401 (no word "revoked", as probe ACC-9a saw); `leak-at` prints FAKE_LEAK_AT characters, then
  * its token (or FAKE_LEAK_TEXT), on stderr or (FAKE_LEAK_IN=result) in its error reply; `slow` says CHECK-STARTED on
  * the terminal and then waits a minute (a check to interrupt with Ctrl-C).
@@ -53,12 +53,12 @@ function patchFakeClaude(path) {
     .replace("import { appendFileSync", "import { createHash } from 'node:crypto';\nimport { appendFileSync")
     .replace(FAKE_LOG_LINE, FAKE_LOG_LINE_WITH_LOGIN)
     .replace(FAKE_ERROR_MODE, `${FAKE_LOGIN_MODES}${FAKE_ERROR_MODE}`);
-  for (const part of ["from 'node:crypto'", 'tokenHash', "mode === 'revoked'"]) assert.ok(patched.includes(part), `the fake claude of recall-fakes.mjs changed: ${part} not patched in`);
+  for (const part of ["from 'node:crypto'", 'tokenHash', "mode === 'revoked'"]) assert.ok(patched.includes(part), `the fake claude of claude-fakes.mjs changed: ${part} not patched in`);
   writeFileSync(path, patched);
 }
 
 /**
- * A sandbox for one test: the fake stack of recall-fakes.mjs with a temp HOME and TMPDIR, the file store forced, no
+ * A sandbox for one test: the fake stack of claude-fakes.mjs with a temp HOME and TMPDIR, the file store forced, no
  * session variable of the test runner's own terminal, and a script that prints a hash of the shell's token.
  * @returns {object} `fakeStack`'s fields plus `home`, `storeDir`, `envPrint` and an `env` to pass to every child.
  */

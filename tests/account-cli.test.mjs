@@ -25,7 +25,7 @@ function sandbox(t, options) {
 
 /** Runs the command with `input` on stdin (a pipe, as the shell function gives it). */
 const account = (box, args, { input = '', env = {} } = {}) => spawnSync(process.execPath, [CLI, ...args], { env: { ...box.env, ...env }, input, encoding: 'utf8' });
-const usageRows = (box) => readFileSync(join(box.env.RECALL_STATE_DIR, 'usage.jsonl'), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+const usageRows = (box) => readFileSync(join(box.env.ACCOUNT_STATE_DIR, 'usage.jsonl'), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
 const shown = (run) => `${run.stdout}${run.stderr}`;
 
 test('add: the pasted export line is accepted, checked with one Haiku call on that token, stored, and never printed', (t) => {

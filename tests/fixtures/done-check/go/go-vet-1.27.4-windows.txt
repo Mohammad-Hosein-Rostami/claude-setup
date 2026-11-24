@@ -1,3 +1,0 @@
-# example.com/probe/vettype
-vet: vettype\x.go:3:23: cannot use "s" (untyped string constant) as int value in return statement
-vetan\x.go:5:24: fmt.Printf format %d has arg "s" of wrong type string

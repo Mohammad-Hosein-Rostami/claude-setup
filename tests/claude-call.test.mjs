@@ -1,14 +1,13 @@
-// Tests for the login of the hook child (`callHaiku` in home/tools/recall/lib/claude-call.mjs), spec-accounts K1, K2, K13:
+// Tests for the login of the Haiku child (`callHaiku` in home/tools/account/lib/claude-call.mjs), spec-accounts K1, K2, K13:
 // which account's token the `claude -p` child gets, that no child starts without one (a stored login is never spent),
 // that an auth or usage-limit error never leads to a call on another account, and that the usage row names the account.
-// The child is the fake `claude` of recall-fakes.mjs, patched to log a hash of its token; the store is in memory.
-// (`claudePlan` and the billing variables are tested in tests/recall-checkpoint.test.mjs, not again here.)
+// The child is the fake `claude` of claude-fakes.mjs, patched to log a hash of its token; the store is in memory.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AccountError } from '../home/tools/account/lib/names.mjs';
-import { callHaiku } from '../home/tools/recall/lib/claude-call.mjs';
+import { callHaiku } from '../home/tools/account/lib/claude-call.mjs';
 import { accountSandbox, assertNoLeak, fakeToken, memoryStore, tokenHash } from './account-helpers.mjs';
 
 const TOKEN_A = fakeToken('AccountA');
@@ -18,7 +17,7 @@ const CALL = { system: 'Reply with the single word ok.', prompt: 'ok', label: 't
 
 const usageRows = (box) => {
   try {
-    return readFileSync(join(box.env.RECALL_STATE_DIR, 'usage.jsonl'), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    return readFileSync(join(box.env.ACCOUNT_STATE_DIR, 'usage.jsonl'), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
   } catch (error) {
     if (error.code === 'ENOENT') return [];
     throw error;

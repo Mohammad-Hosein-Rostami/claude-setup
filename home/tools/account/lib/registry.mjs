@@ -1,13 +1,13 @@
 // Purpose: the list of accounts and their non-secret fields, `accounts.json` in the accounts folder: per account the
 // date it was added, the plan and "usage credits off" as the owner said them, the last check; and the default account.
 // Exports: accountsDir, readRegistry, writeRegistry, REGISTRY_FILE, REGISTRY_MAX_BYTES, PLANS.
-// Invariants: never a token; the folder is 0700 and the file 0600 from the first write (private-fs.mjs of recall) and
+// Invariants: never a token; the folder is 0700 and the file 0600 from the first write (private-fs.mjs) and
 // replaced whole, so a reader never sees half a list; the reader refuses a link, a looser mode and anything that is not
 // this shape; writer and reader keep one size cap. The file is written with two-space indentation, one field per line:
 // home/shell/claude-as.sh finds the line `"default": "<name>"` in it at shell start without starting node.
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { ensurePrivateDir, writeFileAtomic } from '../../recall/lib/private-fs.mjs';
+import { ensurePrivateDir, writeFileAtomic } from './private-fs.mjs';
 import { AccountError, NAME_PATTERN } from './names.mjs';
 import { assertPrivateDir, readPrivateFile } from './private-file.mjs';
 

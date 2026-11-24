@@ -1,7 +1,7 @@
-// Purpose: the one definition of "UI files" (for the ui-proof stop hook, `ui-proof changed`, `git-tidy land` and the road gate) and the
+// Purpose: the one definition of "UI files" (for `ui-proof changed` and `git-tidy land`) and the
 // hash of a tree's UI files, at a commit or in the working tree. Exports: isUiPath, isCoreUiPath, isUiRepoAt,
 // uiEntriesAt, workingUiEntries, uiTreeHash, uiTreeAt, workingUiTree, changedUiFiles, git.
-// Definition: the skill router's isUiFile (markup and style files), `.astro`, `.svelte`, `.vue` and `.mdx` files, `.ts`/`.js` style
+// Definition: markup and style files (isUiFile, not a .test/.spec/.stories file), `.astro`, `.svelte`, `.vue` and `.mdx` files, `.ts`/`.js` style
 // scripts under a styles/style/theme/themes/sx folder or named *.styles.ts, *.theme.ts, *.sx.ts (F3), and `.js` files whose text has
 // a JSX tag or a react, react-native or expo import (React, React Native and Expo keep JSX in .js), minus anything under a folder
 // named test, tests, __tests__ or fixtures; in a repo that has such a file (at either sha), also every package.json, its lockfile and
@@ -14,7 +14,6 @@ import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { isUiFile } from '../../../hooks/skill-router.mjs';
 import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
 import { readBlobs } from './git-read.mjs';
 
@@ -26,7 +25,13 @@ const STYLE_NAME = /\.(styles?|theme|sx)\.m?[jt]s$/i;
 const SCRIPT = /\.m?[jt]s$/i;
 const PACKAGE_FILE = /(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$/;
 const LOCALE_FOLDER = /(^|\/)(locales?|i18n|lang)\//i;
-const FRAMEWORK_FILE = /\.(?:astro|svelte|vue|mdx)$/i; // framework files the router's isUiFile does not all name
+const FRAMEWORK_FILE = /\.(?:astro|svelte|vue|mdx)$/i; // framework files isUiFile does not all name
+// isUiFile (the former skill router's rule): markup and style files, and style scripts by folder (either separator) or name.
+const MARKUP_OR_STYLE_FILE = /\.(tsx|jsx|vue|svelte|html|css|scss|sass|less)$/i;
+const NON_UI_FILE = /\.(test|spec|stories)\.\w+$/i;
+const STYLE_FOLDER_ANY_SEPARATOR = /(^|[\\/])(styles?|themes?|sx)[\\/]/i;
+const isUiFile = (file) => !NON_UI_FILE.test(file)
+  && (MARKUP_OR_STYLE_FILE.test(file) || (SCRIPT.test(file) && (STYLE_FOLDER_ANY_SEPARATOR.test(file) || STYLE_NAME.test(file))));
 const PLAIN_JS = /\.js$/i; // a .js file is UI by its text (JSX in .js: React, React Native, Expo)
 const MAX_SCRIPT_BYTES = 1 << 20; // a larger .js is not read: it counts as UI
 const MAX_TREE_SCRIPT_BYTES = 16 << 20; // .js text read per tree; past it every .js counts as UI (the stop hook has 15 s)

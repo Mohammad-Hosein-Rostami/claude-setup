@@ -13,7 +13,7 @@ import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { readAsking } from './lib/asking-marker.mjs';
 import { effectiveChannel, needsYouText, noteSequence, quotaText, stoppedText, takeNotes, terminalName } from './lib/notify-note.mjs';
-import { latestSample, readLimits } from '../tools/estimate/lib/limits-store.mjs';
+import { latestSample, readLimits } from './lib/limits-store.mjs';
 
 const MAX_INPUT_BYTES = 1024 * 1024;
 const MORE_SEPARATOR = ' · ';

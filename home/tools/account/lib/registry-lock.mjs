@@ -9,7 +9,7 @@
 // needs a crash first; accepted).
 import { closeSync, lstatSync, openSync, unlinkSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
-import { ensurePrivateDir } from '../../recall/lib/private-fs.mjs';
+import { ensurePrivateDir } from './private-fs.mjs';
 import { AccountError } from './names.mjs';
 import { assertPrivateDir, readPrivateFile } from './private-file.mjs';
 

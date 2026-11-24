@@ -6,7 +6,7 @@
 // refuses a link, a looser mode, a folder open to others and content that is not one token.
 import { lstatSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { ensurePrivateDir, writeFileAtomic } from '../../recall/lib/private-fs.mjs';
+import { ensurePrivateDir, writeFileAtomic } from './private-fs.mjs';
 import { assertName, assertToken } from './names.mjs';
 import { assertPrivateDir, readPrivateFile } from './private-file.mjs';
 

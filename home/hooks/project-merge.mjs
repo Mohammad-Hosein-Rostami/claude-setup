@@ -1,17 +1,17 @@
-// Project-merge hook: tells the lead (SessionStart) and every worker (SubagentStart) what the project's own AI setup brings
-// beside ours, and the project's note found by its repo key (layering spec section 3, owner rule R22 and decisions R22-Q3, R22-L4).
-//   SessionStart (startup, resume, clear, compact; the lead only: inside a subagent it prints nothing) -> the lead note:
+// Project-merge hook: tells the main session (SessionStart) what the project's own AI setup brings beside ours, and the
+// project's note found by its repo key (layering spec section 3, owner rule R22 and decisions R22-Q3, R22-L4). Main session only
+// (plan 2026-11-24: workers get no note, and inside a subagent it prints nothing).
+//   SessionStart (startup, resume, clear, compact) -> the lead note:
 //     instructions (CLAUDE.md, AGENTS.md and whether it loads, .claude/rules), skills (ours hide a same-name project skill:
 //     named with its path), agents (with maxTurns), hooks beside ours, settings that change ours (a weaker model, our check
 //     switches, permission mode, and a clear warning when the project turns all hooks off or may hide our CLAUDE.md), MCP
 //     servers, the note line, the project-agents line (lib/project-agents-timed.mjs; from the session folder by a filesystem
 //     walk, also when git fails) and the notes.
-//   SubagentStart -> the worker note: the hidden project skills and the notes.
 // Notes: `<key>.md` in the setup's shared folder (home/project-notes, found from this file's real path), then the personal one
 // (~/.claude/project-notes); a note CLAUDE.local.md already imports is named, not repeated.
 // Parts: lib/project-note-key.mjs (key, notes), lib/project-setup-scan.mjs (what the project brings), lib/project-merge-text.mjs
-// (wording, caps). Output: JSON { hookSpecificOutput: { hookEventName, additionalContext } }, at most 6,000 (lead) or 4,000
-// (worker) characters, below the 10,000-character cap of a hook string (hooks docs), as its own hook entry in settings/base.json.
+// (wording, caps). Output: JSON { hookSpecificOutput: { hookEventName, additionalContext } }, at most LEAD_NOTE_MAX_CHARS
+// characters, below the 10,000-character cap of a hook string (hooks docs), as its own hook entry in settings/base.json.
 // Exports: HOOK_BUDGET_MS, GIT_TIMEOUT_MS, SCAN_BUDGET_MS, hookOutput(input, deps), ourSetup(home, coreHome).
 // Invariants: read-only, no state file, so parallel sessions and agents get the same answer (F2); never blocks (exit 0, nothing
 // on bad input); git runs hardened (lib/gated-folder.mjs runGit) with GIT_TIMEOUT_MS per call; one deadline, HOOK_BUDGET_MS from
@@ -21,12 +21,11 @@ import { readdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { isSubagentStart } from './session-notes.mjs';
 import { runGit } from './lib/gated-folder.mjs';
 import { readPlainFile } from './lib/plain-file.mjs';
 import { findNotes, repoIdentity } from './lib/project-note-key.mjs';
 import { scanProjectSetup } from './lib/project-setup-scan.mjs';
-import { leadNote, workerNote } from './lib/project-merge-text.mjs';
+import { leadNote } from './lib/project-merge-text.mjs';
 import { timedProjectAgentNote } from './lib/project-agents-timed.mjs';
 
 export const HOOK_BUDGET_MS = 4000; // the 5,000 ms timeout of both entries minus 1,000 ms for node's start and the printing
@@ -36,7 +35,10 @@ const NOTES_RESERVE_MS = 200; // kept back from the agents child for the notes a
 const SETTINGS_MAX_BYTES = 1024 * 1024; // our merged settings.json is about 30 KiB
 const AGENTS_MD_SETTING = 'claude-md-and-agents-md';
 const AGENTS_MD_PLUGIN = 'cc-plugin-agents-md@builtin';
-const EVENTS = ['SessionStart', 'SubagentStart'];
+const EVENT = 'SessionStart';
+
+/** True inside a subagent: `agent_id` is a non-empty string (any other value is the main session). */
+const isSubagent = (input) => typeof input?.agent_id === 'string' && input.agent_id !== '';
 const CORE_HOME = dirname(dirname(fileURLToPath(import.meta.url))); // <repo>/home: import.meta.url is this file's real path
 
 const defaultGit = (cwd, args) => runGit(cwd, args, GIT_TIMEOUT_MS);
@@ -125,21 +127,17 @@ function notesFor(identity, setup, { home, coreHome }) {
  */
 export async function hookOutput(input, { home = homedir(), coreHome = CORE_HOME, git = defaultGit, now = () => performance.now(), agentNoteOptions } = {}) {
   const event = input?.hook_event_name;
-  if (!EVENTS.includes(event) || (event === 'SessionStart' && isSubagentStart(input))) return null;
+  if (event !== EVENT || isSubagent(input)) return null;
   const timeLeft = () => HOOK_BUDGET_MS - now();
   const identity = repoIdentity(input.cwd, { git, home });
   const ours = ourSetup(home, coreHome);
   const setup = identity.top === null ? null : scanProjectSetup(identity.top, input.cwd,
     { personalSkillsDir: join(home, '.claude', 'skills'), budgetMs: Math.max(0, Math.min(SCAN_BUDGET_MS, timeLeft())), ours });
   const notes = notesFor(identity, setup, { home, coreHome });
-  let text;
-  if (event === 'SubagentStart') text = workerNote(setup, notes);
-  else {
-    // From the session folder whatever git said: the child finds the agent folders by its own filesystem walk, so a missing or
-    // failing git (identity.top null) never hides the line (review R1 of agents-note; the old session-notes did the same).
-    const agentNote = timedProjectAgentNote(input.cwd, join(home, '.claude', 'agents'), { ...agentNoteOptions, budgetLeftMs: timeLeft() - NOTES_RESERVE_MS });
-    text = leadNote(setup, notes, agentNote, identity);
-  }
+  // From the session folder whatever git said: the child finds the agent folders by its own filesystem walk, so a missing or
+  // failing git (identity.top null) never hides the line (review R1 of agents-note).
+  const agentNote = timedProjectAgentNote(input.cwd, join(home, '.claude', 'agents'), { ...agentNoteOptions, budgetLeftMs: timeLeft() - NOTES_RESERVE_MS });
+  const text = leadNote(setup, notes, agentNote, identity);
   return text ? { hookSpecificOutput: { hookEventName: event, additionalContext: text } } : null;
 }
 

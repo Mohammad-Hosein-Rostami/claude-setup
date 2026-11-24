@@ -8,7 +8,7 @@
 import { spawnSync } from 'node:child_process';
 import { lstatSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { ensurePrivateDir, writeFileAtomic } from '../../recall/lib/private-fs.mjs';
+import { ensurePrivateDir, writeFileAtomic } from './private-fs.mjs';
 import { AccountError, assertName, assertToken } from './names.mjs';
 import { readPrivateFile } from './private-file.mjs';
 

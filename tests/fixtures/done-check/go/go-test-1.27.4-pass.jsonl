@@ -1,8 +1,0 @@
-{"Time":"2026-11-23T11:17:39.987251+03:30","Action":"start","Package":"example.com/probe/ok"}
-{"Time":"2026-11-23T11:17:39.987394+03:30","Action":"run","Package":"example.com/probe/ok","Test":"TestAdd"}
-{"Time":"2026-11-23T11:17:39.987405+03:30","Action":"output","Package":"example.com/probe/ok","Test":"TestAdd","Output":"=== RUN   TestAdd\n","OutputType":"frame"}
-{"Time":"2026-11-23T11:17:39.987422+03:30","Action":"output","Package":"example.com/probe/ok","Test":"TestAdd","Output":"--- PASS: TestAdd (0.00s)\n","OutputType":"frame"}
-{"Time":"2026-11-23T11:17:39.987426+03:30","Action":"pass","Package":"example.com/probe/ok","Test":"TestAdd","Elapsed":0}
-{"Time":"2026-11-23T11:17:39.987432+03:30","Action":"output","Package":"example.com/probe/ok","Output":"PASS\n","OutputType":"frame"}
-{"Time":"2026-11-23T11:17:39.987435+03:30","Action":"output","Package":"example.com/probe/ok","Output":"ok  \texample.com/probe/ok\t(cached)\n"}
-{"Time":"2026-11-23T11:17:39.98744+03:30","Action":"pass","Package":"example.com/probe/ok","Elapsed":0}

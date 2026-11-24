@@ -1,6 +1,6 @@
 // Part (a) of the token view: the usage limits against time, per account, from the 7-day limit logs the status line writes
 // (`~/.claude/state/limits/<account>.jsonl`, one sample per line: { t, five_hour, seven_day }, each window
-// { used_percentage, resets_at }; format owned by home/tools/estimate/lib/limits-store.mjs).
+// { used_percentage, resets_at }; format owned by home/hooks/lib/limits-store.mjs).
 // Exports: readLimitLogs(dir, sinceMs) -> [{ account, samples, days }].
 // Invariants: read-only; a missing folder gives []; a line that is not a sample is skipped; a gap is shown as a gap (a day with
 // no sample has no row), never filled. A log is read through hooks/lib/plain-file.mjs within MAX_LOG_BYTES, the cap its writer
@@ -9,7 +9,7 @@
 import { readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
-import { MAX_LOG_BYTES } from '../../estimate/lib/limits-store.mjs';
+import { MAX_LOG_BYTES } from '../../../hooks/lib/limits-store.mjs';
 
 const LOG_SUFFIX = '.jsonl';
 
