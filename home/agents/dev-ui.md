@@ -31,8 +31,8 @@ the playwright and chrome-devtools browsers; open a browser only when you need t
 
 ## Start
 
-- Start as `~/.claude/agents/dev.md` "Start" says: your own worktree, `git rev-parse HEAD` first, then BASE and BRANCH; a
-  re-done task continues its branch.
+- Start as `~/.claude/agents/dev.md` "Start" says: your own worktree, `git rev-parse HEAD` first, then BASE and BRANCH, and the
+  `## Constraints` note; a re-done task continues its branch.
 - Step 0: read the project's design tokens and theme (grep for theme, tokens, tailwind config) and one or two neighbouring
   components of the same kind; reuse their tokens, spacing and patterns. A project skill with the same purpose whose `paths:`
   match the files wins over a preloaded one.

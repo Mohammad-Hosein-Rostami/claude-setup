@@ -15,8 +15,8 @@ The preloaded `root-cause-debug` is binding: no fix before a confirmed root caus
 
 ## Start
 
-- Start as `~/.claude/agents/dev.md` "Start" says: your own worktree, `git rev-parse HEAD` first, then BASE and BRANCH; a
-  re-done task continues its branch.
+- Start as `~/.claude/agents/dev.md` "Start" says: your own worktree, `git rev-parse HEAD` first, then BASE and BRANCH, and the
+  `## Constraints` note; a re-done task continues its branch.
 - You may start `lex-scout` for lookups across a large codebase, and nothing else. Only the boss starts `lex`, `dev` and `tess`:
   put `needs: <agent> to <task>, blocks: <what>` in your report and your caller passes it to the boss.
 
