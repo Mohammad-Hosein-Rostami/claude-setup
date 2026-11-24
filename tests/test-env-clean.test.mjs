@@ -1,12 +1,14 @@
 // Drift guard for the test environment: the suite must give the same result whatever the session that runs it holds.
 // A Claude Code session exports the owner's switches (CLAUDE_GUARD_ASK=allow turns a guard ask into an allow) and a TMPDIR deep in
 // its own scratchpad (180+ chars, inside claude-<uid>, which the guard frees and the 160-char shown paths cut). These cases prove
-// cleanEnv/hookEnv drop the switches, that no test spawns with the raw session env, and that makeTempDir leaves a long session TMPDIR.
+// cleanEnv/hookEnv drop the switches, that no test spawns with the raw session env, that makeTempDir leaves a long session TMPDIR,
+// and that a long-run child's desktop note reaches the quiet stand-in, never the real osascript / notify-send.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join, resolve, sep } from 'node:path';
 import { test } from 'node:test';
+import { desktopCommand, readNotifyConfig } from '../home/tools/long-run/lib/notify.mjs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { cleanEnv } from './clean-env.mjs';
 import { hookEnv } from './hook-env.mjs';
@@ -14,6 +16,8 @@ import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const TESTS = resolve('tests');
 const GUARD = resolve('home/hooks/pre-bash-guard.mjs');
+const LONG_RUN = resolve('home/tools/long-run/long-run.mjs');
+const QUIET_TOOLS_LOG_ENV = 'CS_TEST_QUIET_TOOLS_LOG'; // tests/clean-env.mjs; written out so this file loads where that export is missing
 const PROJECT = resolve('/work/proj');
 const OWNER_SWITCHES = { CLAUDE_GUARD_ASK: 'allow', CLAUDE_GUARD_TRIM: '0', CLAUDE_POST_EDIT_TRUST_FORMAT: '1', CLAUDE_SOME_NEW_SWITCH: 'on', CLAUDECODE: '1' };
 const ASKED_COMMAND = 'rm -rf ~/x'; // destructive, not outward: CLAUDE_GUARD_ASK=allow would turn its ask into a silent allow
@@ -98,4 +102,18 @@ test('makeTempDir under a long TMPDIR inside a claude-<uid> tree makes a short f
   assert.equal(folder.startsWith(longTemp), false, folder);
   assert.deepEqual(folder.split(sep).filter((part) => CLAUDE_TREE_FOLDER.test(part)), [], folder);
   assert.ok(folder.length < SHOWN_PATH_CUT, `${folder.length} chars: ${folder}`);
+});
+
+// Windows has no quiet stand-ins (a script cannot shadow powershell.exe), so there is nothing to prove there.
+test('a long-run child under cleanEnv sends its desktop note to the quiet stand-in, with the argv of the real command', { skip: process.platform === 'win32' }, () => {
+  const home = makeTempDir('quiet-notify-home-');
+  const log = join(home, 'quiet-tools.log');
+  const env = cleanEnv({ HOME: home, USERPROFILE: home, [QUIET_TOOLS_LOG_ENV]: log });
+  assert.equal(readNotifyConfig(env), null, 'no ntfy topic in this HOME, so no phone push');
+  const run = spawnSync(process.execPath, [LONG_RUN, 'notify', 'test'], { encoding: 'utf8', env });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /sent a test note/);
+  const real = desktopCommand(process.platform, 'long-run', 'test note');
+  assert.equal(existsSync(log), true, `the note went past the quiet ${real.command}: a real note was shown`);
+  assert.deepEqual(readFileSync(log, 'utf8').split('\n').filter(Boolean), [[real.command, ...real.args].join(' ')]);
 });
