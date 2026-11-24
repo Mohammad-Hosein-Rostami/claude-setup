@@ -150,7 +150,11 @@ test('a 100k-file tree: inference and reach answer from git objects (time logged
   const blob = git(dir, ['hash-object', '-w', '--stdin'], 'export const filler = 1;\n');
   const lines = Array.from({ length: 100_000 }, (_, i) => `100644 ${blob}\tvendor/part${i % 100}/file${i}.ts`).join('\n');
   git(dir, ['update-index', '--index-info'], `${lines}\n`);
-  const tip = git(dir, ['commit-tree', git(dir, ['write-tree']), '-p', 'HEAD', '-m', 'big'], '');
+  git(dir, ['commit', '-q', '-m', 'big']);
+  const tip = git(dir, ['rev-parse', 'HEAD']);
+  // Packed like any real repo of this size (git's auto gc packs past 6,700 loose objects): git reads a loose object again for
+  // every tree entry that names it, so 100k entries of one loose blob cost seconds of system time per git call, not tool time.
+  git(dir, ['repack', '-a', '-d', '-q']);
   const start = Date.now();
   const result = reach(dir, [tip], ['src/ui/button.tsx']);
   console.log(`100k-file tree: inference and reach took ${Date.now() - start} ms`);
