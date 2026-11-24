@@ -4,7 +4,5 @@
 # Without the file every WARN stays a WARN. A file that is a link accepts nothing; an id doctor does not know is ignored; either
 # gives one WARN. The production host list WARN (no ~/.claude/private/prod-hosts) can never be accepted.
 #
-# ollama-off            Ollama is not running: recall search is lexical only.
 # apple-terminal-notes  Apple Terminal shows no desktop notes (at most a bell).
-ollama-off
 apple-terminal-notes

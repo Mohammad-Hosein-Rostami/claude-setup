@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# The setup's own checks: its settings, plugins, hooks, token budget, accounts, caps and notes (sourced by scripts/doctor.sh, which
+# The setup's own checks: its settings, plugins, hooks, accounts, caps and desktop notes (sourced by scripts/doctor.sh, which
 # holds the helpers ok, bad, warn and warn_unless_accepted, the variables REPO, CLAUDE_DIR, LINK_ROOT and BAD, and the run order in run_checks).
-# Defines functions only; nothing runs when this file is sourced, so no output comes from it. Exports: check_settings, check_deny_rules, check_plugins, check_plugin_parity, check_effort_env, check_projects, check_env_names, check_session_notes_hook, check_token_budget, check_plugin_session_start, check_workflows_gone, check_project_agents, check_accounts, check_stop_cap, check_agent_cap, check_notify, check_done_check.
+# Defines functions only; nothing runs when this file is sourced, so no output comes from it. Exports: check_settings, check_deny_rules, check_plugins, check_plugin_parity, check_effort_env, check_projects, check_env_names, check_plugin_session_start, check_workflows_gone, check_project_agents, check_accounts, check_stop_cap, check_agent_cap, check_notify.
 # Invariants: read-only, as doctor.sh is; every line is `ok`, `WARN`, `FAIL` or `INFO` text on stdout; a check that fails calls bad (BAD=1).
 
 # Drift: rebuild the expected settings.json in memory and compare with the live one.
@@ -90,28 +90,6 @@ check_projects() {
 # env-names reads YAML deploy files with the `yaml` package; without it those files are skipped (the report says so).
 check_env_names() {
   if [ -d "$REPO/home/tools/env-names/node_modules/yaml" ]; then ok "env-names dep yaml"; else bad "env-names dep yaml (run scripts/install.sh)"; fi
-}
-
-# The session-notes hook feeds lead-rules.md to the lead; if it is not registered live, sessions silently run without those rules.
-check_session_notes_hook() {
-  local live="$CLAUDE_DIR/settings.json" event missing=""
-  for event in SessionStart UserPromptSubmit; do
-    jq -e --arg e "$event" '[.hooks[$e][]?.hooks[]?.command // empty | select(test("hooks/session-notes\\.mjs"))] | length > 0' "$live" >/dev/null 2>&1 || missing="$missing $event"
-  done
-  if [ -n "$missing" ]; then bad "session-notes hook not registered in settings.json for:$missing (SessionStart context will not reach sessions)"
-  elif [ ! -f "$CLAUDE_DIR/hooks/session-notes.mjs" ]; then bad "session-notes hook file missing: $CLAUDE_DIR/hooks/session-notes.mjs"
-  elif [ ! -s "$CLAUDE_DIR/lead-rules.md" ]; then bad "lead-rules.md missing or empty (lead rules are not injected)"
-  else ok "session-notes hook registered for SessionStart, UserPromptSubmit"; fi
-}
-
-# Token budget (spec-p6 r9-token-view): the lead text's SessionStart string against its 10,000-char cap (over it Claude gets a
-# file path instead of the text) and the always-loaded size; hooks/token-audit.mjs --budget prints `<ok|warn|fail><TAB><message>`.
-check_token_budget() {
-  local audit="$CLAUDE_DIR/hooks/token-audit.mjs" level message
-  [ -f "$audit" ] || { warn "token budget not checked: $audit missing"; return; }
-  while IFS=$'\t' read -r level message; do
-    case "$level" in ok) ok "token budget: $message" ;; warn) warn "token budget: $message" ;; *) bad "token budget: $message" ;; esac
-  done < <(node "$audit" --budget 2>/dev/null || printf 'fail\ttoken-audit.mjs --budget did not run\n')
 }
 
 # A third-party plugin whose SessionStart hook injects EXTREMELY_IMPORTANT text can cost tens of thousands of tokens per session.
@@ -220,16 +198,4 @@ check_notify() {
     passthrough="$(tmux show -gv allow-passthrough 2>/dev/null || true)"
     [ "$passthrough" = on ] || warn "notify: tmux without allow-passthrough drops the desktop notes (tmux set -g allow-passthrough on)"
   fi
-}
-
-# done-check: its ledger says whether a check raises too many false alarms (tools/done-check, `stats --doctor` prints one `WARN done-check:` line per
-# noisy kind and one when the ledger is full). An empty ledger or a quiet one is an ok line; a machine without the tool yet (not synced) is INFO.
-check_done_check() {
-  local tool="$REPO/home/tools/done-check/done-check.mjs" out line warned=0
-  if [ ! -f "$tool" ]; then echo "INFO  done-check: tool not installed here (sync this machine)"; return; fi
-  if ! out="$(node "$tool" stats --doctor 2>&1)"; then warn "done-check: stats could not run: $(tr -d '\000-\037\177' <<<"$out" | head -c 200)"; return; fi
-  while IFS= read -r line; do
-    case "$line" in "WARN done-check:"*) warn "${line#WARN }"; warned=1 ;; esac
-  done < <(tr -d '\000-\010\013-\037\177' <<<"$out")
-  [ "$warned" = 1 ] || ok "done-check: no check over its false-alarm limit"
 }

@@ -30,7 +30,7 @@ warn() { echo "WARN  $1"; }
 # writes it (settings/doctor-accepted.example). An accepted fact prints as INFO, which the summary does not count. Only the ids in
 # ACCEPTED_IDS can be accepted: the production host list WARN never can (owner, FR8). A list that is a link or not a plain file
 # accepts nothing; check_doctor_accepted reports it, and an unknown id, as one WARN.
-ACCEPTED_IDS="ollama-off apple-terminal-notes"
+ACCEPTED_IDS="apple-terminal-notes"
 accepted_file() { echo "${CLAUDE_DOCTOR_ACCEPTED_FILE:-$CLAUDE_DIR/private/doctor-accepted}"; }
 # The ids listed in the accepted file, one per line (Windows line ends dropped); nothing when it is missing, a link or not plain.
 accepted_ids() {
@@ -93,7 +93,7 @@ check_personal() {
 # CLAUDE.md is a written file, not a link; project-notes links to personal/project-notes (scripts/install/personal.mjs).
 check_links() {
   local name target want
-  for name in CLAUDE.md lead.md rules skills agents standards hooks tools project-notes lead-rules.md statusline.mjs; do
+  for name in CLAUDE.md rules skills agents standards hooks tools project-notes statusline.mjs; do
     target="$CLAUDE_DIR/$name"
     case "$name" in
       CLAUDE.md) check_claude_md; continue ;;
@@ -183,7 +183,7 @@ run_checks() {
   local check
   if [ -n "${DOCTOR_ONLY:-}" ]; then for check in $DOCTOR_ONLY; do "$check"; done; return; fi
   if [ -n "$MISSING_GROUPS" ]; then bad "check files missing from scripts/doctor/:$MISSING_GROUPS (restore them: git checkout -- scripts/doctor)"; return; fi
-  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_doctor_accepted; check_session_notes_hook; check_token_budget; check_plugin_session_start; check_recall; check_stop_cap; check_agent_cap; check_disk_free; check_disk_clean; check_native_cleanup; check_tools; check_accounts; check_notify; check_done_check; check_lsp; check_ui_check; check_project_agents; check_projects; check_workflows_gone; check_env_names
+  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_doctor_accepted; check_plugin_session_start; check_stop_cap; check_agent_cap; check_disk_free; check_disk_clean; check_native_cleanup; check_tools; check_accounts; check_notify; check_lsp; check_ui_check; check_project_agents; check_projects; check_workflows_gone; check_env_names
 }
 # The machine's name in the summary: the owner's two machines by OS, else the host name; DOCTOR_MACHINE overrides it.
 machine_name() {
