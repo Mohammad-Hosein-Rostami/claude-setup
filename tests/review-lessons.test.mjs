@@ -1,5 +1,5 @@
 // Text checks for the lessons folded in from the old reviewer and security-auditor notes (2026-11-22): the size caps of
-// home/rules/principles.md and home/agents/reviewer.md, the `from:` defect class on every sharpened principle, the key clauses
+// home/rules/principles.md and home/agents/tess-review.md, the `from:` defect class on every sharpened principle, the key clauses
 // that carry each lesson, and that no part of the setup reads the old note folders any more. The checked project facts the old notes
 // held live in the owner's project notes, which leave core (R22): their case moved with them to personal/tests/project-notes-facts.test.mjs.
 import test from 'node:test';
@@ -51,8 +51,8 @@ test('the folded lessons keep their whole clauses', () => {
   for (const [id, clause] of Object.entries(clauses)) assert.ok(rows[id][2].includes(clause), `${id}: ${clause}`);
 });
 
-test('reviewer.md stays within its line cap and carries the proof rules', () => {
-  const text = read('home/agents/reviewer.md');
+test('tess-review.md stays within its line cap and carries the proof rules', () => {
+  const text = read('home/agents/tess-review.md');
   assert.ok(text.split('\n').length - 1 <= REVIEWER_MAX_LINES);
   for (const clause of [
     'run the same repro on a base copy',

@@ -18,8 +18,8 @@ test('home/CLAUDE.md names the status tool for STATUS.md row edits', () => {
   assert.match(read('home/CLAUDE.md'), /tools\/status\/status\.mjs add\|start\|done\|deliver\|rule\|decision` only/);
 });
 
-test('runner agent never starts background loops or watchers', () => {
-  assert.match(read('home/agents/runner.md'), /Never start a background loop, watcher, poller or dev server/);
+test('dev-run never starts background loops or watchers', () => {
+  assert.match(read('home/agents/dev-run.md'), /Never start a watcher, a poller or a dev server/);
 });
 
 // one-home-rules (R16 items 13, 16, 19): one home per rule, the three contradictions gone, lead-only text out of CLAUDE.md.

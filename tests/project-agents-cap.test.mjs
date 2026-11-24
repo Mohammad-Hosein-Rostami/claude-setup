@@ -63,7 +63,9 @@ test('with the real personal agents and the built-in ones all shadowed, their na
   for (const name of personal) await writeFile(join(copied.agentsDir, `${name}.md`), agent(name, 'maxTurns: 60\n'));
   const copiedNote = projectAgentNote(copied.projectDir, REAL_PERSONAL_AGENTS_DIR);
   assert.ok(copiedNote.length <= NOTE_MAX_CHARS, `note is ${copiedNote.length} chars`);
-  assert.ok(copiedNote.startsWith(`${noteOf({ advice: BOTH_ADVICE, shadowed: personal }).slice(0, -1)}. Files: ${AGENTS}${personal[0]}.md (maxTurns 60, shadows the personal agent), `), copiedNote);
+  // the files are listed in file-name order, where `dev-debug.md` comes before `dev.md` ('-' sorts before '.')
+  const firstFile = personal.map((name) => `${name}.md`).sort()[0];
+  assert.ok(copiedNote.startsWith(`${noteOf({ advice: BOTH_ADVICE, shadowed: personal }).slice(0, -1)}. Files: ${AGENTS}${firstFile} (maxTurns 60, shadows the personal agent), `), copiedNote);
 });
 
 // The most the hook itself can say: every piece of advice, every real personal agent and every built-in one shadowed, and all four
