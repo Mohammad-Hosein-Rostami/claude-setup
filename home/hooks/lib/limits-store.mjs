@@ -1,5 +1,5 @@
 // The last-seen usage limits per account: the status line render writes a sample when the status input's `rate_limits` brought
-// news; the status line's session row, notify.mjs and the token view read them. One format, one owner (display design 4.6
+// news; the status line's session row, notify.mjs and long-run's limit-time read them. One format, one owner (display design 4.6
 // rows 1 and 11; spec-p5 `r9-board` "Limit samples per account"; fixes-spec X12 for many sessions on one account).
 // Exports: limitsDir(), isAccountName(name), readLimits(account, deps) -> { account, samples } | null, latestSample(file) -> sample | null,
 // recordSample(account, rateLimits, deps) -> boolean; MAX_SAMPLES, LOG_KEEP_MS, MAX_LOG_BYTES.
@@ -24,7 +24,7 @@
 //   writer killed mid-line) gets a line break first, so the next line stays whole and the torn one is dropped at the next rewrite.
 // - The log never passes MAX_LOG_BYTES, the byte cap its writer and readers share: before a line would pass it, the log is rewritten
 //   to its newest half. It is also rewritten once its first line is LOG_TRIM_SLACK_MS older than LOG_KEEP_MS (about once a day),
-//   so it holds the 7 days the token view needs and no more. A rewrite is a temp file `<account>.jsonl.<hex>.tmp` and a rename.
+//   so it holds the last 7 days (the longest limit window) and no more. A rewrite is a temp file `<account>.jsonl.<hex>.tmp` and a rename.
 import { randomBytes } from 'node:crypto';
 import { closeSync, lstatSync, openSync, readSync, renameSync, rmSync, writeSync } from 'node:fs';
 import { homedir } from 'node:os';
