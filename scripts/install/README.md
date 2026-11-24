@@ -15,7 +15,7 @@ find Node and call it. Its flags are in the header of `install.mjs`.
 | `settings.mjs` | `settings.json` from the layers, through `scripts/merge-settings.jq` |
 | `tools.mjs` | plugins and tool dependencies |
 | `pin.mjs` | `--update --to <tag>`: a detached worktree of the tag at `~/.claude-setup-at/<tag>` |
-| `uninstall.mjs` | `--uninstall`: undo what the record names |
+| `uninstall.mjs` | `--uninstall`: undo what the record names, then list what it left in place |
 | `windows.mjs` | Windows only: Git Bash must be there, the user PATH |
 | `cli.mjs` | `--claude-version`: install the pinned Claude Code, prove it answers, else restore the old binary |
 | `local-settings.mjs` | `claudeSetup` of `settings/local.json` for the sync: targets, CLI pin, shared values |

@@ -15,7 +15,7 @@
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, renameSync, rmSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { runGit } from '../../home/hooks/lib/gated-folder.mjs';
-import { InstallError, act, note, samePath, warn } from './context.mjs';
+import { InstallError, act, leave, note, samePath, warn } from './context.mjs';
 import { INSTALL_LOCK_STALE_MS, backup } from './record.mjs';
 
 export const PERSONAL_DIR = 'personal';
@@ -238,7 +238,7 @@ export function moveOwnNotes(ctx, record) {
 export function restoreMovedNotes(ctx, record) {
   for (const { from, to } of [...(record.movedNotes ?? [])].reverse()) {
     if (!lstatOrNull(to)) warn(`${to} is gone; not moved back to ${from}`);
-    else if (lstatOrNull(from)) warn(`${from} exists again; your note stays at ${to}`);
+    else if (lstatOrNull(from)) leave(ctx, to, `${from} exists again; your note stays at ${to}`);
     else {
       act(ctx, `move ${to} back to ${from}`, () => {
         mkdirSync(dirname(from), { recursive: true });

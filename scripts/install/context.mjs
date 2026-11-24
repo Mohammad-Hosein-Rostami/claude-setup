@@ -1,5 +1,5 @@
 // Purpose: the install run's context: the parsed flags, the paths the run works on, and its log (what was done, what failed).
-// Exports: USAGE, InstallError, parseArgs, makeContext, act, note, warn, samePath, OS_NAME.
+// Exports: USAGE, InstallError, parseArgs, makeContext, act, note, warn, leave, samePath, OS_NAME.
 // Invariants: parseArgs refuses an unknown flag or a bad combination with exit code 2 before anything changes; every change
 //   on disk goes through act(), so --dry-run prints it instead of doing it.
 import { homedir } from 'node:os';
@@ -78,6 +78,7 @@ export function makeContext(flags, repo, env = process.env) {
     backupDir: join(home, `.claude-backup-${stamp}`),
     done: [],
     failures: [],
+    left: [],
   };
 }
 
@@ -105,6 +106,19 @@ export function note(ctx, message) {
 /** Prints a warning that does not stop the run. */
 export function warn(message) {
   console.error(`WARNING: ${message}`);
+}
+
+/**
+ * Prints a warning for a path the run leaves in place on purpose and keeps it in `ctx.left`, so --uninstall can list at its
+ * end what it did not remove or restore.
+ * @param {{left: {path: string, why: string}[]}} ctx the run context
+ * @param {string} path the file or folder left as it is
+ * @param {string} message the warning, naming the path and why it stays
+ * @returns {void}
+ */
+export function leave(ctx, path, message) {
+  warn(message);
+  ctx.left.push({ path, why: message });
 }
 
 /** True when two paths name the same place (case-insensitive on Windows; a `\\?\` prefix is ignored). */

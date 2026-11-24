@@ -4,12 +4,12 @@
 //   line, a written file only while it holds exactly the text written, a folder only when empty); a note the
 //   install moved into personal/project-notes goes back to home/project-notes only to a free path; a backup goes back only to a
 //   free path (else it stays and is named); the installer's own earlier outputs in the backup folder are deleted, not restored;
-//   with every step done the file list is as before the first install. Plugins, tool dependencies and personal/ stay (they
+//   with every step done the file list is as before the first install; whatever it leaves in place is listed at the end. Plugins, tool dependencies and personal/ stay (they
 //   belong to Claude Code, to the repo and to the user).
 import { existsSync, lstatSync, mkdirSync, readdirSync, renameSync, rmdirSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname } from 'node:path';
-import { act, note, warn } from './context.mjs';
+import { act, leave, note, warn } from './context.mjs';
 import { recordPath, loadRecord } from './record.mjs';
 import { removeLine } from './startup.mjs';
 import { removeLink } from './links.mjs';
@@ -28,7 +28,7 @@ const exists = (path) => {
 function removeMade(ctx, entry) {
   if (!exists(entry.path)) return;
   if (entry.kind === 'link' && !lstatSync(entry.path).isSymbolicLink()) {
-    warn(`${entry.path} is no longer the link the installer made; left as it is`);
+    leave(ctx, entry.path, `${entry.path} is no longer the link the installer made; left as it is`);
     return;
   }
   act(ctx, `remove ${entry.kind} ${entry.path}`, () => {
@@ -55,7 +55,7 @@ function restoreBackup(ctx, entry) {
     return;
   }
   if (exists(entry.path)) {
-    warn(`${entry.path} exists again; its backup stays at ${entry.backup}`);
+    leave(ctx, entry.backup, `${entry.path} exists again; its backup stays at ${entry.backup}`);
     return;
   }
   act(ctx, `restore ${entry.path}`, () => {
@@ -74,11 +74,11 @@ function removeEmpty(dir, stop) {
 }
 
 /** Removes an empty folder; one an install filled or removed since the check (the lock was let go before) is left as it is. */
-function removeFolderIfStillEmpty(path) {
+function removeFolderIfStillEmpty(ctx, path) {
   try {
     rmdirSync(path);
   } catch (error) {
-    if (error.code === 'ENOTEMPTY') warn(`${path} is not empty (an install started meanwhile); left as it is`);
+    if (error.code === 'ENOTEMPTY') leave(ctx, path, `${path} is not empty (an install started meanwhile); left as it is`);
     else if (error.code !== 'ENOENT') throw error;
   }
 }
@@ -107,8 +107,19 @@ export function uninstall(ctx, release = () => {}) {
   release();
   for (const entry of made.filter((item) => item.kind === 'dir')) {
     act(ctx, `remove folder ${entry.path} when empty`, () => {
-      if (existsSync(entry.path) && readdirSync(entry.path).length === 0) removeFolderIfStillEmpty(entry.path);
-      else if (existsSync(entry.path)) warn(`${entry.path} is not empty (files made after the install); left as it is`);
+      if (existsSync(entry.path) && readdirSync(entry.path).length === 0) removeFolderIfStillEmpty(ctx, entry.path);
+      else if (existsSync(entry.path)) leave(ctx, entry.path, `${entry.path} is not empty (files made after the install); left as it is`);
     });
   }
+  printLeftovers(ctx);
+}
+
+/** The list of what this --uninstall left in place (each also had its WARNING), or one line saying nothing was left. */
+function printLeftovers(ctx) {
+  if (ctx.left.length === 0) {
+    console.log('Left in place: nothing the install record names');
+    return;
+  }
+  console.log(`Left in place (${ctx.left.length}; remove or restore by hand):`);
+  for (const { why } of ctx.left) console.log(`  - ${why}`);
 }

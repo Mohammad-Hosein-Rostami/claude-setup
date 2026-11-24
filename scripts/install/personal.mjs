@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { readRegularFile } from '../../home/tools/env-names/lib/read-regular-file.mjs';
-import { InstallError, act, note, samePath, warn } from './context.mjs';
+import { InstallError, act, leave, note, samePath, warn } from './context.mjs';
 import { backup, isMade } from './record.mjs';
 import { linkOne, removeLink } from './links.mjs';
 import { NOTES, PERSONAL_DIR, ensurePersonal, isLayerLinked, isPlainDir, lstatOrNull, moveOwnNotes, personalDir, recoverDeletedNotes } from './personal-folder.mjs';
@@ -173,7 +173,7 @@ export function removeWrittenFiles(ctx, record) {
   for (const entry of [...writtenList(record)].reverse()) {
     if (!lstatOrNull(entry.path)) continue;
     if (!isUnchangedWrite(entry)) {
-      warn(`${entry.path} changed since the installer wrote it (your lines are in it); left as it is`);
+      leave(ctx, entry.path, `${entry.path} changed since the installer wrote it (your lines are in it); left as it is`);
       continue;
     }
     act(ctx, `remove ${entry.path}`, () => {
