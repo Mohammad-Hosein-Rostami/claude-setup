@@ -48,11 +48,10 @@ that edit and return `needs-judgement: <file:line> <why>`; go on with the others
 - Commit after each finished step: `git commit -m "<type(scope): subject>" -- <paths>` (Conventional Commits, subject at most 60
   characters, a body saying what and why). Never `--no-verify`, never push, never return with uncommitted work.
 - One-line git: never a merge commit, never `--force`, never `update-ref`.
-- A command that may run over 3 minutes: give it to `dev-run`, or start it with `run_in_background: true` and a `timeout` (at
-  most 2 h) as `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`, then wait with one foreground call
-  (`timeout` 180000): `for i in $(seq 80); do [ -f <log>.exit ] && break; sleep 2; done`, again until `<log>.exit` exists. Never
-  end your turn while it runs. A command that ends within 3 minutes runs in the foreground with an explicit Bash `timeout`:
-  600000 for an install or a long run, 60000 for a probe. Never poll in a loop of your own.
+- A command that may run over 3 minutes: give it to `dev-run`, or run it with `run_in_background: true` and a `timeout` (at
+  most 2 h), started and waited for as `~/.claude/agents/dev-run.md` says. A command that ends within 3 minutes runs in the
+  foreground with an explicit Bash `timeout`: 600000 for an install or a long run, 60000 for a probe. Never poll in a loop of
+  your own.
 
 ## Helpers
 
@@ -68,6 +67,7 @@ result, `model:` (the model you ran on), `Suggested:` (or none), **Not run** and
 The global CLAUDE.md does not load for you, so these rules from it hold here:
 
 - Reply in the language the caller wrote in.
+- Before your final report, stop every background command and monitor you started (TaskStop); never report while one runs.
 - Never push or publish: no `git push`, no release, no outward-facing action.
 - Never print a secret: a token, password, key or the contents of a `.env` file is named by its kind only, and never goes into
   code, a commit or a command line.

@@ -1,8 +1,8 @@
 // Advice for the Bash guard: a command that waits by sleeping. A sleep loop holds the turn, and a repeated check costs a model call each time, so a
 // `for|while|until ... sleep N` loop (N >= 5 s) or one long `sleep` (>= 30 s) is bounced once with the better way to wait. A quality rule,
 // not a safety rule: lib/bounce-once.mjs denies the first send with this text and lets the identical retry run, never the owner.
-// Exports: WAIT_ADVICE (the text, classed exactly in lib/reason-classes.mjs), WAIT_START_FORM and WAIT_CALL (the two commands the text and
-// the agents' Waiting lines name, so tests can hold them equal), waitAdvice(command) -> [] | [WAIT_ADVICE],
+// Exports: WAIT_ADVICE (the text, classed exactly in lib/reason-classes.mjs), WAIT_START_FORM (the start command the text and
+// home/agents/dev-run.md name, so tests can hold them equal), waitAdvice(command) -> [] | [WAIT_ADVICE],
 // withoutWaitAdvice(verdict) -> verdict (the hook uses it for a call sent with `run_in_background: true`: that wait needs no advice).
 // Reads the command like the other guard rules (lib/shell-words.mjs segments): heredoc bodies are dropped, a
 // quoted word (`echo "for i; do sleep 9; done"`) is one word, so text that only mentions sleep never counts. The sleep must be a command
@@ -13,41 +13,37 @@
 // background command stops after 30 min (10 min for a text `-p` prompt) unless `timeout` is passed, and 7200000 ms is the most; an interactive
 // session has no limit. No page says which of the two a background subagent is, so the advice is "set timeout" for every background command.
 // Same page: a background command of a foreground subagent stops when that agent's run ends, while the main session's or a background
-// subagent's keeps running (only those are told of its exit). Changelog: a background subagent's foreground command is moved to the
-// background after 3 min (seen at 180 s with `timeout` 600000, Claude Code 2.1.329). No agent is told which it is, so the text names one
-// way to wait that holds for all: over 3 min, start in the background, then wait inside the turn with a call that ends by itself in
-// 160 s. The wait call's 2 s pause is under this rule's own 5 s loop limit, so the guard lets it run (tests hold that).
+// subagent's keeps running and its exit is a completion notice. So the text names one way to wait: over 3 min, start in the background
+// and wait for that notice; to wait for anything else, the Monitor tool (each line its command prints is a notice; it ends when the
+// command exits). A shell still running at the final report keeps the agent listed as running, so the text says to stop it first.
 // Condition loops (spec-p3 `r9-waits-more`): a `while` or `until` loop whose condition polls (`kill -0`, `pgrep`, `grep -q`, `test`, `[`, `[[`)
 // and that sleeps at all is a wait at any sleep length (`while kill -0 $pid; do sleep 2; done`); a `for` loop keeps the 5 s rule, so
-// WAIT_CALL (a bounded `for` over `seq`) still runs. Plain retries (`until npm ci; do sleep 1; done`) stay allowed. A background subagent's
+// a bounded `for` pause loop still runs. Plain retries (`until npm ci; do sleep 1; done`) stay allowed. A background subagent's
 // result arrives as a notification (sub-agents docs), so the text says not to poll its output file.
 import { commandOf, KEYWORDS } from './command-of.mjs';
 import { withoutSubstitutions } from './merge-commit.mjs';
 import { segments, stripHeredocs } from './shell-words.mjs';
 
 const BACKGROUND_TIMEOUT_MAX_MS = 7200000; // 2 h: the longest `timeout` the Bash tool takes for a background command
-const WAIT_CALL_TIMEOUT_MS = 180000; // 3 min: a background subagent's foreground command is moved to the background after this long
-const WAIT_ROUNDS = 80; // rounds of one wait call: 80 x 2 s = 160 s, so the call ends by itself before it would be moved
-const WAIT_PAUSE_SECONDS = 2; // a pause between two looks at one file, under LOOP_SLEEP_SECONDS
+const FOREGROUND_TIMEOUT_MAX_MS = 600000; // 10 min: the longest `timeout` a foreground Bash call takes by default (BASH_MAX_TIMEOUT_MS)
 
 /**
  * How a command over 3 min is started (with `run_in_background: true` and `timeout`): output to a log, exit code to `<log>.exit`. The old
- * `<log>.exit` is removed first: the wait call only looks whether that file is there, so the exit file of an earlier run with the same log
- * name would end the wait at once, next to a log the new run has just emptied.
+ * `<log>.exit` is removed first, so a Monitor that waits for that file never ends at once on the exit file of an earlier run.
  */
 export const WAIT_START_FORM = 'rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit';
-/** The foreground call that waits for that command inside the agent's turn: it ends when `<log>.exit` is there, or after 160 s. */
-export const WAIT_CALL = `for i in $(seq ${WAIT_ROUNDS}); do [ -f <log>.exit ] && break; sleep ${WAIT_PAUSE_SECONDS}; done`;
 
 export const WAIT_ADVICE = 'Waiting (speed): do not wait with a long sleep or a sleep loop: it holds the turn, and a repeated check costs a model call each time. '
   + 'A command that ends within 3 min runs in the foreground with an explicit timeout. '
   + `Run a longer one with run_in_background: true and set timeout to its expected run plus a margin, at most ${BACKGROUND_TIMEOUT_MAX_MS} ms (2 h), started as ${WAIT_START_FORM}. `
-  + `Then wait inside your turn with one foreground call (timeout ${WAIT_CALL_TIMEOUT_MS}) that ends by itself in ${WAIT_ROUNDS * WAIT_PAUSE_SECONDS} s (a background subagent's foreground command is moved to the background after 3 min): ${WAIT_CALL}; send it again until <log>.exit is there, then read the log in one call. `
-  + "Never end your turn while the command runs: a background command of a foreground subagent stops when that agent's run ends and nobody is woken; "
-  + "only the main session's or a background subagent's keeps running. "
+  + 'Its completion notice is the wait: work on or end your turn, then read the log once. '
+  + 'To wait for anything else (a file, a log line, a server), use the Monitor tool with a command that prints a line on success and on failure and then exits, '
+  + 'or send the check loop itself with run_in_background: true: its exit is the notice. '
+  + `A foreground subagent gets no notice and its background commands stop when its run ends: there, run the command in the foreground with timeout ${FOREGROUND_TIMEOUT_MAX_MS}. `
+  + 'Before your final report, stop every background command and monitor you started (TaskStop); never report while one runs. '
   + 'Set timeout for every background command: in an unattended run (-p, Agent SDK, CI, cloud) one without it stops after 30 min '
   + '(10 min for a text -p prompt). A run over 2 h is split, or started in an interactive session, where background commands have no limit. '
-  + "A background subagent's result arrives as a notification (with fork mode on the lead cannot wait on a subagent at all): end your turn or work on, never poll its output file. "
+  + "A background subagent's result arrives as a notification (with fork mode on the lead cannot wait on a subagent at all): never poll its output file. "
   + 'If a sleep is what you need, send the same command again and it runs.';
 
 const LOOP_SLEEP_SECONDS = 5; // a shorter sleep inside a loop is a pause between steps, not a wait

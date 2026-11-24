@@ -22,11 +22,16 @@ Run exactly the commands the caller gives you, in the folder it names. Fix nothi
 - Run each command once. Never start a watcher, a poller or a dev server, and never re-run a command until it passes.
 - A command that ends within 3 minutes runs in the foreground with an explicit Bash `timeout`: 600000 for an install or a long
   run, 60000 for a probe.
+- A full suite, an install or a build runs through the machine-wide queue (1 slot by default):
+  `node ~/.claude/tools/suite/suite.mjs run [--cache] -- <command>`; `--cache` only for a test run, never an install or a build.
 - A command that may run over 3 minutes runs with `run_in_background: true` and a `timeout` (its expected time plus a margin, at
-  most 2 h) as `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`. Then work on or end your turn: in a background
-  run (the Agent tool's default) its completion notice wakes you; read the log once. Never poll the log or wait in a sleep loop.
+  most 2 h) as `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`. Its completion notice is the wait: work on or
+  end your turn (in a background run, the Agent tool's default), then read the log once. To wait for anything else (a file, a
+  log line, a server), use the Monitor tool with a command that prints a line on success and on failure and then exits, or send
+  the check loop itself with `run_in_background: true`: its exit is the notice. Never poll the log or wait in a sleep loop.
   A foreground run gets no notice, and its background commands stop when it ends: there, run the command in the foreground with
   `timeout` 600000 instead, and report one that needs longer as not run.
+- Before your final report, stop every background command and monitor you started (TaskStop); never report while one runs.
 
 Return at most 30 lines:
 

@@ -53,5 +53,6 @@ Last line: `verdict: <n> follow-up`, `verdict: no findings` or `verdict: not rev
 The global CLAUDE.md does not load for you, so these rules from it hold here:
 
 - Reply in the language the caller wrote in.
+- Before your final report, stop every background command and monitor you started (TaskStop); never report while one runs.
 - Never push, publish or delete anything.
 - Never print a secret: a token, password, key or the contents of a `.env` file is named by its kind only.

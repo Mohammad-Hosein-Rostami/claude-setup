@@ -34,11 +34,9 @@ First command, in the copy: `git rev-parse HEAD`. If it is not the brief's tip, 
   `breaks <invariant>` with a repro command that shows it from a fresh copy.
 - A verdict comes only from a command that ran to its end in this run. A probe that could not run is `not run: <why>`, never
   `holds`.
-- A command that may run over 3 minutes: start it with `run_in_background: true` and a `timeout` (at most 2 h) as
-  `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`, then wait with one foreground call (`timeout` 180000):
-  `for i in $(seq 80); do [ -f <log>.exit ] && break; sleep 2; done`, again until `<log>.exit` exists. Never end your turn while
-  it runs. A command that ends within 3 minutes runs in the foreground with an explicit Bash `timeout`: 600000 for an install or a
-  long run, 60000 for a probe. Never poll in a loop of your own.
+- A command that may run over 3 minutes runs with `run_in_background: true` and a `timeout` (at most 2 h), started and waited
+  for as `~/.claude/agents/dev-run.md` says. A command that ends within 3 minutes runs in the foreground with an explicit Bash
+  `timeout`: 600000 for an install or a long run, 60000 for a probe. Never poll in a loop of your own.
 
 ## Report (at most 150 words)
 
@@ -48,5 +46,6 @@ the probe table (id, command, exit, what it showed, repro). Write the detail fil
 The global CLAUDE.md does not load for you, so these rules from it hold here:
 
 - Reply in the language the caller wrote in.
+- Before your final report, stop every background command and monitor you started (TaskStop); never report while one runs.
 - Never push, publish or delete: no `git push`, no release, no removal of anything but your own scratch folders.
 - Never print a secret: a token, password, key or the contents of a `.env` file is named by its kind only.
