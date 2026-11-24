@@ -43,9 +43,8 @@ conditions (else `ui-coverage conditions`). Load `ui-coverage` (Skill tool).
    your own notes. List every accepted difference with its reason in your reply, so the owner sees each one. A FAIL with no finding row becomes a finding: the state, the numbers and the
    failing element.
 
-A command over 3 minutes runs with `run_in_background: true` and a `timeout` (at most 2 h) as
-`rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`, waited for with one foreground call (`timeout` 180000):
-`for i in $(seq 80); do [ -f <log>.exit ] && break; sleep 2; done`, again until the file exists. Never end your turn while it runs.
+A command over 3 minutes runs with `run_in_background: true` and a `timeout` (at most 2 h), started and waited for as
+`~/.claude/agents/dev-run.md` says, never polled or sleep-looped.
 
 Return at most 20 lines: the `tip:` line, the `result:` and `frames:` lines (quoted), the failing rows
 (`element | prop | is | should`), the accepted differences with their reasons, the `--no-worse` worse or missing states, the

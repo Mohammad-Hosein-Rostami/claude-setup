@@ -35,10 +35,9 @@ installed version) before you edit; never guess a library API. The coding rules 
 - `dev-ui`: screens, components, forms. `dev-pixel`: a Figma frame or a design to match pixel for pixel. `dev-debug`: a bug whose
   cause is unclear after one honest fix, an intermittent one, or one across packages. `dev-run`: installs, builds, long logs.
   Nothing else.
-- Only the boss starts `lex` (a design question the plan does not answer) and `tess` (a check the brief or the owner asks for, or a
-  risky or wide change, a fix you must prove; not after every small step): send `main` the line `needs: <agent> to <task>, blocks:
-  <what>` (SendMessage; refused in a foreground run, then it goes under `needs:` in your report) and go on with what does not
-  depend on it; the boss sends the result back.
+- Only the boss starts `lex` (a design question the plan does not answer) and `tess` (a check the brief or the owner asks for, or
+  a risky or wide change, a fix you must prove; not after every small step): ask with `needs: <agent> to <task>, blocks: <what>`
+  as home/CLAUDE.md says, and go on with what does not depend on it.
 - A writing helper gets its own branch and worktree (`git worktree add -b <branch> <path> <base>` and a `worktree:` line, or
   `isolation: "worktree"`) and files no other writer touches. Brief it with the goal, its files, BASE, BRANCH, acceptance,
   constraints and a word cap. Start independent helpers in one message.
@@ -58,11 +57,10 @@ installed version) before you edit; never guess a library API. The coding rules 
   (search the repo; report `swept: <id>: <class>: <n> sites`). A fix that needs new state, a lock, a cache, a new module or a new
   flag reuses a named helper (`reused: <path>`) or stops with `needs-design: <what>`. Re-run the commands of earlier reports
   before each commit. A `Fix:` on a test branch (`BASE: test/<topic>`) makes its failing tests pass; never edits those tests.
-- A command that may run over 3 minutes: give it to `dev-run`, or start it with `run_in_background: true` and a `timeout` (at
-  most 2 h) as `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`, then wait with one foreground call
-  (`timeout` 180000): `for i in $(seq 80); do [ -f <log>.exit ] && break; sleep 2; done`, again until `<log>.exit` exists. Never
-  end your turn while it runs. A command that ends within 3 minutes runs in the foreground with an explicit Bash `timeout`:
-  600000 for an install or a long run, 60000 for a probe. Never poll in a loop of your own.
+- A command that may run over 3 minutes: give it to `dev-run`, or run it with `run_in_background: true` and a `timeout` (at
+  most 2 h), started and waited for as `~/.claude/agents/dev-run.md` says. A command that ends within 3 minutes runs in the
+  foreground with an explicit Bash `timeout`: 600000 for an install or a long run, 60000 for a probe. Never poll in a loop of
+  your own.
 - A conflict between the plan and what the code needs is reported as `contract-dispute: <step> <why>`, never silently redesigned.
 - Before returning, read your diff against the brief once.
 

@@ -23,9 +23,10 @@ Run exactly the commands the caller gives you, in the folder it names. Fix nothi
 - A command that ends within 3 minutes runs in the foreground with an explicit Bash `timeout`: 600000 for an install or a long
   run, 60000 for a probe.
 - A command that may run over 3 minutes runs with `run_in_background: true` and a `timeout` (its expected time plus a margin, at
-  most 2 h) as `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`; then wait with one foreground call (`timeout`
-  180000): `for i in $(seq 80); do [ -f <log>.exit ] && break; sleep 2; done`, again until `<log>.exit` exists, then read the
-  log once. Never end your turn while it runs.
+  most 2 h) as `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`. Then work on or end your turn: in a background
+  run (the Agent tool's default) its completion notice wakes you; read the log once. Never poll the log or wait in a sleep loop.
+  A foreground run gets no notice, and its background commands stop when it ends: there, run the command in the foreground with
+  `timeout` 600000 instead, and report one that needs longer as not run.
 
 Return at most 30 lines:
 

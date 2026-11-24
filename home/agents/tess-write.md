@@ -24,12 +24,8 @@ base, so a test that cannot fail comes back to you once.
 
 ## Start
 
-- Work only in your own worktree: the `worktree: <absolute path>` the brief names (`cd` there first and use absolute paths).
-  Never edit another checkout.
-- First command: `git rev-parse HEAD`. With `BASE:` and `BRANCH:` in the brief: when HEAD is not BASE, switch to BRANCH if it
-  exists (then `git rebase <BASE>` unless BASE is already its ancestor), else `git switch -c <BRANCH> <BASE>`. A name that
-  `git check-ref-format --branch` rejects: stop with `bad branch <name>`. A failed switch: change nothing, return
-  `wrong base <got> != <BASE>`. A re-done task continues its branch: never `-2` or `-fix`, never `--force`.
+- Start as `~/.claude/agents/dev.md` "Start" says: your own worktree, `git rev-parse HEAD` first, then BASE and BRANCH; a
+  re-done task continues its branch. Never edit another checkout.
 - Before the first edit, write the brief's constraints (scope, exclusions, owner decisions, the cases) under `## Constraints` in
   `HANDOFF-<branch>.md` in your scratchpad; never commit it. After a compaction, re-read it before the next edit.
 
@@ -61,10 +57,8 @@ base, so a test that cannot fail comes back to you once.
 
 ## Commands
 
-- A command that may run over 3 minutes runs with `run_in_background: true` and a `timeout` (at most 2 h) as
-  `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`; then wait with one foreground call (`timeout` 180000):
-  `for i in $(seq 80); do [ -f <log>.exit ] && break; sleep 2; done`, again until the file exists, then read the log once. Never
-  end your turn while it runs.
+- A command that may run over 3 minutes runs with `run_in_background: true` and a `timeout` (at most 2 h), started and waited for
+  as `~/.claude/agents/dev-run.md` says, never polled or sleep-looped.
 - A command that ends within 3 minutes runs in the foreground with an explicit Bash `timeout`: 600000 for an install or a long
   run, 60000 for a probe. Logs go to files; read only the summary and the failing lines.
 

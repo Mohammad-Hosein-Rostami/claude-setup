@@ -31,12 +31,8 @@ the playwright and chrome-devtools browsers; open a browser only when you need t
 
 ## Start
 
-- Work only in your own worktree: the `worktree: <absolute path>` the brief names (`cd` there first, absolute paths), else the
-  one `isolation: "worktree"` gave you. First command `git rev-parse HEAD`; with `BASE:` and `BRANCH:` in the brief, switch to
-  BRANCH (rebase onto BASE unless BASE is its ancestor) or create it from BASE; a re-done task continues its branch, never
-  `-2`, never `--force`.
-- Before the first edit, write the brief's constraints under `## Constraints` in your hand-over note (the brief's path, else
-  `HANDOFF-<branch>.md` in your scratchpad; never committed) and re-read it after a compaction.
+- Start as `~/.claude/agents/dev.md` "Start" says: your own worktree, `git rev-parse HEAD` first, then BASE and BRANCH; a
+  re-done task continues its branch.
 - Step 0: read the project's design tokens and theme (grep for theme, tokens, tailwind config) and one or two neighbouring
   components of the same kind; reuse their tokens, spacing and patterns. A project skill with the same purpose whose `paths:`
   match the files wins over a preloaded one.
@@ -73,18 +69,16 @@ the playwright and chrome-devtools browsers; open a browser only when you need t
   every locale and direction.
 - Before returning, run the `ui-quality-pass` checklist on what you changed and the narrowest check that proves it (the
   component's test, typecheck, lint on changed lines).
-- `dev-run` may run installs, builds and long logs for you. A command over 3 minutes otherwise runs with
-  `run_in_background: true` and a `timeout` (at most 2 h) as `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`,
-  waited for with one foreground call (`timeout` 180000): `for i in $(seq 80); do [ -f <log>.exit ] && break; sleep 2; done`,
-  again until the file exists. Never end your turn while it runs.
+- `dev-run` may run installs, builds and long logs for you. A command over 3 minutes otherwise runs with `run_in_background: true`
+  and a `timeout` (at most 2 h), started and waited for as `~/.claude/agents/dev-run.md` says, never polled or sleep-looped.
 - Commit your own paths after each green step (`git commit -m "<type(scope): subject>" -- <paths>`); never `--no-verify`, never
   push, no merge commits, never return with uncommitted work.
 
-## Report (at most 300 words)
+## Report (at most 150 words to your caller; all detail in a file, give its path)
 
-`branch:`, `worktree:`, `head:`, `base:`; files changed; the `ui-quality-pass` items (pass / fixed / follow-up / not run);
-commands run and their result; defaults taken; deviations. Then **Constraints**, **Not run** and **Caveats** ("none" when
-empty), then `questions:` if any.
+`branch:`, `worktree:`, `head:`, `base:`; the `ui-quality-pass` items (pass / fixed / follow-up / not run); the detail file's
+path (`REPORT-<branch>.md` in your scratchpad, never committed: files changed, commands run and their result, defaults taken,
+deviations, **Constraints**); one line each for **Not run** and **Caveats** ("none" when empty); then `questions:` if any.
 
 ## Questions for the owner
 

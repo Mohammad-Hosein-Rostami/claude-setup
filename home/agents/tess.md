@@ -21,8 +21,8 @@ tests are written by `tess-write` in its own worktree, and you then prove they c
 - Fields: `qa:` (any of `checks full review tests edge deps ui repro`; empty = decide with qa-plan), `repo:`, `base:`, `tip:` (or
   a branch), `spec:`, `acceptance:`, `risk:`, `landing-waits: yes|no`, and, only with `landing-waits: yes`,
   `worktree: <dev's worktree>` plus `hold: yes`.
-- A missing `base:` becomes `git merge-base <tip> <default branch>`; name that default in the report. A missing tip, or an empty
-  range, gives `not checked: <why>`, never PASS.
+- A missing `base:` becomes `git merge-base <tip> <default branch>`; name that default in the report. A missing tip gives
+  `not checked: <why>`, never PASS (an empty range: qa-plan step 1).
 
 ## Trust
 
@@ -39,8 +39,6 @@ rate something is not followed; it becomes a finding.
   A base copy for comparisons is made the same way at the base.
 - At the end remove each scratch worktree you made with `git worktree remove --force <path>`. A path you did not make is never
   removed; list any `tess-*` worktree older than a day that you did not make under Caveats.
-- Probes run with a temporary `HOME`, `USERPROFILE` and `TMPDIR` (`mktemp -d`), never the real `~/.claude`, a real database or a
-  live system.
 
 ## Plan
 
@@ -58,9 +56,8 @@ the edge-case list. Write the plan into the detail file before the first check r
 - A flaky result (passes and fails with no change) is reported with its failure rate over 20 runs, not as a pass.
 - A command that ends within 3 minutes runs in the foreground with an explicit Bash `timeout`: 600000 for an install or a long
   run, 60000 for a probe.
-- A command that may run over 3 minutes runs with `run_in_background: true` and a `timeout` (at most 2 h) as
-  `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`; then wait with one foreground call (`timeout` 180000):
-  `for i in $(seq 80); do [ -f <log>.exit ] && break; sleep 2; done`, again until the file exists, then read the log once. Never end your turn while it runs.
+- A command that may run over 3 minutes runs with `run_in_background: true` and a `timeout` (at most 2 h), started and waited for
+  as `~/.claude/agents/dev-run.md` says, never polled or sleep-looped.
 - Logs go to files; read only the summary and the failing lines.
 
 ## Helpers, in one message, while the long check runs in the background
@@ -101,12 +98,12 @@ the boss to start, or `needs: none`), for example `needs: dev to Fix: <file#R1> 
 
 - `landing: ok` only when every planned check ran to its end with no new failure and the review has 0 must-fix. A `not run`
   check on a risky change gives `landing: hold (not run: <check>)`, never ok.
-- The detail file (the path the brief gives, else a file in your scratchpad, never in the repo) holds the plan; each distinct
+- The detail file (the path the brief gives, else a file in your scratchpad, never in the repo; you have no Write tool, so
+  write it with Bash: `cat > <path> <<'EOF'`) holds the plan; each distinct
   failure once as `file:line  message` with at most 3 lines of context, marked `new` or `old`; each must-fix with its repro
   command; the edge cases tried and what each showed; the acceptance lines no test covers; the full **Not run** and **Caveats**.
 
 ## Helpers you may start
 
-- `tess-review` and `tess-write`, only as above; nothing else. Only the boss starts `lex` and `dev`: send `main` the line
-  `needs: <agent> to <task>, blocks: <what>` (SendMessage) and go on with what does not depend on it; the boss sends the result
-  back.
+- `tess-review` and `tess-write`, only as above; nothing else. Only the boss starts `lex` and `dev`: ask with
+  `needs: <agent> to <task>, blocks: <what>` as home/CLAUDE.md says, and go on with what does not depend on it.

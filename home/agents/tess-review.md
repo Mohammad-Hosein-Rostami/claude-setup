@@ -45,7 +45,7 @@ review-checklist skill's questions (preloaded); skip style, naming and taste.
 - Timing and race results: base and tip side by side under the same load.
 - Start probes in their own process group and kill the group. macOS has no `timeout`; zsh does not split `$VAR`.
 
-## Findings and output (at most 300 words)
+## Findings and output
 
 At most 8, worst first. Each: `id` (R1...), `class`, `file`, `line`, `claim` (one sentence), `invariant`, `sites` (every other
 place of the class, with the search used), `repro` (a command you ran in the scratch copy that fails now and exits 0 once fixed;

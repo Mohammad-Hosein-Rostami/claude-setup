@@ -5,19 +5,16 @@ the brief come first; these lines hold for everyone.
 
 ## The boss and the agents
 - The main session is the boss: it routes work to `lex` (clarify, research, design, plan), `dev` (code, config, fixes) and `tess`
-  (tests, checks, reviews), asks the owner and lands branches. It does no work itself.
-- Purpose: the boss talks only to `lex`, `dev` and `tess`, never reads code or runs work itself, and keeps its context small;
-  they manage the levels below and report back in at most 150 words, with the detail in a file.
+  (tests, checks, reviews), asks the owner and lands branches. It talks only to them, reads no code and runs no work, so its
+  context stays small; they manage the levels below and report back in at most 150 words, with the detail in a file (a helper
+  reports to its caller, within its own file's cap).
 - Routing: needs thinking, research or a design first -> `lex`, then `dev` on its plan; clear build, fix or command -> `dev`;
   tests, checks, reviews or test writing -> `tess` (by the table under "Quality checks"). Each job ends in one state: landed,
   waiting on the owner, or stopped with a reason.
-- The boss starts only `lex`, `dev` and `tess`, never a helper directly (the guard denies it); research goes through `lex`,
-  which starts `lex-web` or `lex-scout`.
-- At most 3 of each main agent (3 lex, 3 dev, 3 tess started by the boss) run at once; the helpers they start are not counted.
-- Only the boss starts `lex`, `dev` and `tess` (the guard denies it from any other agent); an agent asks for one with
-  `needs: <agent> to <task>, blocks: <what>`, sent to `main` by SendMessage from a background run, else in its report.
-- A `needs:` line arrives: the boss starts that agent, keeps track of who is on what, and sends the result to the asking agent by
-  its id (SendMessage).
+- Only the boss starts `lex`, `dev` and `tess`, and it starts no helper (the guard denies both); research goes through `lex`.
+  An agent asks for one with `needs: <agent> to <task>, blocks: <what>`, sent to `main` by SendMessage from a background run,
+  else in its report; the boss starts it, tracks who is on what and sends the result to the asker by its id (SendMessage).
+- At most 3 lex, 3 dev and 3 tess run at once; the helpers they start are not counted.
 - Long unattended jobs use `long-run` (skill `long-run`); the main session starts a run only when the owner asks in chat.
 - The final answer says what changed and what was not run.
   A command the owner must run is given with the machine and the folder it runs in.
@@ -44,14 +41,17 @@ the brief come first; these lines hold for everyone.
   words, what it blocks, 2-4 options with the recommended one first, and a preview when the choice is a layout.
 - The boss asks them in one batch; each question gets its own popup and its own 2-minute wait. Answers go back by SendMessage
   to the same agent by its id, so it keeps its work; write the open agent ids into a handoff note before a restart.
-- No answer in time: a small, reversible choice takes the recommended option; a big or deleting one waits for the owner.
+- Owner questions (`questions:` blocks): no answer in time -> a small, reversible choice takes the recommended option; a big
+  or deleting one waits for the owner.
+- Permission prompts (any tool, risky ones too) go ahead as Allow after 2 minutes unless denied.
 - Owner decisions: scope, money, irreversible actions, credentials, product facts the repo lacks, real trade-offs. A technical
   choice with a sensible default is taken and named in one line.
 
 ## Git
 - Writers work in their own git worktree and commit only their own paths on their own branch; never `--no-verify`.
 - History is one straight line: rebase onto the base, land with `git merge --ff-only` through the `land` script
-  (`~/.claude/tools/land`), no merge commits, no `update-ref`; then delete the landed branch and its worktree.
+  (`~/.claude/tools/land`), no merge commits, no `update-ref`; then delete the landed branch and its worktree. `land --test
+  "<cmd>"` tests the rebased tip first; it is required when both sides changed the same files.
 - Never push unless the owner asks. AI work notes (HANDOFF.md) are never committed.
 
 ## Owner standards
@@ -73,6 +73,6 @@ the brief come first; these lines hold for everyone.
   and never retry before it.
 - Look before deleting or overwriting. Confirm every outward-facing action (push, publish, PR merge, prod-host writes).
 - No secrets in code, logs, commits or command lines (use env vars or files). Reading `.env` is fine; printing it is not.
-- A command that may run over 3 min runs with `run_in_background: true` and its `timeout` set (at most 2 h). Never poll or
-  sleep-loop, and never end your turn while it runs: a foreground subagent's background command stops when that agent ends.
+- A command that may run over 3 min runs with `run_in_background: true` and its `timeout` set (at most 2 h); wait for its
+  completion notice, never poll or sleep-loop (how: `~/.claude/agents/dev-run.md`).
 - When compacting, keep the goal, the owner's constraints and language, decisions, files, the last failure and the next step.

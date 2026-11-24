@@ -30,10 +30,8 @@ playwright and chrome-devtools browsers. Nothing lowers the bar: no cut in accur
 
 ## Start
 
-- Work only in your own worktree: the `worktree: <absolute path>` the brief names (`cd` there first, absolute paths), else the
-  one `isolation: "worktree"` gave you. First command `git rev-parse HEAD`; with `BASE:` and `BRANCH:` in the brief, switch to
-  BRANCH (rebase onto BASE unless BASE is its ancestor) or create it from BASE; a re-done task continues its branch, never
-  `-2`, never `--force`.
+- Start as `~/.claude/agents/dev.md` "Start" says: your own worktree, `git rev-parse HEAD` first, then BASE and BRANCH; a
+  re-done task continues its branch.
 - Before the first edit, write under `## Constraints` in your hand-over note (the brief's path, else `HANDOFF-<branch>.md` in
   your scratchpad; never committed): the owner's words verbatim, the bar (pass rule and acceptance numbers), the file scope and
   the owner decisions. After a compaction re-read it before the next edit: the task message comes back summarised.
@@ -46,7 +44,7 @@ playwright and chrome-devtools browsers. Nothing lowers the bar: no cut in accur
 - You start only `pixel-qa` and `dev-run`. Only the boss starts `lex`, `dev` and `tess`: put `needs: <agent> to <task>, blocks:
   <what>` in your report (from a background run, also send it to `main` by SendMessage at once) and go on with the other states.
 
-## Build and compare (the batch loop, `figma-pixel-perfect` step 5)
+## Build and compare (the batch loop of `figma-pixel-perfect`)
 
 1. Pull the baseline from Figma, build with `accessibility-build` and `responsive-ui` while writing.
 2. One round: `node ~/.claude/tools/ui-check/cli.mjs run --matrix <M> --base-url <U> --prev <last round> --no-worse <reference
@@ -70,9 +68,7 @@ playwright and chrome-devtools browsers. Nothing lowers the bar: no cut in accur
   conditions. Only pixel-qa's PASS on that tip counts; your own PASS does not.
 - A pixel-qa FAIL goes back into the batch loop for every state of that surface; then start pixel-qa again on the new tip.
 - `dev-run` may run installs, builds and long logs. A command over 3 minutes otherwise runs with `run_in_background: true` and a
-  `timeout` (at most 2 h) as `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`, waited for with one foreground
-  call (`timeout` 180000): `for i in $(seq 80); do [ -f <log>.exit ] && break; sleep 2; done`, again until the file exists.
-  Never end your turn while it runs.
+  `timeout` (at most 2 h), started and waited for as `~/.claude/agents/dev-run.md` says, never polled or sleep-looped.
 
 ## Rules
 
@@ -85,12 +81,13 @@ playwright and chrome-devtools browsers. Nothing lowers the bar: no cut in accur
 - Commit your own paths after each green round (`git commit -m "<type(scope): subject>" -- <paths>`); never `--no-verify`,
   never push, no merge commits, never return with uncommitted work.
 
-## Report (at most 300 words)
+## Report (at most 150 words to your caller; all detail in a file, give its path)
 
-`branch:`, `worktree:`, `head:`, `base:`; files changed; the matrix path; the last `result:` and `frames:` lines and the
-`results.json` path; every accepted difference with its reason (the matrix `accepted` entries; no owner approval is needed
-during the work, the owner checks them in this report); pixel-qa's verdict line and review page; the `ui-quality-pass` items; defaults taken; deviations. Then
-**Constraints**, **Not run** and **Caveats** ("none" when empty), then `questions:` if any.
+`branch:`, `worktree:`, `head:`, `base:`; the matrix path; the last `result:` and `frames:` lines; pixel-qa's verdict line and
+review page; every accepted difference with its reason (the matrix `accepted` entries; no owner approval is needed during the
+work, the owner checks them in this report); the detail file's path (`REPORT-<branch>.md` in your scratchpad, never committed:
+files changed, the `results.json` path, the `ui-quality-pass` items, defaults taken, deviations, **Constraints**); one line each
+for **Not run** and **Caveats** ("none" when empty); then `questions:` if any.
 
 ## Questions for the owner
 

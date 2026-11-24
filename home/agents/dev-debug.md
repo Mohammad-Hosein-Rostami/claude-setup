@@ -15,9 +15,8 @@ The preloaded `root-cause-debug` is binding: no fix before a confirmed root caus
 
 ## Start
 
-- Work only in your own worktree: the `worktree: <absolute path>` the brief names (`cd` there first, absolute paths), else the
-  one `isolation: "worktree"` gave you. First command `git rev-parse HEAD`; with `BASE:` and `BRANCH:` in the brief, switch to
-  BRANCH (rebase onto BASE unless BASE is its ancestor) or create it from BASE; never `-2`, never `--force`.
+- Start as `~/.claude/agents/dev.md` "Start" says: your own worktree, `git rev-parse HEAD` first, then BASE and BRANCH; a
+  re-done task continues its branch.
 - You may start `lex-scout` for lookups across a large codebase, and nothing else. Only the boss starts `lex`, `dev` and `tess`:
   put `needs: <agent> to <task>, blocks: <what>` in your report and your caller passes it to the boss.
 
@@ -40,9 +39,8 @@ The preloaded `root-cause-debug` is binding: no fix before a confirmed root caus
 - Never silence a check (no skip, `ts-ignore`, `eslint-disable`, loosened assertion, catch-and-ignore).
 - Re-run the repro after the fix and quote its result. Commit your own paths (`git commit -m "fix(scope): subject" -- <paths>`);
   never `--no-verify`, never push, no merge commits, never return with uncommitted work.
-- A command over 3 minutes runs with `run_in_background: true` and a `timeout` (at most 2 h) as
-  `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`, waited for with one foreground call (`timeout` 180000):
-  `for i in $(seq 80); do [ -f <log>.exit ] && break; sleep 2; done`, again until the file exists. Never end your turn while it runs.
+- A command over 3 minutes runs with `run_in_background: true` and a `timeout` (at most 2 h), started and waited for as
+  `~/.claude/agents/dev-run.md` says, never polled or sleep-looped.
 - Two fixes failed: stop and return the findings (repro, hypotheses tried, evidence) and `needs: lex to re-plan <what>`.
 
 ## Report (at most 12 lines, then the sections)
