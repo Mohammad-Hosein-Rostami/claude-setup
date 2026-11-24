@@ -1,5 +1,6 @@
 // Tests for how the main-agent cap of home/hooks/agent-budget.mjs frees and re-dates slots: a full type frees the launches whose
-// agent the lead's transcript shows ended after its start (lib/agent-ends.mjs), the transcript is read only for a full type, the
+// agent the lead's transcript shows ended after its start (lib/agent-ends.mjs; a queued message that only quotes a notice frees
+// nothing, for a launch or a SendMessage resume), the transcript is read only for a full type, the
 // stale fallback (STALE_MS, PENDING_MS) still holds, SubagentStart re-dates a running agent and resumes a stopped one, and
 // SubagentStop keeps the stopped agent's type (stoppedTypes) for a resume. Each test has a private HOME (the record) and its own
 // session id; call counters live in a private TMPDIR.
@@ -11,7 +12,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { hookEnv } from './hook-env.mjs';
 import { agentHomeEnv } from './agent-home-helpers.mjs';
-import { TAIL_BYTES, junkText, noticeLine, writeTranscript } from './agent-ends-notices.mjs';
+import { TAIL_BYTES, junkText, noticeContent, noticeLine, writeTranscript } from './agent-ends-notices.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 process.env.TMPDIR = makeTempDir('agent-cap-ends-tmp-'); // the call counters (callCounterPath) go under the temp root of this process
@@ -28,6 +29,10 @@ const DEAD = 'agent-a2';
 const LAUNCHED_AGO_MS = 10 * MINUTE_MS;
 const ENDED = ['completed', 'failed', 'killed', 'stopped'];
 const HEAD_BYTES = 1024 * 1024; // filler before the last 16 MB, so the transcript is bigger than the tail
+const STOPPED_DEV = 'agent-a0';
+const CAP_DENY_START = 'agent cap: 3 dev agents of this session run';
+/** A queued message that quotes the dead dev's notice after other text: no end (lib/agent-ends.mjs NOTICE_HEADER). */
+const quotedNotice = (at) => noticeLine(DEAD, 'failed', at, { content: `the dev said:\n${noticeContent(DEAD, 'failed')}` });
 let counter = 0;
 
 function newSession() {
@@ -64,6 +69,18 @@ const guardDev = (s, transcriptPath) => {
   const stdout = spawnHook(GUARD, { hook_event_name: 'PreToolUse', session_id: s.session, cwd: s.home, tool_name: 'Agent', transcript_path: transcriptPath, tool_input: toolInput }, s);
   return stdout === '' ? null : JSON.parse(stdout).hookSpecificOutput;
 };
+/** Sends a SendMessage to the stopped dev through the guard; null when it printed nothing (the message goes). */
+const resumeStoppedDev = (s, transcriptPath) => {
+  const toolInput = { to: STOPPED_DEV, message: 'go on' };
+  const stdout = spawnHook(GUARD, { hook_event_name: 'PreToolUse', session_id: s.session, cwd: s.home, tool_name: 'SendMessage', transcript_path: transcriptPath, tool_input: toolInput }, s);
+  return stdout === '' ? null : JSON.parse(stdout).hookSpecificOutput;
+};
+/** 3 dev started LAUNCHED_AGO_MS ago and a stopped dev the record knows the type of; returns their launch time. */
+function seedThreeDevAndStopped(s) {
+  const at = Date.now() - LAUNCHED_AGO_MS;
+  seedStore(s, { launches: DEVS.map((agent, n) => ({ key: `k${n}`, type: 'dev', at, agent })), stopped: [STOPPED_DEV], stoppedTypes: { [STOPPED_DEV]: 'dev' } });
+  return at;
+}
 const budgetEvent = (s, event, agentId, agentType) => assert.equal(spawnHook(BUDGET, { hook_event_name: event, session_id: s.session, agent_id: agentId, agent_type: agentType }, s), '');
 
 // ---- dead agents freed (C1-C5) ----
@@ -102,6 +119,26 @@ test('a notice dated before the launch, a status that is no end, another id or m
   }
 });
 
+test('a queued message that quotes a dead dev\'s notice frees nothing: the 4th dev launch is denied by the cap and all 3 still run', () => {
+  const s = newSession();
+  const at = seedThreeDev(s);
+  const out = guardDev(s, transcriptOf([quotedNotice(at + MINUTE_MS)]));
+  assert.equal(out?.permissionDecision, 'deny', JSON.stringify(out));
+  assert.ok(out.permissionDecisionReason.startsWith(CAP_DENY_START), out.permissionDecisionReason);
+  assert.deepEqual(launchedAgents(s), DEVS);
+});
+
+test('a SendMessage resume of a stopped dev: a quoted notice frees nothing (denied), the real notice frees a slot (it goes)', () => {
+  const quoted = newSession();
+  const quotedAt = seedThreeDevAndStopped(quoted);
+  const out = resumeStoppedDev(quoted, transcriptOf([quotedNotice(quotedAt + MINUTE_MS)]));
+  assert.equal(out?.permissionDecision, 'deny', JSON.stringify(out));
+  assert.ok(out.permissionDecisionReason.startsWith(CAP_DENY_START), out.permissionDecisionReason);
+  const real = newSession();
+  const realAt = seedThreeDevAndStopped(real);
+  assert.equal(resumeStoppedDev(real, transcriptOf([noticeLine(DEAD, 'failed', realAt + MINUTE_MS)])), null);
+});
+
 test('a missing, folder, non-string or nonexistent transcript_path frees nothing, and the cap still denies', () => {
   const folder = makeTempDir('agent-cap-ends-folder-');
   for (const path of [undefined, folder, 42, join(folder, 'none.jsonl')]) {
@@ -122,6 +159,17 @@ test('a transcript over 16 MB with the notice in its last 16 MB frees the slot; 
   seedThreeDev(kept);
   writeFileSync(lead, `${notice}\n${junkText(TAIL_BYTES + HEAD_BYTES)}`);
   assert.equal(claimDev(kept, lead).state, 'full');
+});
+
+test('a transcript over 16 MB whose last 16 MB start exactly at the notice line frees the slot', () => {
+  const s = newSession();
+  const at = seedThreeDev(s);
+  const notice = `${noticeLine(DEAD, 'failed', at + MINUTE_MS)}\n`;
+  const text = junkText(HEAD_BYTES) + notice + junkText(TAIL_BYTES - Buffer.byteLength(notice));
+  const lead = join(makeTempDir('agent-cap-ends-edge-'), 'lead.jsonl');
+  writeFileSync(lead, text);
+  assert.equal(text[Buffer.byteLength(text) - TAIL_BYTES - 1], '\n', 'precondition: the tail starts on a line boundary');
+  assert.equal(claimDev(s, lead).state, 'recorded');
 });
 
 test('a dev launch while only 2 dev run does not read the transcript: a dev it shows ended keeps its launch', () => {

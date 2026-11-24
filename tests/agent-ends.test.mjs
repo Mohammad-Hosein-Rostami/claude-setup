@@ -1,12 +1,13 @@
 // Tests for home/hooks/lib/agent-ends.mjs agentEndTimes: the end times of background agents as the lead's transcript shows them
-// (Claude Code's task notifications), read from at most the last 16 MB, with any line in another shape, any other status and any
-// transcript that cannot be read showing no end. Each test writes its own transcript in a private temp folder.
+// (Claude Code's task notifications), read from at most the last 16 MB, with any line in another shape, any other status, a queued
+// message that only quotes a notice and any transcript that cannot be read showing no end. Each test writes its own transcript in a
+// private temp folder.
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { agentEndTimes } from '../home/hooks/lib/agent-ends.mjs';
-import { TAIL_BYTES, junkText, noticeLine, writeTranscript } from './agent-ends-notices.mjs';
+import { TAIL_BYTES, junkText, noticeContent, noticeLine, writeTranscript } from './agent-ends-notices.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const ENDED = ['completed', 'failed', 'killed', 'stopped'];
@@ -15,6 +16,15 @@ const OTHER_AGENT = 'agent-a9';
 const ENDED_AT = Date.parse('2026-11-24T10:00:00.000Z');
 const HEAD_BYTES = 1024 * 1024; // filler before the tail, so the file is bigger than TAIL_BYTES
 const CUT_PREFIX = 'y'.repeat(100); // the part of a cut line that lies before the tail
+// A notice as Claude Code 2.1.330 queues it: the two optional header fields between the task id and the status, then the rest
+const FULL_HEADER_NOTICE = `<task-notification>\n<task-id>${AGENT}</task-id>\n<tool-use-id>toolu_01abc</tool-use-id>\n`
+  + '<output-file>/tmp/tasks/agent-a2.output</output-file>\n<status>completed</status>\n<summary>Agent "job" completed</summary>\n</task-notification>';
+// Queued messages that hold a whole notice, but not at the start of the content (a user or an agent quoting one)
+const QUOTED_NOTICES = {
+  'after other text': `look at this:\n${noticeContent(AGENT, 'failed')}`,
+  'after a space': ` ${noticeContent(AGENT, 'failed')}`,
+  'after a newline': `\n${noticeContent(AGENT, 'failed')}`,
+};
 
 const transcriptPath = () => join(makeTempDir('agent-ends-'), 'lead.jsonl');
 const endsOf = (path, ids = [AGENT]) => agentEndTimes(path, ids);
@@ -50,6 +60,20 @@ test('a malformed line, a notice with no task-id and the marker text on a line o
   assert.deepEqual([...endsOf(path)], [[AGENT, later]]);
 });
 
+test('a queued message that holds a notice but does not start with it (a quote) shows no end; the same notice at the start counts', () => {
+  for (const [name, content] of Object.entries(QUOTED_NOTICES)) {
+    const path = writeTranscript(transcriptPath(), [noticeLine(AGENT, 'failed', ENDED_AT, { content })]);
+    assert.equal(endsOf(path).size, 0, name);
+  }
+  const path = writeTranscript(transcriptPath(), [noticeLine(AGENT, 'failed', ENDED_AT, { content: noticeContent(AGENT, 'failed') })]);
+  assert.deepEqual([...endsOf(path)], [[AGENT, ENDED_AT]], 'the notice itself');
+});
+
+test('a notice with the tool-use-id and output-file header fields before its status counts', () => {
+  const path = writeTranscript(transcriptPath(), [noticeLine(AGENT, 'completed', ENDED_AT, { content: FULL_HEADER_NOTICE })]);
+  assert.deepEqual([...endsOf(path)], [[AGENT, ENDED_AT]]);
+});
+
 test('a missing, non-string, folder or nonexistent transcript_path shows no end and does not throw', () => {
   const folder = makeTempDir('agent-ends-folder-');
   for (const path of [undefined, '', 42, null, { path: folder }, folder, join(folder, 'none.jsonl')]) {
@@ -81,9 +105,9 @@ test('a transcript over 16 MB: a line that starts before the tail is dropped, ev
   assert.equal(endsOf(path).size, 0);
 });
 
-test('REPRO: a transcript over 16 MB whose last 16 MB start exactly at a notice line still reads that notice', () => {
-  // Found on 0caeac89: transcriptTail drops the tail's first line even when the tail starts on a line boundary, so a whole
-  // notice in the last 16 MB is skipped (agentEndTimes returns an empty Map; expected agent-a2 -> its notice time).
+test('a transcript over 16 MB whose last 16 MB start exactly at a notice line still reads that notice', () => {
+  // A bug on 0caeac89: transcriptTail dropped the tail's first line even when the tail started on a line boundary, so a whole
+  // notice in the last 16 MB was skipped (agentEndTimes returned an empty Map; expected agent-a2 -> its notice time).
   const path = transcriptPath();
   const notice = `${noticeLine(AGENT, 'failed', ENDED_AT)}\n`;
   const text = junkText(HEAD_BYTES) + notice + junkText(TAIL_BYTES - Buffer.byteLength(notice));

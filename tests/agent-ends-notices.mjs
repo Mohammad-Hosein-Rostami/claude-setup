@@ -1,11 +1,14 @@
 // The lead transcript lines the agent-ends tests write: Claude Code's task notification for a background agent's end (the shape
-// home/hooks/lib/agent-ends.mjs reads) and filler lines. Exports: TAIL_BYTES, noticeLine, junkText, writeTranscript.
+// home/hooks/lib/agent-ends.mjs reads) and filler lines. Exports: TAIL_BYTES, noticeContent, noticeLine, junkText, writeTranscript.
 // Invariant: writes only the file it is given.
 import { writeFileSync } from 'node:fs';
 
 /** The tail lib/agent-ends.mjs reads (its MAX_READ_BYTES, not exported). */
 export const TAIL_BYTES = 16 * 1024 * 1024;
 const JUNK_LINE_BYTES = 1024;
+
+/** The queued text of one task notification: the tag, the task id and the status. */
+export const noticeContent = (id, status) => `<task-notification>\n<task-id>${id}</task-id>\n<status>${status}</status>\n</task-notification>`;
 
 /**
  * One task notification line as the lead's transcript holds it.
@@ -15,8 +18,7 @@ const JUNK_LINE_BYTES = 1024;
  * @param {object} [fields] fields that replace the line's own (type, operation, content)
  */
 export function noticeLine(id, status, at, fields = {}) {
-  const content = `<task-notification>\n<task-id>${id}</task-id>\n<status>${status}</status>\n</task-notification>`;
-  return JSON.stringify({ type: 'queue-operation', operation: 'enqueue', timestamp: new Date(at).toISOString(), content, ...fields });
+  return JSON.stringify({ type: 'queue-operation', operation: 'enqueue', timestamp: new Date(at).toISOString(), content: noticeContent(id, status), ...fields });
 }
 
 /** `bytes` of filler, whole lines of JUNK_LINE_BYTES each and a shorter last line; every line ends with a newline. */
