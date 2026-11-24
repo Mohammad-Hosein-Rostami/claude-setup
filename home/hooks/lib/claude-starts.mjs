@@ -2,7 +2,7 @@
 // started there is a new session with no agent_type, so it would act outside max's click rule (lib/click-only.mjs).
 // A start: a command word that is `claude` with any words but a help or version flag, the @anthropic-ai/claude-code package (any
 // version) or a script file inside it (`node .../@anthropic-ai/claude-code/cli.js`), or the long-run tool (`long-run.mjs`) with a verb
-// that starts or drives a run. Every word of a simple command is tried as a command word, as lib/dangerous-scan.mjs does, so a launcher
+// that starts or drives a run (LONG_RUN_STARTS, `autostart on`). Every word of a simple command is tried as a command word, as lib/dangerous-scan.mjs does, so a launcher
 // no list knows (`setsid`, `screen -dm`, `script -q f`, `caffeinate`) and a package runner (`pnpm dlx`, `npm exec`) count too; a
 // command that only shows or forwards its words (lib/dangerous-scan.mjs SCAN_STOP: `echo`, `grep`, `git`, `ssh` ...) is not scanned
 // unless it is a package runner, and for `find` only the command after -exec|-execdir|-ok|-okdir is. A scanned word that holds a blank
@@ -23,7 +23,10 @@ const INFO_FLAGS = new Set(['--version', '--help', '-v', '-h']); // claude print
 const CLAUDE_PACKAGE = '@anthropic-ai/claude-code';
 const CLAUDE_PACKAGE_SCRIPT = /(?:^|[/\\])@anthropic-ai[/\\]claude-code[/\\].*\.[cm]?js$/; // node_modules/@anthropic-ai/claude-code/cli.js
 const LONG_RUN_SCRIPT = 'long-run.mjs';
-const LONG_RUN_STARTS = new Set(['start', 'resume', 'rerun', 'schedule', 'tell', 'takeover']); // each starts or drives a `claude -p`
+// each starts or drives a `claude -p` (schedule: a later start); help, check, status, watch, log, pause, stop, summary, prune, events
+// and notify only read or write the run's files
+const LONG_RUN_STARTS = new Set(['start', 'resume', 'rerun', 'schedule', 'tell', 'takeover', 'drive']);
+const LONG_RUN_AUTOSTART = 'autostart'; // `autostart on` loads a login agent that runs `resume --stale` at once; `off` and `status` do not
 const FIND_RUNS = new Set(['-exec', '-execdir', '-ok', '-okdir']);
 const MAX_SCAN_WORDS = 100; // as lib/dangerous-scan.mjs: a launcher's own words are few
 const MAX_NESTING = 24; // like the guard's own limit; deeper bodies are not read (the guard asks about those)
@@ -35,7 +38,8 @@ function startsAt(words) {
   if (cmd === undefined) return false;
   if (cmd === CLAUDE) return !args.some((word) => INFO_FLAGS.has(word));
   if (packageName(words[at]) === CLAUDE_PACKAGE || CLAUDE_PACKAGE_SCRIPT.test(words[at])) return true;
-  return cmd === LONG_RUN_SCRIPT && LONG_RUN_STARTS.has(args[0] ?? '');
+  if (cmd !== LONG_RUN_SCRIPT) return false;
+  return LONG_RUN_STARTS.has(args[0] ?? '') || (args[0] === LONG_RUN_AUTOSTART && args[1] === 'on');
 }
 
 /** The indexes of `segment` that may start a command: the real command word, and the later words the header names. */
