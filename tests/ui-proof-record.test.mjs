@@ -112,7 +112,7 @@ test('matrixArg reads --matrix <path> and --matrix=<path>', () => {
   assert.equal(matrixArg(['--out', 'o']), null);
 });
 
-const cli = (args, cwd) => spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf8', env: process.env });
+const cli = (args, cwd) => spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf8', env: cleanEnv() });
 
 test('ui-proof record: usage errors exit 2; a run that stops before its verdict passes its code through and leaves no record', () => {
   const dir = repo();
