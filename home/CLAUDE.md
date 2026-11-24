@@ -18,6 +18,7 @@ the brief come first; these lines hold for everyone.
   `needs: <agent> to <task>, blocks: <what>`, sent to `main` by SendMessage from a background run, else in its report.
 - A `needs:` line arrives: the boss starts that agent, keeps track of who is on what, and sends the result to the asking agent by
   its id (SendMessage).
+- Long unattended jobs use `long-run` (skill `long-run`); the main session starts a run only when the owner asks in chat.
 - The final answer says what changed and what was not run.
   A command the owner must run is given with the machine and the folder it runs in.
 

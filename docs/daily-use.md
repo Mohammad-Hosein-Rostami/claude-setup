@@ -83,6 +83,15 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   command sent again runs. Every ask and its outcome is in `~/.claude/logs/guard.jsonl`.
 - `tess` always runs in the background and reports to the boss. Only the landing of a risky change waits for its
   `landing: ok`; when it finds a real bug in work that already landed, the boss starts the fix at once and tells you in one line.
+- A job of several long steps that must survive crashes, reboots and usage limits with nobody watching: `long-run`
+  (`node ~/.claude/tools/long-run/long-run.mjs`). Each step is one `claude -p` boss session with its own team; a crash, limit,
+  pause or takeover continues the same session. Start it from a terminal (`check job.json`, then `start job.json`) or ask a
+  Claude session in plain words (the `long-run` skill writes the job, shows the plan and starts only on your typed yes, then
+  reports each event in one line). Then `status`, `log <run> <step> --tail 20`, `watch`, `pause` / `stop <run> [step]`,
+  `takeover <run> <step>` (three lines to paste: you are in that session), `resume <run>` (`--answer "..."` for a question),
+  `tell <run> <step> "..."` (reaches a running step at its next tool end) and `events --follow`. Each boss start costs about
+  35k new cache tokens, so give one boss many small tasks and use parallel steps only for a few big ones. Details, including
+  how this parallel compares with Claude Code's own: `home/tools/long-run/README.md`.
 - To bring your other machines along after the last landing, run the machine sync on the machine you landed on, in the repo
   folder, as `docs/setup.md` ("Sync the machines") gives it; it never pushes.
 
