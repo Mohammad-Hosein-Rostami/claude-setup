@@ -6,8 +6,8 @@
 //                        {pid, startedAt, repo, command, token}
 // Invariants:
 // - Arrival order: a waiter takes a slot only when fewer waiters are ahead of it than slots are free.
-// - A crashed holder never blocks the queue for good: a holder whose pid is gone, or that is older than HOLDER_MAX_MS, or a slot
-//   folder that got no holder.json within HOLDER_WRITE_GRACE_MS, is removed by the next waiter. A ticket whose pid is gone or that
+// - A crashed holder never blocks the queue for good: a holder whose pid is gone, that is older than HOLDER_MAX_MS or has no valid
+//   pid or start time, or a slot folder that got no holder.json within HOLDER_WRITE_GRACE_MS, is removed by the next waiter. A ticket whose pid is gone or that
 //   was not rewritten for TICKET_STALE_MS is removed the same way.
 // - Release removes the slot only while it still holds this run's token, so it never frees a slot another run took.
 // - Left over: a holder that takes a slot in the instant between another waiter's stale check of that slot and its rename can lose
@@ -63,13 +63,16 @@ function namesIn(folder, pattern) {
   }
 }
 
-/** True when the slot folder's holder no longer runs, is too old, or was never written. */
+/** True when the slot folder's holder no longer runs, is too old, was never written, or has no valid pid or start time. */
 function isStaleSlot(slotDir, holder) {
   if (holder === null) {
     const stats = statSync(slotDir, { throwIfNoEntry: false });
     return stats !== undefined && Date.now() - stats.mtimeMs > HOLDER_WRITE_GRACE_MS;
   }
-  return !isAlive(holder.pid) || Date.now() - Date.parse(holder.startedAt) > HOLDER_MAX_MS;
+  // a holder nobody can judge (`{}`, a planted or foreign file) would hold its slot for good
+  const startedAt = Date.parse(holder.startedAt);
+  if (!Number.isInteger(holder.pid) || holder.pid <= 0 || !Number.isFinite(startedAt)) return true;
+  return !isAlive(holder.pid) || Date.now() - startedAt > HOLDER_MAX_MS;
 }
 
 /** Removes the stale slot folders. Renamed aside first, so of many waiters on one stale slot only one removes it. */
