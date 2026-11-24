@@ -1,10 +1,11 @@
 // Outward actions that always need the owner's confirmation: `git push`, `gh release *`, `gh pr merge`, `gh repo edit --visibility`,
 // `gh secret set`, `gh workflow run`, a `gh api graphql` mutation, package publish, and the merge and release verbs and `api` writes of
-// glab, hub and tea.
+// glab, hub and tea, and the deploy and cloud verbs of lib/deploy.mjs (kubectl apply, terraform apply, vercel --prod ...).
 // Exports: parsePushArgs(rest), pushAsk(options), outwardAsk(cmd, args) -> reason | undefined.
 // The guard turns a reason into a PreToolUse permissionDecision "ask", which prompts even in bypassPermissions mode.
 // Read-only or rehearsal forms stay allowed: `git push --dry-run`, `npm publish --dry-run`, `gh release list|view|download`.
 // Pure, no I/O. Deny rules (force push, mirror, delete) are checked first by the caller and win over an ask.
+import { deployAsk } from './deploy.mjs';
 
 const GH_VALUE_OPTIONS = new Set(['-R', '--repo', '--hostname']);
 const GH_RELEASE_READ = new Set(['list', 'view', 'download']);
@@ -133,10 +134,13 @@ function forgeAsk(cmd, args) {
 
 /**
  * Reason to ask the owner before running this command, or undefined.
- * @param {string} cmd command name (gh, glab, hub, tea, npm, pnpm, yarn, bun, lerna, npx; others give undefined)
+ * @param {string} cmd command name (gh, glab, hub, tea, npm, pnpm, yarn, bun, lerna, npx, and the deploy tools of lib/deploy.mjs;
+ *   others give undefined)
  * @param {string[]} args words after the command
  */
 export function outwardAsk(cmd, args) {
+  const deploy = deployAsk(cmd, args);
+  if (deploy !== undefined) return deploy;
   if (cmd === 'gh') return ghAsk(args);
   if (cmd === 'glab' || cmd === 'hub' || cmd === 'tea') return forgeAsk(cmd, args);
   return PUBLISHERS.has(cmd) ? publishAsk(cmd, args) : undefined;

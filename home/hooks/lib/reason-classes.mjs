@@ -16,6 +16,7 @@ import { BRANCH_MOVE_ADVICE } from './branch-move.mjs';
 import { LOCKFILES, lockfileAdvice } from './command-checks.mjs';
 import { COPY_BRANCH_ADVICE_PATTERN } from './git-advice.mjs';
 import { MERGE_COMMIT_ADVICE } from './merge-commit.mjs';
+import { DEPLOY_REASON_TAIL, DEPLOY_TOOLS } from './deploy.mjs';
 import { DOCKER_RM_ADVICE } from './docker-advice.mjs';
 import { RISKY_REASON } from './raw-risk.mjs';
 import { ARITHMETIC_REASON, RUNTIME_VALUE_REASON } from './runtime-values.mjs';
@@ -111,6 +112,7 @@ const ASK_CLASS_PATTERNS = [
   ['interpreter reading code from stdin', /^\S+ reads its code from stdin/],
   ['$IFS in the line', /^the line expands \$IFS/],
   ['package publish', /^\S+ publish releases a package to a registry/],
+  ['deploy or cloud change', new RegExp(`^(?:${DEPLOY_TOOLS.join('|')}) .+ ${DEPLOY_REASON_TAIL}$`)], // tool and verb are fixed text (lib/deploy.mjs)
   ['keychain secret print', /^security \S+ prints a stored secret into the transcript/],
   ['gh auth token print', /^gh auth token prints a stored secret into the transcript/],
   ['gh ssh-key add of a private key', /^gh ssh-key add uploads a key file that is not a \.pub public key/],
@@ -131,12 +133,12 @@ const ASK_CLASS_PATTERNS = [
 ];
 export const ASK_CLASSES = ASK_CLASS_PATTERNS.map(([name]) => name);
 
-// The owner's standing rule "confirm every outward-facing action" (push, publish, PR merge, prod-host writes): these classes keep
+// The owner's standing rule "confirm every outward-facing action" (push, publish, PR merge, deploy, prod-host writes): these classes keep
 // their dialog under CLAUDE_GUARD_ASK=allow.
 const OUTWARD_CLASSES = new Set(['force push', '+refspec force push', 'git push --mirror', 'remote branch or tag delete', 'git push',
   'gh api graphql mutation', 'gh api write to a repository', 'gh repo visibility change', 'gh secret change', 'gh workflow run',
   'gh repo delete or rename', 'gh release change', 'gh pr merge', 'forge merge', 'forge release change', 'forge api write',
-  'package publish', 'gh ssh-key add of a private key', 'production host write', 'credential file next to a sender']);
+  'package publish', 'deploy or cloud change', 'gh ssh-key add of a private key', 'production host write', 'credential file next to a sender']);
 // What runs is hidden from the guard, so it may be one of those: these keep their dialog too (a class-less reason as well).
 const HIDDEN_CLASSES = new Set([...BOUNCE_CLASSES, 'git runs a command it cannot read', 'git -c alias', 'interpreter code that builds its command',
   'PowerShell -EncodedCommand', 'interpreter reading code from stdin', '$IFS in the line', 'shell reading commands from stdin', 'env -S',

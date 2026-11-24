@@ -35,12 +35,15 @@ const CASE_INSENSITIVE_PLATFORMS = new Set(['win32', 'darwin']);
  */
 export const commandCase = (name) => (CASE_INSENSITIVE_PLATFORMS.has(process.platform) ? name.toUpperCase().toLowerCase() : name);
 
+const WINDOWS_PROGRAM_SUFFIX = /\.(?:exe|cmd|bat)$/i; // how Windows names a program, a batch shim or an npm CLI shim
+
 /**
- * Command word -> bare name: `/bin/rm`, `\rm` and `rm.exe` all become `rm`, and `RM` too where names ignore case (commandCase). A word
+ * Command word -> bare name: `/bin/rm`, `\rm`, `rm.exe` and the Windows shims `rm.cmd` / `rm.bat` (npm installs a CLI as `vercel.cmd`)
+ * all become `rm`, and `RM` too where names ignore case (commandCase). A word
  * with a `$` keeps its case: the shell reads a variable's name exactly (`$EDITOR` is not `$editor`).
  */
 export function commandName(word) {
-  const name = basenameOf(word).replace(/\.exe$/i, '');
+  const name = basenameOf(word).replace(WINDOWS_PROGRAM_SUFFIX, '');
   return name.includes('$') ? name : commandCase(name);
 }
 

@@ -24,7 +24,8 @@
 // never ask (rm refuses them), nor does a bare glob of the folder this line's `mktemp -d` made. A nested body (`$(...)`, backticks) of a line that has a `cd`,
 // `pushd` or `popd` is judged with the folder unknown. Plain ASK: git --no-verify (and unique prefixes), `git -c core.hooksPath`, `HUSKY=0 git`, `git push`
 // (not --dry-run), `git update-ref` (every time), `gh release *`, `gh pr merge`, the merge and release verbs of glab, hub (which also gets the git rules) and
-// tea, package publish (lib/outward.mjs), ssh/scp/rsync/psql/mysql that write to a production host (lib/remote.mjs; list in ~/.claude/private/prod-hosts),
+// tea, package publish (lib/outward.mjs), deploy and cloud verbs (`kubectl apply`, `terraform apply`, `vercel --prod`, `aws s3 cp` to s3:// ...:
+// lib/deploy.mjs; an outward ask from agent type max runs only after a click on Allow: lib/timed-ask.mjs), ssh/scp/rsync/psql/mysql that write to a production host (lib/remote.mjs; list in ~/.claude/private/prod-hosts),
 // `security find-*-password -w|-g` (not of the account tool's own service: lib/account-reads.mjs) / `dump-keychain` / `export` and `gh auth token` (print a
 // stored secret), `gh ssh-key add` of a file that is not `*.pub`, and a private credential file (`.ssh/id_*` or any non-public file directly under `.ssh`,
 // `.aws/credentials`, `.netrc`, gh `hosts.yml`, `.kube/config`, `.npmrc`, `.docker/config.json`, `.pypirc`) in one command line with a network sender or cloud

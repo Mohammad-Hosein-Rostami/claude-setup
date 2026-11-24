@@ -2,18 +2,24 @@
 // `caffeinate -i git push`, `chrt 10 dd of=/dev/sda`) by trying every later word of a simple command as the start of a command.
 // Exports: scanWrapped(words, parsed, check) -> string[] reasons; SCAN_VERBS; SCAN_STOP.
 // Only the verbs of the rule set are tried (rm, git, dd, mkfs*, wipefs, blkdiscard, shred, gh, glab, hub, tea, package managers, ssh/scp/rsync,
-// psql/mysql, shells), and only after the real command word, so `rm -rf node_modules` and `git status` are unaffected.
+// psql/mysql, shells, the deploy tools of lib/deploy.mjs), and only after the real command word, so `rm -rf node_modules` and `git status`
+// are unaffected. `vercel` deploys with no words at all, so it is tried only where a package runner runs it (`npx vercel`): a folder
+// named vercel (`mkdir vercel`) must not ask.
 // A scan is skipped when the real command only displays or forwards words (SCAN_STOP): `echo rm -rf /`, `grep git push`,
 // `man rm`, `git rm -r x`, `docker run img rm -rf /`, `ssh host rm -rf /` (that rm is not local) must stay silent. The package runners
-// `pnpm exec|dlx`, `yarn exec|dlx`, `npm exec`, `bun x` and `npx` are the exception: what follows them runs, so it is scanned.
+// `pnpm exec|dlx`, `yarn exec|dlx`, `npm exec`, `bun x`, `bunx`, `pnpx` and `npx` are the exception: what follows them runs, so it is scanned.
 // git's own programs (`git-push`) are the git verb (lib/command-of.mjs asGitSubcommand); the stop list reads the name as written, so after
 // `git-foo` (a program the guard does not know) the scan runs as after any unknown command.
 // Pure, no I/O. Invariant: a false positive costs the owner a dialog, so when in doubt the verb is not on the list.
 import { asGitSubcommand, commandName } from './command-of.mjs';
+import { DEPLOY_TOOLS } from './deploy.mjs';
+
+// deploy tools whose bare name already deploys: tried only right where a package runner runs its words (see the header)
+const RUNNER_ONLY_VERBS = new Set(['vercel']);
 
 /** Verbs whose rules are worth a scan: the destructive ones, outward actions, remote writes, nested shells. */
 export const SCAN_VERBS = new Set(['rm', 'git', 'dd', 'wipefs', 'blkdiscard', 'shred', 'gh', 'glab', 'hub', 'tea', 'npm', 'pnpm', 'yarn', 'bun', 'lerna', 'npx',
-  'diskutil', 'ssh', 'scp', 'rsync', 'psql', 'mysql', 'bash', 'sh', 'zsh', 'ksh', 'dash']);
+  'diskutil', 'ssh', 'scp', 'rsync', 'psql', 'mysql', 'bash', 'sh', 'zsh', 'ksh', 'dash', ...DEPLOY_TOOLS.filter((tool) => !RUNNER_ONLY_VERBS.has(tool))]);
 // a wrapper's own words are few; the cap keeps the scan linear-ish on a huge file list (each hit re-reads the words after it)
 const MAX_SCAN_WORDS = 100;
 const MKFS_VERB = /^(?:mkfs(?:\.\w+)?|newfs(?:_\w+)?)$/;
@@ -25,13 +31,13 @@ export const SCAN_STOP = new Set(['echo', 'printf', 'grep', 'egrep', 'fgrep', 'r
   'zsh', 'ksh', 'dash']);
 
 // package runners that execute another command (`pnpm exec rm -rf /`, `npx git push`): unlike `pnpm run x` (a package script), their words ARE a command
-const RUNNER_WORDS = new Map([['pnpm', ['exec', 'dlx']], ['yarn', ['exec', 'dlx']], ['npm', ['exec', 'x']], ['bun', ['x']], ['npx', null]]);
+const RUNNER_WORDS = new Map([['pnpm', ['exec', 'dlx']], ['yarn', ['exec', 'dlx']], ['npm', ['exec', 'x']], ['bun', ['x']], ['npx', null], ['bunx', null], ['pnpx', null]]);
 const runsCommand = (cmd, args) => RUNNER_WORDS.has(cmd) && (RUNNER_WORDS.get(cmd) === null || args.some((a) => RUNNER_WORDS.get(cmd).includes(a)));
 
 /** The command a word starts, as the guard's rules name it: its basename, `git` for `git-<sub>` (args: `<sub>` and the words after it). */
 const commandAt = (words, i) => asGitSubcommand({ cmd: commandName(words[i]), args: words.slice(i + 1) });
-const isVerbWord = (word) => !word.startsWith('-') && !word.includes('=') && !word.includes('$')
-  && (SCAN_VERBS.has(commandAt([word], 0).cmd) || MKFS_VERB.test(commandName(word)));
+const isVerbWord = (word, afterRunner) => !word.startsWith('-') && !word.includes('=') && !word.includes('$')
+  && (SCAN_VERBS.has(commandAt([word], 0).cmd) || MKFS_VERB.test(commandName(word)) || (afterRunner && RUNNER_ONLY_VERBS.has(commandName(word))));
 
 /**
  * @param {string[]} words normalised words of one simple command (variables substituted, ANSI-C decoded)
@@ -41,11 +47,12 @@ const isVerbWord = (word) => !word.startsWith('-') && !word.includes('=') && !wo
  */
 export function scanWrapped(words, parsed, check) {
   const written = commandName(words[parsed.at] ?? '');
-  if (parsed.cmd === undefined || parsed.cmd.startsWith('#') || (SCAN_STOP.has(written) && !runsCommand(parsed.cmd, parsed.args))) return [];
+  const afterRunner = parsed.cmd !== undefined && runsCommand(parsed.cmd, parsed.args);
+  if (parsed.cmd === undefined || parsed.cmd.startsWith('#') || (SCAN_STOP.has(written) && !afterRunner)) return [];
   const reasons = [];
   for (let i = parsed.at + 1; i < Math.min(words.length, parsed.at + 1 + MAX_SCAN_WORDS); i++) {
     if (words[i].startsWith('#')) break; // a comment: the rest of the line is text
-    if (!isVerbWord(words[i])) continue;
+    if (!isVerbWord(words[i], afterRunner)) continue;
     const { cmd, args } = commandAt(words, i);
     reasons.push(...check(cmd, args, i));
   }
