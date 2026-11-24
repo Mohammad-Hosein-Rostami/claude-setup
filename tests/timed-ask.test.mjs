@@ -4,8 +4,8 @@
 // (Esc) / timeout / fail. No test ever opens a real dialog.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { warmExec } from './warm-exec.mjs';
+import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { sharedToolDir } from './shared-tools.mjs';
 import { delimiter, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -41,18 +41,24 @@ process.stdout.write(out[result]);
 process.exit(process.platform === 'linux' ? { allow: 0, deny: 1, timeout: 5 }[result] : 0);
 `;
 
-/** A directory holding a fake dialog tool, plus the env that makes the hooks use it. */
+/** POSIX: one shared folder (a new executable is slow to start) with the fake dialog tool and its script; it reads all per-test data from env. */
+const sharedDialogDir = () => sharedToolDir({
+  'fake.cjs': FAKE_SCRIPT,
+  [dialogExecutable(process.platform)]: '#!/bin/sh\n[ -n "$FAKE_WARM" ] && exit 0\nexec node "$(dirname "$0")/fake.cjs" "$@"\n',
+});
+
+/** A directory holding a fake dialog tool (on POSIX the shared one goes on PATH), plus the env that makes the hooks use it. */
 function fakeDialog(result, extra = {}) {
   const dir = makeTempDir('fake-dialog-');
-  const script = join(dir, 'fake.cjs');
-  writeFileSync(script, FAKE_SCRIPT);
-  const bin = join(dir, dialogExecutable(process.platform) + (process.platform === 'win32' ? '.cmd' : ''));
-  writeFileSync(bin, process.platform === 'win32' ? `@node "${script}" %*\r\n` : `#!/bin/sh\n[ -n "$FAKE_WARM" ] && exit 0\nexec node "${script}" "$@"\n`);
-  chmodSync(bin, 0o755);
-  if (process.platform !== 'win32') warmExec(bin);
+  const tools = process.platform === 'win32' ? dir : sharedDialogDir();
+  if (process.platform === 'win32') {
+    const script = join(dir, 'fake.cjs');
+    writeFileSync(script, FAKE_SCRIPT);
+    writeFileSync(join(dir, `${dialogExecutable(process.platform)}.cmd`), `@node "${script}" %*\r\n`);
+  }
   const out = join(dir, 'asked.json');
   const home = join(dir, 'home'); // the guard keeps per-session state under HOME (bounce store): never the real one
-  const env = cleanEnv({ HOME: home, USERPROFILE: home, PATH: `${dir}${delimiter}${process.env.PATH}`, DISPLAY: ':0', FAKE_DIALOG_RESULT: result, FAKE_DIALOG_OUT: out, CLAUDE_GUARD_LOG: tempLogPath(), ...extra });
+  const env = cleanEnv({ HOME: home, USERPROFILE: home, PATH: `${tools}${delimiter}${process.env.PATH}`, DISPLAY: ':0', FAKE_DIALOG_RESULT: result, FAKE_DIALOG_OUT: out, CLAUDE_GUARD_LOG: tempLogPath(), ...extra });
   for (const name of ['NODE_TEST_CONTEXT', 'SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY', 'CI']) delete env[name];
   return {
     env,
