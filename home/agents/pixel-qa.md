@@ -29,7 +29,7 @@ conditions (else `ui-coverage conditions`). Load `ui-coverage` (Skill tool).
 
 1. Check the tree: report `tip: <full sha>` (`git rev-parse HEAD`). It must equal the tip the brief names and
    `git merge-base --is-ancestor <base> HEAD` must pass; otherwise report "not the tree that lands" and stop, with no verdict.
-2. Run once: `node ~/.claude/tools/ui-check/cli.mjs run --matrix <M> --base-url <U> --no-worse <reference run> --self-test
+2. Run once, through the recorder: `node ~/.claude/tools/ui-proof/ui-proof.mjs record --as pixel-qa -- --matrix <M> --base-url <U> --no-worse <reference run> --self-test
    --out <dir>` (add `--strict` when the matrix has `rule: strict`; the widths come from the matrix). Exit 2 is a setup problem:
    report it, do not loop. Quote its `result:` and `frames:` lines.
 3. Review page: `node ~/.claude/tools/ui-proof/ui-proof.mjs review-page --results <dir> --out <dir>/review --matrix <M>`; give

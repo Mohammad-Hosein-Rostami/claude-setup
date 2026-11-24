@@ -17,6 +17,8 @@ Run exactly the commands the caller gives you, in the folder it names. Fix nothi
 - A verdict comes only from a command that ran to its end in this run. A command that failed to start is no `PASS`; a
   syntax-only check is reported as syntax only. If a command could not run (a missing tool or dependency, a bad path), say which
   and why, and name the project's own install command instead of a verdict.
+- A UI render check (`ui-check run ...`) runs through the recorder so its result can be checked later:
+  `node ~/.claude/tools/ui-proof/ui-proof.mjs record --as dev-run -- <ui-check run arguments>`.
 - Run each command once. Never start a watcher, a poller or a dev server, and never re-run a command until it passes.
 - A command that ends within 3 minutes runs in the foreground with an explicit Bash `timeout`: 600000 for an install or a long
   run, 60000 for a probe.
