@@ -102,6 +102,20 @@ test('DONE_CHECK_SKIP in an untracked settings.local.json is honoured, so it is 
   assert.match(rowsOf(run(fx), fx, 'mine').join('\n'), /^WARN .*DONE_CHECK_SKIP "lint" set in your own untracked .claude\/settings.local.json: our check is off there/m);
 });
 
+test('CLAUDE_POST_EDIT_TRUST_FORMAT in the committed file: INFO ignored, stricter applies; never a WARN', () => {
+  const fx = fixture({ projects: { trust: team({ env: { CLAUDE_POST_EDIT_TRUST_FORMAT: '1' } }) } });
+  const rows = rowsOf(run(fx), fx, 'trust');
+  assert.match(rows.join('\n'), /^INFO .*CLAUDE_POST_EDIT_TRUST_FORMAT "1" set by a team file: ignored, stricter applies/m);
+  assert.ok(!rows.some((row) => row.startsWith('WARN')), rows.join('\n'));
+});
+
+test('CLAUDE_POST_EDIT_TRUST_FORMAT in an untracked settings.local.json is honoured, so it is a WARN', () => {
+  const fx = fixture({ projects: { mine: {} } });
+  git(dirname(fx.project('mine')), 'init', '-q', fx.project('mine'));
+  writeFiles(fx.project('mine'), { '.claude/settings.local.json': { env: { CLAUDE_POST_EDIT_TRUST_FORMAT: '1' } } });
+  assert.match(rowsOf(run(fx), fx, 'mine').join('\n'), /^WARN .*CLAUDE_POST_EDIT_TRUST_FORMAT "1" set in your own untracked .claude\/settings.local.json: our check is off there/m);
+});
+
 test('CLAUDE.local.md importing its project note: INFO now automatic; the file is never edited', () => {
   const fx = fixture({ projects: { alpha: { 'CLAUDE.local.md': '@~/.claude/project-notes/alpha.md\n' } }, notes: { alpha: 'how we combine\n' } });
   const local = join(fx.project('alpha'), 'CLAUDE.local.md');

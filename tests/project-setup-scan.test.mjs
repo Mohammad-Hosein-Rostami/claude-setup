@@ -5,7 +5,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { globMatches, scanProjectSetup, teamSetEnv } from '../home/hooks/lib/project-setup-scan.mjs';
+import { TRUST_ENV } from '../home/hooks/lib/format-trust.mjs';
+import { globMatches, OUR_SWITCHES, scanProjectSetup, teamSetEnv } from '../home/hooks/lib/project-setup-scan.mjs';
 import { git } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -76,6 +77,29 @@ test('settings that change ours: weaker model, our switch, hooks off, permission
   assert.deepEqual(weaker.overrides.map(({ key, effect }) => [key, effect]), [
     ['model', 'weaker-model'], ['CLAUDE_CODE_SUBAGENT_MODEL', 'weaker-model'], ['CLAUDE_CODE_EFFORT_LEVEL', 'weaker-model'],
   ]);
+});
+
+// The format trust switch as post-edit reads it; written out too, so a rename on both sides still shows here.
+const TRUST_FORMAT = 'CLAUDE_POST_EDIT_TRUST_FORMAT';
+const TRUSTED = '1';
+
+test('OUR_SWITCHES holds the format trust switch by the very name lib/format-trust.mjs reads (a guard against drift)', () => {
+  assert.equal(TRUST_ENV, TRUST_FORMAT);
+  assert.ok(OUR_SWITCHES.includes(TRUST_ENV), JSON.stringify(OUR_SWITCHES));
+});
+
+test('a committed settings.json that sets the format trust switch is our-switch, its value kept', () => {
+  const setup = scan(project(settings({ env: { [TRUST_FORMAT]: TRUSTED } })));
+  assert.deepEqual(setup.overrides, [{ key: TRUST_FORMAT, value: TRUSTED, effect: 'our-switch' }]);
+});
+
+test('the format trust switch in an untracked settings.local.json only is our-switch too, and no team-set key', () => {
+  const fixture = project({ '.claude/settings.local.json': JSON.stringify({ env: { [TRUST_FORMAT]: TRUSTED } }) });
+  git(fixture.top, 'init', '-q'); // the local file is untracked: the owner's own, so team-switch honours it
+  assert.deepEqual(scan(fixture).overrides, [{ key: TRUST_FORMAT, value: TRUSTED, effect: 'our-switch' }]);
+  assert.deepEqual(teamSetEnv(fixture.top), { keys: new Set(), readable: true, trackedLocal: new Set() });
+  const team = project(settings({ env: { [TRUST_FORMAT]: TRUSTED } }));
+  assert.deepEqual(teamSetEnv(team.top).keys, new Set([TRUST_FORMAT]), 'the committed file sets it: team-switch ignores it');
 });
 
 test('claudeMdExcludes is flagged when it may hide our CLAUDE.md or rules, not for a project-only pattern', () => {

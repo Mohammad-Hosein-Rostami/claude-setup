@@ -75,6 +75,18 @@ test('trustedSwitch: team-only switches are ignored with why, local twins and en
   }
 });
 
+test('trustedSwitch: the format trust switch is ignored and honoured in the same named cases as the skip switch', () => {
+  const key = 'CLAUDE_POST_EDIT_TRUST_FORMAT';
+  for (const one of namedCases(key, '1')) {
+    const dir = project(one.files, one.git ?? null);
+    const env = { [key]: '1', ...one.env };
+    const got = inFolder(dir, () => trustedSwitch(env, key, switchDirs(env, dir)));
+    assert.equal(got.value, one.honoured ? '1' : undefined, one.name);
+    if (one.honoured) assert.equal(got.ignored, null, one.name);
+    else assert.match(got.ignored, one.why, one.name);
+  }
+});
+
 test('trustedSwitch: an unset or empty switch is not ignored; no project folder or the home folder honours the switch as before', () => {
   const dir = project({ [SETTINGS]: envFile('CLAUDE_POST_EDIT_SKIP', 'all') });
   assert.deepEqual(trustedSwitch({}, 'CLAUDE_POST_EDIT_SKIP', [dir]), { value: undefined, ignored: null });
