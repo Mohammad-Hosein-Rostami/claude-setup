@@ -2,8 +2,8 @@
 // Exports: cacheKey, lookup, recordPass, removeOlderThan, CACHE_KEEP_MS.
 // Invariants:
 // - Only passes are stored (the caller records exit 0 on a clean tree only), so a failure always runs again.
-// - The key is the exact tree sha, the command as given (argv, not a joined string), the Node version and the platform: any change
-//   to one of them is a miss.
+// - The key is the exact tree sha, the folder the command runs in (relative to the repo's top), the command as given (argv, not a
+//   joined string), the Node version and the platform: any change to one of them is a miss.
 // - An entry older than CACHE_KEEP_MS is a miss and is removed by the next recordPass.
 import { createHash } from 'node:crypto';
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -15,12 +15,13 @@ const KEY_PATTERN = /^[0-9a-f]{64}$/;
 
 /**
  * The cache key of one run.
- * @param {{ tree: string, command: string[], nodeVersion: string, platform: string }} run the tree sha (`HEAD^{tree}`), the
- *   command and its arguments, `process.version` and `process.platform`
+ * @param {{ tree: string, folder: string, command: string[], nodeVersion: string, platform: string }} run the tree sha
+ *   (`HEAD^{tree}`), the folder relative to the repo's top (`git rev-parse --show-prefix`), the command and its arguments,
+ *   `process.version` and `process.platform`
  * @returns {string} a sha256 hex string
  */
-export function cacheKey({ tree, command, nodeVersion, platform }) {
-  return createHash('sha256').update(JSON.stringify([tree, command, nodeVersion, platform])).digest('hex');
+export function cacheKey({ tree, folder, command, nodeVersion, platform }) {
+  return createHash('sha256').update(JSON.stringify([tree, folder, command, nodeVersion, platform])).digest('hex');
 }
 
 const entryPath = (stateDir, key) => {

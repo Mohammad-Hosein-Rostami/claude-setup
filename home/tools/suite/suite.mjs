@@ -2,7 +2,7 @@
 // Purpose: run a test suite through one machine-wide queue with a pass cache, and pick the tests a change can affect, so parallel
 //   lanes neither overload the machine nor run the same suite on the same tree twice.
 // Usage:
-//   node ~/.claude/tools/suite/suite.mjs run [--repo <dir>] [--slots <n>] [--fresh] [--log <file>] -- <command> [args...]
+//   node ~/.claude/tools/suite/suite.mjs run [--repo <dir>] [--slots <n>] [--cache [--fresh]] [--log <file>] -- <command> [args...]
 //   node ~/.claude/tools/suite/suite.mjs related [--repo <dir>] --base <ref> [--tip <ref>]
 //   node ~/.claude/tools/suite/suite.mjs status
 // Exports: none (a CLI). Exit codes: run: the command's exit (128 + signal number when a signal ended it; 0 on a cache hit);
@@ -10,7 +10,8 @@
 // Invariants:
 // - The command runs as argv, never through a shell, in the repo folder, in its own process group; SIGINT, SIGTERM and exit kill
 //   that group and free the slot.
-// - A pass is cached only when the tree was clean before and after the run and did not change; a failure is never cached.
+// - The pass cache is opt-in (`--cache`, for test runs only: an install or a build has effects a cached pass would skip). A pass is
+//   cached only when the tree was clean before and after the run and did not change; a failure is never cached.
 // - State lives in `$CLAUDE_CONFIG_DIR/state/suite/` (else `~/.claude/state/suite/`): one queue for every session on the machine.
 //   It holds only locks, the cache and logs, so it can be deleted at any time.
 import { spawn, spawnSync } from 'node:child_process';
@@ -25,7 +26,7 @@ import { acquireSlot, queueState } from './lib/queue.mjs';
 import { relatedTests } from './lib/related.mjs';
 
 const USAGE = [
-  'usage: node ~/.claude/tools/suite/suite.mjs run [--repo <dir>] [--slots <n>] [--fresh] [--log <file>] -- <command> [args...]',
+  'usage: node ~/.claude/tools/suite/suite.mjs run [--repo <dir>] [--slots <n>] [--cache [--fresh]] [--log <file>] -- <command> [args...]',
   '       node ~/.claude/tools/suite/suite.mjs related [--repo <dir>] --base <ref> [--tip <ref>]',
   '       node ~/.claude/tools/suite/suite.mjs status',
 ].join('\n');
@@ -73,13 +74,13 @@ const isSlotCount = (value) => Number.isInteger(value) && value >= 1 && value <=
 function readRunArgs(args) {
   const split = args.indexOf('--');
   if (split < 0 || split === args.length - 1) throw new UsageError('run needs the command after --');
-  const options = { repo: { type: 'string' }, slots: { type: 'string' }, fresh: { type: 'boolean' }, log: { type: 'string' } };
+  const options = { repo: { type: 'string' }, slots: { type: 'string' }, cache: { type: 'boolean' }, fresh: { type: 'boolean' }, log: { type: 'string' } };
   const { values } = parseArgs({ args: args.slice(0, split), options, strict: true, allowPositionals: false });
   const slots = values.slots === undefined ? undefined : Number(values.slots);
   if (slots !== undefined && !isSlotCount(slots)) throw new UsageError(`--slots must be a whole number from 1 to ${MAX_SLOTS}`);
   const repo = resolve(values.repo ?? '.');
   if (!statSync(repo, { throwIfNoEntry: false })?.isDirectory()) throw new UsageError(`--repo ${repo} is not a folder`);
-  return { repo, slots, fresh: values.fresh === true, log: values.log, command: args.slice(split + 1) };
+  return { repo, slots, cache: values.cache === true, fresh: values.fresh === true, log: values.log, command: args.slice(split + 1) };
 }
 
 /** The repo's tree sha when its worktree is clean (no change, no untracked file), else null; null outside a repository too. */
@@ -89,6 +90,9 @@ function cleanTree(repo) {
   const tree = runGit(repo, ['rev-parse', '--verify', '--quiet', 'HEAD^{tree}']);
   return tree.status === 0 ? tree.stdout.trim() : null;
 }
+
+/** The folder the command runs in, relative to the repo's top (`pkgA/`, or '' at the top), so two worktrees share a key. */
+const folderInRepo = (repo) => runGit(repo, ['rev-parse', '--show-prefix']).stdout.trim();
 
 /** The last TAIL_BYTES of the log as lines (the first, likely cut, line dropped when the log is longer). */
 function logTail(logPath) {
@@ -160,14 +164,15 @@ function report(exitCode, commandText, logPath) {
   console.log(`log: ${logPath}`);
 }
 
-/** `suite run`: a cache hit prints `cached PASS`; otherwise waits for a slot, runs, reports and records a pass. */
+/** `suite run`: with --cache a hit prints `cached PASS`; otherwise waits for a slot, runs, reports and (with --cache) records a pass. */
 async function runCommand(args) {
   const options = readRunArgs(args);
   const stateDir = stateFolder();
   const config = readConfig(stateDir);
   const commandText = options.command.join(' ');
-  const treeBefore = config.cache ? cleanTree(options.repo) : null;
-  const key = treeBefore && cacheKey({ tree: treeBefore, command: options.command, nodeVersion: process.version, platform: process.platform });
+  const treeBefore = options.cache && config.cache ? cleanTree(options.repo) : null;
+  const folder = treeBefore && folderInRepo(options.repo);
+  const key = treeBefore && cacheKey({ tree: treeBefore, folder, command: options.command, nodeVersion: process.version, platform: process.platform });
   const hit = key && !options.fresh ? lookup(stateDir, key) : null;
   if (hit !== null) {
     console.log(`cached PASS ${treeBefore.slice(0, TREE_PREFIX)} ${hit.at} ${commandText}`);

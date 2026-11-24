@@ -184,7 +184,7 @@ function cacheCase() {
   commit(repo, 'a.txt');
   const script = testCase.fake('marker.mjs', MARKER_FAKE);
   const marker = join(testCase.work, 'marker');
-  const run = (code, ...flags) => suite(['run', '--repo', repo, ...flags, '--', process.execPath, script, marker, String(code)], { env: testCase.env, cwd: repo });
+  const run = (code, ...flags) => suite(['run', '--repo', repo, '--cache', ...flags, '--', process.execPath, script, marker, String(code)], { env: testCase.env, cwd: repo });
   const runs = () => (existsSync(marker) ? readFileSync(marker, 'utf8').split('\n').filter(Boolean).length : 0);
   return { ...testCase, repo, run, runs };
 }
@@ -314,7 +314,7 @@ test('related: a changed settings file selects the full suite', async () => {
   writeFileSync(join(repo, 'settings/base.json'), '{"a":1}\n');
   const result = await related();
   assert.equal(result.stdout, 'full\n');
-  assert.match(result.stderr, /settings\/base\.json changes how every test runs/, 'full although a test names the file');
+  assert.match(result.stderr, /settings\/base\.json can change any test/, 'full although a test names the file');
 });
 
 test('related: an empty range is none, and so is a change of plain docs only', async () => {
