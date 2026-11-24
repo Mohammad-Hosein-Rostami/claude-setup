@@ -247,18 +247,26 @@ test('a stop stores stoppedAt for the agent id', () => {
 
 const base = JSON.parse(readFileSync(join(REPO, 'settings', 'base.json'), 'utf8'));
 
-test('settings/base.json turns workflows off by setting, env and deny rule, and sets the backstop cap', () => {
+/** Claude Code's own default cap of running subagents (docs env-vars; `dNt=20` in the 2.1.330 binary): it caps helpers too. */
+const CLI_DEFAULT_SUBAGENT_CAP = 20;
+
+test('settings/base.json turns workflows off by setting, env and deny rule, and lifts the CLI subagent cap above its default', () => {
   assert.equal(base.disableWorkflows, true);
   assert.equal(base.env.CLAUDE_CODE_DISABLE_WORKFLOWS, '1');
-  assert.equal(base.env.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS, '5');
+  assert.equal(base.env.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS, '100');
   assert.ok(base.permissions.deny.includes('Workflow'));
   assert.ok(!base.permissions.allow.includes('Workflow'));
   assert.ok(!(base.permissions.additionalDirectories ?? []).some((dir) => dir.endsWith('/workflows')));
 });
 
+test('the CLI subagent cap stays far above the hook caps and the CLI default, so helpers are not capped', () => {
+  const cap = Number(base.env.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS);
+  assert.ok(cap > CLI_DEFAULT_SUBAGENT_CAP && cap > MAX_RUNNING_AGENTS, String(cap));
+});
+
 const GOOD_LIVE = {
   disableWorkflows: true,
-  env: { CLAUDE_CODE_DISABLE_WORKFLOWS: '1', CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: '5' },
+  env: { CLAUDE_CODE_DISABLE_WORKFLOWS: '1', CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: '100' },
   permissions: { deny: ['Workflow'] },
   hooks: {
     PreToolUse: [{ matcher: 'Agent', hooks: [{ type: 'command', command: 'node "/home/u/.claude/hooks/agent-model-guard.mjs"' }] }],
@@ -277,7 +285,7 @@ test('check_agent_cap is ok when the live settings match', (t) => {
   if (!hasJq) return t.diagnostic('not run: jq not installed');
   const run = doctorCheck(GOOD_LIVE);
   assert.equal(run.status, 0, run.stdout);
-  assert.match(run.stdout, /^ok\s+agent cap: workflows off, deny Workflow, cap hook wired, env cap 5 = MAX_RUNNING_AGENTS/m);
+  assert.match(run.stdout, /^ok\s+agent cap: workflows off, deny Workflow, cap hook wired, CLI subagent cap 100 \(helpers not capped\)/m);
 });
 
 test('check_agent_cap prints a FAIL line for each drift', (t) => {
@@ -286,11 +294,11 @@ test('check_agent_cap prints a FAIL line for each drift', (t) => {
     [{ ...GOOD_LIVE, disableWorkflows: false }, /FAIL\s+settings\.json: disableWorkflows is not true/],
     [{ ...GOOD_LIVE, disableWorkflows: undefined }, /FAIL\s+settings\.json: disableWorkflows is not true/],
     [{ ...GOOD_LIVE, permissions: { deny: ['Bash(rm *)'] } }, /FAIL\s+settings\.json: permissions\.deny lacks Workflow/],
-    [{ ...GOOD_LIVE, env: { CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: '5' } }, /FAIL\s+settings\.json: env CLAUDE_CODE_DISABLE_WORKFLOWS is not 1/],
+    [{ ...GOOD_LIVE, env: { CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: '100' } }, /FAIL\s+settings\.json: env CLAUDE_CODE_DISABLE_WORKFLOWS is not 1/],
     [{ ...GOOD_LIVE, hooks: { ...GOOD_LIVE.hooks, PreToolUse: [] } }, /FAIL\s+settings\.json: the agent cap hook \(hooks\/agent-model-guard\.mjs\) is not under hooks\.PreToolUse/],
     [{ ...GOOD_LIVE, hooks: { ...GOOD_LIVE.hooks, SubagentStart: [] } }, /FAIL\s+settings\.json: the agent launch counter \(hooks\/agent-budget\.mjs\) is not under hooks\.SubagentStart/],
-    [{ ...GOOD_LIVE, env: { CLAUDE_CODE_DISABLE_WORKFLOWS: '1' } }, /FAIL\s+settings\.json: env CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS is unset/],
-    [{ ...GOOD_LIVE, env: { ...GOOD_LIVE.env, CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: '20' } }, /FAIL\s+settings\.json: env CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS is 20, the hook caps at 5/],
+    [{ ...GOOD_LIVE, env: { CLAUDE_CODE_DISABLE_WORKFLOWS: '1' } }, /FAIL\s+settings\.json: env CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS is unset: Claude Code's default of 20 then caps helpers too/],
+    [{ ...GOOD_LIVE, env: { ...GOOD_LIVE.env, CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: '5' } }, /FAIL\s+settings\.json: env CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS is 5, settings\/base\.json sets 100/],
   ];
   for (const [live, pattern] of cases) {
     const run = doctorCheck(live);

@@ -18,7 +18,7 @@ const KNOBS = ['COPY_BRANCH_DEADLINE_MS', 'COPY_BRANCH_GIT_TIMEOUT_MS'];
 
 const EMPTY_HOME = makeTempDir('copy-brief-home-');
 const ENV = { HOME: EMPTY_HOME, USERPROFILE: EMPTY_HOME };
-const input = (repo, prompt, type = 'implementer') => ({ cwd: repo, tool_input: { subagent_type: type, prompt } });
+const input = (repo, prompt, type = 'dev') => ({ cwd: repo, tool_input: { subagent_type: type, prompt } });
 
 function repoWithLane(lane = 'lane/r4-w1') {
   const repo = makeRepo();
@@ -53,9 +53,9 @@ test('the lane branch itself, a brief with no branch, a rename and a stem that d
 
 test('read-only agents and non-repositories pass; odd input never throws', () => {
   const repo = repoWithLane();
-  assert.equal(copyBranchBriefAdvice(input(repo, 'git checkout -b lane/r4-w1-2', 'reviewer'), ENV).deny, false);
+  assert.equal(copyBranchBriefAdvice(input(repo, 'git checkout -b lane/r4-w1-2', 'tess-review'), ENV).deny, false);
   assert.equal(copyBranchBriefAdvice(input(makeTempDir('not-a-repo-'), 'git checkout -b lane/r4-w1-2'), ENV).deny, false);
-  for (const bad of [undefined, null, 4, {}, { tool_input: { prompt: 5 } }, { cwd: 'relative', tool_input: { subagent_type: 'implementer', prompt: 'git checkout -b a-2' } }]) {
+  for (const bad of [undefined, null, 4, {}, { tool_input: { prompt: 5 } }, { cwd: 'relative', tool_input: { subagent_type: 'dev', prompt: 'git checkout -b a-2' } }]) {
     assert.equal(typeof copyBranchBriefAdvice(bad, ENV).deny, 'boolean');
   }
 });

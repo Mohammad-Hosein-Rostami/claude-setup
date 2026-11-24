@@ -1,14 +1,13 @@
 // Which agent types write files, and the checks that read a session's launch record for a writer. The record itself (every agent's
 // launch, start and stop, and the cap of agents running at once) lives in lib/agent-launches.mjs; this file keeps the questions about
-// writers that commit-gate.mjs, read-only-hold.mjs, copy-branch-brief.mjs, gated-folder.mjs, agent-budget.mjs and the board ask.
+// writers that agent-model-guard.mjs, copy-branch-brief.mjs, gated-folder.mjs, agent-budget.mjs and the board ask.
 // Exports: agentFileWrites(type, env), isWritingAgent(type, env), isReadOnlyBrief(prompt), laneWorktreeOf(prompt, cwd, env) -> {folder, many},
 // worktreeValues(text) (pure), worktreeLineAdvice(prompt, env) (the gate's quote of a near-miss line or of many worktrees), agentTypeOf(type),
-// callCounterPath(session, agentId), readOnlyLaunchOpen(session, agentId, type, env), openWritersOf(session, env, now), writersDirOf(env).
+// callCounterPath(session, agentId), openWritersOf(session, env, now), writersDirOf(env).
 // Store: ~/.claude/state/agent-writers/<session>.json (a historic name: it held writer launches only; there is no migration), written
-// through lib/agent-launches.mjs. `open` (spec-p3 r9-resume, lib/open-writers.mjs) is the launch record the resume notice reads: written
-// before the agent starts, closed only at its SubagentStop, never dropped for idleness, so a writer cut off by an exit or a usage-limit
-// stop is still listed in the next session. readOnlyAgents keeps the ids of started read-only launches after their stop, because
-// commit-gate's read-only hold runs on the same SubagentStop as the stop record (hooks of one event run in parallel).
+// through lib/agent-launches.mjs. `open` (spec-p3 r9-resume, lib/open-writers.mjs) is the writer launch record the status line's board
+// reads: written before the agent starts, closed only at its SubagentStop, never dropped for idleness. readOnlyAgents (the ids of
+// started read-only launches, kept after their stop) is still written; its reader, commit-gate's read-only hold, was removed.
 // Flags (round 9, r9-writer-gate): `isolated` (launched with isolation "worktree", or a brief whose `worktree:` field (lib/brief-fields.mjs)
 // names a lane worktree laneWorktreeOf accepts and no open record of the session holds, lib/agent-launches.mjs) and `readOnly` (a read-only brief,
 // isReadOnlyBrief). The `worktree:` value is the writer's own text, so it is trusted only after `git worktree list` of that folder lists its real path as a linked worktree that is not the lead's folder; git runs
@@ -32,10 +31,12 @@ const AGENT_FILE_BYTES = 64 * 1024;
 const AGENT_TYPE = /^[\w-]{1,64}$/; // a name that can be a file name part; plugin agents (`plugin:name`) have no file here
 const WRITING_TOOLS = /\b(?:Write|Edit|MultiEdit|NotebookEdit)\b/;
 const DEFAULT_TYPE = 'general-purpose'; // what an Agent call with no subagent_type runs
-// A brief line that declares the agent read-only; exact case, at the start of a trimmed line (commit-gate holds the agent to it at its stop)
+// A brief line that declares the agent read-only; exact case, at the start of a trimmed line
 const READ_ONLY_BRIEF_PREFIXES = ['read-only:', 'scratchpad-only:'];
-const WRITER_TYPES = new Set(['implementer', 'ui-implementer', 'general-purpose', 'claude']);
-const READ_ONLY_TYPES = new Set(['scout', 'runner', 'Explore', 'Plan', 'architect']);
+// The agents of home/agents (lex-dev-tess plan): dev and its UI and debug forms write in their own worktree; lex writes plans, never
+// product code, and the rest only read. Built-in types: general-purpose and claude write, Explore and Plan only read.
+const WRITER_TYPES = new Set(['dev', 'dev-ui', 'dev-pixel', 'dev-debug', 'general-purpose', 'claude']);
+const READ_ONLY_TYPES = new Set(['lex', 'lex-scout', 'lex-web', 'pixel-qa', 'dev-run', 'tess', 'tess-review', 'Explore', 'Plan']);
 const NEAR_MISS = /worktree:/i; // a line that meant to name a worktree, quoted (at most MAX_QUOTED_LINE_CHARS) when nothing was taken
 const MAX_QUOTED_LINE_CHARS = 160;
 const MAX_QUOTED_VALUES = 3; // how many of a brief's worktree values the "name one" advice quotes
@@ -80,7 +81,7 @@ function readHead(path, maxBytes) {
  * @param {unknown} type the agent type
  * @param {Record<string, string | undefined>} env HOME / USERPROFILE and CLAUDE_PROJECT_DIR
  * @returns {boolean | undefined} true when its `tools:` line names Write/Edit/MultiEdit/NotebookEdit or is missing (all tools), false
- *   when it names none of them or its `disallowedTools:` line names both Write and Edit (road-cap 14a: visual-qa takes no writer slot),
+ *   when it names none of them or its `disallowedTools:` line names both Write and Edit (road-cap 14a: pixel-qa takes no writer slot),
  *   undefined when there is no such file or the type is no file name
  */
 export function agentFileWrites(type, env) {
@@ -237,23 +238,6 @@ export function callCounterPath(session, agentId) {
   if (!SAFE_ID.test(session ?? '') || !SAFE_ID.test(agentId ?? '')) return null;
   const root = checkedTempRoot();
   return root === null ? null : join(root, 'budget', `${session}--${agentId}`);
-}
-
-/**
- * Whether a stopping agent was launched read-only, for commit-gate's hold when the agent's brief cannot be read: a started read-only
- * launch with this agent id (kept after its stop), or a read-only launch of its type that has not ended. Read without the lock (a read).
- * @param {unknown} session hook input session_id
- * @param {unknown} agentId hook input agent_id
- * @param {unknown} type hook input agent_type
- * @param {Record<string, string | undefined>} env HOME / USERPROFILE
- * @returns {boolean} false when there is no such launch or the store cannot be read
- */
-export function readOnlyLaunchOpen(session, agentId, type, env) {
-  if (typeof agentId !== 'string' || agentId === '') return false;
-  const record = readLaunchRecord(session, env, Date.now());
-  if (record === null) return false;
-  if (record.readOnlyAgents.includes(agentId)) return true;
-  return record.launches.some((launch) => launch.readOnly === true && (launch.agent === agentId || launch.type === agentTypeOf(type)));
 }
 
 /**

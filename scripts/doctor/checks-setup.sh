@@ -185,12 +185,14 @@ check_stop_cap() {
   return 0
 }
 
-# Agent cap (hooks/lib/agent-launches.mjs MAX_RUNNING_AGENTS): the hook caps the agents of a session; the live settings must also switch
-# workflows off (setting, env and deny rule) and set the CLI's own cap, the backstop, to the same number.
+# Agent cap: the hooks cap the main agents of a session; the live settings must also switch workflows off (setting, env and deny
+# rule). CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS is Claude Code's own cap of every running subagent, helpers included (default 20, it
+# cannot be switched off; docs env-vars and the 2.1.330 binary): it must stay at the high value settings/base.json sets, so helpers
+# are never capped.
 check_agent_cap() {
-  local live="$CLAUDE_DIR/settings.json" lib="$REPO/home/hooks/lib/agent-launches.mjs" cap expected problems=0
+  local live="$CLAUDE_DIR/settings.json" cap expected problems=0
   if ! jq -e . "$live" >/dev/null 2>&1; then bad "settings.json missing or invalid JSON (agent cap not checked)"; return; fi
-  expected="$(node -e 'import(require("node:url").pathToFileURL(process.argv[1]).href).then((m) => console.log(m.MAX_RUNNING_AGENTS))' "$lib" 2>/dev/null)"
+  expected="$(jq -r '.env.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS // ""' "$REPO/settings/base.json" 2>/dev/null)"
   if [ "$(jq -r '.disableWorkflows // false' "$live")" != true ]; then bad "settings.json: disableWorkflows is not true (settings/base.json, then scripts/install.sh)"; problems=1; fi
   if ! jq -e '(.permissions.deny // []) | index("Workflow") != null' "$live" >/dev/null; then bad "settings.json: permissions.deny lacks Workflow"; problems=1; fi
   if [ "$(jq -r '.env.CLAUDE_CODE_DISABLE_WORKFLOWS // ""' "$live")" != 1 ]; then bad "settings.json: env CLAUDE_CODE_DISABLE_WORKFLOWS is not 1"; problems=1; fi
@@ -198,9 +200,9 @@ check_agent_cap() {
   if ! jq -e '[.hooks.PreToolUse[]?.hooks[]?.command] | any(. != null and contains("hooks/agent-model-guard.mjs"))' "$live" >/dev/null 2>&1; then bad "settings.json: the agent cap hook (hooks/agent-model-guard.mjs) is not under hooks.PreToolUse (re-run scripts/install.sh)"; problems=1; fi
   if ! jq -e '[.hooks.SubagentStart[]?.hooks[]?.command] | any(. != null and contains("hooks/agent-budget.mjs"))' "$live" >/dev/null 2>&1; then bad "settings.json: the agent launch counter (hooks/agent-budget.mjs) is not under hooks.SubagentStart (re-run scripts/install.sh)"; problems=1; fi
   cap="$(jq -r '.env.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS // ""' "$live")"
-  if [ -z "$cap" ]; then bad "settings.json: env CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS is unset: set it to ${expected:-5} in settings/base.json"; problems=1
-  elif [ "$cap" != "$expected" ]; then bad "settings.json: env CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS is $cap, the hook caps at ${expected:-?} (MAX_RUNNING_AGENTS in home/hooks/lib/agent-launches.mjs)"; problems=1; fi
-  [ "$problems" = 0 ] && ok "agent cap: workflows off, deny Workflow, cap hook wired, env cap $cap = MAX_RUNNING_AGENTS"
+  if [ -z "$cap" ]; then bad "settings.json: env CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS is unset: Claude Code's default of 20 then caps helpers too (settings/base.json sets ${expected:-?}; re-run scripts/install.sh)"; problems=1
+  elif [ "$cap" != "$expected" ]; then bad "settings.json: env CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS is $cap, settings/base.json sets ${expected:-?} (Claude Code's cap of all subagents: keep it high so helpers are not capped)"; problems=1; fi
+  [ "$problems" = 0 ] && ok "agent cap: workflows off, deny Workflow, cap hook wired, CLI subagent cap $cap (helpers not capped)"
   return 0
 }
 

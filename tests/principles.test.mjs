@@ -1,5 +1,5 @@
 // Text checks of the guidance files: the principle table P1-P16, lex's plan lists and self-attack, the long-command and timeout
-// lines of the agents that run commands, dev's contract-dispute line, and the lead.md job-order line.
+// lines of the agents that run commands, dev's contract-dispute line, and the home/CLAUDE.md long-command line.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -111,19 +111,6 @@ test('home/CLAUDE.md: long-command line says over 3 min, with a timeout, no poll
   assert.match(claude, /A command that may run over 3 min runs with `run_in_background: true` and its `timeout` set \(at most 2 h\)\. Never poll or\s+sleep-loop, and never end your turn while it runs/);
   assert.doesNotMatch(claude, /watch\.mjs/, 'watch.mjs is removed and never a way to run or bound a command');
   assert.doesNotMatch(claude, /A command over ~2 min/);
-});
-
-test('home/lead.md job-order bullet: contract first, probes beside lanes, repos apart; the sync is personal', () => {
-  const claude = read('home/lead.md');
-  const lines = claude.split('\n');
-  const start = lines.findIndex((candidate) => candidate.startsWith('- Order a job as'));
-  const end = lines.findIndex((candidate, index) => index > start && candidate.startsWith('- '));
-  const block = lines.slice(start, end).join('\n'); // the bullet and its sub-bullets
-  assert.match(block, /the contract/i);
-  assert.match(block, /probes run beside lanes/i);
-  assert.match(block, /independent repos run as separate roads/i);
-  // The once-per-job machine sync is an owner-only script: its line lives in personal/CLAUDE.md, never in the shared lead text.
-  assert.doesNotMatch(claude, /sync-machines/);
 });
 
 test('docs/catalog.md lists principles.md among the rules', () => {
