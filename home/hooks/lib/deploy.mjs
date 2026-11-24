@@ -9,7 +9,8 @@
 // apply|destroy|import|state rm|mv|push; pulumi up|update|destroy|refresh; vercel with no sub-command, with a path, with
 // deploy|redeploy|promote|rollback|remove|rm, with --prod, alias (not `alias ls|list`), env add|rm|remove|update; netlify|ntl deploy;
 // fly|flyctl deploy|scale|secrets set|unset|apps destroy; wrangler deploy|publish, pages|versions deploy|publish, secret put|delete;
-// firebase deploy (and `hosting:channel:deploy`); gcloud with deploy among its first three command words; aws s3 cp|sync to an s3://
+// firebase deploy (and `hosting:channel:deploy`); gcloud with deploy among its first three command words (not right after a verb
+// such as describe, whose resource name it is); aws s3 cp|sync to an s3://
 // target, s3 mv with an s3:// path, s3 rm|rb, s3api put-*|delete-*|create-*, cloudformation deploy|create-*|update-*|delete-*|
 // execute-change-set, ecs update-service; serverless|sls deploy|remove; eas submit|update and `eas build --auto-submit`. Stay allowed:
 // every other verb (kubectl get|describe|logs|diff, terraform plan|state list|show, helm list|template, docker build, vercel ls|dev|env ls,
@@ -137,8 +138,14 @@ function wranglerAsk([group, action]) {
 const FIREBASE_DEPLOY = /^(?:[\w-]+:)*deploy$/; // `deploy`, `hosting:channel:deploy`
 const firebaseAsk = ([verb]) => (FIREBASE_DEPLOY.test(verb ?? '') ? 'deploy' : undefined);
 
-const GCLOUD_COMMAND_DEPTH = 3; // `gcloud run deploy`, `gcloud beta run deploy`; a later word is a name (`... describe deploy`)
-const gcloudAsk = (words) => (words.slice(0, GCLOUD_COMMAND_DEPTH).includes('deploy') ? '... deploy' : undefined);
+const GCLOUD_COMMAND_DEPTH = 3; // `gcloud run deploy`, `gcloud beta run deploy`; a later word is a name (`... services describe deploy`)
+// verbs that take a resource name: a `deploy` right after one is that name (`gcloud functions describe deploy`), not the deploy verb
+const GCLOUD_NAME_VERBS = new Set(['describe', 'delete', 'list', 'logs', 'read', 'get', 'update', 'create', 'cancel']);
+
+function gcloudAsk(words) {
+  const at = words.slice(0, GCLOUD_COMMAND_DEPTH).indexOf('deploy');
+  return at !== -1 && !GCLOUD_NAME_VERBS.has(words[at - 1]) ? '... deploy' : undefined;
+}
 
 const S3_URL = /^s3:\/\//i;
 const S3_COPIES = new Set(['cp', 'sync']);
