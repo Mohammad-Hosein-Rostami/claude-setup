@@ -19,15 +19,16 @@ Keep extra usage off in claude.ai so nothing can bill credits.
     (Figma to code; its final gate is `pixel-qa`), `dev-debug` (hard bugs, root cause) and `dev-run` (installs, builds, long
     logs, returned as a short summary).
   - `tess` runs the quality checks in the background, by the table under "Quality checks" in `home/CLAUDE.md`: a risky change
-    (security, data, money, concurrency, the setup's guards, very large) waits for tess before it lands; other code changes get
+    (security, data, money, concurrency, gate such as the setup's guards, large) waits for tess before it lands; other code changes get
     one background check at the end of the job; docs and text only get none; and anything you ask for runs at once. Its helpers:
     `tess-review` (reviews the code against lex's spec) and `tess-write` (writes the missing tests in its own worktree; tess then
     proves each one can fail).
 - Only the boss starts `lex`, `dev` and `tess`. An agent that needs one asks the boss with a `needs:` line (by message while it
   runs in the background, else in its report); the boss starts it, keeps track of who is on what and sends the result back.
-- Helpers are not counted in the 6. Technical choices are made and stated in one line; your decisions are asked.
+- Helpers are not counted. Technical choices are made and stated in one line; your decisions are asked.
 - Landing is one script call, not an agent: the `land` script (`home/tools/land`) rebases the branch, fast-forwards it with
-  `git merge --ff-only` and removes the landed branch and worktree. A machine sync, where your setup has one, brings your
+  `git merge --ff-only` and removes the landed branch and worktree. `--test "<command>"` runs a test on the rebased tip first;
+  when the base and the lane changed the same files, `land` lists them and refuses to land without that test. A machine sync, where your setup has one, brings your
   other machines along (`docs/setup.md`, "Sync the machines").
 - UI work is checked as closely as the change needs, by the check plan (`node ~/.claude/tools/ui-proof/ui-proof.mjs plan`, rules
   in `home/standards/ui-checks.md`): nobody labels the work; the request, the diff and the screens it reaches decide. A docs page,
@@ -37,7 +38,8 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   look change on a screen with a Figma frame, takes the full pixel-perfect path, unchanged: `figma-pixel-perfect`, `ui-check run`
   rounds until every state passes, then the `pixel-qa` final gate on the tree that lands (pixel). `ui-quality-pass` runs before
   done at every depth but none (under same as a review that lists `follow-up:` lines).
-- The guards stay on: the Bash guard, gitleaks and `node --check` of hook files at commit, and the `git-tidy` check at session start.
+- The guards stay on: the Bash guard, gitleaks, your private words and `node --check` of hook files at commit, and the `git-tidy`
+  check at session start.
 - While agents run you can keep talking to the boss: it answers and asks without stopping the agents. A command that may run
   over 3 minutes goes to the background with its `timeout` set (at most 2 h).
 - The final answer says what changed and what was not run. No recap of the process.
@@ -46,7 +48,9 @@ Keep extra usage off in claude.ai so nothing can bill credits.
 - `lex` asks at the start of a job. Any other agent that needs you stops and returns a `questions:` block: each question in
   plain words, what it blocks, 2-4 options with the recommended one first, and a preview when the choice is a layout.
 - The boss asks them as popups in one batch and sends your answers back to the agent.
-- With no answer in time, a small, reversible choice takes the recommended option; a big or deleting one waits for you.
+- A question with no answer in time: a small, reversible choice takes the recommended option; a big or deleting one waits for
+  you. Permission prompts are not questions: every one (any tool, risky ones included) goes ahead as Allow after 2 minutes
+  unless you deny it (below).
 
 ## Long or unattended runs
 - Run long or unattended sessions in a plain terminal app (or tmux), not an editor's built-in terminal: closing or
@@ -65,7 +69,7 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   focused and starts again after any keypress; it never starts in a background session, in screen reader mode or while the
   session is connected to Remote Control (those questions wait for an answer). The recommended option is chosen to be safe with nobody there, and each default taken
   is logged. For a big or deleting change the recommended option is "wait for the owner", so a timeout pauses only that part
-  (RC10, skill `ask-owner`).
+  (skill `ask-owner`).
 - Guard dialogs (`git push`, publish, `rm -rf` outside the project or of a whole folder such as `rm -rf *`, prod-host writes) default to
   Allow and go ahead after 2 min (`CLAUDE_ASK_TIMEOUT_S`). A literal secret in a command (a test password) asks nothing; the
   guard log names its kind, never the value, and gitleaks still checks commits (owner decision R22-G1).

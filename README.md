@@ -13,7 +13,7 @@ repo. `settings.json` is generated from `settings/` (it holds machine paths).
 | `home/hooks`, `home/statusline.mjs` | Bash guard, post-edit formatter, status line |
 | `home/tools/ui-check` | Figma baseline pull, visual compare, responsive and column checks |
 | `settings/`, `plugins/` | Settings layers (base, OS, local) and the plugin list |
-| `tests/`, `tools/`, `.githooks` | Repo tests (`node:test`), Brewfile and Windows tool script, pre-commit (gitleaks, `node --check` of hook files) |
+| `tests/`, `tools/`, `.githooks` | Repo tests (`node:test`), Brewfile and Windows tool script, commit hooks (gitleaks and your private words in the staged files, `node --check` of hook files; private words in the message) |
 | `scripts/` | `install.mjs` (the one installer; `install/`), `install.sh`, `install.ps1`, `doctor.sh` (+ `doctor/`), `doctor-accounts.mjs`, `lane-new.sh`, `merge-settings.jq` |
 
 ## Quick start
@@ -37,17 +37,18 @@ Day-to-day use (starting a session, long runs, limits, another machine): [docs/d
 
 Start a session: `claude --model <m> --effort <e>`, for example `claude --model opus --effort high` (see [docs/daily-use.md](docs/daily-use.md)).
 
-Run tests (the second needs the ui-check deps that `install.sh` installs):
+Run tests (the second needs the ui-check deps that `install.sh` installs; `npm run test:all` runs both):
 
-    node --test tests/*.test.mjs
-    pnpm --dir home/tools/ui-check test
+    npm test                    # node --test tests/*.test.mjs
+    npm run test:ui-check       # ui-check's own tests
 
-No test runs by itself: the commit hook and a push run none; the boss sends changes to `tess` by the "Quality checks" table in
-`home/CLAUDE.md`. Run the whole suite by hand (or ask `tess`) when you want to know everything still works.
+No test runs by itself: the commit hook and a push run none, and `land` runs one only with `--test` or when the lane and the
+base changed the same files; the boss sends changes to `tess` by the "Quality checks" table in `home/CLAUDE.md`. Run the whole
+suite by hand (or ask `tess`) when you want to know everything still works.
 
 Windows: `powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-Update [-To <tag>]] [-Uninstall]` (not verified on Windows yet). Needs git (Git for Windows).
 Existing targets are moved to
-`~/.claude-backup-<stamp>/`, never deleted. A gitleaks pre-commit hook guards commits.
+`~/.claude-backup-<stamp>/`, never deleted.
 
 Pixel-exact Figma work: pull once, build, compare, fix, check responsive:
 

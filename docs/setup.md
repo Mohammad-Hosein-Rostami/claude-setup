@@ -24,17 +24,17 @@ edits. `install.ps1` runs on Windows PowerShell 5.1 and 7 (not verified on Windo
 The installer links `home/*` (rules, skills, agents, standards, hooks, tools, statusline.mjs, and `commands` when it has files) into
 `~/.claude`, makes `personal/` from `personal.example/` when it is missing (git-ignored, its own git repo with a first commit),
 links `~/.claude/project-notes` to `personal/project-notes`, and writes `~/.claude/CLAUDE.md` as a marker line plus
-`@<repo>/home/CLAUDE.md` and `@<repo>/personal/CLAUDE.md` (and removes the launcher, `modes` and `workflows` links an older install made for the retired session modes and workflows; a copy or the owner's own file at those paths goes to the backup folder instead), builds `~/.claude/settings.json`, installs `home/tools/ui-check` dependencies (lockfile if present,
+`@<repo>/home/CLAUDE.md` and `@<repo>/personal/CLAUDE.md`, builds `~/.claude/settings.json`, installs `home/tools/ui-check` dependencies (lockfile if present,
 otherwise a plain install), sets `core.hooksPath` to `.githooks`, then installs plugins. Anything replaced is moved
 to `~/.claude-backup-<stamp>/`, never deleted. One install runs at a time: a second one started meanwhile stops with a message. Check the result with `scripts/doctor.sh`
 (`DOCTOR_PROJECT=/path/to/app scripts/doctor.sh` also checks Playwright and Chromium from that project). It also reports free disk space (FAIL below 5 GB, WARN below 15 GB; `DISK_FAIL_FREE_GB` and `DISK_WARN_FREE_GB` move the limits) and names the caches to clear. It never runs the repo's tests (an old `--quick` or `--full` is ignored).
 
 After the first install, fill your deny list: `personal/share-deny.txt` (git-ignored, in your own `personal/`) starts as an empty
-template. Put one private word or phrase per line in it (your name, your employer, clients, project and machine names), so
-`scripts/share-check.mjs` and the commit-msg hook can keep them out of the shared files and commit messages. While the list is
-empty or holds only comments, share-check prints `not run` and `doctor.sh` gives one WARN. A list missing beside an existing
-`personal/` makes the commit hooks refuse every commit, and `doctor.sh` FAILs with the `cp` from `personal.example/share-deny.txt`
-that fixes it. Each person keeps their own list;
+template. Put one private word or phrase per line in it (your name, your employer, clients, project and machine names). At each
+commit `scripts/share-check.mjs` checks the staged files (pre-commit) and the message (commit-msg); a hit blocks the commit.
+While the list is empty or holds only comments, share-check prints `not run` and `doctor.sh` gives one WARN. A list missing
+beside an existing `personal/` blocks every commit and prints the `cp` line that restores it from
+`personal.example/share-deny.txt`; `doctor.sh` FAILs with the same `cp`. Each person keeps their own list;
 `node scripts/share-check.mjs` checks the tracked files against it.
 
 ## settings and local.json

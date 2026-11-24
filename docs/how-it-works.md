@@ -20,7 +20,7 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 | `settings/` | `base.json` plus one file per OS. They are merged into `~/.claude/settings.json`. |
 | `plugins/` | The list of plugins to install. |
 | `tools/` | System programs to install (`Brewfile`, `windows-tools.ps1`); not the same as `home/tools/`. |
-| `.githooks/` | The pre-commit hook: gitleaks on the staged changes and `node --check` of each staged hook file. It only runs after `scripts/install.sh` sets `core.hooksPath`. |
+| `.githooks/` | The commit hooks: gitleaks and your private words (`scripts/share-check.mjs`) on the staged changes, `node --check` of each staged hook file, and the private words in the commit message. It only runs after `scripts/install.sh` sets `core.hooksPath`. |
 | `scripts/` | `install.sh`, `install.ps1` and `doctor.sh` (its check groups are in `scripts/doctor/`). |
 | `tests/` | The test suite (`node:test`), run by hand. |
 | `docs/` | The documents for people. Start with `catalog.md` for a list of everything. |
@@ -74,7 +74,7 @@ printed as `follow-up:` lines; new ones fail the check.
 | A workflow | `home/skills/<name>/SKILL.md` | update its row in `docs/catalog.md` |
 | A permission or hook wiring | `settings/base.json` (or the OS file) | run `scripts/install.sh` to rebuild `~/.claude/settings.json` |
 
-Edit in a git worktree, not the main checkout: the files are live in every session. Land by rebasing onto main and fast-forwarding (`git merge --ff-only`). Details: `CLAUDE.md` (this repo's
+Edit in a git worktree, not the main checkout: the files are live in every session. Land by rebasing onto main and fast-forwarding (`git merge --ff-only`), through the `land` script (`--test "<command>"` tests the rebased tip first). Details: `CLAUDE.md` (this repo's
 own rules) and `docs/usage.md`.
 
 ## Turn a hook off by hand
@@ -100,9 +100,10 @@ From the repo root:
 
     node --test tests/*.test.mjs
 
-Never run bare `node --test`. The `ui-check` tool has its own tests: `pnpm --dir home/tools/ui-check test`.
+Never run bare `node --test`. The `ui-check` tool has its own tests: `npm run test:ui-check` (`npm run test:all` runs both).
 
-No test runs by itself: the pre-commit hook and a push run none; the boss sends changes to `tess` by the "Quality checks"
+No test runs by itself: the pre-commit hook and a push run none, and `land` runs one only with `--test` or when the lane and
+the base changed the same files; the boss sends changes to `tess` by the "Quality checks"
 table in `home/CLAUDE.md`. Run the whole suite, or one file
 (`node --test tests/principles.test.mjs`), when you want to know that everything still works, or ask `tess` to.
 

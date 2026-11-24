@@ -8,9 +8,12 @@ live in every running session at once. A half-written hook breaks Bash everywher
 - Edit hooks, the guard and tools in a git worktree (`scripts/lane-new.sh <name>`). To land: rebase onto main, then
   fast-forward (`git merge --ff-only`), through the `land` script (`home/tools/land`). Parallel agents each use their own
   worktree; never edit the main checkout while others work.
-- Tests: `node --test tests/*.test.mjs` (never bare `node --test`). No test runs by itself: the commit hook and a push run
-  none. Run the whole suite by hand (or ask `tess`) when you want to know everything still works.
-- The pre-commit hook runs gitleaks on the staged changes and `node --check` on each staged hook file.
+- Tests: `node --test tests/*.test.mjs` (never bare `node --test`); ui-check's own tests: `npm run test:ui-check`
+  (`npm run test:all` runs both). No test runs by itself: the commit hook and a push run none, and `land` only with `--test`
+  or when both sides changed the same files. Run the whole suite by hand (or ask `tess`) when you want to know everything
+  still works.
+- The pre-commit hook runs gitleaks and `scripts/share-check.mjs --staged` (your private words) on the staged changes and
+  `node --check` on each staged hook file; the commit-msg hook checks the message for the same words.
 - Commit only your own paths: `git commit -m "<conventional message>" -- <paths>`. Never `--no-verify`.
 - `~/.claude/settings.json` is a merged copy: change `settings/base.json` (or an OS file) and re-merge with
   `scripts/install.sh`.
