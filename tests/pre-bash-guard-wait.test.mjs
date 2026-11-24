@@ -74,7 +74,7 @@ test('short sleeps, loops without sleep, a sleep it cannot read and text that on
 
 test('the advice names the better way to wait and is classed as advice', () => {
   assert.match(WAIT_ADVICE, /run_in_background: true/);
-  assert.match(WAIT_ADVICE, /watch\.mjs/);
+  assert.doesNotMatch(WAIT_ADVICE, /watch\.mjs/, 'the watch tool was removed');
   assert.match(WAIT_ADVICE, /timeout/);
   assert.match(WAIT_ADVICE, /send the same command again and it runs/);
   assert.equal(reasonClass(WAIT_ADVICE), ADVICE_CLASS.sleepWait);

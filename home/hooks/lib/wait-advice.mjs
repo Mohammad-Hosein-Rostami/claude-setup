@@ -17,7 +17,6 @@
 // background after 3 min (seen at 180 s with `timeout` 600000, Claude Code 2.1.329). No agent is told which it is, so the text names one
 // way to wait that holds for all: over 3 min, start in the background, then wait inside the turn with a call that ends by itself in
 // 160 s. The wait call's 2 s pause is under this rule's own 5 s loop limit, so the guard lets it run (tests hold that).
-// watch.mjs watches session transcripts: it is named for waiting on a session or an agent, never as a way to run or bound a command.
 // Condition loops (spec-p3 `r9-waits-more`): a `while` or `until` loop whose condition polls (`kill -0`, `pgrep`, `grep -q`, `test`, `[`, `[[`)
 // and that sleeps at all is a wait at any sleep length (`while kill -0 $pid; do sleep 2; done`); a `for` loop keeps the 5 s rule, so
 // WAIT_CALL (a bounded `for` over `seq`) still runs. Plain retries (`until npm ci; do sleep 1; done`) stay allowed. A background subagent's
@@ -48,7 +47,6 @@ export const WAIT_ADVICE = 'Waiting (speed): do not wait with a long sleep or a 
   + "only the main session's or a background subagent's keeps running. "
   + 'Set timeout for every background command: in an unattended run (-p, Agent SDK, CI, cloud) one without it stops after 30 min '
   + '(10 min for a text -p prompt). A run over 2 h is split, or started in an interactive session, where background commands have no limit. '
-  + 'node ~/.claude/tools/watch/watch.mjs waits on a session or an agent only: it never runs or bounds a command. '
   + "A background subagent's result arrives as a notification (with fork mode on the lead cannot wait on a subagent at all): end your turn or work on, never poll its output file. "
   + 'If a sleep is what you need, send the same command again and it runs.';
 

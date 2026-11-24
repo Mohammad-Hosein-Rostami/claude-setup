@@ -67,13 +67,12 @@ test('a loop that sleeps 5 s or more, or a lone sleep of 30 s or more, is denied
     const { decision, reason } = guardSession().run(command);
     assert.equal(decision, 'deny', command);
     assert.match(reason, /run_in_background/, command);
-    assert.match(reason, /watch\.mjs/, command);
     assert.match(reason, /timeout/, command);
     assert.match(reason, /same command again/i, command);
   }
 });
 
-/** The sentences of an advice text: cut after each full stop that a blank follows (`watch.mjs` and `2 h)` stay whole). */
+/** The sentences of an advice text: cut after each full stop that a blank follows (`2 h)` stays whole). */
 const sentencesOf = (text) => text.split(/(?<=\.)\s+/);
 
 test('the deny reason names run_in_background, timeout and the 2-h maximum in one sentence, and the path for a run over 2 h', () => {
@@ -87,11 +86,9 @@ test('the deny reason names run_in_background, timeout and the 2-h maximum in on
   assert.match(overTwoHours, /is split, or started in an interactive session, where background commands have no limit/);
 });
 
-test('the deny reason names watch.mjs only for waiting on a session or an agent, never as the way to run or bound a command', () => {
+test('the deny reason names no removed watcher tool and no bounded wait', () => {
   const { reason } = guardSession().run(BOUNCED[0]);
-  const naming = sentencesOf(reason).filter((sentence) => /watch\.mjs/.test(sentence));
-  assert.equal(naming.length, 1, reason);
-  assert.match(naming[0], /waits on a session or an agent only: it never runs or bounds a command/);
+  assert.doesNotMatch(reason, /watch\.mjs/, 'the watch tool was removed');
   assert.doesNotMatch(reason, /bounded wait/);
 });
 
