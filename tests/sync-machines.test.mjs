@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 import { cleanEnv } from './clean-env.mjs';
+import { hardLinkSharedTool, sharedToolDir } from './shared-tools.mjs';
 
 const SCRIPT = fileURLToPath(new URL('../scripts/sync-machines.mjs', import.meta.url));
 const FLOOR = '2.1.326';
@@ -39,19 +40,25 @@ if (script.includes('== pin')) {
 function setup({ targets = undefined, cliVersion = '', dirty = false } = {}) {
   const root = makeTempDir('sync-');
   const repo = join(root, 'repo');
-  const bin = join(root, 'bin');
   const home = join(root, 'home');
-  for (const dir of [join(repo, 'scripts'), join(repo, 'settings'), join(repo, 'home', 'tools', 'git-tidy'), bin, join(home, '.claude')]) mkdirSync(dir, { recursive: true });
-  writeFileSync(join(repo, 'scripts', 'doctor.sh'), `#!/bin/sh\nCLAUDE_FLOOR=${FLOOR}\nexit 0\n`);
-  writeFileSync(join(repo, 'scripts', 'install.sh'), '#!/bin/sh\nexit 0\n');
+  for (const dir of [join(repo, 'scripts'), join(repo, 'settings'), join(repo, 'home', 'tools', 'git-tidy'), join(home, '.claude')]) mkdirSync(dir, { recursive: true });
+  // The repo's two scripts are hard links of shared files and the tools one shared folder: a new executable is slow to start. The
+  // dirty case writes its own install.sh (it changes the file, and the run stops at verify before any script runs).
+  const scripts = { 'doctor.sh': `#!/bin/sh\nCLAUDE_FLOOR=${FLOOR}\nexit 0\n`, 'install.sh': '#!/bin/sh\nexit 0\n' };
+  for (const [name, body] of Object.entries(scripts)) {
+    if (dirty && name === 'install.sh') {
+      writeFileSync(join(repo, 'scripts', name), body);
+      chmodSync(join(repo, 'scripts', name), 0o755);
+    } else hardLinkSharedTool(join(repo, 'scripts', name), body);
+  }
   writeFileSync(join(repo, 'home', 'tools', 'git-tidy', 'git-tidy.mjs'), 'process.exit(0);\n');
   writeFileSync(join(repo, 'settings', 'local.json'), JSON.stringify({ claudeSetup: { ...(cliVersion ? { cliVersion } : {}), ...(targets ? { syncTargets: targets } : {}) } }));
-  for (const name of ['doctor.sh', 'install.sh']) chmodSync(join(repo, 'scripts', name), 0o755);
   writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify({ env: { DISABLE_UPDATES: '1' } }));
-  writeFileSync(join(bin, 'claude'), `#!/bin/sh\necho "${FLOOR} (Claude Code)"\n`);
-  writeFileSync(join(bin, 'ssh'), FAKE_SSH);
-  writeFileSync(join(bin, 'scp'), '#!/bin/sh\necho "scp $*" >> "$FAKE_LOG"\n');
-  for (const name of ['claude', 'ssh', 'scp']) chmodSync(join(bin, name), 0o755);
+  const bin = sharedToolDir({
+    claude: `#!/bin/sh\necho "${FLOOR} (Claude Code)"\n`,
+    ssh: FAKE_SSH,
+    scp: '#!/bin/sh\necho "scp $*" >> "$FAKE_LOG"\n',
+  });
   const git = (...args) => spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
   git('init', '-q', '-b', 'main');
   git('add', '-A');

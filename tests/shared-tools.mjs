@@ -1,10 +1,12 @@
 // Fake executables written once and shared by every test file and every suite run. Exports: SHARED_TOOLS_PREFIX,
-// sharedToolDir(files), sharedTool(name, body), linkSharedTool(dir, name, body), sharedNodeToolDir(name, script).
+// sharedToolDir(files), sharedTool(name, body), linkSharedTool(dir, name, body), hardLinkSharedTool(path, body),
+// sharedNodeToolDir(name, script).
 // Why: macOS checks each newly written executable on its first run (about 1 s, more on a loaded machine). A test that writes its
 // own fake per test pays that every time; a shared fake pays it once, when it is first written, and never again.
 // How: one fixed folder per user under testTempRoot() (`cs-test-shared-tools-<uid>`, like clean-env.mjs's quiet tools), and in it
 // one folder per content hash of the tool set, so two bodies with the same tool name never collide and a folder never changes
-// once written. Each file is written to `<file>.<pid>.tmp`, made runnable and renamed into place, so a parallel test file never
+// once written. A tool is read-and-run only (0o555), so a test that writes to a link of it fails instead of changing it for every
+// other test. Each file is written to `<file>.<pid>.tmp`, made runnable and renamed into place, so a parallel test file never
 // runs a half-written tool; the process that writes a tool warms it (warmExecInert: the OS check without running the tool), a
 // process that finds it ready does not.
 // Invariants: POSIX only (on win32 a test keeps its own per-test `.cmd`); a body holds no per-test data (a test passes its log
@@ -12,14 +14,15 @@
 // test; the folders are this user's own (owner-only, no symlink) or this module throws. Nothing removes them during a run: each
 // use sets their time to now, so disk-clean's test-temp rule (cs-test-* idle 1 day) removes them only after a day with no test run.
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { TEST_TEMP_PREFIX, testTempRoot } from './temp-dir-helpers.mjs';
 import { warmExecInert } from './warm-exec.mjs';
 
 export const SHARED_TOOLS_PREFIX = `${TEST_TEMP_PREFIX}shared-tools-`;
 const OWNER_ONLY = 0o700;
-const RUNNABLE = 0o755;
+const READ_AND_RUN = 0o555;
+const PERMISSIONS = 0o777;
 const WRITABLE_BY_OTHERS = 0o022;
 const HASH_CHARS = 20; // 80 bits of sha256: no two tool sets of this suite share a folder
 const ready = new Map(); // hash -> folder, the tool sets this process has checked or written
@@ -33,11 +36,11 @@ function ownFolder(dir) {
   }
 }
 
-/** @returns {boolean} true when `file` is this user's own runnable regular file holding exactly `body` */
+/** @returns {boolean} true when `file` is this user's own read-and-run-only regular file holding exactly `body` */
 function isReady(file, body) {
   if (!existsSync(file)) return false;
   const stat = lstatSync(file);
-  return stat.isFile() && stat.uid === process.getuid() && (stat.mode & RUNNABLE) === RUNNABLE && readFileSync(file, 'utf8') === body;
+  return stat.isFile() && stat.uid === process.getuid() && (stat.mode & PERMISSIONS) === READ_AND_RUN && readFileSync(file, 'utf8') === body;
 }
 
 /**
@@ -60,8 +63,9 @@ export function sharedToolDir(files) {
     const file = join(dir, name);
     if (isReady(file, body)) continue;
     const temp = `${file}.${process.pid}.tmp`;
+    rmSync(temp, { force: true }); // a read-only leftover of a killed process with this pid would refuse the write
     writeFileSync(temp, body);
-    chmodSync(temp, RUNNABLE);
+    chmodSync(temp, READ_AND_RUN);
     renameSync(temp, file);
     written.push(file);
   }
@@ -90,6 +94,19 @@ export function linkSharedTool(dir, name, body) {
   const link = join(dir, name);
   symlinkSync(sharedTool(name, body), link);
   return link;
+}
+
+/**
+ * Puts the shared tool named like `path`'s last part at `path` as a hard link: the same file, so it costs no first-run check, for a
+ * script a program runs by its own path inside a test repo (a symlink would be committed as a link). Writing to it fails (0o555):
+ * a test that changes such a file writes its own copy instead.
+ * @param {string} path where the file goes (its folder must exist, on the same disk as testTempRoot())
+ * @param {string} body the script text
+ * @returns {string} path
+ */
+export function hardLinkSharedTool(path, body) {
+  linkSync(sharedTool(basename(path), body), path);
+  return path;
 }
 
 /**
