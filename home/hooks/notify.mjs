@@ -1,8 +1,8 @@
 // Notification and StopFailure hook: a desktop note only when work waits on the owner or stopped (display design 7.10;
 // spec-p5 `r9-notify`). Notification `permission_prompt` and `elicitation_*` give `Needs you: ...` (with the asking marker's
 // count and time to the default), `quota_auto_resume_stale|disabled` give `Stopped: ...`; StopFailure `rate_limit` gives
-// `Stopped: 5-hour limit, resumes 17:40` from this account's last limit sample (CLAUDE_ACCOUNT, limits-store.mjs); a Stop event
-// gives no note (the queued agent-failed note was removed on 2026-11-24).
+// `Stopped: 5-hour limit, resumes 17:40` from this account's last limit sample (CLAUDE_ACCOUNT, limits-store.mjs). No Stop entry
+// is registered (the queued agent-failed note and its Stop entry were removed on 2026-11-24).
 // The note goes out as `terminalSequence` (hooks docs, "Emit terminal notifications": kept on Notification and StopFailure, whose
 // other output is discarded; written only in an interactive session); no other output field is printed.
 // Exports: noteFor(input, env, now) -> text | null, hookOutput(text, env) -> stdout string. `--channel` prints the terminal and the

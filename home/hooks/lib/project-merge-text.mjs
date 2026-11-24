@@ -78,7 +78,7 @@ const agentsLine = (setup) => fitted(`Agents: ${setup.agents.length}: `,
 
 function hooksLine(setup) {
   const line = fitted('Hooks beside ours (both run): ', setup.hooks.map(({ event, count }) => `${shownKey(event)} ${count}`), LINE_ROOM.hooks);
-  return line && setup.hooks.some(({ event }) => event === 'Stop') ? `${line}; Stop blocks share CLAUDE_CODE_STOP_HOOK_BLOCK_CAP with ours` : line;
+  return line && setup.hooks.some(({ event }) => event === 'Stop') ? `${line}; Stop blocks count toward CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` : line;
 }
 
 const sortedOverrides = (setup) => [...setup.overrides].sort((a, b) => EFFECT_ORDER.indexOf(a.effect) - EFFECT_ORDER.indexOf(b.effect));

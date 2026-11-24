@@ -158,17 +158,6 @@
         ]
       }
     ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/notify.mjs\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
     "SubagentStart": [
       {
         "hooks": [
