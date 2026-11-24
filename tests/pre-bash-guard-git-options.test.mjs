@@ -9,7 +9,7 @@ import { resolve } from 'node:path';
 import { test } from 'node:test';
 import { parseGitArgs } from '../home/hooks/lib/git-options.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
-import { fastestMs } from './timing.mjs';
+import { fastestCpuMs } from './timing.mjs';
 
 const PROJECT = resolve('/work/proj');
 const ctx = { cwd: PROJECT, project: PROJECT, prodHosts: ['db1.example.com'] };
@@ -110,6 +110,6 @@ test('32 KB of unknown options still finds the push and finishes in seconds (eac
   const pushes = `git ${'--future-option push '.repeat(1550)}origin main`; // and each one a push to parse
   assert.match(reasonOf(pairs), FORCE_PUSH);
   assert.match(reasonOf(pushes), /^git push publishes commits/);
-  const fastest = fastestMs(() => [pairs, pushes].forEach((command) => decide(command, ctx)));
+  const fastest = fastestCpuMs(() => [pairs, pushes].forEach((command) => decide(command, ctx)));
   assert.ok(fastest < 5000, `took too long (fastest of 3: ${fastest.toFixed(1)} ms)`);
 });

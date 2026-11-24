@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { adviceOnce, bouncedDir } from '../home/hooks/lib/bounce-once.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
 import { hookEnv } from './hook-env.mjs';
-import { fastestMs } from './timing.mjs';
+import { fastestCpuMs } from './timing.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
@@ -250,7 +250,7 @@ test('C37: next to git push the merge asks like the push alone; 32 KB of merges 
   assert.deepEqual(decide(`git merge lane/x && ${PUSH}`, ctx), { ...decide(PUSH, ctx), advice: [MERGE_ADVICE] });
   const many = 'git merge x; '.repeat(2400);
   assert.deepEqual(decide(many, ctx), { allow: true, advice: [MERGE_ADVICE] });
-  const fastest = fastestMs(() => decide(many, ctx));
+  const fastest = fastestCpuMs(() => decide(many, ctx));
   assert.ok(fastest < 500, `32 KB of merges took too long (fastest of 3: ${fastest.toFixed(1)} ms)`);
   const huge = decide('git merge x; '.repeat(8000), ctx);
   assert.deepEqual([huge.ask, huge.advice], [true, undefined]);

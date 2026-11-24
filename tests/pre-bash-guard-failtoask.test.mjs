@@ -11,7 +11,7 @@ import { lexShell } from '../home/hooks/lib/shell-lexer.mjs';
 import { riskyWordInExpansion } from '../home/hooks/lib/raw-risk.mjs';
 import { logDecision } from '../home/hooks/lib/guard-log.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
-import { fastestMs } from './timing.mjs';
+import { fastestCpuMs } from './timing.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const PROJECT = resolve('/work/proj');
@@ -225,7 +225,7 @@ test('R4: the reason is DESTRUCTIVE for rm and disk words, plain for the rest', 
 
 test('R4: a command over 32 KB asks "command too long to check" and is decided fast; the log keeps 2 KB, masked', () => {
   const huge = `echo ${'a'.repeat(500_000)}`;
-  const fastest = fastestMs(() => decide(huge, ctx));
+  const fastest = fastestCpuMs(() => decide(huge, ctx));
   assert.ok(fastest < 500, `decided in under 500 ms (fastest of 3: ${fastest.toFixed(1)} ms)`);
   const r = decide(huge, ctx);
   assert.equal(r.ask, true);
@@ -242,7 +242,7 @@ test('R4: a command over 32 KB asks "command too long to check" and is decided f
 test('R4: hostile 500 KB inputs of every shape decide in under 500 ms', () => {
   const shapes = ['curl '.repeat(100_000), 'aKEY'.repeat(125_000), 'a-'.repeat(250_000), 'x://a:'.repeat(80_000), '$('.repeat(250_000), "'".repeat(500_000)];
   for (const command of shapes) {
-    const fastest = fastestMs(() => decide(command, ctx));
+    const fastest = fastestCpuMs(() => decide(command, ctx));
     assert.ok(fastest < 500, `${command.slice(0, 12)} took too long (fastest of 3: ${fastest.toFixed(1)} ms)`);
   }
 });

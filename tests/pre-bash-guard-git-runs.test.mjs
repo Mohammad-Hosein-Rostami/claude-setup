@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import { GIT_UNREADABLE_REASON } from '../home/hooks/lib/git-runs.mjs';
 import { MAX_COMMAND_CHARS } from '../home/hooks/lib/verdict.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
-import { fastestMs } from './timing.mjs';
+import { fastestCpuMs } from './timing.mjs';
 
 const PROJECT = resolve('/work/proj');
 const ctx = { cwd: PROJECT, project: PROJECT, prodHosts: [] };
@@ -295,6 +295,6 @@ test('hostile input stays bounded: ambiguous readings ask, chains stop at MAX_NE
   assert.match(reasonOf(chain), /nested too deeply/);
   assert.match(reasonOf(`git ${'for-each-repo --config=r '.repeat(10)}${PUSH.slice(4)}`), FORCE_PUSH);
   assert.match(reasonOf(options), RM_OUTSIDE);
-  const fastest = fastestMs(() => [readings, forEachRepo, chain, options, distinct].forEach((command) => decide(command, ctx)));
+  const fastest = fastestCpuMs(() => [readings, forEachRepo, chain, options, distinct].forEach((command) => decide(command, ctx)));
   assert.ok(fastest < 5000, `took too long (fastest of 3: ${fastest.toFixed(1)} ms)`);
 });

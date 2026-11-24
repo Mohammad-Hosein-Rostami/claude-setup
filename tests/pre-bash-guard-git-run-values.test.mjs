@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import { COMMAND_ENV, GIT_UNREADABLE_REASON } from '../home/hooks/lib/git-runs.mjs';
 import { MAX_COMMAND_CHARS } from '../home/hooks/lib/verdict.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
-import { fastestMs } from './timing.mjs';
+import { fastestCpuMs } from './timing.mjs';
 
 const PROJECT = resolve('/work/proj');
 const ctx = { cwd: PROJECT, project: PROJECT, prodHosts: [] };
@@ -116,7 +116,7 @@ test('form 4: git config set writes its value like the legacy form', () => {
 test('a default nested 2000 deep is read in one pass: quiet and bounded', () => {
   const deepDefault = `GIT_EDITOR="${'${A:-'.repeat(2000)}vi${'}'.repeat(2000)}" git commit`;
   quiet(deepDefault);
-  const fastest = fastestMs(() => decide(deepDefault, ctx));
+  const fastest = fastestCpuMs(() => decide(deepDefault, ctx));
   assert.ok(fastest < MAX_MS, `took too long (fastest of 3: ${fastest.toFixed(1)} ms)`);
 });
 
@@ -130,7 +130,7 @@ test('hostile shapes stay bounded: a value repeated by many git commands, many v
   for (const command of [manyGits, values, defaults, keys]) assert.ok(command.length <= MAX_COMMAND_CHARS, 'parsed, not too long');
   assert.match(reasonOf(manyGits), RM_OUTSIDE);
   assertAll([values, defaults, keys], quiet);
-  const fastest = fastestMs(() => [manyGits, values, defaults, keys].forEach((command) => decide(command, ctx)));
+  const fastest = fastestCpuMs(() => [manyGits, values, defaults, keys].forEach((command) => decide(command, ctx)));
   assert.ok(fastest < MAX_MS, `took too long (fastest of 3: ${fastest.toFixed(1)} ms)`);
 });
 

@@ -10,7 +10,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
 import { findLiteralSecret, maskSecrets } from '../home/hooks/lib/secrets.mjs';
-import { fastestMs } from './timing.mjs';
+import { fastestCpuMs } from './timing.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
 const PROJECT = resolve('/work/proj');
@@ -148,7 +148,7 @@ test('R4/L1: every secret pattern is linear: hostile inputs at the size limit an
     for (const shape of shapes) {
       const text = shape.repeat(Math.ceil(size / shape.length)).slice(0, size);
       for (const run of [findLiteralSecret, maskSecrets]) {
-        const fastest = fastestMs(() => run(text));
+        const fastest = fastestCpuMs(() => run(text));
         assert.ok(fastest < 500, `${run.name}(${JSON.stringify(shape)} x ${size}) took too long (fastest of 3: ${fastest.toFixed(1)} ms)`);
       }
     }
@@ -349,7 +349,7 @@ test('data: a 32 KB heredoc body (and hostile opener shapes) is read in linear t
   assert.notEqual(findLiteralSecret(`cat > f <<'EOF'\n${body}${line}EOF`), undefined, 'a body cut by the scan limit has no terminator, so it is scanned');
   const shapes = [`cat > f <<'EOF'\n${body}EOF`, `cat > f <<'EOF'\n${body}`, "<<'E' ".repeat(6000), '$('.repeat(8000), '"$(`'.repeat(5000), `cat <<'E'\n${'x\n'.repeat(16000)}`, "cat<<'E'\nx\nE\n".repeat(3000), "cat <<'E';".repeat(3200)];
   for (const text of shapes) {
-    const fastest = fastestMs(() => findLiteralSecret(text));
+    const fastest = fastestCpuMs(() => findLiteralSecret(text));
     assert.ok(fastest < 500, `findLiteralSecret(${JSON.stringify(text.slice(0, 20))}... x ${text.length}) took ${fastest.toFixed(1)} ms`);
   }
 });
