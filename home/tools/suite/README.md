@@ -87,7 +87,8 @@ slot 0: pid 4242 since 2026-11-24T21:03:05.118Z repo /path/to/lane command node 
 waiting: pid 4300 since 2026-11-24T21:03:09.002Z repo /path/to/other command node --test tests/b.test.mjs
 ```
 
-A slot marked `(stale: ...)` is removed by the next waiter. Exit 0.
+A slot marked `(stale: ...)` is removed by the next waiter. A holder or ticket with no valid pid (a planted `{}`, for example) shows
+as `invalid holder (no valid pid)` or `invalid ticket (no valid pid)`. Exit 0.
 
 ## State
 

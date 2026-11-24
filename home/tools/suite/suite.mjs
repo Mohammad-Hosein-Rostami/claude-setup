@@ -226,13 +226,17 @@ function statusCommand(args) {
   if (args.length > 0) throw new UsageError('status takes no arguments');
   const stateDir = stateFolder();
   const { holders, waiters } = queueState(stateDir);
-  const describe = (entry) => `pid ${entry.pid} since ${entry.startedAt ?? entry.since} repo ${entry.repo} command ${entry.command}`;
+  // a planted or foreign record ({}, [], a pid of "abc") has no pid to show: say so plainly instead of `pid undefined`
+  const describe = (entry, kind) =>
+    Number.isInteger(entry?.pid) && entry.pid > 0
+      ? `pid ${entry.pid} since ${entry.startedAt ?? entry.since} repo ${entry.repo} command ${entry.command}`
+      : `invalid ${kind} (no valid pid)`;
   console.log(`slots: ${readConfig(stateDir).slots} (state ${stateDir})`);
   if (holders.length === 0) console.log('no suite running');
   for (const { slot, holder, stale } of holders) {
-    console.log(`slot ${slot}: ${holder === null ? 'being taken' : describe(holder)}${stale ? ' (stale: the next waiter removes it)' : ''}`);
+    console.log(`slot ${slot}: ${holder === null ? 'being taken' : describe(holder, 'holder')}${stale ? ' (stale: the next waiter removes it)' : ''}`);
   }
-  for (const waiter of waiters) console.log(`waiting: ${describe(waiter)}`);
+  for (const waiter of waiters) console.log(`waiting: ${describe(waiter, 'ticket')}`);
   return EXIT_OK;
 }
 
