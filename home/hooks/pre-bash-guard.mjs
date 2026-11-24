@@ -95,6 +95,7 @@ import { GIT_UNREADABLE_REASON, gitRunReasons } from './lib/git-runs.mjs';
 import { gitAdvice } from './lib/git-advice.mjs';
 import { waitAdvice, withoutWaitAdvice } from './lib/wait-advice.mjs';
 import { outwardAsk } from './lib/outward.mjs';
+import { trimAnswer } from './lib/output-trim.mjs';
 import { hostVariables, readProdHosts, remoteAsk } from './lib/remote.mjs';
 import { TOO_COMPLEX_REASON, checkRm, newScope, newWork, runsInOrder, substituteKnownWords, trackAssignments } from './lib/rm-paths.mjs';
 import { groupBranches } from './lib/bare-glob.mjs';
@@ -248,7 +249,7 @@ export function decideSafely(command, ctx, rules = decide) {
 
 const cwdOf = (input) => (typeof input.cwd === 'string' ? input.cwd : process.cwd());
 
-/** The hook's answer for one Bash call: '' lets it run, anything else is the ask or deny line for stdout. */
+/** The hook's answer for one Bash call: '' lets it run, anything else is the ask, deny or rewrite (lib/output-trim.mjs) line for stdout. */
 function answerFor(command, input) {
   const cwd = cwdOf(input);
   const project = process.env.CLAUDE_PROJECT_DIR || cwd;
@@ -257,7 +258,7 @@ function answerFor(command, input) {
   const r = input.tool_input.run_in_background === true || input.tool_name === 'Monitor' ? withoutWaitAdvice(decided) : decided; // waits the right way
   if (r.secret !== undefined) logSecretKind(r.secret, { cwd, input }); // owner G1: noted, never asked
   if (r.ask) return askOrBounce(r, { command, cwd, input });
-  return r.advice ? adviceOnce(r.advice, { command, cwd, input }) : ''; // advice only: never the owner
+  return r.advice ? adviceOnce(r.advice, { command, cwd, input }) : trimAnswer(input); // advice only: never the owner
 }
 
 async function main() {
