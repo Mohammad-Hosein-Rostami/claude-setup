@@ -36,6 +36,9 @@ const TELL = (message) => `Message from the owner, sent while you worked: ${mess
 const CHECK_TAIL_LINES = 40;
 const CHECK_KEEP_CHARS = 64 * 1024;
 const MS_PER_MINUTE = 60 * 1000;
+// The exit a check gets when it has no exit code of its own, or was stopped at its deadline: a timed-out check never passes,
+// even when it exits 0 on the SIGTERM that stops it.
+const NO_EXIT_CODE = -1;
 
 /** The full sha of HEAD of `folder`, or null when it is not a git folder. */
 export function gitHead(folder) {
@@ -100,7 +103,9 @@ function runCheck(ctx, unit, folder, token) {
     const keep = (chunk) => { output = `${output}${chunk}`.slice(-CHECK_KEEP_CHARS); };
     child.stdout.on('data', keep);
     child.stderr.on('data', keep);
+    let timedOut = false;
     const timer = setTimeout(() => {
+      timedOut = true;
       output += `\n(check stopped after ${unit.check.timeoutMinutes} min)`;
       endProcessTree(child, { platform: ctx.platform }).catch((error) => { output += `\n(its processes could not be ended: ${error.message})`; });
     }, timeoutMs);
@@ -108,7 +113,7 @@ function runCheck(ctx, unit, folder, token) {
     child.once('close', (code) => {
       clearTimeout(timer);
       const tail = scrub(output, token).trimEnd().split('\n').slice(-CHECK_TAIL_LINES).join('\n');
-      resolve({ command: unit.check.command, exit: code ?? -1, tail });
+      resolve({ command: unit.check.command, exit: timedOut ? NO_EXIT_CODE : code ?? NO_EXIT_CODE, tail });
     });
   });
 }

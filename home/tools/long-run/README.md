@@ -89,7 +89,7 @@ environment only. Fable is refused anywhere in a job; the default model is `clau
 | `steps[].prompt` / `promptFile` | exactly one; the file relative to the job file and inside its folder (no `..`, no link out), UTF-8, at most 100 KB, not empty | required (not on a group) |
 | `steps[].parallel` | 2-20 items `{ id, prompt \| promptFile, cwd?, model?, effort? }`: a group | none |
 | `steps[].worktree` | groups only: each item runs in its own lane worktree on branch `long-run/<run-id>/<item-id>` | false: each item then needs its own `cwd` |
-| `steps[].check.command` | a shell command run in the step folder after the boss says done; optional `timeoutMinutes` (default 30) | none |
+| `steps[].check.command` | a shell command run in the step folder after the boss says done; optional `timeoutMinutes` (default 30; a check stopped there fails, whatever its exit) | none |
 | `steps[].next` | `{ done?, blocked?, "needs-owner"?, failed? }` -> a step id or `"end"` | `done` -> the next step; the rest hold the run |
 | `steps[].maxVisits` | 1-10: how often a step may run in one run | 3 |
 
