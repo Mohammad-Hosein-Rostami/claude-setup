@@ -8,15 +8,21 @@
 param([switch]$Update, [string]$To = '', [switch]$Uninstall, [switch]$DryRun, [switch]$NoPlugins, [switch]$NoTools,
   [string]$ClaudeVersion = '')
 $ErrorActionPreference = 'Stop'
-$NodeMajorMin = 22 # the Node the tools and hooks are written for
+# The one Node floor (major.minor), the same in install.sh and scripts/doctor/checks-machine.sh: the guard's Windows path tests need
+# module.registerHooks, which Node has from 22.15, and doctor FAILs below it.
+$NODE_FLOOR = [version]'22.15'
 
 $node = Get-Command node -ErrorAction SilentlyContinue
-if (-not $node) { Write-Error "missing required tool: node $NodeMajorMin+ (winget install OpenJS.NodeJS.LTS)"; exit 1 }
-# Parsed here from `node --version` (v22.15.0): an argument holding `"` (a `node -p` script) loses its quotes on PowerShell 5.1.
+if (-not $node) { Write-Error "missing required tool: node $NODE_FLOOR+ (winget install OpenJS.NodeJS.LTS)"; exit 1 }
+# Parsed here from `node --version` (vX.Y.Z): an argument holding `"` (a `node -p` script) loses its quotes on PowerShell 5.1.
 $nodeVersion = [string](& node --version)
-if (-not ($nodeVersion -match '^v(\d+)\.')) { Write-Error "node --version printed '$nodeVersion', not vX.Y.Z"; exit 1 }
-$major = [int]$Matches[1]
-if ($major -lt $NodeMajorMin) { Write-Error "node $major found; the setup needs node $NodeMajorMin+"; exit 1 }
+if (-not ($nodeVersion -match '^v(\d+)\.(\d+)\.')) { Write-Error "node --version printed '$nodeVersion', not vX.Y.Z"; exit 1 }
+if ([version]"$($Matches[1]).$($Matches[2])" -lt $NODE_FLOOR) { Write-Error "node $nodeVersion found; the setup needs node $NODE_FLOOR+"; exit 1 }
+# jq merges the settings layers (scripts/install/settings.mjs); checked here so a missing jq stops the run before any link moves.
+# -Uninstall merges nothing.
+if (-not $Uninstall -and -not (Get-Command jq -ErrorAction SilentlyContinue)) {
+  Write-Error 'missing required tool: jq (winget install jqlang.jq)'; exit 1
+}
 
 $Repo = Split-Path -Parent $PSScriptRoot
 $argList = @((Join-Path $Repo 'scripts\install.mjs'))

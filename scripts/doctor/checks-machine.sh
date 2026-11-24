@@ -6,12 +6,14 @@
 # check_disk_free, check_disk_clean, check_native_cleanup, check_long_run.
 # Invariants: read-only, as doctor.sh is; every line is `ok`, `WARN`, `FAIL` or `INFO` text on stdout; a check that fails calls bad (BAD=1).
 
-# Node 22.15 or later: the guard's Windows path tests need module.registerHooks (added in 22.15) and are skipped without it.
+# The one Node floor (major.minor), the same in scripts/install.sh and scripts/install.ps1: the guard's Windows path tests need
+# module.registerHooks (added in 22.15) and are skipped without it.
+NODE_FLOOR=22.15
 check_node() {
   local version
   version="$(node -p 'process.versions.node' 2>/dev/null | grep -Eo '^[0-9]+\.[0-9]+\.[0-9]+' || true)"
-  if version_at_least "${version:-0.0.0}" 22.15.0; then ok "node $version"
-  else bad "node >= 22.15 required (found ${version:-none}): the guard's Windows path tests need module.registerHooks and are skipped without it"; fi
+  if version_at_least "${version:-0.0.0}" "$NODE_FLOOR"; then ok "node $version"
+  else bad "node >= $NODE_FLOOR required (found ${version:-none}): the guard's Windows path tests need module.registerHooks and are skipped without it"; fi
 }
 
 # Windows (spec-p7 r9-windows; tools-reference): with Git Bash present any Bash deny rule turns the PowerShell tool off unless
