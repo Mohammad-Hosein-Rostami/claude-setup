@@ -15,6 +15,8 @@ test('exit codes: 2 for usage, 3 for no such run or step, 4 for a run whose driv
   const started = cli(box, ['start', box.writeJob({ name: 'busy', cwd: box.work('repo'), steps: [{ id: 'one', prompt: 'One.' }] })]);
   const paths = runPaths(box.root, /^started (\S+)/m.exec(started.stdout)[1]);
   await waitFor(() => readJson(paths.driver)?.live?.one, 20000, 'one running');
+  // live.one is set at spawn; the fake records its call only after it boots and reads stdin, and a stop before that kills it unrecorded.
+  await waitFor(() => readCalls(box).length === 1, 20000, 'the fake claude recorded its call');
   assert.equal(cli(box, ['pause', paths.runId, 'nostep']).status, 3);
   const busy = cli(box, ['resume', paths.runId]);
   assert.equal(busy.status, 4);
