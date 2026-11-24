@@ -1,4 +1,4 @@
-// Tests for home/tools/estimate/lib/limits-store.mjs when many sessions on one account write the limits (fixes-spec X12): a sample
+// Tests for home/hooks/lib/limits-store.mjs when many sessions on one account write the limits (fixes-spec X12): a sample
 // behind the newest is dropped (per window), each sample names its session, the log is appended, capped and trimmed and never
 // written through a link, the account lock is tried once and never waited for, the status line passes its session id, and the
 // token view reads the log within the same cap (node:test, no dependencies).
@@ -8,11 +8,11 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, linkSync, mkdirSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { LOG_KEEP_MS, MAX_LOG_BYTES, readLimits, recordSample } from '../home/tools/estimate/lib/limits-store.mjs';
+import { LOG_KEEP_MS, MAX_LOG_BYTES, readLimits, recordSample } from '../home/hooks/lib/limits-store.mjs';
 import { readLimitLogs } from '../home/tools/token-view/lib/limits.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
-const STORE_URL = new URL('../home/tools/estimate/lib/limits-store.mjs', import.meta.url).href;
+const STORE_URL = new URL('../home/hooks/lib/limits-store.mjs', import.meta.url).href;
 const STATUSLINE = fileURLToPath(new URL('../home/statusline.mjs', import.meta.url));
 const ACCOUNT = 'acct';
 const T0 = Date.UTC(2026, 10, 23, 10, 0, 0);

@@ -45,7 +45,8 @@ import * as tools from './install/tools.mjs';
  * The items the install makes in ~/.claude (doctor.sh checks the same list): links to home/<name>, except PERSONAL_ITEMS:
  * CLAUDE.md is a written file and project-notes links to personal/project-notes (scripts/install/personal.mjs).
  */
-export const LINKS = ['CLAUDE.md', 'lead.md', 'rules', 'skills', 'agents', 'standards', 'hooks', 'tools', 'project-notes', 'lead-rules.md', 'statusline.mjs'];
+// lead.md and lead-rules.md left the list (plan 2026-11-24): removeRetiredLinks removes their recorded links on the next install.
+export const LINKS = ['CLAUDE.md', 'rules', 'skills', 'agents', 'standards', 'hooks', 'tools', 'project-notes', 'statusline.mjs'];
 // Tools with npm dependencies: ui-check (odiff-bin, pngjs) and env-names (yaml). scripts/lane-new.sh reads this line.
 export const TOOLS_WITH_DEPS = ['ui-check', 'env-names'];
 

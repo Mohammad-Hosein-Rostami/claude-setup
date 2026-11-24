@@ -90,7 +90,7 @@ const isInside = (folder, path) => {
 
 /**
  * Removes what an older install made that this one no longer makes, on every platform: a ~/.claude link whose home/ item left
- * `names` (the session modes folder, the workflows folder) and anything it put in the launcher folders ~/.local/bin and ~/.claude/bin (the mode launcher
+ * `names` (the session modes folder, the workflows folder, the lead rule files) and anything it put in the launcher folders ~/.local/bin and ~/.claude/bin (the mode launcher
  * and its Windows twins, retired with the modes: sessions start with `claude --model <m> --effort <e>`). Only links and copies the
  * install record names are looked at, and they leave the record once removed (an entry whose removal fails stays for the next
  * run); nothing else in those folders is. A path is removed only while it is still a link (never followed); a recorded copy (a

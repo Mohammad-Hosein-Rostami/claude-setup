@@ -1,6 +1,6 @@
 // Tests for the personal layer of an install (scripts/install/personal.mjs and personal-folder.mjs, through scripts/install.mjs): the generated
 // ~/.claude/CLAUDE.md, personal/ made from personal.example/, the owner's notes (untracked, or deleted by a pull) moved out of home/project-notes, the
-// project-notes link, --uninstall, and the callers that follow the new layout (isNewMachine, token-audit's import count, recall).
+// project-notes link, --uninstall, and the callers that follow the new layout (isNewMachine).
 // Exports: none (node:test file). Every installer run uses a temp HOME and a copy of the repo in a cs-test- folder (git init'ed,
 // only home/project-notes/README.md tracked there), with --no-plugins --no-tools; it needs jq and git like every install.
 import test from 'node:test';
@@ -13,8 +13,6 @@ import { fileURLToPath } from 'node:url';
 import { CLAUDE_MD_MARKER, checkImportPath, claudeMdText, importPath } from '../scripts/install/personal.mjs';
 import { isNewMachine } from '../scripts/install/settings.mjs';
 import { INSTALL_LOCK_STALE_MS, RECORD_NAME } from '../scripts/install/record.mjs';
-import { fileWithImports } from '../home/hooks/lib/claude-md-imports.mjs';
-import { discoverFiles } from '../home/tools/recall/lib/indexer.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
@@ -351,24 +349,4 @@ test('isNewMachine: the generated CLAUDE.md marks a machine installed before, ev
   assert.equal(isNewMachine(ctx, { fresh: true }), false);
   writeFileSync(join(claudeDir, 'CLAUDE.md'), '# the machine owner\'s own\n');
   assert.equal(isNewMachine(ctx, { fresh: true }), true);
-});
-
-test('token-audit counts what ~/.claude/CLAUDE.md imports, each file once, and recall indexes personal and shared notes', () => {
-  const dir = makeTempDir('personal-imports-');
-  writeFileSync(join(dir, 'core.md'), 'core rules\n@./core.md\n');
-  writeFileSync(join(dir, 'own.md'), 'own rules\n');
-  writeFileSync(join(dir, 'CLAUDE.md'), `${CLAUDE_MD_MARKER} -->\n@${dir}/core.md\n@${dir}/own.md\nnot @${dir}/x.md\n`);
-  const read = (path) => (existsSync(path) ? readFileSync(path, 'utf8') : null);
-  assert.deepEqual(fileWithImports(join(dir, 'CLAUDE.md'), '~/.claude/CLAUDE.md', read).map((file) => file.path), ['~/.claude/CLAUDE.md', join(dir, 'core.md'), join(dir, 'own.md')]);
-  const home = join(dir, 'home');
-  mkdirSync(join(home, 'project-notes'), { recursive: true });
-  const core = join(dir, 'repo', 'home');
-  mkdirSync(join(core, 'tools'), { recursive: true });
-  mkdirSync(join(core, 'project-notes'));
-  writeFileSync(join(home, 'project-notes', 'mine.md'), 'x');
-  writeFileSync(join(core, 'project-notes', 'team.md'), 'y');
-  const docs = () => discoverFiles({ root: join(home, 'projects'), home, cwds: [] }).map((file) => file.path);
-  assert.deepEqual(docs(), [join(home, 'project-notes', 'mine.md')], 'no tools link: no shared folder is read');
-  symlinkSync(join(core, 'tools'), join(home, 'tools'));
-  assert.deepEqual(docs(), [join(home, 'project-notes', 'mine.md'), join(realpathSync(core), 'project-notes', 'team.md')]);
 });

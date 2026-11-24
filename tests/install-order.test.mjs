@@ -35,7 +35,7 @@ for (const [file, plugins, settings, tools] of [
 for (const file of ['scripts/install.mjs', 'scripts/doctor.sh']) {
   test(`${file}: the list of linked home items ends with the status line and holds no workflows link (workflows are gone)`, () => {
     const text = readFileSync(`${root}${file}`, 'utf8');
-    assert.match(text, /project-notes[ ',]+lead-rules\.md[ ',]+statusline\.mjs/);
-    assert.doesNotMatch(text, /lead-rules\.md[ ',]+workflows/);
+    assert.match(text, /project-notes[ ',]+statusline\.mjs/);
+    assert.doesNotMatch(text, /project-notes[ ',]+workflows/);
   });
 }

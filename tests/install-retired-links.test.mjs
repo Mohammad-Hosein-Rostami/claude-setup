@@ -164,16 +164,18 @@ test('--dry-run removes nothing and keeps the record', () => {
   assert.equal(existsSync(ctx.backupDir), false);
 });
 
-test('the installer itself retires the recorded modes and launcher links and leaves other files', () => {
+test('the installer itself retires the recorded modes, lead rules and launcher links and leaves other files', () => {
   const { home, ctx } = setup();
   const modes = join(ctx.claudeDir, 'modes');
+  const leadRules = join(ctx.claudeDir, 'lead-rules.md');
   const ccm = join(home, '.local', 'bin', 'ccm');
   const claude = join(home, '.local', 'bin', 'claude');
   linkToFolder(home, modes);
+  symlinkSync(join(home, 'no-such-rules'), leadRules, 'file');
   symlinkSync(join(home, 'no-such-launcher'), ccm, 'file');
   writeFileSync(claude, 'claude code\n');
   const recordFile = join(ctx.claudeDir, RECORD_NAME);
-  const made = [{ kind: 'link', path: modes }, { kind: 'link', path: ccm }];
+  const made = [{ kind: 'link', path: modes }, { kind: 'link', path: leadRules }, { kind: 'link', path: ccm }];
   writeFileSync(recordFile, JSON.stringify({ version: 1, repo: REPO, root: REPO, tag: null, firstLayer: null, made, backups: [] }));
   const run = spawnSync(process.execPath, [join(REPO, 'scripts', 'install.mjs'), '--no-plugins', '--no-tools'], {
     env: { ...process.env, HOME: home, USERPROFILE: home },
@@ -181,11 +183,12 @@ test('the installer itself retires the recorded modes and launcher links and lea
   });
   assert.equal(run.status, 0, run.stderr);
   assert.equal(exists(modes), false);
+  assert.equal(exists(leadRules), false);
   assert.equal(exists(ccm), false);
   assert.equal(readFileSync(claude, 'utf8'), 'claude code\n');
-  assert.ok(lstatSync(join(ctx.claudeDir, 'lead-rules.md')).isSymbolicLink());
+  assert.ok(lstatSync(join(ctx.claudeDir, 'statusline.mjs')).isSymbolicLink());
   const saved = JSON.parse(readFileSync(recordFile, 'utf8'));
-  assert.ok(!saved.made.some((entry) => entry.path === modes || entry.path === ccm), 'the saved record no longer names them');
+  assert.ok(!saved.made.some((entry) => [modes, leadRules, ccm].includes(entry.path)), 'the saved record no longer names them');
   assert.ok(!readdirSync(home).some((name) => name.startsWith('.claude-backup-')), 'nothing was backed up');
 });
 

@@ -9,7 +9,6 @@ import { existsSync, lstatSync, readFileSync, statSync, symlinkSync, writeFileSy
 import { join } from 'node:path';
 import { GUARD_LOG_FILE, GUARD_LOG_MAX_BYTES, GUARD_ROTATE_LOCK_FILE, logDecision, rotatedLogPath } from '../home/hooks/lib/guard-log.mjs';
 import { checkGuardStateWrite } from '../home/hooks/lib/guard-state-write.mjs';
-import { createTail } from '../home/tools/watch/lib/tail.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const posix = { skip: process.platform === 'win32' && 'needs symlinks and file modes' };
@@ -84,19 +83,18 @@ test(`${RACERS} writers on a full log at once: rotated once, no line lost`, posi
   for (let n = 0; n < RACERS; n += 1) assert.equal(all.filter((line) => line.includes(`"racer-${n}"`)).length, 1, `racer-${n}`);
 });
 
-test('a reader that follows guard.jsonl keeps reading after the rotation: the path never goes missing, the new file is read from its start', posix, async () => {
+test('a reader that follows guard.jsonl (tail -F) keeps reading after the rotation: the path never goes missing, the new file holds only new lines', posix, () => {
   const { path, env } = logIn();
   logDecision(record('make the folder'), env);
   fill(path, 'A');
-  const tail = createTail(path, { fromStart: false });
-  assert.deepEqual((await tail.poll()).lines, []);
+  const before = statSync(path).ino;
   logDecision(record('rotates'), env);
-  const between = await tail.poll();
-  assert.equal(between.error, undefined, 'guard.jsonl exists right after the rotation');
+  assert.ok(existsSync(path), 'guard.jsonl exists right after the rotation');
+  assert.notEqual(statSync(path).ino, before, 'a new file, so a follower reads it from its start');
   logDecision(record('after the rotation'), env);
-  const after = await tail.poll();
-  assert.equal(after.error, undefined);
-  assert.deepEqual(after.lines.map((line) => JSON.parse(line).command), ['after the rotation']);
+  const commands = readFileSync(path, 'utf8').split('\n').filter((line) => line !== '').map((line) => JSON.parse(line).command);
+  assert.equal(commands.at(-1), 'after the rotation');
+  assert.ok(!commands.includes('make the folder'), 'the old lines are in guard.1.jsonl, not in the new file');
 });
 
 test('crash case: temp names a killed rotation left are removed by the next one; a link planted at guard.1.jsonl is replaced, never followed', posix, () => {

@@ -70,13 +70,14 @@ test('base.json askUserQuestionTimeout is a value the CLI accepts (others are dr
   assert.ok(['60s', '5m', '10m', 'never'].includes(base.askUserQuestionTimeout), String(base.askUserQuestionTimeout));
 });
 
-test('base.json registers git-tidy-gate on Stop, SubagentStop and PreCompact, each with a timeout that covers its 4 s check', () => {
+test('base.json registers git-tidy-gate at SessionStart only (startup, resume), with a timeout that covers its 4 s check', () => {
   const base = JSON.parse(readFileSync(fileURLToPath(new URL('../settings/base.json', import.meta.url)), 'utf8'));
-  for (const event of ['Stop', 'SubagentStop', 'PreCompact']) {
-    const gates = base.hooks[event].flatMap((group) => group.hooks).filter((hook) => hook.command.includes('hooks/git-tidy-gate.mjs'));
-    assert.equal(gates.length, 1, `${event} has exactly one git-tidy-gate entry`);
-    assert.ok(gates[0].timeout >= 10, `${event} timeout ${gates[0].timeout}`);
-  }
+  const gatesOf = (event) => (base.hooks[event] ?? []).filter((group) => group.hooks.some((hook) => hook.command.includes('hooks/git-tidy-gate.mjs')));
+  const [start, ...more] = gatesOf('SessionStart');
+  assert.equal(more.length, 0, 'SessionStart has exactly one git-tidy-gate entry');
+  assert.equal(start?.matcher, 'startup|resume');
+  assert.ok(start.hooks[0].timeout >= 10, `timeout ${start.hooks[0].timeout}`);
+  for (const event of Object.keys(base.hooks).filter((name) => name !== 'SessionStart')) assert.deepEqual(gatesOf(event), [], `${event} has no git-tidy-gate entry`);
 });
 
 test('additionalDirectories is a de-duplicated union, so a local file cannot drop the shared workflows folder', { skip }, async () => {
