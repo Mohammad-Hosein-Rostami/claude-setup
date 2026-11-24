@@ -30,3 +30,8 @@ test('questions wait 2 minutes (RC3)', () => {
   assert.doesNotMatch(read('home/CLAUDE.md'), /60 s wait|No answer in 60 s/);
   assert.match(read('home/CLAUDE.md'), /its own popup and its own 2-minute wait/);
 });
+
+// The lead-only "Project config layers" text left home/CLAUDE.md (it went to lead-rules.md, since removed with the lex-dev-tess plan).
+test('home/CLAUDE.md holds no Project config layers section', () => {
+  assert.doesNotMatch(read('home/CLAUDE.md'), /Project config layers/);
+});
