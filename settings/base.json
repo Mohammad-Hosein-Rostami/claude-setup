@@ -5,7 +5,6 @@
     "BASH_DEFAULT_TIMEOUT_MS": "300000",
     "CLAUDE_QUESTION_TIMEOUT_S": "120",
     "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-5-5",
-    "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP": "8",
     "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "3",
     "CLAUDE_CODE_DISABLE_WORKFLOWS": "1",
     "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "100"
@@ -38,13 +37,8 @@
           {
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/pre-bash-guard.mjs\"",
-            "timeout": 200,
+            "timeout": 230,
             "onFailure": "block"
-          },
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/agent-budget.mjs\"",
-            "timeout": 5
           }
         ]
       },
@@ -65,7 +59,7 @@
           {
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/artifact-ask.mjs\"",
-            "timeout": 200,
+            "timeout": 230,
             "onFailure": "block"
           }
         ]
@@ -105,7 +99,7 @@
         ]
       },
       {
-        "matcher": "startup|resume|clear|compact",
+        "matcher": "startup|resume|clear|compact|fork",
         "hooks": [
           {
             "type": "command",
@@ -141,6 +135,7 @@
           {
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/agent-budget.mjs\"",
+            "async": true,
             "timeout": 5
           }
         ]
