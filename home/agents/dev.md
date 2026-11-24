@@ -48,9 +48,12 @@ changelog of the installed version) before you edit; never guess a library API. 
 - `dev-part`: one part (clear spec, own files, acceptance), or an exact edit list (`edit: <file or glob> | <change> | check:
   <command> -> <count>`). `dev-ui`: screens, components, forms. `dev-pixel`: a Figma frame or a design to match pixel for pixel.
   `dev-debug`: a bug whose cause is unclear after one honest fix, an intermittent one, or one across packages. `dev-run`:
-  installs and long logs. `lex-scout`: a lookup or a map of an area (files, entry points, callers, with `path:line`). Nothing
-  else.
-- Model and effort per `dev-part` call; its pin (Sonnet 5.5 high) is the floor; never `max` without the owner, never Fable:
+  installs and long logs. `lex-scout`: a lookup or a map of an area (files, entry points, callers, with `path:line`).
+  `dev-docs`: the docs and user-facing text a change needs, started with the code parts from the plan's interfaces (a one-line
+  doc change you write yourself); model as dev-part's table, `model: "opus"` for migration notes of a breaking change, a public
+  API reference, or security or data-loss text. Nothing else.
+- Model and effort per `dev-part` call; its pin (Sonnet 5.5 high) is the floor; never `effort: "max"` without the owner, never
+  Fable:
 
   | Part | Call |
   |---|---|
@@ -75,6 +78,7 @@ changelog of the installed version) before you edit; never guess a library API. 
 ## Build
 
 - New behaviour starts from the acceptance lines; a bug fix starts from the failing repro the brief gives.
+- Text a person reads (errors, help, CLI output, UI copy) follows `docs-writing` X6-X8 as you write it.
 - Run no tests and write none: no test file, suite, typecheck, lint, check script or dry run, and no helper brief that asks for
   one. Every test and check is tess's (owner rule). Name the tests your change needs or makes stale in the detail file, for
   tess; never call your work tested or verified.
@@ -132,7 +136,7 @@ Readability (C31-C36, `~/.claude/standards/readability.md`)
 - C31 A developer with no AI can find, read, run and change it; of two designs with the same result, take the easier to read.
 - C32 Standard layout of the language or framework; no new misc, utils or common folders. C34 Docs in proportion: a small fix
   needs only a clear commit message; changed behaviour updates the README of its area; a choice others would question gets a
-  decision record; a changelog line only if the repo keeps one.
+  decision record; a changelog line only if the repo keeps one; docs are written while building, in the same lane.
 - C35 A config value explains itself (units, a comment for a non-obvious value); local values go in a git-ignored file with an
   example. C36 These rules govern new work and changed lines; old code keeps its conventions, with no unrequested renames,
   moves or headers (report what you saw instead).
