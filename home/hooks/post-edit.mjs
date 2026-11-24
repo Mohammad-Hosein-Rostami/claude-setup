@@ -67,6 +67,14 @@ export function needsTrust(scripts) {
 }
 
 /**
+ * `file` as a command-line argument: a name that starts with `-` (a repo file `--plugin=x.ts` at the package root) would reach the
+ * tool as an option, and npm passes the words after its own `--` on to the script, so `./` keeps it a path for every tool. Pure.
+ * @param {string} file the edited file, relative to the package folder
+ * @returns {string} the file, prefixed with `./` when it starts with `-`
+ */
+const fileArgument = (file) => (file.startsWith('-') ? `./${file}` : file);
+
+/**
  * Checks to run for `file`: [{ name, cmd?, args }]; without `cmd` the package manager runs `args`. Pure.
  * A format script that is broad would format the whole repo, so the tool's own binary (found by `findTool`) runs on
  * the file instead; when that binary is missing the check is skipped. Any other script goes through the package manager only when
@@ -76,16 +84,17 @@ export function needsTrust(scripts) {
 export function plannedChecks(scripts, file, findTool = () => null, trusted = false) {
   const script = formatScriptOf(scripts);
   if (script === null) return [];
+  const target = fileArgument(file);
   if (isBroadScript(script)) {
     const [tool, ...flags] = FORMAT_TOOL;
     const cmd = findTool(tool);
-    return cmd ? [{ name: FORMAT_SCRIPT, cmd, args: [...flags, file] }] : [];
+    return cmd ? [{ name: FORMAT_SCRIPT, cmd, args: [...flags, target] }] : [];
   }
-  if (trusted) return [{ name: FORMAT_SCRIPT, args: ['run', FORMAT_SCRIPT, '--', file] }];
+  if (trusted) return [{ name: FORMAT_SCRIPT, args: ['run', FORMAT_SCRIPT, '--', target] }];
   const call = formatterCall(script);
   if (call === null) return [];
   const [tool, ...args] = call;
-  return [{ name: FORMAT_SCRIPT, cmd: findTool(tool) ?? tool, args: [...args, file] }];
+  return [{ name: FORMAT_SCRIPT, cmd: findTool(tool) ?? tool, args: [...args, target] }];
 }
 
 /** Finder for the nearest node_modules/.bin/<tool> walking up from `dir` (a monorepo hoists binaries to the root); returns null when absent. */
@@ -178,6 +187,9 @@ export function runCheck(pm, check, cwd, timeoutMs) {
 
 const outputOf = (r) => `${r.stdout}\n${r.stderr}`;
 
+/** What a check runs, for its failure line: the tool's own binary when it has one (npm never ran then), else `<pm> <check>`. */
+const runnerName = (pm, check) => (check.cmd === undefined ? `${pm} ${check.name}` : `${check.cmd} (${check.name})`);
+
 /**
  * Runs the checks in order until the deadline (epoch ms); the first failing check decides. A timeout or an exhausted
  * budget returns [] (never a false failure). Returns the failure lines ([] = all passed).
@@ -188,7 +200,7 @@ export async function runStages(checks, ctx) {
     if (left <= 0) return []; // out of time: do not block the edit on a slow project
     const result = await runCheck(ctx.pm, check, ctx.cwd, left);
     if (result.timedOut) return [];
-    if (result.error) return [`${ctx.rel}:1 HOOK could not run ${ctx.pm} ${check.name}: ${result.error.message}`];
+    if (result.error) return [`${ctx.rel}:1 HOOK could not run ${runnerName(ctx.pm, check)}: ${result.error.message}`];
     if (result.status !== 0) return diagnostics(outputOf(result), ctx.rel);
   }
   return [];
