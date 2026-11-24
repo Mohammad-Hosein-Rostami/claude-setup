@@ -13,6 +13,7 @@ import { commandName, commandOf } from './command-of.mjs';
 import { parseGitArgs } from './git-options.mjs';
 import { parsePushArgs, pushAsk } from './outward.mjs';
 import { RECURSIVE_FLAG } from './rm-paths.mjs';
+import { RUNTIME_VALUE_REASON } from './runtime-values.mjs';
 import { OUTPUT_REDIRECT, basenameOf, flagsOf, segments } from './shell-words.mjs';
 import { DESTRUCTIVE_PREFIX, destructive } from './verdict.mjs';
 
@@ -60,10 +61,6 @@ function checkGitPush(rest) {
 
 // every `git update-ref` asks (home/CLAUDE.md: land with `git merge --ff-only`, no update-ref); lib/branch-move.mjs adds why as advice
 export const UPDATE_REF_REASON = 'git update-ref moves a ref by plumbing (land with git merge --ff-only instead); confirm with the owner';
-// `git ${x}push`, `git pu${NOPE}sh`: a variable the line does not set is left in the word, and an unset one expands to nothing, so
-// the subcommand may be push; the guard cannot know which one runs
-const GIT_VARIABLE_SUBCOMMAND_REASON = 'command too complex to check: the git subcommand holds a variable the line does not set, '
-  + 'so it may be push or another guarded subcommand; write the subcommand out';
 
 /** The rules on one reading of the subcommand and its words (`commit -n`, `--no-verify`, update-ref, push); undefined when none applies. */
 function checkGitSubcommand({ sub, rest }) {
@@ -73,7 +70,9 @@ function checkGitSubcommand({ sub, rest }) {
   const prefixNoVerify = flags.some((f) => f.length >= MIN_NO_VERIFY_PREFIX && NO_VERIFY.startsWith(f.split('=')[0]));
   if (prefixNoVerify || shortNoVerify) return `git ${NO_VERIFY} skips the git hooks`;
   if (sub === 'update-ref') return UPDATE_REF_REASON;
-  if (sub?.includes('$')) return GIT_VARIABLE_SUBCOMMAND_REASON;
+  // `git ${x}push`, `git pu${NOPE}sh`: a variable the line does not set stays in the word, and an unset one expands to nothing, so
+  // the subcommand may be push. It is the same cause as `read X; git $X`, so it gives the same reason (one reason per line, not two).
+  if (sub?.includes('$')) return RUNTIME_VALUE_REASON;
   return sub === 'push' ? checkGitPush(rest) : undefined;
 }
 
