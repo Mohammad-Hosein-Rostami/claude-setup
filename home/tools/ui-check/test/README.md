@@ -1,6 +1,7 @@
 # ui-check/test
 
 - `smoke.test.mjs` - end-to-end smoke test of compare and responsive against static fixtures, and the drawn font of the card title (Inter web font loaded; `card.html?font=absent` asks for a family no machine has, so a fallback is drawn and compare fails), a static SemiBold face that must pass (`fixtures/fonts/static-face.html`) and text deeper than two levels, in fields, a shadow root and generated content (`fixtures/fonts/deep-text.html`).
+- `figma-diff-decisions.test.mjs` - browser-free tests for the `figma-diff --decisions` file: a written reason of 15+ characters, no owner field needed (an old one is not read), the row takes the entry's class and reason.
 - `spec.test.mjs` - unit checks for flattenSpec, compareElements (the drawn-font rule included), alignColumns and the report cap (no browser needed).
 - `units.test.mjs` - browser-free unit tests for colour parsing, measurement, pixel gate, cache/args validation and CLI exit-2 mapping.
 - `steps.test.mjs` - browser-free tests for steps validation/runner, the `--steps`/`--bypass-csp` flags and the openPage bypass wiring (default off).

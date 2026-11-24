@@ -391,16 +391,18 @@ data (e-mail addresses, phone-like numbers), texts with no letter or digit (icon
 Classes (default rule, from the ICE `figma-diff` decisions: a difference no decision covers is never passed unseen; and the setup's
 standing rule: an element not in Figma defaults to "match Figma"): `missing` and `extra` are `fix` (match Figma); a `case` or
 `punctuation` wording is `fix` (use Figma's exact text); a `spelling` or `words` wording is `ask the owner` (copy is a product decision,
-and either side may hold the typo). `--decisions` overrides the default for matching rows; each entry needs the owner reference:
+and either side may hold the typo). `--decisions` overrides the default for matching rows; each entry needs a written `reason` of
+15+ characters (the ui-coverage rule) and no owner approval: the report lists every row with its reason, and the owner checks them
+when the work is done. An `owner` field left in an older file is allowed and not read.
 
 ```json
 [{ "type": "extra", "build": "Continue registration on another device", "surface": "register", "class": "keep",
-   "owner": "STATUS.md decision 2026-11-14 B15", "reason": "the only entry to the e-mailed link flow" }]
+   "reason": "the only entry to the e-mailed link flow" }]
 ```
 
 An entry matches on `type` and on each of `figma`, `build` (whitespace-normalised, exact) and `surface` it gives (at least `figma` or
 `build`); `class` is `fix`, `keep` or `ask`. Output: `report.md` / `report.json` in `--out` (default under the OS temp dir; the JSON has
-every row with boxes, node id, selector and reason per state) and one stdout line per row, then `PASS|FAIL figma-diff - ...`. Exit 0 when
+every row with boxes, node id, selector and reason per state; `report.md` has a reason column) and one stdout line per row ending in its reason, then `PASS|FAIL figma-diff - ...`. Exit 0 when
 no row is open (none, or only `keep`), 1 when any `fix` or `ask the owner` row exists, 2 for a usage or setup error, also when a state
 could not be compared (missing cache, HTTP error, root not found; the other states still run and the error is in the report).
 `spec.json` keeps the full Figma text (until this change it cut every text at 80 characters): a cache written before that is flagged

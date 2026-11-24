@@ -4,8 +4,10 @@
 // Invariants: pure (no I/O, no browser). A unit is {part, text, box:{x,y,w,h}} with both sides' boxes relative to the top-left of the
 // Figma frame and of the built root. Hidden Figma layers never reach this module (flattenSpec drops invisible nodes). Sample data
 // (e-mail addresses, phone-like numbers) and texts with no letter or digit never make a row. Graphics on both sides pass the same
-// size filter. A row no owner decision covers gets the default class of its type (classifyRow).
+// size filter. A row no decision covers gets the default class of its type (classifyRow); a decision needs a written reason of
+// MIN_REASON_CHARS+ characters (the ui-coverage rule) and no owner approval: the owner checks the report after the work.
 // Ported and cut from the ICE harness `figma-diff/` (match.mjs, compare-frame.mjs, collect-figma.mjs, decisions.mjs).
+import { MIN_REASON_CHARS, isReason } from '../../ui-coverage/lib/shape.mjs';
 import { UsageError } from './errors.mjs';
 
 /** Same place: the two boxes overlap, or their centres are at most this far apart (CSS px = Figma px at scale 1). */
@@ -214,14 +216,14 @@ export const CLASSES = { fix: 'fix', keep: 'keep', ask: 'ask the owner' };
 const MINOR_WORDING = new Set(['case', 'punctuation']);
 
 /**
- * Default class of a row no owner decision covers. Rule (ICE decisions.mjs: a difference no decision knows is not passed unseen;
+ * Default class of a row no decision covers. Rule (ICE decisions.mjs: a difference no decision knows is not passed unseen;
  * the setup's standing rule: an element not in Figma defaults to "match Figma"): a part only in Figma or only in the build is `fix`
  * (match Figma); a case, punctuation or spacing difference is `fix` (use Figma's exact text); a different spelling or wording is
  * `ask the owner` (copy is a product decision, and either side may hold the typo).
  */
 function defaultClass(row) {
   if (row.type === 'missing') return { class: CLASSES.fix, reason: 'Figma shows it and the build does not: build it' };
-  if (row.type === 'extra') return { class: CLASSES.fix, reason: 'not in Figma: match Figma (remove it), or record an owner decision to keep it' };
+  if (row.type === 'extra') return { class: CLASSES.fix, reason: 'not in Figma: match Figma (remove it), or record a decision with its reason to keep it' };
   if (MINOR_WORDING.has(row.difference)) return { class: CLASSES.fix, reason: `${row.difference} differs: use Figma's exact text` };
   return { class: CLASSES.ask, reason: `the ${row.difference === 'spelling' ? 'spelling' : 'wording'} differs: the owner picks Figma's text or the build's` };
 }
@@ -232,7 +234,7 @@ const decisionMatches = (decision, row, surface) => decision.type === row.type
   && (decision.build === undefined || strictText(decision.build) === strictText(row.build));
 
 /**
- * Class one row: the first owner decision that matches it, else the default rule.
+ * Class one row: the first decision that matches it (its reason is the row reason), else the default rule.
  * @param {object} row a diffUnits row
  * @param {string} surface the state's surface
  * @param {object[]} decisions parseDecisions output
@@ -241,10 +243,11 @@ const decisionMatches = (decision, row, surface) => decision.type === row.type
 export function classifyRow(row, surface, decisions) {
   const decision = decisions.find((d) => decisionMatches(d, row, surface));
   if (!decision) return defaultClass(row);
-  return { class: CLASSES[decision.class], reason: `${decision.reason} (owner: ${decision.owner})` };
+  return { class: CLASSES[decision.class], reason: decision.reason.trim() };
 }
 
-const DECISION_KEYS = ['type', 'surface', 'figma', 'build', 'class', 'owner', 'reason'];
+// `owner` is allowed so an older decisions file still loads; it is not read (no owner approval is needed).
+const DECISION_KEYS = ['type', 'surface', 'figma', 'build', 'class', 'reason', 'owner'];
 const ROW_TYPES = ['extra', 'missing', 'wording'];
 
 function checkDecision(entry, label) {
@@ -253,9 +256,7 @@ function checkDecision(entry, label) {
   if (unknown.length > 0) throw new UsageError(`${label}: unknown field ${unknown.join(', ')} (allowed: ${DECISION_KEYS.join(', ')})`);
   if (!ROW_TYPES.includes(entry.type)) throw new UsageError(`${label}.type: must be one of ${ROW_TYPES.join(', ')}`);
   if (!Object.hasOwn(CLASSES, entry.class)) throw new UsageError(`${label}.class: must be one of ${Object.keys(CLASSES).join(', ')}`);
-  for (const key of ['owner', 'reason']) {
-    if (typeof entry[key] !== 'string' || entry[key].trim() === '') throw new UsageError(`${label}.${key}: must be a non-empty string (owner: the answered question or STATUS.md decision line)`);
-  }
+  if (!isReason(entry.reason)) throw new UsageError(`${label}.reason: must say why, at least ${MIN_REASON_CHARS} characters (no owner approval is needed)`);
   for (const key of ['surface', 'figma', 'build']) {
     if (entry[key] !== undefined && typeof entry[key] !== 'string') throw new UsageError(`${label}.${key}: must be a string`);
   }
@@ -263,7 +264,8 @@ function checkDecision(entry, label) {
 }
 
 /**
- * Validate a decisions file: [{type, figma?, build?, surface?, class: 'fix'|'keep'|'ask', owner, reason}].
+ * Validate a decisions file: [{type, figma?, build?, surface?, class: 'fix'|'keep'|'ask', reason}] (reason: MIN_REASON_CHARS+
+ * characters; an `owner` field of an older file is allowed and not read).
  * @param {unknown} raw parsed JSON
  * @returns {object[]} the decisions, unchanged
  * @throws {UsageError} naming the entry and field of the first mistake

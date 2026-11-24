@@ -22,7 +22,7 @@ export const options = {
   states: { type: 'string' },
   only: { type: 'string' },
   out: { type: 'string' },
-  decisions: { type: 'string' }, // owner decisions that class matching rows (README "figma-diff")
+  decisions: { type: 'string' }, // decisions (each with its reason) that class matching rows (README "figma-diff")
   project: { type: 'string' }, // default: current directory, then UI_CHECK_PROJECT, then the tool's own node_modules (lib/playwright.mjs)
 };
 
@@ -96,7 +96,7 @@ function summaryLines(results, skipped, rows) {
 function printRows(rows) {
   for (const row of rows) {
     const where = row.type === 'extra' ? row.where : `node ${row.node}`;
-    console.log(`${row.class} | ${row.label} | ${row.type}${row.difference ? ` (${row.difference})` : ''} ${row.part} | figma "${row.figma}" | build "${row.build}" | ${where}`);
+    console.log(`${row.class} | ${row.label} | ${row.type}${row.difference ? ` (${row.difference})` : ''} ${row.part} | figma "${row.figma}" | build "${row.build}" | ${where} | ${row.reason}`);
   }
 }
 
@@ -106,8 +106,8 @@ function report(outDir, results, skipped) {
   const errors = results.filter((r) => r.error).length;
   const md = writeReport(outDir, {
     title: 'ui-check figma-diff', verdict: open === 0 && errors === 0 ? 'PASS' : 'FAIL', summary: summaryLines(results, skipped, rows),
-    head: ['state', 'type', 'part', 'figma', 'build', 'class'],
-    rows: rows.map((row) => [row.label, row.difference ? `${row.type} (${row.difference})` : row.type, row.part, short(row.figma), short(row.build), row.class]),
+    head: ['state', 'type', 'part', 'figma', 'build', 'class', 'reason'],
+    rows: rows.map((row) => [row.label, row.difference ? `${row.type} (${row.difference})` : row.type, row.part, short(row.figma), short(row.build), row.class, row.reason]),
     data: { states: results },
   });
   printRows(rows);
