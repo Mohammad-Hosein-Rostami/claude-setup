@@ -5,6 +5,7 @@
 // Invariants: one driver per run (run-store lock); driver.json is written only here; a run-level pause or stop ends every child
 //   gracefully, waits until none runs, then exits the process (the journals are already written: the P3 crash path); SIGTERM,
 //   SIGINT and SIGHUP of the driver are a run-level pause (no boss is left running with nobody reading it; status says paused);
+//   at the end of a run the worktrees its bosses made are removed when they hold no work, else kept and named in the summary;
 //   every timer and signal handler is removed before drive() returns; a note that fails is one events.jsonl line, never a run
 //   failure.
 import { randomUUID } from 'node:crypto';
@@ -12,7 +13,8 @@ import { rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { hostname } from 'node:os';
 import { Command, RunControl, isGraphDrained } from '@langchain/langgraph';
-import { appendJsonLine, acquireLock, readJson, readRunJob, releaseFolder, releaseLock, writeJson } from './run-store.mjs';
+import { appendJsonLine, acquireLock, readJournal, readJson, readRunJob, releaseFolder, releaseLock, writeJournal, writeJson } from './run-store.mjs';
+import { removeIfEmpty } from './worktrees.mjs';
 import { units } from './job.mjs';
 import { makeControl } from './control.mjs';
 import { recordEvent } from './events.mjs';
@@ -152,6 +154,16 @@ async function invokeInput(ctx, app) {
   return { input: null, config, event: 'resumed', detail: state.finished ? 'nothing left' : 'continue' };
 }
 
+/** End of run (audit Job A5): each worktree a step made is removed when it holds no work of its own, else kept; the journal says which. */
+function cleanWorktrees(ctx) {
+  for (const unit of units(ctx.job)) {
+    const journal = readJournal(ctx.paths, unit.id);
+    if (!journal?.worktrees?.length) continue;
+    const worktrees = journal.worktrees.map((one) => ({ ...one, cleanup: one.cleanup === 'removed' ? one.cleanup : removeIfEmpty(one, journal.folder) }));
+    writeJournal(ctx.paths, unit.id, { ...journal, worktrees });
+  }
+}
+
 async function finishRun(ctx, app) {
   const state = await openHold(app, ctx.runId);
   if (state.hold) {
@@ -171,6 +183,7 @@ async function finishRun(ctx, app) {
   ctx.live.write({ status, hold: null });
   for (const unit of units(ctx.job)) releaseFolder(ctx.paths.root, ctx.runId, unit.cwd);
   releaseFolder(ctx.paths.root, ctx.runId, ctx.job.cwd);
+  cleanWorktrees(ctx);
   recordEvent(ctx.paths, { event: abandoned ? 'run-abandoned' : 'run-done', detail: `at ${formatWhen(ctx.now().toISOString())}`, at: ctx.now() });
   writeSummary(ctx.paths, { nextCommand: 'none', now: ctx.now() });
   await tellOwner(ctx, status, `run ${status}`);

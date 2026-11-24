@@ -6,7 +6,9 @@
 // and its result, then `done` after <ms>), agent:<id> (starts a background agent <id> as Claude Code 2.1.330 streams it, starts a
 // grandchild in a process group of its own, like a subagent's Bash, writes its pid to $FAKE_LR_DIR/grandchild-<step>.pid, then
 // hangs; the grandchild outlives this fake unless someone ends it), agent-done:<id> (the same agent, finished, then `done`, no
-// grandchild). Every call appends one JSON line to $FAKE_LR_DIR/calls.jsonl: {step, mode, args, stdin, cwd,
+// grandchild), agent-crash:<id> (agent <id> left running and agent <id>x finished, then a crash), worktree:<name> and
+// worktree-dirty:<name> (`git worktree add ../<name> -b <name>` beside its folder, the second with an uncommitted file in it, then
+// a crash). Every call appends one JSON line to $FAKE_LR_DIR/calls.jsonl: {step, mode, args, stdin, cwd,
 // envNames, account, tokenHash, pid, start, end, ended} (`end` and `ended` on a second line kind `end`), never the token itself;
 // each session writes its transcript to $CLAUDE_CONFIG_DIR/projects/fake-project/<session id>.jsonl (the open-session check).
 // The stream is real `--output-format stream-json` shapes: a system init line, assistant lines, user tool_result lines, a result line.
@@ -15,7 +17,7 @@ import { join } from 'node:path';
 
 export const FAKE_CLAUDE_SOURCE = `#!/usr/bin/env node
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 const dir = process.env.FAKE_LR_DIR;
@@ -88,6 +90,20 @@ if (name === 'agent') {
   grandchild.unref();
   writeFileSync(join(dir, 'grandchild-' + step + '.pid'), String(grandchild.pid));
   for (;;) await sleep(1000);
+}
+if (name === 'agent-crash') {
+  startAgent(value);
+  startAgent(value + 'x');
+  out({ type: 'system', subtype: 'task_notification', task_id: value + 'x', status: 'completed', summary: 'Agent finished' });
+  process.stderr.write('boom\\n');
+  finish(1);
+}
+if (name === 'worktree' || name === 'worktree-dirty') {
+  const path = join(process.cwd(), '..', value);
+  const made = spawnSync('git', ['worktree', 'add', '-q', '-b', value, path], { encoding: 'utf8' });
+  if (made.status !== 0) { process.stderr.write(made.stderr); finish(2); }
+  if (name === 'worktree-dirty') writeFileSync(join(path, 'half-done.txt'), 'x');
+  finish(1);
 }
 if (name === 'agent-done') {
   startAgent(value);

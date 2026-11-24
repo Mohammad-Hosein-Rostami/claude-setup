@@ -105,13 +105,14 @@ function makeEnder(child, { platform, runner }) {
 /**
  * Starts one `claude -p` child.
  * @param {{args: string[], prompt: string, cwd: string, env: object, token: string, added: object, logBase: string,
- *   platform?: string, killAfter?: {term: number, kill: number}, runner?: Function}} start `added`: the labels for the child env;
- *   `logBase`: `<run>/logs/<id>.<start>` (the stream goes to `.jsonl`, stderr to `.stderr.log`); `runner` stands in for spawnSync.
+ *   platform?: string, killAfter?: {term: number, kill: number}, runner?: Function, onEvent?: (event: object) => void}} start
+ *   `added`: the labels for the child env; `logBase`: `<run>/logs/<id>.<start>` (the stream goes to `.jsonl`, stderr to
+ *   `.stderr.log`); `runner` stands in for spawnSync; `onEvent` gets each parsed (scrubbed) stream line.
  * @returns {{pid: number, done: Promise<object>, end: (reason: string) => void, endAtSafePoint: (reason: string, maxMs?: number) => void}}
  *   `done` resolves with `{exitCode, signal, result, stderrTail, endedBy, endedHow, error, outlived, treeError}` (`outlived`: the
  *   pids of the boss's tree still running after it ended, now ended too); it never rejects.
  */
-export function startClaude({ args, prompt, cwd, env, token, added, logBase, platform = process.platform, killAfter = KILL_AFTER, runner = spawnSync }) {
+export function startClaude({ args, prompt, cwd, env, token, added, logBase, platform = process.platform, killAfter = KILL_AFTER, runner = spawnSync, onEvent = null }) {
   const launch = claudeLaunch(platform, args);
   const child = spawn(launch.command, launch.args, {
     cwd, env: childEnv(env, { ...added, CLAUDE_CODE_OAUTH_TOKEN: token }, DROPPED_ENV), shell: launch.shell,
@@ -139,6 +140,7 @@ export function startClaude({ args, prompt, cwd, env, token, added, logBase, pla
     const event = parseLine(line);
     if (event?.type === 'result') state.result = event;
     out.write(line, event?.type === 'result');
+    if (event && onEvent) onEvent(event);
     if (state.safePoint !== null && isSafePoint(event)) end(state.safePoint);
   });
   createInterface({ input: child.stderr }).on('line', (raw) => {

@@ -2,7 +2,9 @@
 //   on stdin), write the journal before the spawn, run the child under the run's semaphore, run the step check, log one usage row.
 // Exports: WRAPPER, FOLLOW_UPS, promptFor, startOnce, gitHead.
 // Invariants: the journal names the session id and the start before the child exists, so a crash between the two resumes or
-//   starts fresh without losing count; the token is read from the store for the recorded account at each start and goes only to
+//   starts fresh without losing count; the boss's agents are written to the journal as the stream names them, and the worktrees
+//   that appeared since the step's first start before and after each start, so a resumed boss is told what was in flight
+//   (RESUME-STATE, in-flight.mjs) even after a SIGKILL of the driver; the token is read from the store for the recorded account at each start and goes only to
 //   the child env; the usage row and the journal hold the account name and token counts, never the token; check output is scrubbed.
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -11,6 +13,8 @@ import { logUsage } from '../../account/lib/usage.mjs';
 import { claudeArgs, classify, scrub, startClaude } from './claude-run.mjs';
 import { readJournal, writeJournal } from './run-store.mjs';
 import { accountToken } from './run-account.mjs';
+import { openAgents, resumeStateBlock, trackAgent } from './in-flight.mjs';
+import { WORKTREES_MAX, commitsSince, listWorktrees, newWorktrees, worktreeState } from './worktrees.mjs';
 
 /** The fixed text after a step's own prompt on its first start (spec 7.3). */
 export const WRAPPER = (runId, unitId) => `You run unattended inside long-run (run ${runId}, step ${unitId}). Nobody watches this session. When an owner decision blocks you, finish what does not depend on it, then stop. Wait for every agent you start before your final message. Commit finished work. Your final message ends with exactly one line: \`STEP-RESULT: done\`, \`STEP-RESULT: blocked: <reason>\` or \`STEP-RESULT: needs-owner: <one-line question>\`.`;
@@ -50,16 +54,38 @@ function followUpKind(journal, reply) {
   return FOLLOW_UPS[journal.last] ? journal.last : 'restart';
 }
 
+/** The RESUME-STATE block for `journal`: its unfinished agents, its worktrees and the commits it made ('' when none). */
+function resumeState(journal) {
+  return resumeStateBlock({
+    agents: openAgents(journal.agents),
+    worktrees: (journal.worktrees ?? []).map((one) => ({ ...one, state: worktreeState(one.path, journal.headBefore) })),
+    commits: commitsSince(journal.folder, journal.headBefore),
+  });
+}
+
 /**
  * The prompt of the next start: the first prompt for a fresh session, else the follow-up of the last outcome; queued owner
- * messages (`tell`) come first.
+ * messages (`tell`) come first; the RESUME-STATE block comes before the follow-up (after the prompt of a fresh start that
+ * replaces a lost session) whenever agents, worktrees or commits of the step were recorded.
  * @returns {string}
  */
 export function promptFor(ctx, unit, journal, { fresh, reply, told }) {
   const tells = told.map(TELL);
-  if (fresh) return [...tells, `${unit.prompt}\n\n${WRAPPER(ctx.runId, unit.id)}${earlierSummaries(ctx, unit.id)}`].join('\n\n');
+  const state = resumeState(journal);
+  const inFlight = state ? [state] : [];
+  if (fresh) return [...tells, `${unit.prompt}\n\n${WRAPPER(ctx.runId, unit.id)}${earlierSummaries(ctx, unit.id)}`, ...inFlight].join('\n\n');
   const kind = followUpKind(journal, reply);
-  return [...tells, ...(kind ? [FOLLOW_UPS[kind](journal, reply)] : [])].join('\n\n') || RESTART;
+  return [...tells, ...inFlight, ...(kind ? [FOLLOW_UPS[kind](journal, reply)] : [])].join('\n\n') || RESTART;
+}
+
+/** `journal` with the worktrees that appeared since its first start (the first call records which ones were there before). */
+function withWorktrees(ctx, journal) {
+  const now = listWorktrees(journal.folder);
+  if (now === null) return journal;
+  const worktreeBase = journal.worktreeBase ?? now.map((one) => one.path);
+  const found = newWorktrees(now, { basePaths: worktreeBase, runId: ctx.runId });
+  const kept = (journal.worktrees ?? []).filter((one) => !found.some((seen) => seen.path === one.path));
+  return { ...journal, worktreeBase, worktrees: [...kept, ...found].slice(-WORKTREES_MAX) };
 }
 
 function runCheck(ctx, unit, folder, token) {
@@ -100,6 +126,7 @@ function usageRow(ctx, unit, journal, run, ms) {
 const addTokens = (sum = {}, more) => Object.fromEntries(Object.entries(more).map(([key, value]) => [key, (sum[key] ?? 0) + value]));
 
 function beginJournal(ctx, unit, journal, fresh) {
+  journal = withWorktrees(ctx, journal);
   const sessionId = fresh ? randomUUID() : journal.sessionId;
   const args = claudeArgs({ model: unit.model, effort: unit.effort, sessionId, resume: !fresh });
   const n = journal.totalStarts + 1;
@@ -110,6 +137,38 @@ function beginJournal(ctx, unit, journal, fresh) {
   };
   writeJournal(ctx.paths, unit.id, begun);
   return { begun, args, logBase: join(ctx.paths.logs, `${unit.id}.${n}`) };
+}
+
+/**
+ * Runs the child of one start under the run's semaphore; the journal is written again with its pid, and each time the stream
+ * names a change of the boss's agents.
+ * @returns {Promise<{run: object, journal: object}>} how the child ended and the journal as last written.
+ */
+async function runChild(ctx, unit, begun, { args, prompt, token, logBase, fresh }) {
+  let current = begun;
+  const save = (patch) => {
+    current = { ...current, ...patch };
+    writeJournal(ctx.paths, unit.id, current);
+  };
+  const onEvent = (event) => {
+    const agents = trackAgent(current.agents ?? [], event, ctx.now());
+    if (agents !== (current.agents ?? [])) save({ agents });
+  };
+  await ctx.semaphore.acquire();
+  try {
+    const added = { CLAUDE_ACCOUNT: begun.account, LONG_RUN_ID: ctx.runId, LONG_RUN_STEP: unit.id };
+    const handle = startClaude({ args, prompt, cwd: begun.folder, env: ctx.env, token, added, logBase, platform: ctx.platform, killAfter: ctx.killAfter, onEvent });
+    ctx.live.running(unit.id, { pid: handle.pid, handle, sessionId: begun.sessionId, folder: begun.folder, log: `${logBase}.jsonl` });
+    save({ pid: handle.pid });
+    ctx.event(unit.id, 'step-started', `${fresh ? 'new' : 'resumed'} session ${begun.sessionId}`, { start: begun.totalStarts, sessionId: begun.sessionId });
+    const timer = ctx.job.stepTimeoutMinutes ? setTimeout(() => handle.end('timeout'), ctx.job.stepTimeoutMinutes * MS_PER_MINUTE) : null;
+    const run = await handle.done;
+    clearTimeout(timer);
+    return { run, journal: current };
+  } finally {
+    ctx.live.stopped(unit.id);
+    ctx.semaphore.release();
+  }
 }
 
 /**
@@ -126,35 +185,21 @@ export async function startOnce(ctx, unit, journal, { reply, told }) {
   const token = accountToken(journal.account, { env: ctx.env, store: ctx.store });
   const fresh = journal.sessionId === null;
   const { begun, args, logBase } = beginJournal(ctx, unit, journal, fresh);
-  const prompt = promptFor(ctx, unit, journal, { fresh, reply, told });
-  await ctx.semaphore.acquire();
+  const prompt = promptFor(ctx, unit, { ...begun, last: journal.last }, { fresh, reply, told });
   const started = ctx.now().getTime();
-  let run;
-  try {
-    const added = { CLAUDE_ACCOUNT: journal.account, LONG_RUN_ID: ctx.runId, LONG_RUN_STEP: unit.id };
-    const handle = startClaude({ args, prompt, cwd: begun.folder, env: ctx.env, token, added, logBase, platform: ctx.platform, killAfter: ctx.killAfter });
-    ctx.live.running(unit.id, { pid: handle.pid, handle, sessionId: begun.sessionId, folder: begun.folder, log: `${logBase}.jsonl` });
-    writeJournal(ctx.paths, unit.id, { ...begun, pid: handle.pid });
-    ctx.event(unit.id, 'step-started', `${fresh ? 'new' : 'resumed'} session ${begun.sessionId}`, { start: begun.totalStarts, sessionId: begun.sessionId });
-    // No step timeout unless the job sets one (owner decision O2).
-    const timer = ctx.job.stepTimeoutMinutes ? setTimeout(() => handle.end('timeout'), ctx.job.stepTimeoutMinutes * MS_PER_MINUTE) : null;
-    run = await handle.done;
-    clearTimeout(timer);
-  } finally {
-    ctx.live.stopped(unit.id);
-    ctx.semaphore.release();
-  }
+  const { run, journal: ran } = await runChild(ctx, unit, begun, { args, prompt, token, logBase, fresh });
   let verdict = classify(run);
-  const check = verdict.outcome === 'done' && unit.check ? await runCheck(ctx, unit, begun.folder, token) : null;
+  const check = verdict.outcome === 'done' && unit.check ? await runCheck(ctx, unit, ran.folder, token) : null;
   if (check && check.exit !== 0) verdict = { ...verdict, outcome: 'check-failed' };
   const ms = ctx.now().getTime() - started;
-  const tokens = usageRow(ctx, unit, begun, run, ms);
-  const startsLog = begun.startsLog.map((entry, index) => (index === begun.startsLog.length - 1 ? { ...entry, endedHow: run.endedHow, exitCode: run.exitCode, outcome: verdict.outcome } : entry));
-  const after = {
-    ...begun, running: false, pid: null, last: verdict.outcome, endedHow: run.endedHow, startsLog, check: check ?? begun.check,
-    tokens: addTokens(begun.tokens, tokens), wallMs: (begun.wallMs ?? 0) + ms, headAfter: gitHead(begun.folder),
-    summary: verdict.summary ?? begun.summary, freshFallback: begun.freshFallback,
-  };
+  const tokens = usageRow(ctx, unit, ran, run, ms);
+  const startsLog = ran.startsLog.map((entry, index) => (index === ran.startsLog.length - 1 ? { ...entry, endedHow: run.endedHow, exitCode: run.exitCode, outcome: verdict.outcome } : entry));
+  const notes = run.treeError ? [...ran.notes, `the boss's process tree could not be read: ${run.treeError}`] : ran.notes;
+  const after = withWorktrees(ctx, {
+    ...ran, running: false, pid: null, last: verdict.outcome, endedHow: run.endedHow, startsLog, check: check ?? ran.check,
+    tokens: addTokens(ran.tokens, tokens), wallMs: (ran.wallMs ?? 0) + ms, headAfter: gitHead(ran.folder),
+    summary: verdict.summary ?? ran.summary, freshFallback: ran.freshFallback, notes,
+  });
   writeJournal(ctx.paths, unit.id, after);
   return { journal: after, verdict, run };
 }

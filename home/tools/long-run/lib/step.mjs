@@ -45,22 +45,22 @@ export function finalOf(verdict, journal) {
   }
 }
 
-function newJournal(ctx, unit, visit, history) {
+/** A journal for a new visit; the worktrees the step made on earlier visits stay listed (they are on disk, not in a session). */
+function newJournal(ctx, unit, visit, saved) {
+  const history = saved ? [...saved.history, { visit: saved.visit, sessionId: saved.sessionId, final: saved.final }] : [];
   return {
     id: unit.id, kind: unit.kind, visit, sessionId: null, account: ctx.account, model: unit.model, folder: unit.cwd, branch: null,
     worktree: null, attempts: 0, starts: 0, totalStarts: 0, startedAt: ctx.now().toISOString(), headBefore: null, headAfter: null,
     running: false, pid: null, last: null, endedHow: null, check: null, nextAttemptAt: null, waitUntil: null, final: null,
     summary: null, tokens: {}, wallMs: 0, startsLog: [], history, notes: [],
+    agents: [], worktrees: saved?.worktrees ?? [], worktreeBase: saved?.worktreeBase ?? null,
   };
 }
 
 /** The journal of this visit: the saved one, a fresh one for a new visit, counters reset when the owner replied. */
 function journalFor(ctx, unit, visit, reply) {
   const saved = readJournal(ctx.paths, unit.id);
-  if (!saved || saved.visit !== visit) {
-    const history = saved ? [...saved.history, { visit: saved.visit, sessionId: saved.sessionId, final: saved.final }] : [];
-    return newJournal(ctx, unit, visit, history);
-  }
+  if (!saved || saved.visit !== visit) return newJournal(ctx, unit, visit, saved);
   if (!reply || saved.replyId === reply.id) return saved; // the same reply again: the driver restarted after applying it
   return { ...saved, final: null, attempts: 0, starts: 0, nextAttemptAt: null, replyId: reply.id, notes: [...saved.notes, `owner: ${reply.action}`] };
 }
