@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { OS_NAME } from '../scripts/install/context.mjs';
@@ -55,4 +55,28 @@ test('the layers line skips an OS file that is missing and names the machine\'s 
   writeFileSync(own, '{}');
   assert.equal(settingsLayersLine(context(dir), null), 'settings layers: settings/base.json');
   assert.equal(settingsLayersLine(context(dir), own), "settings layers: the machine's own settings.json + settings/base.json");
+});
+
+test('long-run is a tool with dependencies: --dry-run lists `npm ci --prefix <repo>/home/tools/long-run` on darwin, linux and win32', async () => {
+  const { TOOLS_WITH_DEPS } = await import('../scripts/install.mjs');
+  const { installToolDeps } = await import('../scripts/install/tools.mjs');
+  assert.ok(TOOLS_WITH_DEPS.includes('long-run'));
+  const root = makeTempDir('install-long-run-');
+  const tool = join(root, 'home', 'tools', 'long-run');
+  mkdirSync(tool, { recursive: true });
+  writeFileSync(join(tool, 'package-lock.json'), readFileSync(join(REPO, 'home', 'tools', 'long-run', 'package-lock.json')));
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+  const log = console.log;
+  for (const name of ['darwin', 'linux', 'win32']) {
+    const printed = [];
+    Object.defineProperty(process, 'platform', { ...platform, value: name });
+    console.log = (line) => printed.push(String(line));
+    try {
+      installToolDeps({ root, dryRun: true, done: [] }, ['long-run']);
+    } finally {
+      console.log = log;
+      Object.defineProperty(process, 'platform', platform);
+    }
+    assert.ok(printed.includes(`[dry-run] npm ci --prefix ${realpathSync(tool)}`), `${name}: ${printed.join('\n')}`);
+  }
 });

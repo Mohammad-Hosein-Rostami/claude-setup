@@ -50,8 +50,8 @@ export async function checkCommand({ positional, flags, env, write }) {
       assertNativeModule();
       await import('@langchain/langgraph');
     } catch (error) {
-      const first = error.message.split('\n')[0];
-      throw new Refusal(`long-run deps: ${first}${first.includes('install.sh') ? '' : ' (run scripts/install.sh; Windows: scripts/install.ps1)'}`);
+      const cause = error.message.split('\n')[0].replace(/: run scripts\/install\.sh.*$/, '');
+      throw new Refusal(`deps: ${cause} (run scripts/install.sh; Windows: scripts/install.ps1)`);
     }
     write('ok');
     return;

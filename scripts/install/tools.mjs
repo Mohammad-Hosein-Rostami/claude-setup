@@ -1,12 +1,12 @@
 // Purpose: the install steps that call other programs: the plugins the merged settings turn on, through `claude plugin`, and
 //   the npm dependencies of the tools that have them.
-// Exports: runProgram, enabledPluginIds, installPlugins, installToolDeps.
+// Exports: runProgram, enabledPluginIds, installPlugins, installToolDeps, installStamp.
 // Invariants: only plugins true in the merged enabledPlugins (settings/base.json < <os>.json < local.json) are installed, and
 //   only the marketplaces they come from are added; nothing is ever uninstalled or disabled here (a plugin installed earlier
 //   and now off stays installed, and settings.json keeps it off); a plugins/plugins.json or merged settings that cannot be read
 //   stops the install before any plugin command; a plugin id must match PLUGIN_ID_SHAPE and goes to `claude` as one argument;
 //   a refused id or a failed plugin command never stops the install (it is listed in ctx.failures and the run exits 1 at the
-//   end); a tool whose lockfile did not change since its last install is not installed again (a second run changes nothing).
+//   end); a tool whose lockfile and Node ABI did not change since its last install is not installed again (a second run changes nothing).
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { InstallError, act, note, warn } from './context.mjs';
 import { mergedSettings } from './settings.mjs';
 
-const STAMP_NAME = '.lock-sha256'; // in node_modules: the lockfile hash of the last install
+const STAMP_NAME = '.lock-sha256'; // in node_modules: `<lockfile sha256>:<Node ABI>` of the last install
 // `name@marketplace`, letters, digits, `.`, `_` and `-` only: no space, quote, `;`, `$`, `%` or other shell sign, so an id is
 // safe as one argument even on Windows, where runProgram passes it through a shell.
 const PLUGIN_ID_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -122,6 +122,14 @@ function pluginStep(ctx, label, args) {
 const sha256 = (path) => createHash('sha256').update(readFileSync(path)).digest('hex');
 
 /**
+ * The stamp of an install: the lockfile hash and the Node ABI (`process.versions.modules`), so a Node upgrade that changes the
+ * ABI rebuilds native modules such as better-sqlite3 once. An older stamp without the `:<ABI>` part never matches.
+ * @param {string} lock the lockfile path
+ * @returns {string} `<sha256>:<abi>`
+ */
+export const installStamp = (lock) => `${sha256(lock)}:${process.versions.modules}`;
+
+/**
  * Installs one tool's dependencies from its lockfile (pnpm when it has a pnpm lockfile and pnpm is there, else npm ci); a plain
  * npm install without one. The real path is used: npm ci through a linked folder reports a false lockfile mismatch.
  * @throws {InstallError} when the install fails
@@ -133,14 +141,14 @@ function installOneTool(ctx, name) {
   const usePnpm = existsSync(pnpmLock) && runProgram('pnpm', ['--version'], { quiet: true }).status === 0;
   const lock = usePnpm ? pnpmLock : existsSync(npmLock) ? npmLock : null;
   const stamp = join(dir, 'node_modules', STAMP_NAME);
-  if (lock && existsSync(stamp) && readFileSync(stamp, 'utf8') === sha256(lock)) {
-    note(ctx, `ok ${name} dependencies (lockfile unchanged)`);
+  if (lock && existsSync(stamp) && readFileSync(stamp, 'utf8') === installStamp(lock)) {
+    note(ctx, `ok ${name} dependencies (lockfile and Node ABI unchanged)`);
     return;
   }
   const [program, args] = usePnpm ? ['pnpm', ['--dir', dir, 'install', '--frozen-lockfile']] : lock ? ['npm', ['ci', '--prefix', dir]] : ['npm', ['install', '--prefix', dir, '--no-audit', '--no-fund']];
   const result = act(ctx, `${program} ${args.join(' ')}`, () => runProgram(program, args));
   if (result && result.status !== 0) throw new InstallError(`${name} dependencies: ${program} exited ${result.status}`);
-  if (result && lock && existsSync(join(dir, 'node_modules'))) writeFileSync(stamp, sha256(lock));
+  if (result && lock && existsSync(join(dir, 'node_modules'))) writeFileSync(stamp, installStamp(lock));
   note(ctx, `${name} dependencies`);
 }
 

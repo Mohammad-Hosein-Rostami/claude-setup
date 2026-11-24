@@ -186,7 +186,7 @@ run_checks() {
   local check
   if [ -n "${DOCTOR_ONLY:-}" ]; then for check in $DOCTOR_ONLY; do "$check"; done; return; fi
   if [ -n "$MISSING_GROUPS" ]; then bad "check files missing from scripts/doctor/:$MISSING_GROUPS (restore them: git checkout -- scripts/doctor)"; return; fi
-  check_links; check_share_deny; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_doctor_accepted; check_plugin_session_start; check_agent_cap; check_disk_free; check_disk_clean; check_native_cleanup; check_tools; check_accounts; check_notify; check_lsp; check_ui_check; check_project_agents; check_projects; check_workflows_gone; check_env_names
+  check_links; check_share_deny; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_doctor_accepted; check_plugin_session_start; check_agent_cap; check_disk_free; check_disk_clean; check_native_cleanup; check_tools; check_accounts; check_notify; check_lsp; check_ui_check; check_long_run; check_project_agents; check_projects; check_workflows_gone; check_env_names
 }
 # The machine's name in the summary: Mac or PC by OS, else the host name; DOCTOR_MACHINE overrides it.
 machine_name() {

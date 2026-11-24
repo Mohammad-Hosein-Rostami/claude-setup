@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# This machine's checks: Node, the shell on Windows, tools on PATH, the production-host list, the doctor accepted list, ui-check dependencies, the LSP server,
+# This machine's checks: Node, the shell on Windows, tools on PATH, long-run dependencies, the production-host list, the doctor accepted list, ui-check dependencies, the LSP server,
 # free disk, disk-clean and Claude Code's own sweep (sourced by scripts/doctor.sh, which holds the helpers ok, bad, warn and warn_unless_accepted, the
 # variables REPO and CLAUDE_DIR, and the run order in run_checks). Defines functions only; nothing runs when this file is sourced.
 # Exports: check_node, check_windows_shell, check_tools, check_prod_hosts, check_doctor_accepted, check_ui_check, check_lsp,
-# check_disk_free, check_disk_clean, check_native_cleanup.
+# check_disk_free, check_disk_clean, check_native_cleanup, check_long_run.
 # Invariants: read-only, as doctor.sh is; every line is `ok`, `WARN`, `FAIL` or `INFO` text on stdout; a check that fails calls bad (BAD=1).
 
 # Node 22.15 or later: the guard's Windows path tests need module.registerHooks (added in 22.15) and are skipped without it.
@@ -68,6 +68,20 @@ check_tools() {
   for t in jq rg gitleaks gh node claude; do
     if command -v "$t" >/dev/null; then ok "tool $t"; else bad "tool $t missing"; fi
   done
+}
+
+# long-run: LangGraph, its SQLite checkpointer and better-sqlite3 are installed, and the native module loads on this Node (a Node
+# upgrade that changes the ABI breaks it until the next install). The CLI's refusal line is `long-run: deps: <cause> (<fix>)`.
+LONG_RUN_FIX="run scripts/install.sh; Windows: scripts/install.ps1"
+check_long_run() {
+  local tool="$REPO/home/tools/long-run" dep missing="" out cause
+  for dep in @langchain/langgraph @langchain/langgraph-checkpoint-sqlite better-sqlite3; do
+    [ -d "$tool/node_modules/$dep" ] || missing="$missing $dep"
+  done
+  if [ -n "$missing" ]; then bad "long-run deps ($LONG_RUN_FIX): missing$missing"; return 0; fi
+  if out="$(node "$tool/long-run.mjs" check --deps 2>&1)"; then ok "long-run deps"; return 0; fi
+  cause="$(printf '%s\n' "$out" | grep -m1 -E '^(long-run: |[A-Za-z]*Error( \[[A-Z_]+\])?: )' | sed -e 's/^long-run: deps: //' -e 's/ (run scripts\/install\.sh.*$//' | cut -c1-200)"
+  bad "long-run deps ($LONG_RUN_FIX): ${cause:-check --deps failed}"
 }
 
 # ui-check: its dependencies resolve, and Playwright + Chromium are found from PROJECT (default: cwd).
