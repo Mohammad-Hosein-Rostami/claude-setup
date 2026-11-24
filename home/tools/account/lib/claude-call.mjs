@@ -1,6 +1,6 @@
 // Purpose: one headless Haiku call over the Claude subscription (`claude -p`), used by the account tool's validity check
 // (home/tools/account/lib/check.mjs).
-// Exports: callHaiku, HAIKU_ARGS, claudePlan.
+// Exports: callHaiku, HAIKU_ARGS, claudePlan, callErrorClass (the child env and the win32 launch come from claude-child.mjs).
 // Login (spec-accounts K1, K2, K13): Claude Code removes CLAUDE_CODE_OAUTH_TOKEN from the environment of hooks (probe
 // ACC-9a, CLI 2.1.329), and a `claude -p` child that is given the variable uses it (probe (a2)). So the child's token
 // is, in this order: the account the caller passes, the token of this process's own environment, else the stored token
@@ -22,6 +22,7 @@ import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { accountForCall } from './accounts.mjs';
+import { TOKEN_SHAPED, childEnv, claudeLaunch } from './claude-child.mjs';
 import { AccountError, NAME_PATTERN } from './names.mjs';
 import { PRIVATE_FILE_MODE, ensurePrivateDir } from './private-fs.mjs';
 import { accountStateDir, logUsage } from './usage.mjs';
@@ -31,17 +32,12 @@ const STDERR_CHARS = 200;
 // An error text is cut to this many characters only after every token in it is taken out (review 1, R2: a token that
 // crossed the cut was left in part). The prefix (`claude exited 1 without JSON: `) plus STDERR_CHARS of the output.
 const ERROR_TEXT_CHARS = STDERR_CHARS + 60;
-// Any token-shaped text of the child's output, its own token or another one (security review 1, S2).
-const TOKEN_SHAPED = /sk-ant-[A-Za-z0-9_-]+/g;
 const TOKEN_ENV = 'CLAUDE_CODE_OAUTH_TOKEN';
 const NO_LOGIN = 'no token in the environment and no account found (pick one in the terminal: claude-as <name>)';
-// Variables that would move the call from the Claude subscription to API billing, Bedrock, Vertex or another endpoint.
-const BILLING_ENV = /^(?:ANTHROPIC_.*|CLAUDE_CODE_USE_BEDROCK|CLAUDE_CODE_USE_VERTEX|AWS_BEARER_TOKEN_BEDROCK)$/;
 export const HAIKU_ARGS = ['-p', '--model', 'haiku', '--output-format', 'json', '--strict-mcp-config', '--disable-slash-commands',
   '--settings', '{"disableAllHooks":true}', '--setting-sources', '', '--no-session-persistence', '--tools', ''];
 
 const SYSTEM_PROMPT_FILE = 'system-prompt.txt';
-const quoteForCmd = (arg) => `"${arg.replace(/"/g, '\\"')}"`;
 
 /**
  * How to start `claude`: a plain `claude` elsewhere; on win32 `claude.cmd` through a shell (Node cannot spawn a .cmd
@@ -52,9 +48,9 @@ const quoteForCmd = (arg) => `"${arg.replace(/"/g, '\\"')}"`;
  * @returns {{command: string, args: string[], shell: boolean, systemFile: string | null}} `systemFile` is the path the caller must write `system` to.
  */
 export function claudePlan(platform, system, cwd) {
-  if (platform !== 'win32') return { command: 'claude', args: [...HAIKU_ARGS, '--system-prompt', system], shell: false, systemFile: null };
+  if (platform !== 'win32') return { ...claudeLaunch(platform, [...HAIKU_ARGS, '--system-prompt', system]), systemFile: null };
   const systemFile = join(cwd, SYSTEM_PROMPT_FILE);
-  return { command: 'claude.cmd', args: [...HAIKU_ARGS, '--system-prompt-file', systemFile].map(quoteForCmd), shell: true, systemFile };
+  return { ...claudeLaunch(platform, [...HAIKU_ARGS, '--system-prompt-file', systemFile]), systemFile };
 }
 
 function runClaude(prompt, system, env, cwd) {
@@ -124,9 +120,8 @@ export async function callHaiku({ system, prompt, session = null, label = 'check
   ensurePrivateDir(cwd);
   const started = Date.now();
   // CLAUDE_CODE_DISABLE_CLAUDE_MDS keeps the owner's global CLAUDE.md out of the call (measured: 3.6k -> 0.4k input tokens).
-  const childEnv = { ...env, CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', [TOKEN_ENV]: login.token };
-  for (const name of Object.keys(childEnv)) if (BILLING_ENV.test(name)) delete childEnv[name];
-  const { json } = await runClaude(prompt, system, childEnv, cwd).catch((error) => { throw new Error(withoutToken(error.message)); });
+  const callEnv = childEnv(env, { CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', [TOKEN_ENV]: login.token });
+  const { json } = await runClaude(prompt, system, callEnv, cwd).catch((error) => { throw new Error(withoutToken(error.message)); });
   const usage = json.usage ?? {};
   logUsage({
     session, label, attempt, account: login.name, model: Object.keys(json.modelUsage ?? {})[0] ?? 'haiku',
