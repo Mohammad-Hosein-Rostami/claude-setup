@@ -18,7 +18,7 @@ const DEFAULT_FAIL_GB = 5;
 const DEFAULT_WARN_GB = 15;
 const EXIT_FAIL = 1;
 const EXIT_USAGE = 2;
-const DU_TIMEOUT_MS = 30_000; // total for ALL folders (not each): huge caches must not push a doctor run or a land-lane start past the runner's 120 s limit; a folder left unmeasured is named without a size
+const DU_TIMEOUT_MS = 30_000; // total for ALL folders (not each): huge caches must not push a doctor run past the runner's 120 s limit; a folder left unmeasured is named without a size
 const CACHES_NAMED = 3;
 const USAGE = 'usage: disk-free.mjs check [--path <dir>]';
 // df -Pk columns from the right: 1024-blocks, Used, Available, Capacity, Mounted on (the filesystem and mount names may hold spaces).

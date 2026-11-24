@@ -55,6 +55,7 @@ const TEMP_PROJECT_SLUG = /^-(?:private-var-folders|private-tmp|tmp)-/;
 const RANDOM_SUFFIX_LENGTH = 6; // what mkdtemp appends
 // tests/temp-dir-helpers.mjs makes cs-test-<label><6 characters>, with-run-tmp.mjs makes cs-run-<6 characters>.
 const NEW_TEST_NAME = new RegExp(`^(?:cs-test-[\\w.-]*|cs-run-)[A-Za-z0-9]{${RANDOM_SUFFIX_LENGTH}}$`);
+// claude-skill-router: the skill-router hook was removed (2026-11-24); kept so the markers it left on a machine still age out.
 const HOOK_STATE_FOLDERS = ['claude-post-edit', 'claude-skill-router'];
 const SCRATCHPAD = 'scratchpad'; // Claude Code's temp folder of one session: <claude tmp>/<project>/<session id>/scratchpad
 const SCRATCH_TEST_PREFIX = 'cs-test-'; // the name agents and probes give their throwaway folders (CLAUDE.md "Probes")

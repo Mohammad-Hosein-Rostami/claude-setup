@@ -23,8 +23,8 @@ named, with "size not measured in time". The Docker builder cache has no folder,
 ## Where it runs
 
 - `scripts/doctor.sh` (`check_disk_free`): `FAIL` makes doctor exit 1, `WARN` is a warning.
-- The first step of `land-lane`, and the lead's check before a build batch: below the fail threshold they stop before any git or agent work and
-  return the line above as the reason. A check that could not run (exit 2) refuses too, so a broken check never lets a build start unseen.
+- By hand before a big build (`node ~/.claude/tools/disk-free/disk-free.mjs`): below the fail threshold, stop before any git or agent
+  work. A check that could not run (exit 2) counts as a refusal too, so a broken check never lets a build start unseen.
 
 ## Test hooks
 
@@ -43,7 +43,7 @@ total measuring limit. Tests: `tests/disk-free.test.mjs`, `tests/doctor-disk.tes
 | session scratch | in each session folder the rule above keeps (the current session, a running one, one not idle long enough): the entries of `<session-id>/scratchpad/` that are a real folder named `cs-test-*` or a git clone (a folder holding a `.git` folder; a linked worktree, whose `.git` is a file, is not one) | nothing anywhere in the folder was modified for 2 days (owner, 2026-11-22: a session that runs for days keeps only its newest 2 days), disk-clean first saw it over 2 days ago (`~/.claude/state/disk-clean/first-seen.json`, keyed by real path, device and inode; a dry run records too, and the report counts the folders seen for the first time as "first seen, kept"; so a `cp -a` copy made today with old times stays), and it holds no git work at any depth (a linked worktree or submodule, changes, untracked files that are not ignored, a stash, commits no remote-tracking branch holds; git that fails keeps it); any other name, a file and a link are never touched, and a session folder the rule above lists or removes in the same run is not looked into |
 | test temp | folders in `os.tmpdir()` named `cs-test-*` (label plus 6 random characters), `cs-run-*` (6 characters), or an old test prefix plus 6 random characters (`lib/test-temp-prefixes.mjs`, only specific two-word-or-longer prefixes; in a shared `/tmp` only the `cs-` names) | older than 1 day |
 | temp projects | `~/.claude/projects/<slug>` where the slug starts with a temp path (`-private-var-folders-`, `-private-tmp-`, `-tmp-`) | no running session in it and nothing in it modified for 3 days |
-| hook state | files in `os.tmpdir()/claude-post-edit/*` and `claude-skill-router/*` (agent call counters, edit logs, tsbuildinfo, router markers) | older than 3 days |
+| hook state | files in `os.tmpdir()/claude-post-edit/*` and `claude-skill-router/*` (agent call counters, edit logs, tsbuildinfo; the removed skill router's old markers age out here) | older than 3 days |
 | figma pulls | `~/.cache/figma/<file>/<node>` folders that figma-pull (ui-check) fills; `--figma-cache` replaces the root | nothing in the folder modified for 30 days (a pull is reused for one UI job; after a month the design is pulled again) |
 
 The bound of each store this setup or Claude Code fills (2026-11-21):
@@ -56,9 +56,7 @@ The bound of each store this setup or Claude Code fills (2026-11-21):
 | test temp folders | 1 day | disk-clean `test-temp` |
 | hook counters in the temp folder | 3 days | disk-clean `hook-state` |
 | `~/.cache/figma` | 30 days idle | disk-clean `figma-pulls` |
-| `~/.claude/recall/index.db` | 2 GiB of live data, oldest transcripts first (`RECALL_MAX_INDEX_MB`) | recall's checkpoint job (`tools/recall/lib/index-bound.mjs`) |
-| `~/.claude/state/commit-gate` | 7 days | the gate itself (`hooks/lib/session-store.mjs`) |
-| `~/.claude/state/done-check/base-go/<repo hash>/` (one Go base tree per repo) | 7 days unused, never while its lock is held | done-check itself, at each Go base run (`tools/done-check/lib/base-go-folder.mjs`) |
+| stores of removed parts (recall index, estimate, done-check, commit-gate, ask queue, checkpoint and job files, 2026-11-24) | removed once | `scripts/install.sh` (its one-time cleanup of known old paths, `scripts/install/retired-state.mjs`) |
 | transcripts, tool results, file history | `cleanupPeriodDays` (default 30; doctor prints it, and the `claude purge --all --dry-run` size) | Claude Code itself: disk-clean adds no rule there |
 | lane worktrees | until landed | `git-tidy prune` only (Claude Code's own cleanup keeps unpushed worktrees) |
 

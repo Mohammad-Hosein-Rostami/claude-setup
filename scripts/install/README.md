@@ -7,7 +7,8 @@ find Node and call it. Its flags are in the header of `install.mjs`.
 |---|---|
 | `context.mjs` | flags, paths, the dry-run switch (`act`), the run log |
 | `record.mjs` | the install record `~/.claude/.claude-setup-install.json`, backups into `~/.claude-backup-<stamp>/`, the install lock |
-| `links.mjs` | `home/*` into `~/.claude`, removal of the retired mode launcher, `modes` and `workflows` links (a copy or the owner's own file there goes to the backup folder) |
+| `links.mjs` | `home/*` into `~/.claude`, removal of the retired mode launcher, `modes`, `workflows`, `lead.md` and `lead-rules.md` links (a copy or the owner's own file there goes to the backup folder) |
+| `retired-state.mjs` | the one-time removal of the stores the removed parts left in `~/.claude` (recall, ask queue, estimate, done-check, commit-gate, call windows, modes, last-seen, ui-proof-gate): only a real folder or file of the installing user at a known path, each removal noted in the install record (`retiredState`); a link is never followed, only named |
 | `personal.mjs` | the personal layer: runs the `personal/` steps, the `~/.claude/project-notes` link, the generated `~/.claude/CLAUDE.md` (and its removal on `--uninstall`) |
 | `personal-folder.mjs` | `<repo>/personal/`: made from `personal.example/` as its own git repo, the owner's notes moved in from `home/project-notes` (and restored from git history when a pull deleted them), moved back on `--uninstall` |
 | `startup.mjs` | the one `claude-as` start-up line (zsh, bash, PowerShell profile) |

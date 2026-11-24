@@ -3,7 +3,8 @@
 //   only find Node and call this file.
 // Usage: node scripts/install.mjs [--update [--to <tag>]] [--uninstall] [--dry-run] [--no-plugins] [--no-tools]
 //          [--ps-profile <path>] [--claude-version <x.y.z>]
-//   (no flag) / --update   link home/ into ~/.claude (and remove the links of the retired modes and workflows), make personal/
+//   (no flag) / --update   link home/ into ~/.claude (and remove the links of the retired modes, workflows and lead rule files and,
+//                          once, the stores of removed parts: scripts/install/retired-state.mjs), make personal/
 //                          from personal.example/ when missing; on the layer's first install move the notes of home/project-notes git does not
 //                          track (or deleted in a pull) into it; link ~/.claude/project-notes to personal/project-notes, write ~/.claude/CLAUDE.md (the marker line and
 //                          @ imports of home/CLAUDE.md and personal/CLAUDE.md; scripts/install/personal.mjs), the claude-as
@@ -32,6 +33,7 @@ import { fileURLToPath } from 'node:url';
 import { InstallError, makeContext, note, parseArgs, samePath } from './install/context.mjs';
 import { ensureDir, loadRecord, lockInstall, saveRecord } from './install/record.mjs';
 import { linkHomeItems, removeRetiredLinks } from './install/links.mjs';
+import { removeRetiredState } from './install/retired-state.mjs';
 import { PERSONAL_ITEMS, checkImportPath, installPersonal } from './install/personal.mjs';
 import { addStartupLines } from './install/startup.mjs';
 import { buildSettings, isNewMachine } from './install/settings.mjs';
@@ -71,6 +73,7 @@ function install(ctx, record) {
   linkHomeItems(ctx, record, LINKS.filter((name) => !PERSONAL_ITEMS.includes(name)));
   installPersonal(ctx, record);
   removeRetiredLinks(ctx, record, LINKS);
+  removeRetiredState(ctx, record);
   addStartupLines(ctx, record);
   enableGitHooks(ctx);
   if (ctx.claudeVersion) installClaude(ctx); // before the plugin commands, which use the new CLI
