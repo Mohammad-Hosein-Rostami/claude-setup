@@ -20,7 +20,8 @@ export const SECRET_OUTCOME = 'secret'; // the log outcome of a secret's kind li
  * The hook stdout for an ask: a command the agent can rewrite is bounced the first time (lib/bounce-once.mjs), and the rest (the
  * identical retry included) get the timed dialog.
  * @param {{reason: string, reasons?: string[], advice?: string[], errorClass?: string}} ask the ask from decideSafely
- * @param {{command: string, cwd: string, input: {session_id?: string, agent_id?: string}}} call the Bash call being guarded
+ * @param {{command: string, cwd: string, input: {session_id?: string, agent_id?: string, agent_type?: string}}} call the Bash call being guarded
+ *   (agent_type: an outward ask from max runs only after a click on Allow, lib/timed-ask.mjs needsClickedAllow)
  * @param {Record<string, string | undefined>} env process environment (HOME, dialog, log)
  * @returns {string} hook stdout ('' for allow; a deny line for a bounce or a Deny click)
  */
@@ -33,7 +34,7 @@ export function askOrBounce(ask, { command, cwd, input }, env = process.env) {
     if (answer.decision === 'allow') rememberAnswered({ session: input.session_id, agentId: input.agent_id, cwd, command }, env);
   };
   const outward = keepsDialog(ask.reasons ?? [ask.reason]); // stays a dialog under CLAUDE_GUARD_ASK=allow
-  return askOwner({ hook: 'pre-bash-guard', tool: 'Bash', reason, command, cwd, outward, sessionId: input.session_id, agentId: input.agent_id, omitCommandFromLog: ask.errorClass !== undefined, onAnswer }, env);
+  return askOwner({ hook: 'pre-bash-guard', tool: 'Bash', reason, command, cwd, outward, sessionId: input.session_id, agentId: input.agent_id, agentType: input.agent_type, omitCommandFromLog: ask.errorClass !== undefined, onAnswer }, env);
 }
 
 /**

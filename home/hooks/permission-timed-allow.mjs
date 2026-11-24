@@ -20,6 +20,8 @@
 // prompt like any other and gets the dialog. A JSON input (MCP and other tools) is shown and logged with its secret-named fields masked
 // (lib/secrets.mjs maskSecretFields). CLAUDE_GUARD_ASK=allow (lib/timed-ask.mjs) allows a prompt at once, destructive ones too, except an
 // MCP tool, an Artifact publish or delete and a Bash command the guard calls outward or hidden (lib/reason-classes.mjs keepsDialog).
+// Such an outward prompt from max (the input's agent_type) runs only after a click on Allow: no answer, a failed dialog and no GUI deny
+// (lib/timed-ask.mjs needsClickedAllow).
 // Invariants: never throws out of main; every answered prompt is logged to the guard log.
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -90,7 +92,7 @@ function guardAsk(command, cwd, env) {
 
 /**
  * Answers one PermissionRequest.
- * @param {{tool_name?: string, tool_input?: object, permission_mode?: string, cwd?: string, session_id?: string, agent_id?: string}} input hook JSON
+ * @param {{tool_name?: string, tool_input?: object, permission_mode?: string, cwd?: string, session_id?: string, agent_id?: string, agent_type?: string}} input hook JSON
  * @param {Record<string, string | undefined>} env process environment (timeout, GUI detection, HOME, log path, CLAUDE_PROJECT_DIR)
  * @param {typeof answerAsk} answer the dialog (lib/timed-ask.mjs answerAsk; a test passes a fake)
  * @returns {string} an allow or deny line, or '' to leave the prompt to Claude Code
@@ -115,7 +117,7 @@ export function permissionReply(input, env = process.env, answer = answerAsk) {
   // kept as a dialog under CLAUDE_GUARD_ASK=allow: an outward or hidden Bash command, an Artifact publish or delete, any MCP tool (an outside system)
   const outward = guard?.outward === true || artifact !== undefined || tool.startsWith(MCP_PREFIX);
   const reason = hookReason ? `${hookReason}. ${promptReason(tool, input.permission_mode)}` : promptReason(tool, input.permission_mode);
-  const request = { tool, reason, outward, command: text, targetLabel: label, timeoutS: permissionTimeoutSeconds(env), cwd, sessionId: input.session_id, agentId: input.agent_id };
+  const request = { tool, reason, outward, command: text, targetLabel: label, timeoutS: permissionTimeoutSeconds(env), cwd, sessionId: input.session_id, agentId: input.agent_id, agentType: input.agent_type };
   const result = answer(request, env);
   logDecision({ ...record, decision: result.decision, outcome: result.outcome, reason }, env);
   if (result.decision === 'allow') return replyLine(allow);
