@@ -2,7 +2,7 @@
 // and hook counters never pile up. --all-lines: the log is the one place that keeps every NOT removed and SKIPPED line of the run. The stamp file `~/.claude/state/disk-clean.stamp` records the last start (its mtime).
 // Exports: startIfDue(input, deps) -> 'started' | 'not-due' | 'skipped'; openLogFile, cleanEnv (tests).
 // Invariants: never waits for the clean-up (detached child, stdio to a log file, unref); never fails the session start (an error goes to stderr,
-//   the exit code stays 0); skips subagents and any source other than startup. Two sessions that start together run one clean-up: the check
+//   the exit code stays 0; input that is not JSON, or over 1 MiB, is skipped with no line at all); skips subagents and any source other than startup. Two sessions that start together run one clean-up: the check
 //   and the stamp write happen while holding a lock file made with O_EXCL (lib/lock-file.mjs: a lock older than a minute is a crashed hook's
 //   and is replaced by one breaker only). An empty or relative HOME skips the run.
 //   The stamp is written to a new file and renamed over the old one, the lock and the log are opened with O_NOFOLLOW and O_NONBLOCK, and
@@ -123,10 +123,16 @@ async function main() {
     if (size > MAX_INPUT_BYTES) return;
     chunks.push(chunk);
   }
+  let input;
+  try {
+    input = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    return; // not hook JSON: no session start to act on, and nothing to say
+  }
   const home = homedir();
   if (!isAbsolute(home)) throw new Error(`skipped: the home folder ${JSON.stringify(home)} is not an absolute path`); // an empty HOME would put the state folder in the working directory
   const claudeDir = join(home, '.claude');
-  startIfDue(JSON.parse(Buffer.concat(chunks).toString('utf8')), {
+  startIfDue(input, {
     stampPath: join(claudeDir, 'state', 'disk-clean.stamp'), logPath: join(claudeDir, 'logs', 'disk-clean.log'), tool: process.env.DISK_CLEAN_TOOL ?? TOOL, nowMs: Date.now(),
   });
 }

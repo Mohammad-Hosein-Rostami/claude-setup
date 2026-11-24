@@ -132,8 +132,8 @@ test('outside a git repository, with unusable input or with another event, the h
     const result = gate.run({ hook_event_name: event, session_id: SESSION, cwd: dir }, dir);
     assert.deepEqual([result.status, result.stdout], [0, ''], event);
   }
-  const garbage = spawnSync(process.execPath, [HOOK], { input: 'not json', encoding: 'utf8', env: { ...CLEAN_ENV, HOME: gate.home } });
-  assert.equal(garbage.status, 0);
-  assert.match(garbage.stderr, /^git-tidy-gate: /);
-  assert.equal(garbage.stdout, '');
+  for (const input of ['not json', '']) {
+    const garbage = spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env: { ...CLEAN_ENV, HOME: gate.home } });
+    assert.deepEqual([garbage.status, garbage.stdout, garbage.stderr], [0, '', ''], JSON.stringify(input));
+  }
 });

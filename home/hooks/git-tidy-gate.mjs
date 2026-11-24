@@ -11,7 +11,7 @@
 // - State: ~/.claude/state/git-tidy-gate/<session>.json holds the check verdict per (repo, fingerprint). The fingerprint is a hash of
 //   all refs and the worktree list, so a repo unchanged for under 10 minutes is a cache hit: two git calls and no child.
 //   A miss runs the child with a CHECK_TIMEOUT_MS bound; on a timeout nothing is said and one detached refresh fills the cache.
-// - Any internal error is one stderr line and exit 0: a session is never trapped.
+// - Input that is not JSON says nothing (exit 0, empty stderr); any internal error is one stderr line and exit 0: a session is never trapped.
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
@@ -104,7 +104,12 @@ async function main() {
     refresh(process.argv[3], process.argv[4], process.env);
     return;
   }
-  const input = JSON.parse(await readStdin());
+  let input;
+  try {
+    input = JSON.parse(await readStdin());
+  } catch {
+    return; // not hook JSON: nothing to check, and nothing to say (a gate that is not a gate stays silent)
+  }
   if (input?.hook_event_name !== EVENT) return;
   const context = await contextFor(input);
   // A top-level additionalContext is dropped (hooks docs, #96193): it goes inside hookSpecificOutput.
