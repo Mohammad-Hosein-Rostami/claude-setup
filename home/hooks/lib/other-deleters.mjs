@@ -8,20 +8,21 @@
 //   `-K`/`--keep-dirlinks` or `-k`/`--copy-dirlinks` it follows links into where they lead, so it always asks;
 // - `powershell|pwsh -Command` text with Remove-Item or an alias of it (rm, rmdir, rd, del, erase, ri) and -Recurse (any prefix);
 // - `cmd /c` (also `//c` from Git Bash, `/k`) text with `rd|rmdir /s` or `del|erase /s`;
-// - `node|python|perl|ruby|deno|bun -e|-c|-p|--eval` text with a recursive delete call (rmSync/rm/rmdir with `recursive: true`,
+// - `node|python|perl|ruby|deno|bun -e|-c|-p|--eval` (`php -r`, `deno eval`; lib/inline-code.mjs reads it) text with a recursive delete call (rmSync/rm/rmdir with `recursive: true`,
 //   rmtree, remove_tree, FileUtils.rm_rf|rm_r|remove_dir|remove_entry): its first argument when it is a string literal; any other
 //   argument (a variable, a joined path) asks, since the guard cannot read it.
 // Also asks: a recursive delete (rm -r, rimraf, a deleting find) through a symlink a `ln -s` made earlier in the same line (it may
 // point anywhere), and a command that may make links on a line where a scratch-area delete was let run (lib/scratch-area.mjs
 // linkMakerReason: a loop, a pipe or `&` may run it first). Writes under ~/.claude/private and the guard's own state: lib/guard-state-write.mjs.
 // withoutDotTargets drops `.` and `./` from rm's targets: rm refuses to remove them, so they never ask.
-// Known limits (also named in pre-bash-guard.mjs): PowerShell -EncodedCommand, -File and script blocks run later; cmd text with `^`
-// escapes or `%VAR%` paths (judged as written); interpreter code read from a file or stdin; a delete call reached through an alias
-// or a loop; rimraf's own glob option; the PowerShell tool itself (the hook matcher covers Bash only).
+// Known limits (also named in pre-bash-guard.mjs): PowerShell -File and script blocks run later (-EncodedCommand asks:
+// lib/inline-code.mjs); cmd text with `^` escapes or `%VAR%` paths (judged as written); interpreter code read from a file or stdin; a delete call reached through an alias
+// or a loop; rimraf's own glob option.
 // Invariants: reads the file system only through checkRm (lib/scratch-area.mjs); notes on the line's work budget which command may make
 // links; every rule only adds asks,
 // except withoutDotTargets, which removes only the two words rm itself refuses.
 import { basename } from 'node:path';
+import { interpreterCode } from './inline-code.mjs';
 import { checkRm, RECURSIVE_FLAG, withoutRedirects } from './rm-paths.mjs';
 import { linkMakerReason, linkState } from './scratch-area.mjs';
 import { QUOTED_MARK, flagsOf } from './shell-words.mjs';
@@ -173,9 +174,6 @@ function checkWindowsScript(cmd, args, env) {
   return undefined;
 }
 
-const INTERPRETERS = /^(?:node|python[\d.]*|perl|ruby|deno|bun)(?:\.exe)?$/;
-const CODE_FLAG = /^-[a-zA-Z]*[ecEp]$|^--(?:eval|print)$/;
-const CODE_FLAG_ATTACHED = /^--(?:eval|print)=/;
 // rmtree (Python shutil, Perl File::Path), remove_tree (Perl), FileUtils.rm_rf & co (Ruby); Node's calls count only with `recursive: true`
 const TREE_CALL = /\b(?:rmtree|remove_tree|rm_rf|rm_r|remove_dir|remove_entry_secure|remove_entry)\b/g;
 const NODE_CALL = /\b(?:rmSync|rmdirSync|rm|rmdir)\s*(?=\()/g;
@@ -183,14 +181,6 @@ const NODE_RECURSIVE = /\brecursive\s*:\s*true\b/;
 // the first argument when it is one string literal: `('.')`, ` '.'` (Ruby without parentheses), `(r'/x',` (a Python prefix)
 const CALL_START = /^\s*\(|^\s+['"`]/; // `rmtree(`, `rm_rf '.'`; `import rmtree` names it without calling it
 const LITERAL_ARGUMENT = /^(?:\s*\(\s*|\s+)([rRbBuUfF]{0,2})(['"`])([^'"`\n]{0,4096})\2\s*(?=[,)\s;]|$)/;
-
-/** The code an interpreter is given on its command line, or undefined. */
-function interpreterCode(cmd, args) {
-  if (!INTERPRETERS.test(cmd)) return undefined;
-  const at = args.findIndex((word) => CODE_FLAG.test(word) || CODE_FLAG_ATTACHED.test(word));
-  if (at === -1) return undefined;
-  return CODE_FLAG_ATTACHED.test(args[at]) ? args[at].slice(args[at].indexOf('=') + 1) : args[at + 1];
-}
 
 /** The first argument of each recursive delete call in the code: a literal path, or null when the guard cannot read it. */
 function deleteCallPaths(code) {

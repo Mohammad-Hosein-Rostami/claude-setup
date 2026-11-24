@@ -1,7 +1,7 @@
 // Per-command rules of pre-bash-guard that need only one command's name and words: git, disk wipes, lockfile hand edits,
 // a variable used as the command name with rm-style flags, rm -r run by xargs or parallel (also inside the `sh -c` script they run), and
 // printing a stored secret (keychain, `gh auth token`), and `gh ssh-key add` of a file that is not `*.pub`.
-// Exports: checkGit(args, assigns), checkDiskWipe(cmd, args), checkLockfileEdit(cmd, args), checkHiddenRm(cmd, args),
+// Exports: checkGit(args, assigns) (also for hub, which runs git), UPDATE_REF_REASON, checkDiskWipe(cmd, args), checkLockfileEdit(cmd, args), checkHiddenRm(cmd, args),
 // checkStdinRm(cmd, args, before), checkStdinScriptRm(script, before), checkKeychainPrint(cmd, args), checkGhSecret(cmd, args) - each
 // returns an ask reason, or undefined when the command is fine; secretPrintOf(cmd, args) and isSecretPrintReason(reason) serve
 // lib/captured-read.mjs; LOCKFILES and lockfileAdvice(name) serve lib/reason-classes.mjs; configOf(option) and HOOKS_PATH_REASON serve lib/git-runs.mjs.
@@ -58,18 +58,22 @@ function checkGitPush(rest) {
   return deletes ? destructive('deleting a remote branch or tag') : pushAsk(options);
 }
 
-/** The rules on one reading of the subcommand and its words (`commit -n`, `--no-verify`, push); undefined when none applies. */
+// every `git update-ref` asks (home/CLAUDE.md: land with `git merge --ff-only`, no update-ref); lib/branch-move.mjs adds why as advice
+export const UPDATE_REF_REASON = 'git update-ref moves a ref by plumbing (land with git merge --ff-only instead); confirm with the owner';
+
+/** The rules on one reading of the subcommand and its words (`commit -n`, `--no-verify`, update-ref, push); undefined when none applies. */
 function checkGitSubcommand({ sub, rest }) {
   const flags = flagsOf(rest);
   // -n is the short form of --no-verify for commit (also inside clusters such as -nm)
   const shortNoVerify = sub === 'commit' && flags.some((f) => /^-[a-zA-Z]*n[a-zA-Z]*$/.test(f));
   const prefixNoVerify = flags.some((f) => f.length >= MIN_NO_VERIFY_PREFIX && NO_VERIFY.startsWith(f.split('=')[0]));
   if (prefixNoVerify || shortNoVerify) return `git ${NO_VERIFY} skips the git hooks`;
+  if (sub === 'update-ref') return UPDATE_REF_REASON;
   return sub === 'push' ? checkGitPush(rest) : undefined;
 }
 
 /**
- * The git rules: HUSKY=0, a config that replaces the hooks or defines an alias, --no-verify, push.
+ * The git rules: HUSKY=0, a config that replaces the hooks or defines an alias, --no-verify, update-ref, push.
  * @param {string[]} args words after `git`
  * @param {string[]} assigns `VAR=x` words before the command
  * @returns {string | undefined} the ask reason, or undefined; when git's options can be read more than one way (an option word the

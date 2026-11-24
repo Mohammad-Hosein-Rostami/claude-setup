@@ -1,12 +1,14 @@
-// Tests for lib/branch-move.mjs through the Bash guard: moving a branch ref by plumbing (update-ref, branch -f, push/fetch to `.`) is
-// advice (C37): the first send is denied with "land with git -C <folder> merge --ff-only <lane>", the identical retry runs. Deleting
-// a ref and refs outside refs/heads/ stay silent. Command strings are only passed to decide() or the hook; nothing is executed.
+// Tests for lib/branch-move.mjs through the Bash guard: moving a branch ref by plumbing (branch -f, push/fetch to `.`) is advice (C37):
+// the first send is denied with "land with git -C <folder> merge --ff-only <lane>", the identical retry runs. Every `git update-ref`
+// asks the owner, every time (audit H1; lib/command-checks.mjs), and a branch-moving one carries the same advice. Deleting a ref and
+// refs outside refs/heads/ get no advice. Command strings are only passed to decide() or the hook; nothing is executed.
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { UPDATE_REF_REASON } from '../home/hooks/lib/command-checks.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
 import { hookEnv } from './hook-env.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -54,12 +56,21 @@ const ALLOWED = [
   'git fetch origin main:main', 'git fetch -u origin main', 'git fetch -u origin main:refs/remotes/origin/main',
 ];
 
-test('C37: moving a branch ref by plumbing gets the landing advice (update-ref, --stdin update/create, branch -f, fetch .)', () => {
-  for (const command of MOVES) assert.deepEqual(decide(command, ctx), { allow: true, advice: [BRANCH_MOVE_ADVICE] }, JSON.stringify(command));
+// the commands of ALLOWED that only name update-ref as text; every other command holding the word runs it
+const NAMES_UPDATE_REF = new Set(['echo git update-ref refs/heads/main x', "cat <<'EOF'\ngit update-ref refs/heads/main x\nEOF", 'git log --grep=update-ref',
+  'git commit -m "no update-ref refs/heads/main"']);
+const runsUpdateRef = (command) => command.includes('update-ref') && !NAMES_UPDATE_REF.has(command);
+const updateRefAsk = (advice) => ({ allow: false, ask: true, reason: UPDATE_REF_REASON, reasons: [UPDATE_REF_REASON], ...advice });
+
+test('C37: moving a branch ref by plumbing gets the landing advice (update-ref, --stdin update/create, branch -f, fetch .); update-ref also asks', () => {
+  for (const command of MOVES) {
+    const expected = runsUpdateRef(command) ? updateRefAsk({ advice: [BRANCH_MOVE_ADVICE] }) : { allow: true, advice: [BRANCH_MOVE_ADVICE] };
+    assert.deepEqual(decide(command, ctx), expected, JSON.stringify(command));
+  }
 });
 
-test('C37: ref deletes, refs outside refs/heads/, a detaching --no-deref HEAD, new branches and text that only names update-ref stay silent', () => {
-  for (const command of ALLOWED) assert.deepEqual(decide(command, ctx), { allow: true }, JSON.stringify(command));
+test('C37: ref deletes, refs outside refs/heads/, a detaching --no-deref HEAD, new branches and text that only names update-ref get no advice; update-ref asks', () => {
+  for (const command of ALLOWED) assert.deepEqual(decide(command, ctx), runsUpdateRef(command) ? updateRefAsk({}) : { allow: true }, JSON.stringify(command));
 });
 
 test('C37: git push . lane:main still asks like any push, the landing advice carried apart; push . to refs/backup carries none', () => {
@@ -71,17 +82,31 @@ test('C37: git push . lane:main still asks like any push, the landing advice car
   assert.equal(decide('git push -u origin lane:main', ctx).advice, undefined, 'push -u is --set-upstream, not fetch -u');
 });
 
-test('C37 through the hook: git update-ref refs/heads/main is denied once with the advice, the identical retry runs', () => {
+/** A hook that sends commands in one session, with no GUI (so an ask is the CLI's own prompt). */
+function hookSender() {
   const home = makeTempDir('branch-move-home-');
   const env = hookEnv({ HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: PROJECT });
-  const send = (command) => {
+  return (command) => {
     const input = JSON.stringify({ cwd: PROJECT, session_id: 'sess-1', tool_input: { command } });
     const { status, stdout, stderr } = spawnSync(process.execPath, [GUARD], { input, encoding: 'utf8', env });
     assert.equal(status, 0, stderr);
     return stdout === '' ? { decision: 'allow' } : JSON.parse(stdout).hookSpecificOutput;
   };
-  const first = send('git update-ref refs/heads/main abc');
+}
+
+test('C37 through the hook: git branch -f main is denied once with the advice, the identical retry runs', () => {
+  const send = hookSender();
+  const first = send('git branch -f main abc');
   assert.equal(first.permissionDecision, 'deny');
   assert.ok(first.permissionDecisionReason.includes(BRANCH_MOVE_ADVICE), first.permissionDecisionReason);
-  assert.deepEqual(send('git update-ref refs/heads/main abc'), { decision: 'allow' });
+  assert.deepEqual(send('git branch -f main abc'), { decision: 'allow' });
+});
+
+test('H1 through the hook: git update-ref refs/heads/main HEAD~1 asks the owner both times, never deny-once-then-run', () => {
+  const send = hookSender();
+  for (const attempt of [1, 2]) {
+    const answer = send('git update-ref refs/heads/main HEAD~1');
+    assert.equal(answer.permissionDecision, 'ask', `send ${attempt}`);
+    assert.ok(answer.permissionDecisionReason.includes(UPDATE_REF_REASON), answer.permissionDecisionReason);
+  }
 });

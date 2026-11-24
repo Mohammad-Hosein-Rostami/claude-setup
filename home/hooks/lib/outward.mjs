@@ -1,5 +1,5 @@
 // Outward actions that always need the owner's confirmation: `git push`, `gh release *`, `gh pr merge`, `gh repo edit --visibility`,
-// `gh secret set`, `gh workflow run`, a `gh api graphql` mutation, package publish.
+// `gh secret set`, `gh workflow run`, a `gh api graphql` mutation, package publish, and the merge and release verbs of glab, hub and tea.
 // Exports: parsePushArgs(rest), pushAsk(options), outwardAsk(cmd, args) -> reason | undefined.
 // The guard turns a reason into a PreToolUse permissionDecision "ask", which prompts even in bypassPermissions mode.
 // Read-only or rehearsal forms stay allowed: `git push --dry-run`, `npm publish --dry-run`, `gh release list|view|download`.
@@ -101,12 +101,31 @@ function publishAsk(cmd, args) {
   return publishes ? `${cmd} publish releases a package to a registry; confirm with the owner` : undefined;
 }
 
+// The other forge CLIs (GitLab's glab, GitHub's older hub, Gitea's tea): [the words naming pull requests or releases, what reads only].
+// hub also runs every git command (`hub push`): pre-bash-guard.mjs gives it the git rules too. `glab mr accept` may be an alias of merge;
+// asking for it costs one dialog. `tea pulls` and `tea releases` also go by `pull`, `pr`, `release` and `r`.
+const FORGE_MERGE_GROUPS = new Map([['glab', new Set(['mr'])], ['tea', new Set(['pulls', 'pull', 'pr'])]]);
+const FORGE_MERGE_VERBS = new Set(['merge', 'accept']);
+const FORGE_RELEASE_GROUPS = new Map([['glab', new Set(['release'])], ['hub', new Set(['release'])], ['tea', new Set(['releases', 'release', 'r'])]]);
+const FORGE_RELEASE_READ = new Set(['list', 'ls', 'view', 'show', 'download']);
+
+function forgeAsk(cmd, args) {
+  const [group, action] = positionals(args, GH_VALUE_OPTIONS);
+  const merges = cmd === 'hub' ? group === 'merge' : FORGE_MERGE_GROUPS.get(cmd)?.has(group) && FORGE_MERGE_VERBS.has(action);
+  if (merges) return `${cmd} ${cmd === 'hub' ? 'merge' : `${group} ${action}`} merges a pull request into the target branch; confirm with the owner`;
+  // `hub release` alone lists the releases; any other verb (create, edit, delete) changes one
+  const isRead = action === undefined ? cmd === 'hub' : FORGE_RELEASE_READ.has(action);
+  if (FORGE_RELEASE_GROUPS.get(cmd)?.has(group) && !isRead) return `${cmd} ${group} ${action} changes a published release; confirm with the owner`;
+  return undefined;
+}
+
 /**
  * Reason to ask the owner before running this command, or undefined.
- * @param {string} cmd command name (gh, npm, pnpm, yarn, bun, lerna, npx; others give undefined)
+ * @param {string} cmd command name (gh, glab, hub, tea, npm, pnpm, yarn, bun, lerna, npx; others give undefined)
  * @param {string[]} args words after the command
  */
 export function outwardAsk(cmd, args) {
   if (cmd === 'gh') return ghAsk(args);
+  if (cmd === 'glab' || cmd === 'hub' || cmd === 'tea') return forgeAsk(cmd, args);
   return PUBLISHERS.has(cmd) ? publishAsk(cmd, args) : undefined;
 }
