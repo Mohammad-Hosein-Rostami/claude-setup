@@ -1,7 +1,7 @@
 // Tests for our skip switches set by a team file (home/hooks/lib/team-switch.mjs; layering-spec.md section 3, lane team-switch): a
 // switch that only a project's committed .claude/settings.json sets is ignored with a warning and our check runs; the same key in
-// .claude/settings.local.json, or in the shell env with no project file, is honoured; an unreadable team file fails closed. Each hook
-// (done-check, post-edit, skill-router) is run as Claude Code runs it, with a temp HOME and temp folder.
+// .claude/settings.local.json, or in the shell env with no project file, is honoured; an unreadable team file fails closed. The hook
+// that reads a switch (post-edit) is run as Claude Code runs it, with a temp HOME and temp folder.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -10,8 +10,6 @@ import { userInfo } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { switchDirs, switchNames, trustedSwitch } from '../home/hooks/lib/team-switch.mjs';
-import { saveBaseline } from '../home/hooks/lib/dirty-baseline.mjs';
-import { makeDoneCheckRepo } from './done-check-fixture.mjs';
 import { git as runGit } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -64,7 +62,7 @@ const namedCases = (key, value) => [
 ];
 
 test('trustedSwitch: team-only switches are ignored with why, local twins and env-only switches are honoured', () => {
-  for (const key of ['DONE_CHECK_SKIP', 'CLAUDE_POST_EDIT_SKIP', 'CLAUDE_SKILL_ROUTER']) {
+  for (const key of ['CLAUDE_POST_EDIT_SKIP', 'ANY_OTHER_SKIP']) { // the lib takes any key: the real switch and a made-up one
     for (const one of namedCases(key, 'all')) {
       const dir = project(one.files, one.git ?? null);
       const env = { [key]: 'all', ...one.env };
@@ -77,9 +75,9 @@ test('trustedSwitch: team-only switches are ignored with why, local twins and en
 });
 
 test('trustedSwitch: an unset or empty switch is not ignored; no project folder or the home folder honours the switch as before', () => {
-  const dir = project({ [SETTINGS]: envFile('DONE_CHECK_SKIP', 'all') });
-  assert.deepEqual(trustedSwitch({}, 'DONE_CHECK_SKIP', [dir]), { value: undefined, ignored: null });
-  assert.deepEqual(trustedSwitch({ DONE_CHECK_SKIP: '' }, 'DONE_CHECK_SKIP', [dir]), { value: '', ignored: null });
+  const dir = project({ [SETTINGS]: envFile('CLAUDE_POST_EDIT_SKIP', 'all') });
+  assert.deepEqual(trustedSwitch({}, 'CLAUDE_POST_EDIT_SKIP', [dir]), { value: undefined, ignored: null });
+  assert.deepEqual(trustedSwitch({ CLAUDE_POST_EDIT_SKIP: '' }, 'CLAUDE_POST_EDIT_SKIP', [dir]), { value: '', ignored: null });
   assert.deepEqual(switchDirs({}, undefined, null, '', 'relative/path'), []);
   // The real home folder's .claude/settings.json is the user's own settings file, never a team file.
   assert.deepEqual(switchDirs({}, userInfo().homedir), []);
@@ -87,89 +85,58 @@ test('trustedSwitch: an unset or empty switch is not ignored; no project folder 
 });
 
 test('R1: HOME and USERPROFILE never make a project folder pass for the home folder (a team file can set them)', () => {
-  const dir = project({ [SETTINGS]: envFile('DONE_CHECK_SKIP', 'all') });
+  const dir = project({ [SETTINGS]: envFile('CLAUDE_POST_EDIT_SKIP', 'all') });
   for (const env of [{ USERPROFILE: '.' }, { HOME: '.' }, { HOME: '.', USERPROFILE: '.' }, { HOME: dir, USERPROFILE: dir }]) {
-    const all = { DONE_CHECK_SKIP: 'all', ...env };
+    const all = { CLAUDE_POST_EDIT_SKIP: 'all', ...env };
     assert.deepEqual(inFolder(dir, () => switchDirs(all, dir)), [dir], JSON.stringify(env));
-    assert.match(inFolder(dir, () => trustedSwitch(all, 'DONE_CHECK_SKIP', switchDirs(all, dir))).ignored ?? '', IGNORED_BY_TEAM, JSON.stringify(env));
+    assert.match(inFolder(dir, () => trustedSwitch(all, 'CLAUDE_POST_EDIT_SKIP', switchDirs(all, dir))).ignored ?? '', IGNORED_BY_TEAM, JSON.stringify(env));
   }
 });
 
 test('R2: a settings.local.json that git tracks, or that sits outside any repository, is a team file (fail closed)', () => {
-  const both = { [SETTINGS]: envFile('DONE_CHECK_SKIP', 'all'), [LOCAL]: envFile('DONE_CHECK_SKIP', 'all') };
-  const localOnly = { [LOCAL]: envFile('DONE_CHECK_SKIP', 'all') };
+  const both = { [SETTINGS]: envFile('CLAUDE_POST_EDIT_SKIP', 'all'), [LOCAL]: envFile('CLAUDE_POST_EDIT_SKIP', 'all') };
+  const localOnly = { [LOCAL]: envFile('CLAUDE_POST_EDIT_SKIP', 'all') };
   for (const [name, dir] of [['committed twin', project(both, 'commit')], ['committed local only', project(localOnly, 'commit')], ['no repository', project(both)]]) {
-    assert.match(trustedSwitch({ DONE_CHECK_SKIP: 'all' }, 'DONE_CHECK_SKIP', [dir]).ignored ?? '', IGNORED_TRACKED_LOCAL, name);
+    assert.match(trustedSwitch({ CLAUDE_POST_EDIT_SKIP: 'all' }, 'CLAUDE_POST_EDIT_SKIP', [dir]).ignored ?? '', IGNORED_TRACKED_LOCAL, name);
   }
   const untracked = project({ ...both, ...LOCAL_IGNORED_BY_GIT }, 'commit'); // the team file committed, the local file ignored by git
-  assert.deepEqual(trustedSwitch({ DONE_CHECK_SKIP: 'all' }, 'DONE_CHECK_SKIP', [untracked]), { value: 'all', ignored: null });
+  assert.deepEqual(trustedSwitch({ CLAUDE_POST_EDIT_SKIP: 'all' }, 'CLAUDE_POST_EDIT_SKIP', [untracked]), { value: 'all', ignored: null });
   const staged = project(localOnly, 'init');
   runGit(staged, 'add', '-f', LOCAL); // staged counts as tracked: the next commit takes it
-  assert.match(trustedSwitch({ DONE_CHECK_SKIP: 'all' }, 'DONE_CHECK_SKIP', [staged]).ignored ?? '', IGNORED_TRACKED_LOCAL, 'staged');
+  assert.match(trustedSwitch({ CLAUDE_POST_EDIT_SKIP: 'all' }, 'CLAUDE_POST_EDIT_SKIP', [staged]).ignored ?? '', IGNORED_TRACKED_LOCAL, 'staged');
 });
 
 test('R5: on Windows a team key in another case is the same switch; elsewhere case is kept', () => {
-  const team = project({ [SETTINGS]: envFile('Done_Check_Skip', 'all') });
-  assert.match(trustedSwitch({ DONE_CHECK_SKIP: 'all' }, 'DONE_CHECK_SKIP', [team], 'win32').ignored ?? '', IGNORED_BY_TEAM);
-  assert.equal(trustedSwitch({ DONE_CHECK_SKIP: 'all' }, 'DONE_CHECK_SKIP', [team], 'darwin').value, 'all');
-  const twin = project({ [SETTINGS]: envFile('DONE_CHECK_SKIP', 'all'), [LOCAL]: envFile('done_check_skip', 'all'), ...LOCAL_IGNORED_BY_GIT }, 'init');
-  assert.equal(trustedSwitch({ DONE_CHECK_SKIP: 'all' }, 'DONE_CHECK_SKIP', [twin], 'win32').value, 'all', 'a local twin in another case counts on Windows');
-  assert.match(trustedSwitch({ DONE_CHECK_SKIP: 'all' }, 'DONE_CHECK_SKIP', [twin], 'linux').ignored ?? '', IGNORED_BY_TEAM);
+  const team = project({ [SETTINGS]: envFile('Claude_Post_Edit_Skip', 'all') });
+  assert.match(trustedSwitch({ CLAUDE_POST_EDIT_SKIP: 'all' }, 'CLAUDE_POST_EDIT_SKIP', [team], 'win32').ignored ?? '', IGNORED_BY_TEAM);
+  assert.equal(trustedSwitch({ CLAUDE_POST_EDIT_SKIP: 'all' }, 'CLAUDE_POST_EDIT_SKIP', [team], 'darwin').value, 'all');
+  const twin = project({ [SETTINGS]: envFile('CLAUDE_POST_EDIT_SKIP', 'all'), [LOCAL]: envFile('claude_post_edit_skip', 'all'), ...LOCAL_IGNORED_BY_GIT }, 'init');
+  assert.equal(trustedSwitch({ CLAUDE_POST_EDIT_SKIP: 'all' }, 'CLAUDE_POST_EDIT_SKIP', [twin], 'win32').value, 'all', 'a local twin in another case counts on Windows');
+  assert.match(trustedSwitch({ CLAUDE_POST_EDIT_SKIP: 'all' }, 'CLAUDE_POST_EDIT_SKIP', [twin], 'linux').ignored ?? '', IGNORED_BY_TEAM);
 });
 
 test('trustedSwitch: CLAUDE_PROJECT_DIR and every other known folder count; one team file anywhere ignores the switch', () => {
   const clean = project();
-  const team = project({ [SETTINGS]: envFile('DONE_CHECK_SKIP', 'all') });
+  const team = project({ [SETTINGS]: envFile('CLAUDE_POST_EDIT_SKIP', 'all') });
   assert.deepEqual(switchDirs({ CLAUDE_PROJECT_DIR: clean }, team, clean), [clean, team]);
-  assert.equal(trustedSwitch({ DONE_CHECK_SKIP: 'all', CLAUDE_PROJECT_DIR: clean }, 'DONE_CHECK_SKIP', switchDirs({ CLAUDE_PROJECT_DIR: clean }, team)).value, undefined);
-  assert.deepEqual([...switchNames({ DONE_CHECK_SKIP: ' types, lint ' }, 'DONE_CHECK_SKIP', [clean])], ['types', 'lint']);
-  assert.deepEqual([...switchNames({ DONE_CHECK_SKIP: 'all' }, 'DONE_CHECK_SKIP', [team])], []);
+  assert.equal(trustedSwitch({ CLAUDE_POST_EDIT_SKIP: 'all', CLAUDE_PROJECT_DIR: clean }, 'CLAUDE_POST_EDIT_SKIP', switchDirs({ CLAUDE_PROJECT_DIR: clean }, team)).value, undefined);
+  assert.deepEqual([...switchNames({ CLAUDE_POST_EDIT_SKIP: ' types, lint ' }, 'CLAUDE_POST_EDIT_SKIP', [clean])], ['types', 'lint']);
+  assert.deepEqual([...switchNames({ CLAUDE_POST_EDIT_SKIP: 'all' }, 'CLAUDE_POST_EDIT_SKIP', [team])], []);
 });
 
 test('hostile settings: a link, a huge file and a switch past 200 env keys are all ignored (fail closed); reads change nothing', () => {
-  const real = project({ 'x.json': envFile('DONE_CHECK_SKIP', 'all') });
+  const real = project({ 'x.json': envFile('CLAUDE_POST_EDIT_SKIP', 'all') });
   const linked = project({ '.claude/.keep': '' });
   symlinkSync(join(real, 'x.json'), join(linked, SETTINGS));
-  const huge = project({ [SETTINGS]: `{"env":{"DONE_CHECK_SKIP":"all"},"pad":"${'x'.repeat(300 * 1024)}"}` });
-  const many = Object.fromEntries([...Array.from({ length: 250 }, (_, i) => [`K${i}`, '1']), ['DONE_CHECK_SKIP', 'all']]);
+  const huge = project({ [SETTINGS]: `{"env":{"CLAUDE_POST_EDIT_SKIP":"all"},"pad":"${'x'.repeat(300 * 1024)}"}` });
+  const many = Object.fromEntries([...Array.from({ length: 250 }, (_, i) => [`K${i}`, '1']), ['CLAUDE_POST_EDIT_SKIP', 'all']]);
   const manyKeys = project({ [SETTINGS]: JSON.stringify({ env: many }) });
   for (const [name, dir, why] of [['link', linked, IGNORED_UNREADABLE], ['huge', huge, IGNORED_UNREADABLE], ['250 keys', manyKeys, IGNORED_BY_TEAM]]) {
     const before = statSync(join(dir, SETTINGS), { throwIfNoEntry: false })?.mtimeMs;
-    const first = trustedSwitch({ DONE_CHECK_SKIP: 'all' }, 'DONE_CHECK_SKIP', [dir]);
+    const first = trustedSwitch({ CLAUDE_POST_EDIT_SKIP: 'all' }, 'CLAUDE_POST_EDIT_SKIP', [dir]);
     assert.match(first.ignored ?? '', why, name);
-    assert.deepEqual(trustedSwitch({ DONE_CHECK_SKIP: 'all' }, 'DONE_CHECK_SKIP', [dir]), first, `${name}: the same answer twice`);
+    assert.deepEqual(trustedSwitch({ CLAUDE_POST_EDIT_SKIP: 'all' }, 'CLAUDE_POST_EDIT_SKIP', [dir]), first, `${name}: the same answer twice`);
     assert.equal(statSync(join(dir, SETTINGS), { throwIfNoEntry: false })?.mtimeMs, before, `${name}: nothing written`);
-  }
-});
-
-// ---- done-check ----
-const PACKAGE = { name: 'p', private: true, scripts: { typecheck: 'tsc --noEmit' } };
-const SOURCES = { 'src/lib.ts': 'export const n: number = 1;\n', 'src/use.ts': "import { n } from './lib';\nexport const t: number = n;\n", 'tsconfig.json': '{"compilerOptions":{"strict":true}}\n' };
-const TSC_BROKEN_CALLER = { exit: 2, stdout: "src/use.ts(3,25): error TS2322: Type 'string' is not assignable to type 'number'.\n" };
-
-test('done-check: DONE_CHECK_SKIP=all from a team file runs the checks and says so once; local, env-only are honoured; unreadable fails closed', async (t) => {
-  for (const one of namedCases('DONE_CHECK_SKIP', 'all')) {
-    const repo = makeDoneCheckRepo({ packageJson: PACKAGE, files: { ...SOURCES, ...one.files }, tools: ['tsc'], replay: { tsc: { exit: 0 } } });
-    t.after(repo.cleanup);
-    // A subagent that started in the repo at its base (as done-check-hook.test.mjs sets one up), then broke a caller.
-    const transcript = join(repo.home, 'team-1--agent-1.jsonl');
-    writeFileSync(transcript, `${JSON.stringify({ cwd: repo.dir })}\n`);
-    assert.equal(saveBaseline(repo.env, 'team-1', 'agent-1', repo.dir, [], repo.baseSha), true);
-    repo.write('src/lib.ts', "export const n: string = '1';\n");
-    repo.setTool('tsc', TSC_BROKEN_CALLER);
-    const input = { hook_event_name: 'SubagentStop', session_id: 'team-1', agent_id: 'agent-1', agent_type: 'implementer', agent_transcript_path: transcript, cwd: repo.dir, stop_hook_active: false };
-    const result = repo.run(hookPath('done-check.mjs'), [], { input: JSON.stringify(input), env: { DONE_CHECK_SKIP: 'all', CLAUDE_PROJECT_DIR: repo.dir, ...one.env } });
-    assert.equal(result.status, 0, one.name);
-    const out = JSON.parse(result.stdout);
-    if (one.honoured) {
-      assert.match(out.systemMessage, /skipped by DONE_CHECK_SKIP=all/, one.name);
-      assert.deepEqual(repo.calls(), [], one.name);
-      continue;
-    }
-    assert.equal(out.decision, 'block', `${one.name}: the checks ran and found the broken caller`);
-    assert.match(out.reason, /src\/use\.ts:3\b[^\n]*TS2322/, one.name);
-    assert.match(out.systemMessage, one.why, one.name);
-    assert.equal(out.systemMessage.split('team switch').length - 1, 1, `${one.name}: one warning per stop`);
   }
 });
 
@@ -199,29 +166,5 @@ test('post-edit: CLAUDE_POST_EDIT_SKIP=all from a team file still formats and wa
     if (one.honoured) assert.equal(first.stdout, '', one.name);
     else assert.match(JSON.parse(first.stdout).systemMessage, one.why, one.name);
     assert.equal(second.stdout, '', `${one.name}: the warning shows once per session`);
-  }
-});
-
-// ---- skill-router ----
-test('skill-router: CLAUDE_SKILL_ROUTER=off from a team file still routes and warns once per session; local and env-only are quiet', () => {
-  const tmp = makeTempDir('team-switch-router-');
-  for (const [index, one] of namedCases('CLAUDE_SKILL_ROUTER', 'off').entries()) {
-    const dir = project(one.files, one.git ?? null);
-    const env = { ...process.env, HOME: tmp, USERPROFILE: tmp, TMPDIR: tmp, TEMP: tmp, TMP: tmp, CLAUDE_PROJECT_DIR: dir, CLAUDE_SKILL_ROUTER: 'off', ...one.env };
-    const ask = () => {
-      const r = spawnSync(process.execPath, [hookPath('skill-router.mjs')], { input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: 'make it pixel perfect', session_id: `router-${index}`, cwd: dir }), encoding: 'utf8', env, cwd: dir });
-      assert.equal(r.status, 0, r.stderr);
-      return r.stdout === '' ? null : JSON.parse(r.stdout);
-    };
-    const first = ask();
-    const second = ask();
-    if (one.honoured) {
-      assert.equal(first, null, one.name);
-      continue;
-    }
-    assert.match(first.hookSpecificOutput.additionalContext, /figma-pixel-perfect/, `${one.name}: the router ran`);
-    assert.match(first.systemMessage, one.why, one.name);
-    assert.match(second.hookSpecificOutput.additionalContext, /figma-pixel-perfect/, one.name);
-    assert.equal(second.systemMessage, undefined, `${one.name}: the warning shows once per session`);
   }
 });

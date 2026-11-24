@@ -18,23 +18,15 @@ test('dev-run never starts background loops or watchers', () => {
   assert.match(read('home/agents/dev-run.md'), /Never start a watcher, a poller or a dev server/);
 });
 
-// one-home-rules (R16 items 13, 16, 19): one home per rule, the three contradictions gone, lead-only text out of CLAUDE.md.
-test('the owner-decision list is written once, in home/CLAUDE.md "Token discipline"; the other always-loaded files point there', () => {
-  const files = ['home/CLAUDE.md', 'home/lead-rules.md', 'home/lead.md']; // home/rules/core.md is gone (lex-dev-tess plan)
+// one-home-rules (R16 items 13, 16, 19): one home per rule. home/rules/core.md and the lead rule files that pointed to the list
+// were removed (lex-dev-tess plan), so home/CLAUDE.md is the one always-loaded file left.
+test('the owner-decision list is written once among the always-loaded files', () => {
+  const files = ['home/CLAUDE.md'];
   const copies = files.flatMap((path) => read(path).match(/scope, money, irreversible/g) ?? []);
   assert.equal(copies.length, 1);
-  assert.match(read('home/lead.md'), /Owner decisions \(the list in CLAUDE\.md "Token discipline"\)/);
 });
 
-test('questions wait 2 minutes (RC3); routing has no per-call model rule and no "Opus writes only a spec"', () => {
-  for (const path of ['home/CLAUDE.md', 'home/lead-rules.md']) assert.doesNotMatch(read(path), /60 s wait|No answer in 60 s/, path);
+test('questions wait 2 minutes (RC3)', () => {
+  assert.doesNotMatch(read('home/CLAUDE.md'), /60 s wait|No answer in 60 s/);
   assert.match(read('home/CLAUDE.md'), /its own popup and its own 2-minute wait/);
-  assert.doesNotMatch(read('home/lead.md'), /Every Agent call names a model/);
-  assert.doesNotMatch(read('home/lead-rules.md'), /Opus writes only a/);
-  assert.match(read('home/lead-rules.md'), /the guard gives Explore and general-purpose `sonnet`, Plan `opus`/);
-});
-
-test('Project config layers moved to lead-rules.md, which tells the lead to quote it in such a brief', () => {
-  assert.doesNotMatch(read('home/CLAUDE.md'), /Project config layers/);
-  assert.match(read('home/lead-rules.md'), /## Project AI config \(quote it in full in a brief that sets up or changes a project's AI config\)/);
 });

@@ -5,14 +5,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
-import { mkdir, rename, symlink, writeFile } from 'node:fs/promises';
+import { rename, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MAX_AGENT_FILES, NOTE_MAX_CHARS, projectAgentNote } from '../home/hooks/lib/project-agents.mjs';
 import { AGENTS, BOTH_ADVICE, CAP_ADVICE, NOTE_START, POSIX, agent, noteOf, sandbox } from './project-agents-helpers.mjs';
 
 const DOCTOR = fileURLToPath(new URL('../scripts/doctor.sh', import.meta.url));
-const NOTES_HOOK = fileURLToPath(new URL('../home/hooks/session-notes.mjs', import.meta.url));
 const MERGE_HOOK = fileURLToPath(new URL('../home/hooks/project-merge.mjs', import.meta.url));
 const NOTE_COMMAND = fileURLToPath(new URL('../home/hooks/lib/project-agents.mjs', import.meta.url));
 test('a project agent with maxTurns is named in the note', async () => {
@@ -89,19 +88,17 @@ async function gitSandbox(files) {
 
 const countOf = (text, part) => text.split(part).length - 1;
 
-// F2 of lane agents-note: both SessionStart hooks run at one start, and the note is shown once, by project-merge.
-test('at one start only project-merge prints the project-agents note, once, for startup and compact; quiet for a clean project', async () => {
+// F2 of lane agents-note: the note is shown once, by project-merge (the only SessionStart hook that prints it).
+test('project-merge prints the project-agents note once, for startup and compact; quiet for a clean project', async () => {
   const capped = await gitSandbox({ project: { builder: 'maxTurns: 60\n' } });
   for (const source of ['startup', 'compact']) {
-    const notes = runStartHook(NOTES_HOOK, capped.home, capped.projectDir, source);
     const merge = runStartHook(MERGE_HOOK, capped.home, capped.projectDir, source);
-    assert.equal(notes.includes(NOTE_START), false, `${source}: session-notes prints no project-agents note`);
     const note = JSON.parse(merge).hookSpecificOutput.additionalContext;
     assert.equal(countOf(note, NOTE_START), 1, `${source}: project-merge prints it once`);
     assert.ok(note.includes(noteOf({ advice: CAP_ADVICE, items: [`${AGENTS}builder.md (maxTurns 60)`] })), note);
   }
   const clean = await gitSandbox({ project: { builder: '' } });
-  assert.doesNotMatch(runStartHook(NOTES_HOOK, clean.home, clean.projectDir) + runStartHook(MERGE_HOOK, clean.home, clean.projectDir), /maxTurns|Project agent files/);
+  assert.doesNotMatch(runStartHook(MERGE_HOOK, clean.home, clean.projectDir), /maxTurns|Project agent files/);
 });
 
 const hasJq = spawnSync('jq', ['--version']).status === 0;
@@ -155,12 +152,10 @@ test('doctor prints the project path escaped, without control characters, in eve
 });
 
 // Audit of db40977 (B1, S4): the agent files come from a cloned repository, so they are untrusted. A link to /dev/zero or a FIFO once
-// grew the SessionStart hook to gigabytes or hung it until its timeout killed it, and the lead rules were lost. The note is now
-// project-merge's line, so that hook must end on its own with it, and session-notes still prints the lead rules.
-test('a link or a FIFO among the agent files is not read, both SessionStart hooks end, and the lead rules stay', { skip: !POSIX && 'POSIX only' }, async () => {
+// grew the SessionStart hook to gigabytes or hung it until its timeout killed it, and the start text was lost. The note is now
+// project-merge's line, so that hook must end on its own with it.
+test('a link or a FIFO among the agent files is not read, and the SessionStart hook ends on its own', { skip: !POSIX && 'POSIX only' }, async () => {
   const { home, projectDir } = await gitSandbox({ project: { builder: 'maxTurns: 60\n' } });
-  await mkdir(join(home, '.claude'), { recursive: true });
-  await writeFile(join(home, '.claude', 'lead-rules.md'), 'LEAD-RULES-MARK\n');
   const agents = join(projectDir, '.claude', 'agents');
   await symlink('/dev/zero', join(agents, 'zero.md'));
   assert.equal(spawnSync('mkfifo', [join(agents, 'pipe.md')]).status, 0);
@@ -168,9 +163,6 @@ test('a link or a FIFO among the agent files is not read, both SessionStart hook
     input: JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'abc-2', source: 'startup', cwd: projectDir }),
     encoding: 'utf8', env: { ...process.env, HOME: home, USERPROFILE: home }, timeout: 4000,
   });
-  const notes = runHook(NOTES_HOOK);
-  assert.equal(notes.signal, null, 'session-notes ends on its own');
-  assert.match(notes.stdout, /^LEAD-RULES-MARK$/m);
   const merge = runHook(MERGE_HOOK);
   assert.equal(merge.signal, null, 'project-merge ends on its own');
   const note = JSON.parse(merge.stdout).hookSpecificOutput.additionalContext.split('\n').find((line) => line.startsWith(NOTE_START)) ?? '';
