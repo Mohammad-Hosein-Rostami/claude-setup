@@ -2,11 +2,11 @@
 // the platform's dialog tool (osascript / powershell / zenity) sits first on PATH, writes its pid to a file, and either answers
 // right away or stays open ("hang") until it is killed, as a real popup does. No test ever opens a real dialog.
 // Exports: fakePopup(result, extra) -> {env, pid(), alive()}; result is allow | deny | timeout | hang.
-import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { dialogExecutable } from '../home/hooks/lib/timed-ask.mjs';
 import { tempLogPath } from './hook-env.mjs';
-import { warmExec } from './warm-exec.mjs';
+import { sharedToolDir } from './shared-tools.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 import { cleanEnv } from './clean-env.mjs';
 
@@ -46,15 +46,18 @@ const isAlive = (pid) => {
  */
 export function fakePopup(result, extra = {}) {
   const dir = makeTempDir('fake-popup-');
-  const script = join(dir, 'fake.cjs');
-  writeFileSync(script, SCRIPT);
-  const bin = join(dir, dialogExecutable(process.platform) + (process.platform === 'win32' ? '.cmd' : ''));
-  writeFileSync(bin, process.platform === 'win32' ? `@node "${script}" %*\r\n` : `#!/bin/sh\nexec node "${script}" "$@"\n`);
-  chmodSync(bin, 0o755);
-  if (process.platform !== 'win32') warmExec(bin);
+  let tools = dir;
+  if (process.platform === 'win32') {
+    const script = join(dir, 'fake.cjs');
+    writeFileSync(script, SCRIPT);
+    writeFileSync(join(dir, `${dialogExecutable(process.platform)}.cmd`), `@node "${script}" %*\r\n`);
+  } else {
+    // one shared folder for every popup (a new executable is slow to start): the tool reads its result and pid file from env
+    tools = sharedToolDir({ 'fake.cjs': SCRIPT, [dialogExecutable(process.platform)]: '#!/bin/sh\nexec node "$(dirname "$0")/fake.cjs" "$@"\n' });
+  }
   const pidFile = join(dir, 'popup.pid');
   const home = join(dir, 'home');
-  const env = cleanEnv({ HOME: home, USERPROFILE: home, PATH: `${dir}${delimiter}${process.env.PATH}`, DISPLAY: ':0', FAKE_POPUP_RESULT: result, FAKE_POPUP_PID: pidFile, CLAUDE_GUARD_LOG: tempLogPath(), ...extra });
+  const env = cleanEnv({ HOME: home, USERPROFILE: home, PATH: `${tools}${delimiter}${process.env.PATH}`, DISPLAY: ':0', FAKE_POPUP_RESULT: result, FAKE_POPUP_PID: pidFile, CLAUDE_GUARD_LOG: tempLogPath(), ...extra });
   for (const name of ['NODE_TEST_CONTEXT', 'SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY', 'CI']) delete env[name];
   const pid = () => {
     try {
