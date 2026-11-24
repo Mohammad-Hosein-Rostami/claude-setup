@@ -3,7 +3,7 @@ name: figma-pixel-perfect
 description: Use whenever a task has a Figma link, frame or node id, or says match the design / pixel perfect - pull the baseline, build, compare with ui-check, fix until it passes, then check responsive.
 ---
 
-When the check plan is pixel (design words in the request, or a look change on a surface with a Figma frame: `standards/ui-checks.md`), with no switch: pull the Figma baseline, build to it, run the `ui-check run` compare loop and the responsive checks, then the `visual-qa` final gate.
+When the check plan is pixel (design words in the request, or a look change on a surface with a Figma frame: `standards/ui-checks.md`), with no switch: pull the Figma baseline, build to it, run the `ui-check run` compare loop and the responsive checks, then the `pixel-qa` final gate.
 
 Rules: U1, U2, F7. Conversion rules, tolerances and false positives: `standards/figma.md` (read it once per task).
 Tools: `node ~/.claude/tools/ui-check/cli.mjs <cmd>`, `ui-coverage/ui-coverage.mjs`, `ui-proof/ui-proof.mjs` (READMEs beside them).
@@ -28,8 +28,7 @@ long edge, never a full page at device pixel ratio 2; a crop explains a row, PAS
 4. **Design-system-first step** (design-system project): list the components the frames use; compare each variant (one story or
    gallery state per variant) with its Figma variant from `figma-pull --bulk`; fix every difference in the theme or the shared
    component, never per screen. Then the screen baseline.
-5. **Baseline**: `ui-check run --matrix M --base-url U --out <ref>` on the base tip (in a road: `run --step <road>.s<N>` before the
-   step starts, the step-start record). Its table (per state: pixels, rows, known causes) goes into every lane brief and `<ref>`
+5. **Baseline**: `ui-check run --matrix M --base-url U --out <ref>` on the base tip. Its table (per state: pixels, rows, known causes) goes into every lane brief and `<ref>`
    is the lane's `--no-worse` reference. Shared root causes found there (fonts, rasteriser, a design-system component) get their
    own first step before lanes tune screens.
 6. **Implement** with tokens (Code Connect and MUI theme tokens over hard-coded values); stable selectors (`data-testid`) on
@@ -38,7 +37,7 @@ long edge, never a full page at device pixel ratio 2; a crop explains a row, PAS
    (`--strict` under the strict rule; `--self-test` once to prove captures are stable). Fix only failing rows, one root cause per
    round (a wrong font moves everything: fix it first). No round limit: repeat until every state passes the rule in force (0
    element rows outside accepted ones, and the pixel rule: 0.5% default or strict). Every round prints identical / better / worse
-   against the reference. **Plateau** (`PLATEAU`: no gain in 2 rounds): change approach (`deep-debugger` on that state; font
+   against the reference. **Plateau** (`PLATEAU`: no gain in 2 rounds): change approach (`dev-debug` on that state; font
    files, hinting, subpixel layout, image sources; `ui-check attribute` for strict leftovers), keep working on other states,
    never lower the bar (`--max-diff`, the rule, the matrix), never mark it passed. Only a proven renderer-level cause is an open
    item with evidence; stop early only for a blocker outside the code (missing font or asset, unclear design), then ask. Text 1px
@@ -49,13 +48,13 @@ long edge, never a full page at device pixel ratio 2; a crop explains a row, PAS
 9. **Accepted differences**: one row each with a reason, a diagnostic proof (a diagnostic state) and an owner reference
    (`ui-coverage` `lib/accepted.mjs` requires one), plus a "settled, do not report again" list for the owner.
 
-The UI lane owns the batch loop (step 7); visual-qa runs the independent final gate on the tree that lands (the lane rebased onto
-the current base; same matrix, URL, widths), writes the review page (`ui-proof review-page`) and only its PASS counts (the
-`ui-proof-gate` hook and `ui-proof check` hold it). A visual-qa failure goes back to the UI lane's loop.
+The UI lane owns the batch loop (step 7); pixel-qa runs the independent final gate on the tree that lands (the lane rebased onto
+the current base; same matrix, URL, widths), writes the review page (`ui-proof review-page`) and only its PASS counts
+(`ui-proof check` holds it). A pixel-qa failure goes back to the UI lane's loop.
 
 ## UI brief template (the lead fills every field)
 
-- Spec path; skills to load (named: a project copy of `ui-implementer` shadows its preloads); worktree and port (dev URL); Figma URL + node and the ui-check cache; reference app; states file;
+- Spec path; skills to load (named: a project copy of `dev-pixel` shadows its preloads); worktree and port (dev URL); Figma URL + node and the ui-check cache; reference app; states file;
   matrix (`MATRIX: <path>`).
 - The per-state baseline table and known causes (step 5); a per-node target table (node, selector, "Now" px).
 - Acceptance numbers: "N states, X px, R rows, not worse" against `<ref>`.
@@ -67,5 +66,5 @@ the current base; same matrix, URL, widths), writes the review page (`ui-proof r
 - Report format: verdict, last `result:` and `frames:` lines, `results.json` path, open items with evidence.
 - The owner gets a live page (the review page of the final gate).
 
-Done-gate: the lane's last `run` PASS (or open items with proven causes), then visual-qa's final-gate PASS on the tree that lands
+Done-gate: the lane's last `run` PASS (or open items with proven causes), then pixel-qa's final-gate PASS on the tree that lands
 with its review page path, commands and verdict lines quoted.

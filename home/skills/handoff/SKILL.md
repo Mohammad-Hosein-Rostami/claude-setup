@@ -4,18 +4,17 @@ description: Write a compact handoff note so work can continue in a fresh sessio
 effort: low
 ---
 
-Write `HANDOFF.md` beside the session's `STATUS.md` (else in the project root), max 40 lines. It uses the digest's
-template, in this order, so the next session reads the same sections the compaction digest prints:
+Write `HANDOFF.md` in the project root (never committed: hide it with `.git/info/exclude`), max 40 lines, in this order:
 
 1. **Goal** and constraints (user's words where they matter).
-2. **Rules**: point to `STATUS.md` `## Standing rules` (added with `status.mjs rule`, ids `R<n>`); copy none here.
+2. **Rules**: the standing rules the owner gave for this job, one line each.
 3. **Decisions**: one item each, with why.
 4. **Files touched**: from `git status --porcelain` and `git log --oneline <start>..HEAD` (paste the command output, never
    from memory); the branch and head sha the same way.
 5. **Last check**: the command run and its exact result or error text (copied from the log).
 6. **Open questions**: each with who decides.
-7. **Next**: ordered steps, each concrete enough to run without asking (also `status.mjs next <row> "<step>"`).
-8. **Don't redo**: dead ends already ruled out, one `-` item each (the session-start notice and the digest print this list).
+7. **Next**: ordered steps, each concrete enough to run without asking.
+8. **Don't redo**: dead ends already ruled out, one `-` item each.
 9. **Surprises**: what behaved other than expected.
 10. **Reports**: only the paths of report files agents wrote; never their content.
 
