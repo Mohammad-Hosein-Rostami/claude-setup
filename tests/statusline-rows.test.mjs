@@ -1,7 +1,8 @@
 // Tests that pin the status line rows' cuts and colours (RC8, R18's RC14 and RC20 of 2026-11-22): the kind colours (branch,
 // session) on the dark, light and 16-colour palettes with yellow, red, magenta and dim only as reserved; the git row's branch cut;
-// ASCII mode; spans; the render time; and the 5 h pace and reset clock of the session row (R33). Rows come from
-// home/tools/board/lib/render.mjs statusRows and sessionRow (pure), on the screenshot board of statusline-board-fixture.mjs.
+// ASCII mode; spans; the render time; the 5 h pace and reset clock of the session row (R33); and git counts that are `unknown`
+// (P3). Rows come from home/tools/board/lib/render.mjs statusRows and sessionRow (pure), on the screenshot board of
+// statusline-board-fixture.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fitParts, lookOf, paint, STATE } from '../home/tools/board/lib/cells.mjs';
@@ -174,4 +175,28 @@ test('R33: with no live 5 h window, an empty last sample shows its reset clock',
   view.limitsFile = { account: 'mine', samples: [{ t: NOW - 5 * 60_000, five_hour: { used_percentage: 100, resets_at: resetS } }] };
   view.input = { ...view.input, rate_limits: undefined };
   assert.match(sessionRow(view, lookFor(NO_COLOR_ENV, 200)), /5h 0% left, 5 min ago, resets 10:20/);
+});
+
+const UNKNOWN = 'unknown'; // git-state.mjs: a count git could not give and no cache held
+/** An entry of board.repo.active as git-state.mjs writes it: a clean branch level with the base, unless `fields` say otherwise. */
+const activeBranch = (name, fields) => ({
+  name, current: false, upstream: null, upAhead: null, upBehind: null, ahead: 0, behind: 0, ageMin: 10, worktree: name, agents: [],
+  staged: 0, changed: 0, untracked: null, conflicts: 0, op: null, opStep: null, ...fields,
+});
+const gitRowsOf = (board, columns) => rowsOf(board, NO_COLOR_ENV, columns).map(plain).filter((row) => /^(git|lanes) /.test(row));
+
+test('P3: unknown counts draw `changes unknown` on the head row and on a lane, never `changes ?`, `clean` or `ready to land`', () => {
+  const unknownCounts = { staged: UNKNOWN, changed: UNKNOWN, conflicts: UNKNOWN };
+  const board = { ...screenshotBoard(), agents: [] };
+  board.repo = { ...board.repo, active: [activeBranch('main', { current: true, worktree: 'main', ...unknownCounts, untracked: UNKNOWN }),
+    activeBranch('idle-lane', { ahead: 2, ...unknownCounts })] };
+  assert.deepEqual(gitRowsOf(board, 160), ['git     claude-setup  main  changes unknown · last commit 10 min ago', 'lanes   idle-lane ↑2 changes unknown']);
+  assert.deepEqual(gitRowsOf(board, 80), ['git main  changes unknown · last commit 10 min ago', 'lanes idle-lane ↑2 changes unknown'], 'narrow rows');
+});
+
+test('an old board file with number counts and no `unknown` field draws its counts as before', () => {
+  const board = { ...screenshotBoard(), agents: [] };
+  board.repo = { ...board.repo, worktrees: board.repo.worktrees.map((wt) => (wt.main ? { ...wt, staged: 1, changed: 3, untracked: 1, conflicts: 0 } : wt)) };
+  assert.deepEqual(gitRowsOf(board, 160), ['git     claude-setup  main  ↑44 to push · 1 staged · 3 changed · 1 new · last commit 5 h 40 ago',
+    'lanes   remove-modes ↑7 · road-gate-landed-row ↑8 ~2 · sync-remote-path ↑1']);
 });
