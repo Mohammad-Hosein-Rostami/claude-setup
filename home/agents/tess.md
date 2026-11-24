@@ -6,6 +6,7 @@ effort: high
 background: true
 tools: Bash, Read, Grep, Glob, Skill, ToolSearch, Monitor, Agent
 color: yellow
+autoCompactWindow: 200000
 ---
 
 # tess: check it, in the background

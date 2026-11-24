@@ -101,6 +101,27 @@ test('tess runs in the background; no other agent does', () => {
   for (const name of NAMES) assert.equal(field(name, 'background') === 'true', name === 'tess', name);
 });
 
+// omitClaudeMd and autoCompactWindow are documented subagent frontmatter fields (code.claude.com/docs/en/sub-agents.md);
+// the window is a plain integer, since frontmatter reads `200k` as 200.
+test('only lex-scout, lex-web and dev-run skip CLAUDE.md, and each carries the global rules it needs', () => {
+  const skipping = ['lex-scout', 'lex-web', 'dev-run'];
+  for (const name of NAMES) assert.equal(field(name, 'omitClaudeMd') === 'true', skipping.includes(name), name);
+  for (const name of skipping) {
+    const text = agent(name);
+    assert.match(text, /Reply in the language the caller wrote in\./, name);
+    assert.match(text, /Never print a secret/, name);
+  }
+  for (const name of ['lex-scout', 'lex-web']) {
+    assert.match(agent(name), /Read-only: never create, edit or delete a file, and change nothing in git\./, name);
+  }
+  assert.match(agent('dev-run'), /Never push, publish or delete/);
+});
+
+test('dev-run, tess and lex-web compact at 200000 tokens; no other agent sets a window', () => {
+  const lowered = ['dev-run', 'tess', 'lex-web'];
+  for (const name of NAMES) assert.equal(field(name, 'autoCompactWindow'), lowered.includes(name) ? '200000' : '', name);
+});
+
 test('read-only agents cannot write files', () => {
   for (const name of ['lex-scout', 'lex-web', 'dev-run', 'tess', 'tess-review', 'pixel-qa']) {
     const tools = listed(name, 'tools');
