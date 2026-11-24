@@ -4,10 +4,11 @@
 // Every test here is new behaviour (the land before the sweep deleted only the landed lane): each fails on the old sources.
 // Each repository is a throw-away one in the OS temp folder (git-tidy-helpers.mjs: no user git config, private HOME).
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { addWorktree, backdate, commit, git, makeRepo } from './git-tidy-helpers.mjs';
+import { CLEAN_ENV, addWorktree, backdate, commit, git, makeRepo } from './git-tidy-helpers.mjs';
 import { addWorktreeAt, branchExists, land, laneFixedOnTestBranch, logRecords, outputLines, tipOf } from './land-sweep-helpers.mjs';
 
 const LANE = 'lane/l';
@@ -158,4 +159,31 @@ test('f: a lane reset with --soft and recommitted after folding a test branch ke
     `  ${TEST}: active, ahead 2`, // the lane commit and the test commit: neither patch is the squashed one on main
   ]);
   assert.equal(tipOf(repo, TEST), testTip, 'the reset ends the proof, so the folded branch stays');
+});
+
+/** The verbatim patch id of commit `sha`, as git computes it from `git show`. */
+function patchIdOf(repo, sha) {
+  const shown = git(repo, 'show', '--format=', sha);
+  const result = spawnSync('git', ['patch-id', '--verbatim'], { cwd: repo, encoding: 'utf8', env: CLEAN_ENV, input: `${shown}\n` });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.split(' ')[0];
+}
+
+// Repro (tess-review R2): patch ids leave out line numbers, so the same line added at two places with the same three lines of
+// context has one patch id. Fails on the tip: test/t is deleted as folded though its change is not on main.
+test('R2: a test branch whose patch id equals a lane commit that changed another place in the file is kept', () => {
+  const repo = makeRepo();
+  const twice = `${['a', 'b', 'c', 'd', 'e', 'f'].join('\n')}\n`; // the same lines twice, so both places have one context
+  commit(repo, 'shared.txt', `${twice}g\nh\n${twice}`);
+  const testTree = addWorktree(repo, 'test', TEST);
+  const testTip = commit(testTree, 'shared.txt', `a\nb\nc\nNEW\nd\ne\nf\ng\nh\n${twice}`);
+  const laneTree = addWorktree(repo, 'lane', LANE);
+  commit(laneTree, 'shared.txt', `${twice}g\nh\na\nb\nc\nNEW\nd\ne\nf\n`);
+  backdate(testTree);
+  const laneTip = tipOf(repo, LANE);
+  assert.equal(patchIdOf(repo, testTip), patchIdOf(repo, laneTip), 'precondition: the two commits have one patch id');
+  const result = land([LANE, '--repo', repo], repo);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(outputLines(result.stdout).slice(3), ['left:', `  ${TEST}: active, ahead 1`]);
+  assert.equal(tipOf(repo, TEST), testTip);
 });

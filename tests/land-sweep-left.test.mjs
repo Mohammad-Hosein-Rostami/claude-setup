@@ -5,11 +5,11 @@
 // sources. Each repository is a throw-away one in the OS temp folder (git-tidy-helpers.mjs: no user git config, private HOME).
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, chmodSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { CLEAN_ENV, addWorktree, commit, git, makeRepo, tidy } from './git-tidy-helpers.mjs';
 import {
-  addWorktreeAt, branchExists, commitAt, land, laneFixedOnTestBranch, logPath, logRecords, outputLines, tipOf,
+  LOG_FILE, addWorktreeAt, branchExists, commitAt, land, laneFixedOnTestBranch, logPath, logRecords, outputLines, tipOf,
 } from './land-sweep-helpers.mjs';
 
 const MS_PER_MINUTE = 60_000;
@@ -129,4 +129,38 @@ test('k: a torn last line (no newline) in the log does not swallow the record of
   const { repo, laneTree, laneTip } = laneFixedOnTestBranch();
   writeFileSync(logPath(repo), '{"landed": {"branch": "test/x", "tip": "ab');
   assert.deepEqual(sweepLines(repo, 'test/x'), [`removed worktree ${laneTree}`, `deleted lane/x (was ${laneTip}, folded into test/x)`, 'left: none']);
+});
+
+// Repro (tess-review R3): a landing record proves a fold only while what it landed is on the base. Fails on the tip: after the
+// owner undoes the landing, prune still deletes lane/x as folded into test/x, and its commit is then on no branch.
+test('R3: once the landing is undone (main reset back), prune --apply no longer deletes a branch as folded by that record', () => {
+  const { repo, laneTree, laneTip } = laneFixedOnTestBranch();
+  const before = tipOf(repo, 'main');
+  const otherTree = addWorktree(repo, 'other', 'lane/other');
+  commit(otherTree, 'other.txt');
+  const stopped = spawnSync('git', ['rebase', '-q', '--exec', 'exit 1', 'main'], { cwd: otherTree, encoding: 'utf8', env: CLEAN_ENV });
+  assert.notEqual(stopped.status, 0, 'precondition: the rebase stopped, so the sweep is skipped');
+  assert.equal(land(['test/x', '--repo', repo], repo).status, 0);
+  git(repo, 'reset', '-q', '--hard', before);
+  git(otherTree, 'rebase', '--abort');
+  const pruned = tidy(['prune', repo, '--apply'], { cwd: repo });
+  assert.equal(pruned.status, 0, pruned.stdout + pruned.stderr);
+  assert.equal(branchExists(repo, 'lane/x'), true, pruned.stdout);
+  assert.equal(tipOf(repo, 'lane/x'), laneTip);
+  assert.ok(existsSync(laneTree), 'its worktree stays');
+});
+
+// Repro (tess-review R4): the spec says land exits 0 once the lane has landed, with the problem on stderr. Fails on the tip:
+// a folder in place of the landing log stops the clean-up with EISDIR and land exits 1.
+test('R4: a landing log that cannot be read (a folder in its place) still lands and removes the lane with exit 0', () => {
+  const repo = makeRepo();
+  const laneTree = addWorktree(repo, 'lane', 'lane/l');
+  const laneTip = commit(laneTree, 'lane.txt');
+  mkdirSync(logPath(repo));
+  const result = land(['lane/l', '--repo', repo], repo);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, new RegExp(LOG_FILE.replace('.', '\\.')));
+  assert.equal(tipOf(repo, 'main'), laneTip);
+  assert.equal(branchExists(repo, 'lane/l'), false);
+  assert.equal(existsSync(laneTree), false);
 });
