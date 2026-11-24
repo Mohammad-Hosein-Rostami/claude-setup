@@ -1,5 +1,5 @@
 // Purpose: how scripts/share-check.mjs finds a deny word: the list format, the text a word is looked for in, and the pattern of a word.
-// Exports: parseDenyList(text), searchable(text), wordPattern(word), findHits(text, denied), findHitsInBytes(bytes, denied),
+// Exports: DENY_MAX_BYTES, parseDenyList(text), searchable(text), wordPattern(word), findHits(text, denied), findHitsInBytes(bytes, denied),
 //   nameWords(name, denied).
 // Invariants:
 // - A text is searched after format and default-ignorable characters (zero-width space, joiners, soft hyphen) are removed and NFKC
@@ -14,6 +14,8 @@
 //   with the NULs removed (UTF-16 or UTF-32 ASCII at any alignment) and as UTF-16 LE and BE, so a binary or BOM-less file still hits.
 // - Every pattern is linear: literal letters, `\s+` or a seam between parts and fixed-width look-arounds, so a hostile file cannot stall it.
 
+/** The largest deny list share-check reads (read as a plain file, no link followed); a larger one is refused, and doctor FAILs it. */
+export const DENY_MAX_BYTES = 1024 * 1024;
 const WORD_CHAR = /[\p{L}\p{N}]/u;
 const IGNORED = /[\p{Cf}\p{Default_Ignorable_Code_Point}]/gu;
 const SPACE_RUN = /\s+/u;

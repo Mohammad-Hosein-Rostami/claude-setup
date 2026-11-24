@@ -35,11 +35,10 @@ import { parseArgs } from 'node:util';
 import { readPlainFile } from '../home/hooks/lib/plain-file.mjs';
 import { escaped } from '../home/hooks/lib/shown-name.mjs';
 import { checkHistory } from './share-check/history.mjs';
-import { findHits, findHitsInBytes, nameWords, parseDenyList, wordPattern } from './share-check/match.mjs';
+import { DENY_MAX_BYTES, findHits, findHitsInBytes, nameWords, parseDenyList, wordPattern } from './share-check/match.mjs';
 
 export const DENY_LIST_PATH = ['personal', 'share-deny.txt']; // below the main checkout
 const DENY_LIST_TEMPLATE = ['personal.example', 'share-deny.txt']; // the empty list the installer starts personal/ with
-const DENY_MAX_BYTES = 1024 * 1024; // a word list larger than this is refused (exit 2)
 const MESSAGE_MAX_BYTES = 1024 * 1024; // a commit message larger than this is refused (exit 2)
 const GIT_MAX_BUFFER_BYTES = 512 * 1024 * 1024; // the blobs of a long history, the index list of a big repo
 const SCISSORS = /^.*-{24} >8 -{24}$/m; // git's cut line (`git commit -v`): what follows it is not committed
