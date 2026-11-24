@@ -30,8 +30,8 @@ const SONNET = 'claude-sonnet-5-5';
 const HAIKU = 'claude-haiku-5-5';
 const PLAN = {
   lex: { model: OPUS, effort: 'high', skills: ['tradeoff-analysis', 'tech-research', 'repo-restructure'] },
-  'lex-scout': { model: HAIKU, effort: 'medium', skills: [] },
-  'lex-web': { model: SONNET, effort: 'medium', skills: ['tech-research'] },
+  'lex-scout': { model: HAIKU, effort: 'high', skills: [] },
+  'lex-web': { model: SONNET, effort: 'high', skills: ['tech-research'] },
   dev: { model: OPUS, effort: 'high', skills: ['clean-code', 'safe-refactor', 'datetime-handling', 'git-linear-history'] },
   'dev-ui': {
     model: OPUS, effort: 'high',
@@ -40,8 +40,8 @@ const PLAN = {
   'dev-pixel': { model: OPUS, effort: 'high', skills: ['figma-pixel-perfect', 'responsive-ui', 'accessibility-build', 'ui-quality-pass', 'ui-coverage'] },
   'pixel-qa': { model: SONNET, effort: 'high', skills: ['figma-pixel-perfect'] },
   'dev-debug': { model: OPUS, effort: 'xhigh', skills: ['root-cause-debug'] },
-  'dev-run': { model: HAIKU, effort: 'medium', skills: [] },
-  tess: { model: SONNET, effort: 'medium', skills: [] },
+  'dev-run': { model: HAIKU, effort: 'high', skills: [] },
+  tess: { model: SONNET, effort: 'high', skills: [] },
   'tess-review': { model: OPUS, effort: 'high', skills: [] },
 };
 const NAMES = Object.keys(PLAN);
