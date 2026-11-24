@@ -109,11 +109,13 @@ test('CLAUDE_POST_EDIT_TRUST_FORMAT in the committed file: INFO ignored, stricte
   assert.ok(!rows.some((row) => row.startsWith('WARN')), rows.join('\n'));
 });
 
-test('CLAUDE_POST_EDIT_TRUST_FORMAT in an untracked settings.local.json is honoured, so it is a WARN', () => {
+test('CLAUDE_POST_EDIT_TRUST_FORMAT in an untracked settings.local.json is honoured where it belongs: INFO naming what runs, never a WARN', () => {
   const fx = fixture({ projects: { mine: {} } });
   git(dirname(fx.project('mine')), 'init', '-q', fx.project('mine'));
   writeFiles(fx.project('mine'), { '.claude/settings.local.json': { env: { CLAUDE_POST_EDIT_TRUST_FORMAT: '1' } } });
-  assert.match(rowsOf(run(fx), fx, 'mine').join('\n'), /^WARN .*CLAUDE_POST_EDIT_TRUST_FORMAT "1" set in your own untracked .claude\/settings.local.json: our check is off there/m);
+  const rows = rowsOf(run(fx), fx, 'mine');
+  assert.match(rows.join('\n'), /^INFO .*CLAUDE_POST_EDIT_TRUST_FORMAT "1" set in your own untracked .claude\/settings.local.json: you trust this project, so post-edit runs its own format script there/m);
+  assert.ok(!rows.some((row) => row.startsWith('WARN')), rows.join('\n'));
 });
 
 test('CLAUDE.local.md importing its project note: INFO now automatic; the file is never edited', () => {

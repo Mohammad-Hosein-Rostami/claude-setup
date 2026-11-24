@@ -15,6 +15,7 @@
 // never throws.
 import { lstatSync, opendirSync, readdirSync, realpathSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { TRUST_ENV } from '../home/hooks/lib/format-trust.mjs';
 import { findNotes, repoIdentity } from '../home/hooks/lib/project-note-key.mjs';
 import { envName, scanProjectSetup, teamSetEnv } from '../home/hooks/lib/project-setup-scan.mjs';
 import { escapedEnd, quotedName, shownName } from '../home/hooks/lib/shown-name.mjs';
@@ -79,6 +80,18 @@ const teamSets = (key, folders) => [...new Set(folders)].some((dir) => {
 });
 
 /**
+ * The row for one of our switches: ignored when a team file sets it; set in the owner's untracked local file it is honoured. The
+ * format trust switch belongs there (lib/format-trust.mjs sends the owner to that file), so it is INFO naming what it allows, never a
+ * WARN to remove it.
+ */
+function ownSwitchRow(setting, key, folders) {
+  if (teamSets(key, folders)) return line('INFO', `${setting} set by a team file: ignored, stricter applies (our check runs)`);
+  const where = `${setting} set in your own untracked .claude/settings.local.json`;
+  if (envName(key) === envName(TRUST_ENV)) return line('INFO', `${where}: you trust this project, so post-edit runs its own format script there`);
+  return line('WARN', `${where}: our check is off there; remove it to turn it back on`);
+}
+
+/**
  * The row for one setting the scan found that changes ours.
  * @param {{ key: string, value: string|null, effect: string }} item one of the scan's overrides
  * @param {string[]} folders the project root and the checked folder (for team-set switches)
@@ -90,9 +103,7 @@ function overrideRow({ key, value, effect }, folders) {
   switch (effect) {
     case 'hooks-off': return line('WARN', `${setting} turns all hooks and the status line off there, our guards and checks included; remove it`);
     case 'hides-our-rules': return line('WARN', `${setting} hides our rules there (it may leave out ~/.claude/CLAUDE.md or our rules files); narrow it`);
-    case 'our-switch': return teamSets(key, folders)
-      ? line('INFO', `${setting} set by a team file: ignored, stricter applies (our check runs)`)
-      : line('WARN', `${setting} set in your own untracked .claude/settings.local.json: our check is off there; remove it to turn it back on`);
+    case 'our-switch': return ownSwitchRow(setting, key, folders);
     case 'weaker-model': return line('WARN', `${setting} is weaker than ours: Claude Code uses it there, though our rule says the stronger applies`);
     case 'permission-mode': return line('INFO', `${setting}: the project sets the permission mode there`);
     case 'replaces-ours': return line('INFO', `${setting} replaces ours there`);
