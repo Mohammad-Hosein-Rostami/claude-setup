@@ -1,7 +1,7 @@
 // Purpose: find branches that only repeat work another branch holds: older copies of a re-done lane (`X`, `X-2`, `X-fixes`,
 //   or any branches with the same tip) and the leftover branch a workflow agent's worktree started on. `check` reports them,
 //   `prune` removes them.
-// Exports: copyFindings, copyCandidates, isStillCopy, isAgentBranch, patchIdsOf, familyStem.
+// Exports: copyFindings, copyCandidates, isStillCopy, isAgentBranch, patchIdsOf, patchIdsOfCommits, commitDates, familyStem.
 // Invariants: reads only. A branch is a `superseded-copy` of B only when its tip is an ancestor of B or every `git patch-id --verbatim`
 //   of `base..branch` is in `base..B` and merging the branch into B changes nothing (a branch with a merge commit only by the ancestor
 //   proof, since patch ids skip merges), and B is not itself a copy. Between branches that cover each other the newest committer date stays (then the one checked out in a worktree,
@@ -31,18 +31,31 @@ export function familyStem(name) {
   return stem;
 }
 
-/** Patch ids (`git patch-id --verbatim`, so a whitespace change makes a different patch) of the non-merge commits of `ref` that the base lacks, one per commit that changes something. */
-export function patchIdsOf(repo, ref) {
-  const log = runGit(repo.dir, ['log', '-p', '--no-merges', ...PLAIN_DIFF, `^${repo.baseRef}`, ref, '--']);
-  if (log.status !== 0) throw new Error(`git log failed for ${ref}: ${log.stderr.split('\n')[0]}`);
-  const ids = runGit(repo.dir, ['patch-id', '--verbatim'], log.stdout);
-  if (ids.status !== 0) throw new Error(`git patch-id failed for ${ref}: ${ids.stderr.split('\n')[0]}`);
+// Patch ids of the commits `git log <logArgs>` shows (stdin `input` when given); `label` names them in an error.
+function patchIdsFromLog(dir, logArgs, input, label) {
+  const log = runGit(dir, ['log', '-p', '--no-merges', ...PLAIN_DIFF, ...logArgs], input);
+  if (log.status !== 0) throw new Error(`git log failed for ${label}: ${log.stderr.split('\n')[0]}`);
+  const ids = runGit(dir, ['patch-id', '--verbatim'], log.stdout);
+  if (ids.status !== 0) throw new Error(`git patch-id failed for ${label}: ${ids.stderr.split('\n')[0]}`);
   return ids.stdout.split('\n').filter((line) => line !== '').map((line) => line.split(' ')[0]);
+}
+
+/** Patch ids (`git patch-id --verbatim`, so a whitespace change makes a different patch) of the non-merge commits of `ref` that the base lacks, one per commit that changes something. */
+export const patchIdsOf = (repo, ref) => patchIdsFromLog(repo.dir, [`^${repo.baseRef}`, ref, '--'], undefined, ref);
+
+/**
+ * Patch ids, as patchIdsOf, of exactly the commits `hashes` (no walk to their parents): one per non-merge commit that changes
+ * something, so an empty or merge commit has none. Throws when git cannot read them (a missing commit).
+ */
+export function patchIdsOfCommits(dir, hashes) {
+  if (hashes.length === 0) return []; // git log with no revision on stdin would show HEAD
+  return patchIdsFromLog(dir, ['--no-walk=unsorted', '--stdin'], `${hashes.join('\n')}\n`, `${hashes.length} commit(s)`);
 }
 
 const hasMerges = (repo, ref) => gitText(repo.dir, ['rev-list', '--merges', '-n', '1', `^${repo.baseRef}`, ref, '--']) !== '';
 
-function commitDates(repo) {
+/** Map(branch name -> committer date of its tip in unix seconds), for every local branch, in one git call. */
+export function commitDates(repo) {
   const listed = gitText(repo.dir, ['for-each-ref', '--format=%(refname)%00%(committerdate:unix)', 'refs/heads']);
   return new Map(listed.split('\n').filter((line) => line !== '').map((line) => line.split('\0')).map(([ref, seconds]) => [ref.slice(HEADS.length), Number(seconds)]));
 }

@@ -12,6 +12,8 @@ The parts of the `git-tidy` tool. `../git-tidy.mjs` is the command; see `../READ
 | `reflog.mjs` | commits that exist only in a reflog (lost when a worktree or branch is removed); whether a branch has no commit of its own yet (its reflog records no work) |
 | `leftovers.mjs` | merged branches, merged worktrees and stale worktrees (shared by `check` and `prune`) |
 | `copies.mjs` | older copies of a re-done lane and agent leftover branches (shared by `check` and `prune`); patch ids |
+| `folded.mjs` | the fold proof: a branch whose commits are all in a lane's history (`folded-branch` for a landed lane, `in-lane?` for a live one) |
+| `landed-log.mjs` | the landing log `cs-tidy-log.jsonl` in the git common dir: a lane's history read before it lands, the landings, the deleted branches |
 | `land.mjs` | `land`: rebase, PASS check, fast-forward, cleanup |
 | `check.mjs` | merge commits and the findings and hints of `check` |
 | `prune.mjs` | the plan and the re-checked removal of `prune` |

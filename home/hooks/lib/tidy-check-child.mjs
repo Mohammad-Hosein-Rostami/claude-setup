@@ -12,8 +12,8 @@ const MAX_TEXT_CHARS = 200; // of one name, path or commit subject kept from a c
 const MAX_LISTED = 20; // entries of one kind kept in a verdict and shown in a reason
 // findings the gate blocks on; all but merge-commit are removed by `git-tidy prune`
 export const MERGE_COMMIT = 'merge-commit';
-export const PRUNE_KINDS = new Set(['superseded-copy', 'agent-leftover', 'merged-branch', 'merged-worktree', 'stale-worktree']);
-export const COPY_KINDS = new Set(['superseded-copy', 'agent-leftover']);
+export const PRUNE_KINDS = new Set(['superseded-copy', 'agent-leftover', 'folded-branch', 'merged-branch', 'merged-worktree', 'stale-worktree']);
+export const COPY_KINDS = new Set(['superseded-copy', 'agent-leftover', 'folded-branch']);
 export const UNLANDED = 'unlanded-lane?';
 export const OPEN_LANE = 'unmerged-branch?';
 // command-scope config beats the repository's own: the child's git never starts a program the repository names

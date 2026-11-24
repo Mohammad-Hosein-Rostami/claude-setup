@@ -1,12 +1,14 @@
 // Purpose: `git-tidy check`: is the history one straight line, and which branches and worktrees are leftovers (merged, or copies of newer work).
-// Exports: runCheck.
+// Exports: runCheck, UNLANDED_AFTER_HOURS.
 // Invariants: reads only. A finding is a fact (merge commit, merged branch or worktree, stale worktree, a folder whose branch moved
-//   under it, edits in the base folder) and sets exit 1;
+//   under it, edits in the base folder, a branch folded into a lane that landed) and sets exit 1;
 //   a hint (kind ends in `?`) is context and never does; an info item (a not-started lane in a locked worktree, the lane folder count)
 //   is neither. Items are `{ kind, subject, detail }`. A git command that fails
 //   throws (exit 2): a check that cannot read must never report clean.
 import { copyFindings } from './copies.mjs';
 import { gitFlag, gitText, runGit, UsageError } from './git.mjs';
+import { foldedCandidates, inLaneHolders } from './folded.mjs';
+import { readLandings } from './landed-log.mjs';
 import { findLeftovers } from './leftovers.mjs';
 import { isBackupTag } from './tags.mjs';
 import { tangledRefs } from './tangled.mjs';
@@ -17,7 +19,8 @@ import { poolSlots } from './lane-slots.mjs';
 const IGNORED_SHOWN = 5;
 // earlier branch positions compared with a folder's index; the landing that moved a branch under its folder is recent
 const BRANCH_POSITIONS_CHECKED = 50;
-const UNLANDED_AFTER_HOURS = 2; // a lane with no commit for this long is waiting to land, not being worked on
+/** A lane with no commit for this long is waiting to land, not being worked on. */
+export const UNLANDED_AFTER_HOURS = 2;
 const MS_PER_HOUR = 60 * 60 * 1000;
 
 const item = (kind, subject, detail) => ({ kind, subject, detail });
@@ -182,6 +185,17 @@ function laneFolderInfo(repo) {
   return [item('lane-folders', [`${free} free`, ...rest.filter(([, count]) => count > 0).map(([state, count]) => `${count} ${state}`)].join(', '), '')];
 }
 
+// `folded-branch` findings for the branches folded into a lane that landed, and `in-lane?` hints for the unmerged `lanes` whose
+// commits are all in a live branch's history (a stacked lane, a folded test branch): both are named instead of `unmerged-branch?`.
+function foldItems(repo, leftovers, notLanes) {
+  const folded = foldedCandidates(repo, readLandings(repo.dir), leftovers).filter(({ name }) => !notLanes.has(name));
+  const findings = folded.map(({ name, tip, by, landing }) => item('folded-branch', name, `${tip.slice(0, 7)} folded into ${by} (landed ${new Date(landing.landedAt).toISOString()})`));
+  const foldedNames = new Set(folded.map(({ name }) => name));
+  const lanes = leftovers.states.filter((b) => b.state === 'unmerged' && !notLanes.has(b.name) && !foldedNames.has(b.name)).map(({ name }) => name);
+  const hints = [...inLaneHolders(repo, lanes)].map(([name, holder]) => item('in-lane?', name, `all its commits are in ${holder}; it goes when ${holder} lands`));
+  return { findings, hints, named: new Set([...foldedNames, ...hints.map(({ subject }) => subject)]) };
+}
+
 /** Runs every check on `repo` (from openRepo). Returns `{ findings, hints, info }`; info items never count as findings or hints. */
 export function runCheck(repo, now = Date.now()) {
   const leftovers = findLeftovers(repo);
@@ -191,10 +205,12 @@ export function runCheck(repo, now = Date.now()) {
   const mergedTags = leftovers.tags.filter((t) => t.state === 'patch-equal');
   const copies = copyFindings(repo, leftovers);
   const reportedAsCopy = new Set(copies.map((copy) => copy.subject)); // an agent branch on the base is one finding, the more specific one
+  const fold = foldItems(repo, leftovers, reportedAsCopy);
   const findings = [
     ...mergeCommitFindings(repo),
     ...tangled.findings,
     ...copies,
+    ...fold.findings,
     ...leftovers.mergedBranches.filter((b) => !reportedAsCopy.has(b.name) && !notStarted.has(b.name)).map((b) => item('merged-branch', b.name, `${b.short} ${b.state}`)),
     ...mergedTags.filter((t) => isBackupTag(t.name)).map((t) => item('merged-tag', t.name, `${t.short} ${t.state}`)),
     ...leftovers.mergedWorktrees.filter((w) => !notStarted.has(w.branch)).map((w) => item('merged-worktree', w.path, `branch ${w.branch}`)),
@@ -202,12 +218,13 @@ export function runCheck(repo, now = Date.now()) {
     ...staleCheckoutFindings(worktrees),
     ...dirtyBaseFindings(repo, worktrees),
   ];
-  const unmerged = leftovers.states.filter((b) => b.state === 'unmerged')
+  const unmerged = leftovers.states.filter((b) => b.state === 'unmerged' && !fold.named.has(b.name))
     .map((b) => item('unmerged-branch?', b.name, `ahead ${b.ahead}, last commit ${b.date}`));
   const unmergedTags = leftovers.tags.filter((t) => t.state === 'unmerged')
     .map((t) => item('unmerged-tag?', t.name, `ahead ${t.ahead}, last commit ${t.date}`));
   const hints = [
-    ...publishedMergeHint(repo), ...unmerged, ...unlandedLaneHints(repo, leftovers.states.filter((b) => b.state === 'unmerged' && !reportedAsCopy.has(b.name)), now), ...unmergedTags,
+    ...publishedMergeHint(repo), ...unmerged, ...fold.hints,
+    ...unlandedLaneHints(repo, leftovers.states.filter((b) => b.state === 'unmerged' && !reportedAsCopy.has(b.name) && !fold.named.has(b.name)), now), ...unmergedTags,
     ...mergedTags.filter((t) => !isBackupTag(t.name)).map((t) => item('merged-tag?', t.name, `${t.short} ${t.state}`)), ...tangled.hints, ...mergedRemoteHints(repo),
     ...(repo.bare ? [] : behindBaseHint(repo)), ...worktreeHints(worktrees, now), ...ignoredFileHints(leftovers.mergedWorktrees.filter((w) => !notStarted.has(w.branch))), ...shallowHint(repo),
   ];
