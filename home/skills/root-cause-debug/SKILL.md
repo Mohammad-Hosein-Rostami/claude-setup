@@ -5,7 +5,7 @@ description: Use for a bug, failing or flaky test, red CI or unexpected behaviou
 
 Iron law: no fix before a confirmed root cause (C22).
 
-1. Reproduce with the smallest command. Record the exact error and command. No repro: add logging, do not guess.
+1. Reproduce with the smallest command. Record the exact error and command. No repro: add logging, do not guess. As a test, with the `test-writing` skill, when the project has a runner.
 2. Read the full failing path, not just the top frame. Check `git log -p` on touched files for recent changes.
 3. Write 1-3 ranked hypotheses. Test each with one cheap observation (log, assertion, bisect). Discard on evidence.
 4. Trace backwards from the symptom to the first wrong value; fix at that origin.
