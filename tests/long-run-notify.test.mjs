@@ -2,7 +2,7 @@
 // note, sends a real push, keeps the machine awake or writes a real launchd or Task Scheduler entry.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { desktopCommand, notify, ntfyRequest, readNotifyConfig, setupNtfy } from '../home/tools/long-run/lib/notify.mjs';
+import { DESKTOP_NOTES_SWITCH, desktopCommand, notify, ntfyRequest, readNotifyConfig, setupNtfy } from '../home/tools/long-run/lib/notify.mjs';
 import { awakeCommand, startAwake } from '../home/tools/long-run/lib/awake.mjs';
 import { createRun, driveRun, makeSandbox } from './long-run-helpers.mjs';
 
@@ -33,6 +33,21 @@ test('ntfy: setup writes a 24-character topic (0600); the request body is the ph
   assert.deepEqual(failures, []);
   assert.deepEqual(sent, [{ url: link, body: 'docs: plan needs your answer' }]);
   assert.throws(() => setupNtfy({ env: box.env, server: 'http://plain.example' }), /https URL/);
+});
+
+test('CLAUDE_LONG_RUN_DESKTOP_NOTES=off shows no desktop note and still sends the phone push; unset shows it', async () => {
+  const box = makeSandbox();
+  setupNtfy({ env: box.env });
+  const spawned = [];
+  const spawnFn = (command) => { spawned.push(command); return { once: (event, done) => { if (event === 'close') setImmediate(() => done(0)); } }; };
+  const sent = [];
+  const fetchFn = async (url) => { sent.push(url); return { ok: true, status: 200 }; };
+  const texts = { desktop: 'run docs-1: done', phone: 'docs: done' };
+  assert.deepEqual(await notify(texts, { env: { ...box.env, [DESKTOP_NOTES_SWITCH]: 'off' }, fetchFn, spawnFn, platform: 'darwin' }), []);
+  assert.deepEqual(spawned, []);
+  assert.equal(sent.length, 1, 'the phone push is not affected by the switch');
+  assert.deepEqual(await notify(texts, { env: { ...box.env, [DESKTOP_NOTES_SWITCH]: undefined }, fetchFn, spawnFn, platform: 'darwin' }), []);
+  assert.deepEqual(spawned, ['osascript']);
 });
 
 test('the driver sends the phone only the job name, the step and a status word, never the question', async () => {

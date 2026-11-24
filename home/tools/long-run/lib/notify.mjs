@@ -1,9 +1,10 @@
 // Purpose: tell the owner when a run needs him or ends (M1 desktop note, M2 phone push through ntfy), from a detached process.
-// Exports: NOTIFY_CONFIG_TOPIC_CHARS, notifyConfigPath, readNotifyConfig, setupNtfy, removeNtfy, desktopCommand, ntfyRequest, notify.
+// Exports: NOTIFY_CONFIG_TOPIC_CHARS, DESKTOP_NOTES_SWITCH, notifyConfigPath, readNotifyConfig, setupNtfy, removeNtfy, desktopCommand, ntfyRequest, notify.
 // Invariants: every text is built from ids, status words and times only (never a prompt, question, path or log line); on every
 //   platform the text is passed as data (osascript argv, environment variables for PowerShell, notify-send arguments after `--`),
 //   never inside code; the ntfy topic is the shared secret: it is in the 0600 config file and the request URL only, never in a
-//   log, an event or an error text; a failed note is returned to the caller (one events.jsonl line), never a run failure.
+//   log, an event or an error text; a failed note is returned to the caller (one events.jsonl line), never a run failure;
+//   CLAUDE_LONG_RUN_DESKTOP_NOTES=off in the env shows no desktop note (the phone push is not affected).
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, rmSync } from 'node:fs';
@@ -14,6 +15,12 @@ import { readJson } from './run-store.mjs';
 
 /** The topic length (url-safe characters) `notify setup` makes. */
 export const NOTIFY_CONFIG_TOPIC_CHARS = 24;
+/**
+ * The env switch that turns desktop notes off when it is `off` (any other value or unset: on). Tests set it, since Windows has
+ * no way to stand in for powershell.exe; the phone push is not affected.
+ */
+export const DESKTOP_NOTES_SWITCH = 'CLAUDE_LONG_RUN_DESKTOP_NOTES';
+const SWITCH_OFF = 'off';
 const TOPIC_BYTES = 18; // 18 random bytes are 24 base64url characters
 const DEFAULT_SERVER = 'https://ntfy.sh';
 const NTFY_TIMEOUT_MS = 10 * 1000;
@@ -113,12 +120,13 @@ async function sendNtfy(config, message, fetchFn) {
 }
 
 /**
- * Shows one note on the desktop and on the phone.
+ * Shows one note on the desktop (unless DESKTOP_NOTES_SWITCH is `off` in `env`) and on the phone.
  * @param {{desktop: string, phone: string}} texts the desktop text (may hold a time) and the phone text (name, step, status).
  * @param {{platform?: string, env?: object, spawnFn?: Function, fetchFn?: Function}} deps stand-ins for tests.
  * @returns {Promise<string[]>} the failures, one short line each (no topic, no text of the note).
  */
 export async function notify(texts, { platform = process.platform, env = process.env, spawnFn = spawn, fetchFn = fetch } = {}) {
-  const results = await Promise.all([showDesktop(platform, texts.desktop, spawnFn, env), sendNtfy(readNotifyConfig(env), texts.phone, fetchFn)]);
+  const desktop = env[DESKTOP_NOTES_SWITCH] === SWITCH_OFF ? null : showDesktop(platform, texts.desktop, spawnFn, env);
+  const results = await Promise.all([desktop, sendNtfy(readNotifyConfig(env), texts.phone, fetchFn)]);
   return results.filter((failure) => failure !== null);
 }

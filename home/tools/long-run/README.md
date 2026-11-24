@@ -38,7 +38,7 @@ running (pause or stop it first) or the folder is used by another live run.
 | `summary <run>` | print `summary.md` |
 | `prune [--older-than <days>]` | remove the folders (checkpoints, logs, journals) of done and abandoned runs that ended at least that many days ago (default 30); a running, held, paused, stopped or stale run is never removed |
 | `events [--run <id>] [--since <n>] [--follow] [--after <n>] [--wait-next [--max-wait <s>]]` | the numbered event lines |
-| `notify setup [--server <url>] \| test \| off` | phone push through ntfy (desktop notes need no setup) |
+| `notify setup [--server <url>] \| test \| off` | phone push through ntfy (desktop notes need no setup; `CLAUDE_LONG_RUN_DESKTOP_NOTES=off` in the environment turns them off, the phone push stays; the tests set it) |
 | `autostart on \| off \| status` | resume stale runs after login (launchd agent / Task Scheduler) |
 | `schedule <job.json> --at HH:MM [--daily \| --on YYYY-MM-DD]`, `schedule list`, `schedule remove <name>` | timed starts |
 
