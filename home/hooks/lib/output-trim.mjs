@@ -1,7 +1,8 @@
 // Shorter test and build output for the Bash guard (audit item I10): a test or build run in the foreground can print thousands of
 // lines, and every line costs context. For such a command the guard hands Claude Code a rewritten command (PreToolUse `updatedInput`)
-// that writes the full output to a temp log, prints only its last TRIM_LINES lines and the log's path, and exits with the runner's own
-// exit code. Exports: trimAnswer(input, env) -> hook stdout ('' or the updatedInput JSON), trimmedCommand(command), isTrimmedRunner(command),
+// that writes the full output to a temp log, prints the log's path first (so a run the Bash tool kills on its timeout still names
+// it), then only the last TRIM_LINES lines once the runner ends, and exits with the runner's own exit code. The log stays in the
+// temp folder for the OS to clean, so it can be read after the call. Exports: trimAnswer(input, env) -> hook stdout ('' or the updatedInput JSON), trimmedCommand(command), isTrimmedRunner(command),
 // TRIM_LINES, NO_TRIM_ENV.
 // Only plain runner calls are rewritten: `node --test`, `npm|pnpm|yarn test`, `npm|pnpm|yarn run build`, vitest, jest, pytest, `go test`,
 // `cargo test`, after optional `NAME=value` words. Anything with a pipe, redirect, `;`, `&`, a substitution or a line break keeps its own
@@ -37,14 +38,14 @@ export function isTrimmedRunner(command) {
 }
 
 /**
- * The runner command wrapped so its output goes to a temp log and only the end of it is printed. The line break before `}` keeps
+ * The runner command wrapped so its output goes to a temp log, named before the run, and only the end of it is printed. The line break before `}` keeps
  * the brace out of a trailing comment; `(exit N)` sets the exit status without leaving the shell the Bash tool runs in.
  * @param {string} command a command isTrimmedRunner accepts
  * @returns {string} the rewritten command
  */
 export function trimmedCommand(command) {
-  return `__guard_log=$(mktemp) && { ${command}\n} > "$__guard_log" 2>&1; __guard_status=$?; tail -n ${TRIM_LINES} "$__guard_log"; `
-    + `echo "[guard: the last ${TRIM_LINES} lines are shown; full log: $__guard_log]"; (exit $__guard_status)`;
+  return `__guard_log=$(mktemp) && echo "[guard: full log: $__guard_log; its last ${TRIM_LINES} lines follow when the run ends]" && `
+    + `{ ${command}\n} > "$__guard_log" 2>&1; __guard_status=$?; tail -n ${TRIM_LINES} "$__guard_log"; (exit $__guard_status)`;
 }
 
 /**

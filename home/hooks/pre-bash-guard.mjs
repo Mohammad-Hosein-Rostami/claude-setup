@@ -73,8 +73,8 @@
 // `cd` that may not have taken effect is judged from the folder before it and the one after; a relative one in a loop or a function body makes the folder
 // unknown: relative rm -r targets then ask), an ssh alias that hides a production host, a link made by an earlier command line, and PowerShell syntax: a
 // PowerShell tool call (the tool is off on Windows, settings/windows.json) is read by these shell rules, which fit only its plain words. OUTPUT TRIM
-// (lib/output-trim.mjs): a plain test or build runner call that the rules let run is rewritten (updatedInput) to print only the last 150 lines of its output
-// and the full log's path, with the runner's exit code; CLAUDE_GUARD_NO_TRIM=1 turns it off.
+// (lib/output-trim.mjs): a plain test or build runner call that the rules let run is rewritten (updatedInput) to print the full log's path first, then
+// only the last 150 lines of its output, with the runner's exit code; CLAUDE_GUARD_NO_TRIM=1 turns it off.
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import {

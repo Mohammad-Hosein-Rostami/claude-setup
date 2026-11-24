@@ -1,5 +1,5 @@
 // Tests for the output trim of the Bash guard (lib/output-trim.mjs, audit item I10): a plain foreground test or build runner call is
-// rewritten through PreToolUse `updatedInput` so it prints only the last TRIM_LINES lines and the full log's path, and exits with the
+// rewritten through PreToolUse `updatedInput` so it prints the full log's path first, then only the last TRIM_LINES lines, and exits with the
 // runner's own code. The end-to-end case runs the rewritten command with bash against a fake `pytest` on PATH in a temp folder.
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
@@ -16,7 +16,7 @@ const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.m
 const PROJECT = resolve('/work/proj');
 const FAKE_LINES = 400;
 const FAKE_EXIT = 3;
-const LOG_LINE = /^\[guard: the last 150 lines are shown; full log: (.+)\]$/;
+const LOG_LINE = /^\[guard: full log: (.+); its last 150 lines follow when the run ends\]$/;
 
 /** The guard hook's stdout for one Bash call. */
 function hookAnswer(toolInput, extraEnv = {}, toolName = 'Bash') {
@@ -48,7 +48,7 @@ test('through the hook: the rewrite keeps every other field; background, Monitor
   assert.equal(hookAnswer({ command: 'git status --short' }), '', 'not a runner: no output, as before');
 });
 
-test('a fake runner that prints 400 lines and exits 3: the rewritten command prints the last 150 lines and the log path, and exits 3', { skip: process.platform === 'win32' && 'needs a POSIX bash with mktemp and tail' }, () => {
+test('a fake runner that prints 400 lines and exits 3: the rewritten command prints the log path, then the last 150 lines, and exits 3', { skip: process.platform === 'win32' && 'needs a POSIX bash with mktemp and tail' }, () => {
   const bin = makeTempDir('trim-bin-');
   const runner = join(bin, 'pytest');
   writeFileSync(runner, `#!/bin/sh\ni=1\nwhile [ $i -le ${FAKE_LINES} ]; do echo "line $i"; i=$((i + 1)); done\nexit ${FAKE_EXIT}\n`);
@@ -58,10 +58,10 @@ test('a fake runner that prints 400 lines and exits 3: the rewritten command pri
   const run = spawnSync('bash', ['-c', hookSpecificOutput.updatedInput.command], { cwd: makeTempDir('trim-run-'), encoding: 'utf8', env });
   assert.equal(run.status, FAKE_EXIT, run.stderr);
   const lines = run.stdout.trimEnd().split('\n');
-  assert.equal(lines.length, TRIM_LINES + 1, 'the last lines, then the log line');
-  assert.equal(lines[0], `line ${FAKE_LINES - TRIM_LINES + 1}`);
-  assert.equal(lines[TRIM_LINES - 1], `line ${FAKE_LINES}`);
-  const logPath = LOG_LINE.exec(lines[TRIM_LINES])?.[1];
-  assert.ok(logPath !== undefined && existsSync(logPath), lines[TRIM_LINES]);
+  assert.equal(lines.length, TRIM_LINES + 1, 'the log line, then the last lines');
+  const logPath = LOG_LINE.exec(lines[0])?.[1];
+  assert.ok(logPath !== undefined && existsSync(logPath), lines[0]);
+  assert.equal(lines[1], `line ${FAKE_LINES - TRIM_LINES + 1}`);
+  assert.equal(lines[TRIM_LINES], `line ${FAKE_LINES}`);
   assert.equal(readFileSync(logPath, 'utf8').trimEnd().split('\n').length, FAKE_LINES, 'the log holds the whole output');
 });
