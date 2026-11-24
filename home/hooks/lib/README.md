@@ -95,7 +95,7 @@ Other hooks:
 - `tidy-gate-store.mjs`: the per-session state file of `git-tidy-gate.mjs` (the check verdict per repo and fingerprint).
 - `writer-agents.mjs`: which agent types write files (agent files' `tools:` line, `WRITER_TYPES`, `READ_ONLY_TYPES`), a brief's lane
   worktree and the open writer launches; used by `gated-folder.mjs`, `agent-launches.mjs` and the board.
-- `agent-launches.mjs`: the launch record of every agent of a session and the cap of 5 running at once (`MAX_RUNNING_AGENTS`):
+- `agent-launches.mjs`: the launch record of every agent of a session, read by the guard's writer isolation gate (it has no cap; the main-agent cap is `agent-budget.mjs`'s):
   `agent-model-guard.mjs` records each launch (writers with the `isolated` and `readOnly` flags), `agent-budget.mjs` marks it started and
   ended on SubagentStart and SubagentStop; a stopped agent that makes a tool call again counts again. The store is
   `~/.claude/state/agent-writers/<session>.json` (a historic folder name).

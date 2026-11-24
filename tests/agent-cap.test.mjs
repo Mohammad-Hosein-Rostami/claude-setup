@@ -1,5 +1,5 @@
 // Tests for the launch record home/hooks/lib/agent-launches.mjs keeps for the writer isolation gate of agent-model-guard.mjs (pending,
-// started, idle, resumed and stopped agents, its own `cap` option, fail closed on an unusable store), and for the settings that turn
+// started, idle, resumed and stopped agents, fail closed on an unusable store), and for the settings that turn
 // workflows off with scripts/doctor.sh `check_agent_cap`. The main-agent cap itself is tested in agent-budget.test.mjs.
 // Each test has a private HOME (the launch record) and its own session id; call counters live in a private TMPDIR.
 import assert from 'node:assert/strict';
@@ -12,8 +12,9 @@ import { hookEnv } from './hook-env.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 process.env.TMPDIR = makeTempDir('agent-cap-tmp-'); // the call counters (callCounterPath) go under the temp root of this process
-import { IDLE_MS, MAX_RUNNING_AGENTS, PENDING_MS, recordAgentLaunch, recordAgentStart, recordAgentStop, runningAgentsOf } from '../home/hooks/lib/agent-launches.mjs';
+import { IDLE_MS, PENDING_MS, recordAgentLaunch, recordAgentStart, recordAgentStop, runningAgentsOf } from '../home/hooks/lib/agent-launches.mjs';
 import { callCounterPath } from '../home/hooks/lib/writer-agents.mjs';
+import { MAX_MAIN_AGENTS } from '../home/hooks/agent-budget.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const GUARD = join(REPO, 'home', 'hooks', 'agent-model-guard.mjs');
@@ -38,7 +39,7 @@ const seedStore = (s, record) => {
   mkdirSync(dirOf(s), { recursive: true, mode: 0o700 });
   writeFileSync(storeOf(s), JSON.stringify(record), { mode: 0o600 });
 };
-const launch = (s, type = 'scout', options = {}) => recordAgentLaunch(s.session, type, s.env, { cap: MAX_RUNNING_AGENTS, ...options });
+const launch = (s, type = 'scout', options = {}) => recordAgentLaunch(s.session, type, s.env, options);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const touchCounter = (s, agent, ms) => {
   const path = callCounterPath(s.session, agent);
@@ -64,21 +65,26 @@ const guard = (s, toolInput, extra) => parseOutput(spawnSync(process.execPath, [
 const denied = (out) => out?.permissionDecision === 'deny';
 const scoutCall = (n) => ({ subagent_type: 'scout', description: 'look', prompt: `job ${n}` });
 
-// ---- the launch record: its own cap option (the guard caps main agents in agent-budget.mjs instead) ----
+// ---- the launch record (the guard caps main agents in agent-budget.mjs; this record has no cap) ----
 
-test('MAX_RUNNING_AGENTS is 5', () => {
-  assert.equal(MAX_RUNNING_AGENTS, 5);
+test('every launch is recorded and listed as running, with no cap of its own', () => {
+  const s = newSession();
+  for (let n = 0; n < 8; n += 1) assert.equal(launch(s).state, 'recorded', `launch ${n + 1}`);
+  const ninth = launch(s, 'reviewer');
+  assert.equal(ninth.state, 'recorded');
+  assert.equal(ninth.running.length, 9);
+  assert.ok(ninth.running.every((entry) => Number.isFinite(entry.at)));
+  assert.equal(ninth.storePath, storeOf(s));
+  assert.equal(runningAgentsOf(s.session, s.env, Date.now()).length, 9);
 });
 
-test('the 6th recorded launch returns full with 5 running entries and records nothing', () => {
+test('R3: an old store with a field no longer written (the read-only agent ids) still reads, and the next write keeps only the known keys', () => {
   const s = newSession();
-  for (let n = 0; n < MAX_RUNNING_AGENTS; n += 1) assert.equal(launch(s).state, 'recorded');
-  const sixth = launch(s, 'reviewer');
-  assert.equal(sixth.state, 'full');
-  assert.equal(sixth.running.length, 5);
-  assert.ok(sixth.running.every((entry) => entry.type === 'scout' && Number.isFinite(entry.at)));
-  assert.equal(sixth.storePath, storeOf(s));
-  assert.equal(runningAgentsOf(s.session, s.env, Date.now()).length, 5);
+  seedStore(s, { launches: [{ type: 'scout', at: Date.now(), writer: false }], retiredIds: ['agent-old-1'] });
+  assert.equal(runningAgentsOf(s.session, s.env, Date.now()).length, 1);
+  assert.equal(launch(s, 'implementer', { writer: true, readOnly: true }).state, 'recorded');
+  assert.equal(recordAgentStart(s.session, 'agent-ro-1', 'implementer', s.env), true);
+  assert.deepEqual(Object.keys(readStore(s)).sort(), ['launches', 'open', 'stoppedAt', 'stoppedTypes']);
 });
 
 // ---- fail closed (P3, OD-6) ----
@@ -153,16 +159,15 @@ test('F3: a stopped agent that makes a tool call counts again; one whose counter
   assert.deepEqual(runningAgentsOf(s.session, s.env, stoppedAt + 5 * SECOND_MS + IDLE_MS + SECOND_MS), [], 'idle again after IDLE_MS');
 });
 
-test('F3: a resumed agent takes a cap slot, and its next stop ends it again', async () => {
+test('F3: a resumed agent is listed as running, and its next stop ends it again', async () => {
   const s = newSession();
   launch(s);
   recordAgentStart(s.session, 'agent-resume-2', 'scout', s.env);
   recordAgentStop(s.session, 'agent-resume-2', 'scout', s.env);
-  for (let n = 0; n < MAX_RUNNING_AGENTS - 1; n += 1) launch(s);
+  for (let n = 0; n < 4; n += 1) launch(s);
   await sleep(PAUSE_MS);
   touchCounter(s, 'agent-resume-2', Date.now());
   assert.equal(runningAgentsOf(s.session, s.env, Date.now()).length, 5);
-  assert.equal(launch(s).state, 'full');
   await sleep(PAUSE_MS);
   assert.equal(recordAgentStop(s.session, 'agent-resume-2', 'scout', s.env), true, 'the second stop of a resumed agent counts');
   assert.equal(runningAgentsOf(s.session, s.env, Date.now()).length, 4);
@@ -191,7 +196,7 @@ test('F4: an old store whose launches lack `writer` still reads, each counting a
   assert.equal(launch(s, 'implementer', { writer: true, unlessRunning: true }).state, 'recorded', 'read-only and isolated launches are no plain writer');
 });
 
-test('U4: a SubagentStart with no launch of its type is recorded unmatched: it counts for the cap, never for writer isolation', () => {
+test('U4: a SubagentStart with no launch of its type is recorded unmatched: it is listed as running, never for writer isolation', () => {
   const s = newSession();
   assert.equal(recordAgentStart(s.session, 'agent-fork-1', 'fork', s.env), true);
   const { launches } = readStore(s);
@@ -199,7 +204,6 @@ test('U4: a SubagentStart with no launch of its type is recorded unmatched: it c
   assert.deepEqual({ type: launches[0].type, agent: launches[0].agent, unmatched: launches[0].unmatched }, { type: 'fork', agent: 'agent-fork-1', unmatched: true });
   assert.equal(runningAgentsOf(s.session, s.env, Date.now()).length, 1);
   assert.equal(launch(s, 'implementer', { writer: true, unlessRunning: true }).state, 'recorded', 'no isolation advice for an unmatched agent');
-  assert.equal(recordAgentLaunch(s.session, 'scout', s.env, { cap: 2 }).state, 'full', 'but 2 running fill a cap of 2');
 });
 
 test('a start that matches a pending launch of its type marks it started and adds nothing', () => {
@@ -268,7 +272,7 @@ test('settings/base.json refuses agent forks: a fork runs on the main session\'s
 
 test('the CLI subagent cap stays far above the hook caps and the CLI default, so helpers are not capped', () => {
   const cap = Number(base.env.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS);
-  assert.ok(cap > CLI_DEFAULT_SUBAGENT_CAP && cap > MAX_RUNNING_AGENTS, String(cap));
+  assert.ok(cap > CLI_DEFAULT_SUBAGENT_CAP && cap > MAX_MAIN_AGENTS, String(cap));
 });
 
 const GOOD_LIVE = {

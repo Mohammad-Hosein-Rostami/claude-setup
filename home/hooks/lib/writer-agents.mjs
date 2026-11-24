@@ -1,13 +1,12 @@
 // Which agent types write files, and the checks that read a session's launch record for a writer. The record itself (every agent's
-// launch, start and stop, and the cap of agents running at once) lives in lib/agent-launches.mjs; this file keeps the questions about
+// launch, start and stop) lives in lib/agent-launches.mjs; this file keeps the questions about
 // writers that agent-model-guard.mjs, copy-branch-brief.mjs, gated-folder.mjs, agent-budget.mjs and the board ask.
 // Exports: agentFileWrites(type, env), isWritingAgent(type, env), isReadOnlyBrief(prompt), laneWorktreeOf(prompt, cwd, env) -> {folder, many},
 // worktreeValues(text) (pure), worktreeLineAdvice(prompt, env) (the gate's quote of a near-miss line or of many worktrees), agentTypeOf(type),
 // callCounterPath(session, agentId), openWritersOf(session, env, now), writersDirOf(env).
 // Store: ~/.claude/state/agent-writers/<session>.json (a historic name: it held writer launches only; there is no migration), written
 // through lib/agent-launches.mjs. `open` (spec-p3 r9-resume, lib/open-writers.mjs) is the writer launch record the status line's board
-// reads: written before the agent starts, closed only at its SubagentStop, never dropped for idleness. readOnlyAgents (the ids of
-// started read-only launches, kept after their stop) is still written; its reader, commit-gate's read-only hold, was removed.
+// reads: written before the agent starts, closed only at its SubagentStop, never dropped for idleness.
 // Flags (round 9, r9-writer-gate): `isolated` (launched with isolation "worktree", or a brief whose `worktree:` field (lib/brief-fields.mjs)
 // names a lane worktree laneWorktreeOf accepts and no open record of the session holds, lib/agent-launches.mjs) and `readOnly` (a read-only brief,
 // isReadOnlyBrief). The `worktree:` value is the writer's own text, so it is trusted only after `git worktree list` of that folder lists its real path as a linked worktree that is not the lead's folder; git runs
