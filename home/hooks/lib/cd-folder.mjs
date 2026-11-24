@@ -139,7 +139,7 @@ function union(some, more) {
   return all.length > MAX_POSSIBLE_FOLDERS ? null : all;
 }
 
-function remember(folder, dirs) {
+function noteEverIn(folder, dirs) {
   for (const dir of dirs ?? []) if (folder.everIn.length < MAX_REMEMBERED_FOLDERS && !folder.everIn.includes(dir)) folder.everIn.push(dir);
 }
 
@@ -227,7 +227,7 @@ export function leaveSegment(folder, parsed, { project, scope }) {
   folder.followed = folder.followed === null ? null : nextCwd(parsed, folder.followed, project, scope, false);
   const knownBefore = folder.dirs !== null;
   const after = foldersAfter(folder, parsed, project, scope);
-  remember(folder, after);
+  noteEverIn(folder, after);
   if (cmd === 'cd' && folder.believes && folder.sureRun && knownBefore && folder.loops === 0 && !folder.inFunction) folder.afterCd = after;
   if (folder.believes) [folder.passed, folder.dirs] = [union(folder.passed, folder.dirs), after];
   else folder.dirs = union(folder.dirs, after);

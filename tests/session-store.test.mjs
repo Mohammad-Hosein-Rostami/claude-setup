@@ -1,5 +1,5 @@
-// Tests for lib/session-store.mjs and lib/session-lock.mjs, the two guard stores that use it (guard-bounced: lib/bounce-once.mjs, guard-allowed:
-// lib/allowed-literals.mjs) and the guard log (lib/guard-log.mjs): a link, FIFO, socket, folder or file planted where a store or the log
+// Tests for lib/session-store.mjs and lib/session-lock.mjs, the guard store that uses it (guard-bounced: lib/bounce-once.mjs; the folder of the old
+// guard-allowed store, lib/allowed-literals.mjs, is still planted on) and the guard log (lib/guard-log.mjs): a link, FIFO, socket, folder or file planted where a store or the log
 // lives is never followed, never waited on and never cleaned up, and the guard then asks as if nothing were stored. Everything is planted
 // inside a fresh temp folder made here; command strings are only passed to decide() or the hook, nothing is executed.
 import './pin-home.mjs';
@@ -12,7 +12,7 @@ import { createServer } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { allowedLiteralsDir, isRemembered, remember } from '../home/hooks/lib/allowed-literals.mjs';
+import { allowedLiteralsDir } from '../home/hooks/lib/allowed-literals.mjs';
 import { adviceOnce, bouncedDir, bounceOnce } from '../home/hooks/lib/bounce-once.mjs';
 import { logDecision } from '../home/hooks/lib/guard-log.mjs';
 import { withSessionLock } from '../home/hooks/lib/session-lock.mjs';
@@ -27,7 +27,6 @@ const PROJECT = resolve('/work/proj');
 const VARIABLE_COMMAND = '$CMD --version';
 const ADVICE_COMMAND = 'sed -i s/a/b/ pnpm-lock.yaml';
 const SECRET_COMMAND = `KEY='${['i6IW', 'fakefilekey', '0123'].join('')}' ./fetch-figma.sh`;
-const VALUE = 'alpha-value-123';
 const EIGHT_DAYS_AGO = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
 const HOOK_TIMEOUT_MS = 20_000; // far above a normal run (about 0.2 s): reaching it means the hook hung
 
@@ -37,14 +36,10 @@ function privateEnv() {
   return { HOME: home, USERPROFILE: home, CLAUDE_GUARD_LOG: join(home, 'guard.jsonl') };
 }
 
-// The two stores through their public functions. use(env) makes one request and returns true when the store worked: a bounce was stored,
-// or the value counts as remembered after remember().
+// The bounce store through its public functions (the old guard-allowed store has no reader or writer left). use(env) makes one request
+// and returns true when the store worked: a bounce or an advice was stored.
 const STORES = [
   ['guard-bounced', bouncedDir, (env) => bounceOnce(decide(VARIABLE_COMMAND, { cwd: PROJECT }), { command: VARIABLE_COMMAND, cwd: PROJECT, input: { session_id: 'sess-1' } }, env) !== undefined],
-  ['guard-allowed', allowedLiteralsDir, (env) => {
-    remember('sess-1', [VALUE], env);
-    return isRemembered('sess-1', [VALUE], env);
-  }],
   // advice shares the bounce store: it worked when the first send was denied (an unusable store lets the command run instead)
   ['guard-bounced (advice)', bouncedDir, (env) => adviceOnce(decide(ADVICE_COMMAND, { cwd: PROJECT }).advice, { command: ADVICE_COMMAND, cwd: PROJECT, input: { session_id: 'sess-1' } }, env) !== ''],
 ];

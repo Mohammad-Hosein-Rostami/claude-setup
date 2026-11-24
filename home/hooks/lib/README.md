@@ -60,8 +60,8 @@ Asking and remembering:
 - `notify-note.mjs`: the texts and terminal sequences of `notify.mjs` (a question note shows the marker's short header: `a question (Scope)`) and the effective channel.
 - `question-rejected.mjs`: notices in the session transcript that the owner turned the question down in the terminal ("Chat about this", Esc), which runs no tool and leaves no mark, so the open popup closes.
 - `remembered-ask.mjs`: bounce once, else ask the owner (`askOrBounce`), and the one log line for a literal secret (`logSecretKind`:
-  its kind, no command, no value). `allowed-literals.mjs`: the per-session store of secrets allowed before R22-G1 (hashes only); the
-  guard no longer writes it, and `guard-state-write.mjs` still guards its folder.
+  its kind, no command, no value). `allowed-literals.mjs`: only the folder of the old per-session store of secrets allowed before R22-G1 and the
+  shortest secret length are left; nothing reads or writes the store, and `guard-state-write.mjs` still guards its folder.
 - `answered-commands.mjs`: a command the guard's dialog allowed, handed to `permission-timed-allow.mjs` so Claude Code's own prompt for it opens no second dialog (hashes of session, agent, directory and command only; used once; 10 s window).
 - `bounce-once.mjs`: the first time a command asks because of how it is written (a variable command word, a risky word
   inside `$(...)` or a heredoc, a word or arithmetic known only at run time), it is sent back to the agent with the fix instead
@@ -70,7 +70,7 @@ Asking and remembering:
   reason, as an ask line does. `reason-classes.mjs` gives every guard reason a fixed class name.
   Advice (a quality rule: a hand-edited lockfile, a merge commit, `docker rm` without `-v`) uses the same store: alone, the first send is sent back
   with the fix and the same command again runs with no dialog; next to a reason that asks, the advice is only added to it.
-- `session-store.mjs`: the per-session files of `allowed-literals.mjs` and `bounce-once.mjs`. It checks the folder and file
+- `session-store.mjs`: the per-session files of `bounce-once.mjs`. It checks the folder and file
   with lstat, never follows a link or waits on a FIFO, and cleans up only its own old files.
 - `session-lock.mjs`: `withSessionLock` makes hooks that record at the same moment take turns, so none drops another's record
   (built on `session-store.mjs`). The lock holds `<pid> <random token>` and is removed only by the run that holds it; a lock is
