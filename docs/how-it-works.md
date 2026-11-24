@@ -29,15 +29,15 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 
 1. You start Claude with `claude --model <m> --effort <e>`. The main session is the boss.
 2. Claude reads `home/CLAUDE.md`, your `personal/CLAUDE.md` and the rules whose paths match the files it works on.
-3. The boss hands the work to `lex` (plan), `dev` (build) or `tess` (tests and reviews, only when you ask), at most 6 at
+3. The boss hands the work to `lex` (plan), `dev` (build) or `tess` (tests and reviews, mostly when you ask), at most 6 at
    once. Each agent file lists its model, tools, preloaded skills and the helpers it may start.
 4. Before each Bash command, `pre-bash-guard.mjs` checks it. Risky commands (push, `rm -rf`, prod-host writes) open a dialog. When a
    rewrite would remove the question (a `$VAR` command word, `rm`/`push` inside `$(...)` or a heredoc, a word or arithmetic known
    only at run time), the first send is sent back to Claude with the fix instead; the same command sent again opens the dialog.
    A literal secret in a command (a test password) asks nothing; the log names its kind (owner decision R22-G1).
 5. After each edit, `post-edit.mjs` runs the project's formatter.
-6. Tests, type check, lint and reviews run when you ask for them (`tess`, `tess-review`); no check runs by itself when an
-   agent stops.
+6. Tests, type check, lint and reviews run mostly when you ask for them (`tess`, `tess-review`); lex and dev may also start
+   `tess` where a check is needed. No check runs by itself when an agent stops.
 
 The hook list with exact triggers is in `docs/catalog.md` (section Hooks) and `home/hooks/README.md`.
 

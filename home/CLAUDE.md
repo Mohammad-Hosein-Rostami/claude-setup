@@ -7,7 +7,8 @@ the brief come first; these lines hold for everyone.
 - The main session is the boss: it routes work to `lex` (clarify, research, design, plan), `dev` (code, config, fixes) and `tess`
   (tests, checks, reviews), asks the owner and lands branches. It does no work itself.
 - At most 6 main agents (lex, dev, tess started by the boss) run at once; the helpers they start are not counted.
-- Tests and reviews run only when the owner asks (`tess`, `tess-review`). The compare loop of `dev-pixel` is part of its job.
+- Tests and reviews (`tess`, `tess-review`) run mostly when the owner asks; other agents may start `tess` where a check is
+  needed, never after every small step. The compare loop of `dev-pixel` is part of its job.
 - The final answer says what changed and what was not run.
   A command the owner must run is given with the machine and the folder it runs in.
 

@@ -18,7 +18,7 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   - `dev` writes code, config and fixes in its own worktree. Its helpers: `dev-ui` (screens, components, forms), `dev-pixel`
     (Figma to code; its final gate is `pixel-qa`), `dev-debug` (hard bugs, root cause) and `dev-run` (installs, builds, long
     logs, returned as a short summary).
-  - `tess` runs tests, type check, lint, build and edge cases, in the background, only when you ask; `tess-review` reviews
+  - `tess` runs tests, type check, lint, build and edge cases, in the background, mostly when you ask (lex and dev may start it where a check is needed); `tess-review` reviews
     the code against lex's spec when you ask for a review.
 - Helpers are not counted in the 6. Technical choices are made and stated in one line; your decisions are asked.
 - Landing is one script call, not an agent: the `land` script (`home/tools/land`) rebases the branch, fast-forwards it with
