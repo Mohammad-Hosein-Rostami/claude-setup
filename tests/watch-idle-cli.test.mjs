@@ -52,9 +52,9 @@ test('CLI: --help names the idle class and what it means', () => {
   assert.match(help.stdout, /idle \(opt-in\) = the session finished its turn and waits for its owner/);
 });
 
-test('docs name the idle class: README, daily use and the events header', async () => {
+test('docs name the idle class: README and the events header (daily use no longer covers watch)', async () => {
   const root = join(dirname(CLI), '..', '..', '..');
-  for (const file of ['home/tools/watch/README.md', 'docs/daily-use.md', 'home/tools/watch/lib/events.mjs']) {
+  for (const file of ['home/tools/watch/README.md', 'home/tools/watch/lib/events.mjs']) {
     assert.match(await readFile(join(root, file), 'utf8'), /\bidle\b/, file);
   }
 });

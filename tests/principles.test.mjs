@@ -105,6 +105,14 @@ test('the long-command line: over 3 minutes runs in the background with a timeou
   assert.doesNotMatch(read('home/rules/principles.md'), /never consent/);
 });
 
+// The 3-min mark is a background subagent's limit: its foreground command is moved to the background after 3 min.
+test('home/CLAUDE.md: long-command line says over 3 min, with a timeout, no polling and no turn end while it runs', () => {
+  const claude = read('home/CLAUDE.md');
+  assert.match(claude, /A command that may run over 3 min runs with `run_in_background: true` and its `timeout` set \(at most 2 h\)\. Never poll or\s+sleep-loop, and never end your turn while it runs/);
+  assert.doesNotMatch(claude, /watch\.mjs/, 'watch.mjs is removed and never a way to run or bound a command');
+  assert.doesNotMatch(claude, /A command over ~2 min/);
+});
+
 test('home/lead.md job-order bullet: contract first, probes beside lanes, repos apart; the sync is personal', () => {
   const claude = read('home/lead.md');
   const lines = claude.split('\n');

@@ -14,17 +14,13 @@ test('home/CLAUDE.md: a command the owner must run names the machine and the fol
   assert.doesNotMatch(text, /MacBook/i, 'machine names are personal');
 });
 
-test('home/CLAUDE.md names the status tool for STATUS.md row edits', () => {
-  assert.match(read('home/CLAUDE.md'), /tools\/status\/status\.mjs add\|start\|done\|deliver\|rule\|decision` only/);
-});
-
 test('dev-run never starts background loops or watchers', () => {
   assert.match(read('home/agents/dev-run.md'), /Never start a watcher, a poller or a dev server/);
 });
 
 // one-home-rules (R16 items 13, 16, 19): one home per rule, the three contradictions gone, lead-only text out of CLAUDE.md.
 test('the owner-decision list is written once, in home/CLAUDE.md "Token discipline"; the other always-loaded files point there', () => {
-  const files = ['home/CLAUDE.md', 'home/rules/core.md', 'home/lead-rules.md', 'home/lead.md'];
+  const files = ['home/CLAUDE.md', 'home/lead-rules.md', 'home/lead.md']; // home/rules/core.md is gone (lex-dev-tess plan)
   const copies = files.flatMap((path) => read(path).match(/scope, money, irreversible/g) ?? []);
   assert.equal(copies.length, 1);
   assert.match(read('home/lead.md'), /Owner decisions \(the list in CLAUDE\.md "Token discipline"\)/);

@@ -23,49 +23,35 @@ test('lead-rules.md keeps the assembly and compact-before-waiting rules', () => 
 });
 
 // The owner's own language (Persian) is in personal/CLAUDE.md; the shared text keeps the user's-language rule and its compaction line.
-test('home/CLAUDE.md names user-language replies, the STATUS.md re-read and the Grep tool or rg', () => {
+// The STATUS.md re-read and the token-discipline lines left with the short global rules (lex-dev-tess plan).
+test('home/CLAUDE.md names user-language replies, the compaction language and the outward-action confirm', () => {
   const text = read('home/CLAUDE.md');
-  assert.match(text, /Reply in the language the user writes\s+in \(never default to English\)/);
-  assert.match(text, /and the user's language: reply in it\)/);
+  assert.match(text, /Reply in the language the user writes in \(never default to English\)/);
+  assert.match(text, /When compacting, keep the goal, the owner's constraints and language/);
   assert.doesNotMatch(text, /Persian/i, 'one person\'s language is personal');
-  assert.match(text, /`STATUS\.md` path/);
-  assert.match(text, /Grep tool or `rg`/);
-  assert.match(text, /Git push[\s\S]*confirm dialog even in bypass mode[\s\S]*goes ahead after 2 min unless the owner clicks Deny[\s\S]*literal password or token/);
+  assert.match(text, /Confirm every outward-facing action \(push, publish, PR merge, prod-host writes\)/);
+  assert.match(text, /No secrets in code, logs, commits or command lines/);
 });
 
 test('home/lead.md keeps the standing-rules and delegation-size bullets, home/CLAUDE.md the usage-limit bullet (L22)', () => {
   const text = read('home/lead.md');
   assert.match(text, /goes into STATUS\.md under `## Standing rules` the moment it is given, in the owner's words; every brief names that file; re-read it after a compaction or a resume\./);
   assert.match(text, /Size a delegated job to finish within about 120 tool calls; split a bigger one into stages with a commit between them\. An agent that returns without its report is continued once \("commit, then report"\), not restarted\./);
-  assert.match(read('home/CLAUDE.md'), /At a usage limit: read the reset time from the message, tell the owner that time, and never retry before the reset[\s\S]*schedule one wake a few minutes after the reset only where that does not reach/);
+  assert.match(read('home/CLAUDE.md'), /At a usage limit, tell the owner the reset time\s+and never retry before it\./);
 });
 
 test('ui-coverage hand-over step gives ONE link to the visual overview', () => {
   assert.match(read('home/skills/ui-coverage/SKILL.md'), /Give the owner ONE link, to the visual overview \(a preview or side-by-side per state\), open it yourself first and check it shows what you describe; never hand over a bare index of routes or a mock's default listing\./);
 });
 
-// Estimator rebuild stage 3: rows are listed first and edited by status.mjs only, a Stop hook records the hand-over, and every
-// estimate is the Finish block pasted as-is.
-const LEAD_ESTIMATE_RULE = '- Multi-day: `STATUS.md` `## Work items`: list the job\'s rows first; row edits by `status.mjs` only. Estimates: the `Finish:` block of `node ~/.claude/tools/estimate/estimate.mjs STATUS.md` only.';
-// one-home-rules (R16 item 19): the rest of the STATUS bullet is lead-only and moved to lead-rules.md; home/CLAUDE.md keeps the
-// row-edit line every agent may need.
-const GLOBAL_STATUS_RULE = '- `STATUS.md` row edits go through `node ~/.claude/tools/status/status.mjs add|start|done|deliver|rule|decision` only, never a typed time (the tool writes it); the lead plans the rows.';
-const LEAD_ESTIMATE_DETAIL = 'Paste the `Finish:` block as-is, never a number or time of your own; if it refuses, give its reason, do its What to do and `Check:` lines first.';
-
-test('the estimate rules are verbatim in lead-rules.md, the row-edit rule in home/CLAUDE.md, and the old bullet is gone', () => {
-  const leadRules = read('home/lead-rules.md');
-  assert.ok(leadRules.split('\n').includes(LEAD_ESTIMATE_RULE), 'lead-rules.md estimate line');
-  assert.ok(LEAD_ESTIMATE_RULE.length <= 200, 'lead-rules.md is injected into every session: the estimate line stays within 200 characters');
-  assert.ok(leadRules.replace(/\n +/g, ' ').includes(LEAD_ESTIMATE_DETAIL), 'lead-rules.md: the Finish block is pasted as-is');
-  assert.match(leadRules, /Every owner request and correction becomes rows before work on it starts/);
-  const global = read('home/CLAUDE.md');
-  assert.ok(global.split('\n').includes(GLOBAL_STATUS_RULE), 'home/CLAUDE.md row-edit rule');
-  assert.doesNotMatch(global, /end that reply with the new finish estimate/);
-  assert.match(read('docs/daily-use.md'), /pastes the `Finish:` block of `node ~\/\.claude\/tools\/estimate\/estimate\.mjs STATUS\.md` as every estimate/);
+// The lex-dev-tess plan removes estimates, the status rows and the job machinery: the shared text names none of them.
+test('home/CLAUDE.md and docs/daily-use.md name no estimate, status row, done-check or road machinery', () => {
+  for (const file of ['home/CLAUDE.md', 'docs/daily-use.md']) {
+    assert.doesNotMatch(read(file), /estimate\.mjs|`Finish:`|status\.mjs|STATUS\.md|done-check|road\.mjs|land-lane|watch\.mjs|recall/, file);
+  }
 });
 
 // Every accuracy rule lives in home/CLAUDE.md, home/lead.md or home/lead-rules.md, which every session loads.
-const GATES = ['ui-quality-pass', 'visual-qa', 'ui-coverage'];
 // Phrases that drop, skip or lessen a gate or check ("skip the reviewer", "no tests", "verify-done is optional").
 // One sentence is checked at a time; a pattern that would also hit an honest sentence is left out (see the fixtures).
 const LOWERS_A_GATE = /\b(skip|omit|drop|without|no|fewer|less|leave out)\b[^.;\n]{0,40}\b(runner|reviewers?|security-auditor|verify-done|ui-quality-pass|visual-qa|ui-coverage|reviews?|verif(y|ication)|tests?|checks?)\b/i;
@@ -108,13 +94,11 @@ test('no sentence of lead-rules.md lowers a gate that home/CLAUDE.md requires', 
   }
 });
 
-test('every remaining gate (the UI ones) is named in home/CLAUDE.md, which every session and agent loads', () => {
+// The UI skills are preloaded by the dev-ui and dev-pixel agent files (lex-dev-tess plan); the global text keeps the pixel bar.
+test('home/CLAUDE.md keeps the pixel-perfect bar and the dev-pixel compare loop as part of its job', () => {
   const claude = read('home/CLAUDE.md');
-  const section = (heading) => claude.split(/^## /m).find((part) => part.startsWith(heading)) ?? '';
-  assert.match(section('Checks'), /`done-check` runs/, 'the Checks section says the done-check runs by itself');
-  const uiRouting = section('Skill routing (UI)');
-  for (const gate of ['visual-qa', 'ui-coverage']) assert.ok(uiRouting.includes(`\`${gate}\``), `Skill routing (UI) must name ${gate}`);
-  for (const gate of GATES) assert.ok(claude.includes(`\`${gate}\``), `home/CLAUDE.md must name ${gate}`);
+  assert.match(claude, /Pixel-perfect work: no sacrifice of\s+its checks, models or effort/);
+  assert.match(claude, /The compare loop of `dev-pixel` is part of its job/);
 });
 
 test('accuracy rules live in the shared files', () => {
@@ -158,7 +142,7 @@ test('lead.md and lead-rules.md send landing to land-lane, leave machine sync to
     assert.doesNotMatch(read(file), /workflow|verifier|not capped/i, `${file} names no workflow`);
   }
   for (const file of ['docs/daily-use.md']) {
-    assert.match(read(file), /Fixed sequences are one script call, not an agent: `land-lane`/, `${file} says landing is one script call`);
+    assert.match(read(file), /Landing is one script call, not an agent: the `land` script/, `${file} says landing is one script call`);
     assert.doesNotMatch(read(file), /git cleanup and (a )?bugfix( job)? always/i, `${file} no longer sends every bugfix and cleanup to a workflow`);
   }
   assert.doesNotMatch(read('home/CLAUDE.md').split('\n').find((line) => line.includes('One background agent')) ?? '', /one debug hypothesis set\.$/, 'the agent line limits a hypothesis set to inside a running job');
