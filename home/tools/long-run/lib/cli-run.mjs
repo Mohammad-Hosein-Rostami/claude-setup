@@ -2,7 +2,7 @@
 // Exports: planLines, checkCommand, startCommand, resumeCommand, resumeStale, rerunCommand.
 // Invariants: nothing starts before the job, the account (stored, usage credits recorded off) and the SQLite module pass; a run
 //   records its account once and every resume checks that same account again; resume refuses while a taken-over session looks
-//   open (unless --force) and never while a driver lives; rerun moves the later journals aside and never touches git.
+//   open (unless --force) and never while a driver lives; --retry, --skip and --abandon are refused unless a step is held; rerun moves the later journals aside and never touches git.
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -17,6 +17,7 @@ import { Refusal, UsageError, claimRunFolders, openRun, startDriver } from './cl
 import { runState } from './view.mjs';
 
 const SECOND_MS = 1000;
+const HOLD_ONLY = ['retry', 'skip', 'abandon'];
 
 /** The plan lines `check` prints: what will run where, on which model and account. */
 export function planLines(job, account) {
@@ -126,6 +127,10 @@ export async function resumeCommand({ runId, flags, env, root, write }) {
   const state = runState(paths);
   if (state === 'done' || state === 'abandoned') throw new Refusal(`run ${runId} is ${state}; use rerun --from <step>`);
   const reply = replyOf(flags);
+  if (HOLD_ONLY.includes(reply.action) && readJson(paths.driver)?.status !== 'held') {
+    // Only a held step takes these; on any other run they would start its boss again instead (audit Job A, the abandon bug).
+    throw new Refusal(`run ${runId} holds no step (it is ${state}); --${reply.action} applies to a held step only. Leave it ${state} (it spends nothing) or continue it with long-run resume ${runId}`);
+  }
   requireCreditsOff(readJson(paths.run).account, env);
   if (!flags.force) refuseOpenSessions(paths, readRunJob(paths), env);
   if (flags['reload-job']) reloadJob(paths, flags['reload-job'], write);
