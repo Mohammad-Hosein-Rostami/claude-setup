@@ -51,18 +51,28 @@ test('the folded lessons keep their whole clauses', () => {
   for (const [id, clause] of Object.entries(clauses)) assert.ok(rows[id][2].includes(clause), `${id}: ${clause}`);
 });
 
-test('tess-review.md stays within its line cap and carries the proof rules', () => {
-  const text = read('home/agents/tess-review.md');
-  assert.ok(text.split('\n').length - 1 <= REVIEWER_MAX_LINES);
+// The class questions and the recurring classes moved from tess-review.md to the review-checklist skill it preloads (tess v2 spec,
+// acceptance A2): they are checked there, once, and no longer in the agent file.
+test('tess-review.md stays within its line cap and carries the proof rules; review-checklist, which it preloads, holds the classes', () => {
+  const raw = read('home/agents/tess-review.md');
+  const text = raw.replace(/\n\s*/g, ' ');
+  const checklist = read('home/skills/review-checklist/SKILL.md').replace(/\n\s*/g, ' ');
+  assert.ok(raw.split('\n').length - 1 <= REVIEWER_MAX_LINES);
   for (const clause of [
     'run the same repro on a base copy',
     'needs an armed control (same fixture, the hazard left on) that fires',
     'A mutant counts as killed only by a named failing test',
     'base and tip side by side under the same load',
+    "with a made-up `CLAUDE_CODE_SESSION_ID` (you share the lead's)",
+  ]) assert.ok(text.includes(clause), clause);
+  assert.match(raw, /^skills:\n {2}- review-checklist$/m, 'tess-review preloads review-checklist');
+  for (const clause of [
     'every other route, tool, CLI or hook that does the same action check it too',
     'Kinder fakes: a test double that forgives what the real dependency does not',
-    "with a made-up `CLAUDE_CODE_SESSION_ID` (you share the lead's)",
-  ]) assert.ok(text.replace(/\n\s*/g, ' ').includes(clause), clause);
+  ]) {
+    assert.ok(checklist.includes(clause), `review-checklist: ${clause}`);
+    assert.ok(!text.includes(clause), `tess-review: ${clause} moved, not copied`);
+  }
 });
 
 /** Every file below `dir`, as paths relative to the repo. */
