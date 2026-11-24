@@ -2,7 +2,8 @@
 // Exports: TRUST_ENV, formatterCall(script), trustedFormat(env, cwd, packageDir), refusedText(refused).
 // Rules: the script runs through the package manager only in a project the owner trusts: TRUST_ENV is "1" from the shell or the
 //   project's untracked .claude/settings.local.json (lib/team-switch.mjs: a committed team file cannot set it), and the package.json
-//   lies inside one of the session's project folders, so a trust set for one project never reaches a repo cloned elsewhere. Untrusted,
+//   lies inside the session's project folder: CLAUDE_PROJECT_DIR, the hook input's cwd only when that is unset (a session that cd'd
+//   into a clone elsewhere moves its cwd, never its project), so a trust set for one project never reaches a repo cloned elsewhere. Untrusted,
 //   a script that is one plain call of a known formatter (KNOWN_FORMATTERS) runs as that tool's binary with the script's words, never
 //   through npm, pnpm or yarn, so no pre/post script, .npmrc script-shell or yarnPath of the repo runs; anything else is not run.
 // Left open: the formatter itself still reads the repo's config (prettier.config.js and eslint.config.js run code) and may be the
@@ -50,18 +51,19 @@ function realFolder(folder) {
 
 /**
  * Whether the owner trusts the format scripts of the package in `packageDir`: TRUST_ENV is "1", no team file set it
- * (lib/team-switch.mjs), and the package lies inside one of the session's project folders (a trust set for one project never reaches
- * a repo cloned somewhere else).
+ * (lib/team-switch.mjs, which looks at every folder the hook knows), and the package lies inside the session's project folder:
+ * CLAUDE_PROJECT_DIR, or `cwd` only when it is unset (a trust set for one project never reaches a repo cloned somewhere else).
  * @param {Record<string, string|undefined>} env the hook's environment
  * @param {string|undefined} cwd the hook input's cwd
  * @param {string} packageDir the folder of the package.json
  * @returns {{ trusted: boolean, ignored: string|null }} ignored: why a team file's TRUST_ENV was not honoured, else null
  */
 export function trustedFormat(env, cwd, packageDir) {
-  const dirs = switchDirs(env, cwd);
-  const { value, ignored } = trustedSwitch(env, TRUST_ENV, dirs);
+  const { value, ignored } = trustedSwitch(env, TRUST_ENV, switchDirs(env, cwd));
+  // switchDirs drops a relative path and the home folder, so a bad CLAUDE_PROJECT_DIR trusts nothing rather than falling back to cwd
+  const projectDirs = env.CLAUDE_PROJECT_DIR ? switchDirs(env) : switchDirs(env, cwd);
   const real = realFolder(packageDir);
-  return { trusted: value === TRUSTED_VALUE && dirs.some((dir) => isInside(real, realFolder(dir))), ignored };
+  return { trusted: value === TRUSTED_VALUE && projectDirs.some((dir) => isInside(real, realFolder(dir))), ignored };
 }
 
 /** The one-line warning for a format script that was not run (formatFile's `refused`). */
