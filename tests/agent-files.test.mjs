@@ -196,3 +196,21 @@ test('no agent file tells an agent to start lex, dev, tess or max; each asks the
 test('no agent names the removed job machinery', () => {
   for (const name of NAMES) assert.doesNotMatch(agent(name), REMOVED_MACHINERY, name);
 });
+
+// Owner decisions on max (ADR 0003): it prepares everything up to the outward step and stops; it acts outward only on an
+// `owner-command:` brief line, which only the boss writes from the owner's own chat words.
+test('max acts outward only on an owner-command: line the boss writes from the owner\'s words; it prepares and stops', () => {
+  const text = agent('max').replace(/\s+/g, ' ');
+  assert.match(field('max', 'description'), /Prepares everything up to the outward step and stops; the owner pushes and deploys\.$/);
+  assert.ok(text.includes('Only with an `owner-command:` line in the brief. Run exactly that action from the landed sha the boss names, nothing more;'), 'the owner-command section');
+  assert.ok(text.includes('Push, tag, publish, deploy, merge a PR, write to production or run a migration on real data without an `owner-command:` for that action.'), 'the outward never-list');
+  assert.ok(text.includes('only the boss writes `owner-command:`, from the owner\'s own chat words.'), 'who writes the line');
+});
+
+// docs-writing (X6-X8) binds the text a person reads: clean-code and dev-ui point to it rather than repeat it.
+test('clean-code and dev-ui point the text a person reads to docs-writing, which exists', () => {
+  assert.ok(readFileSync(`${HOME_DIR}skills/docs-writing/SKILL.md`, 'utf8'), 'docs-writing exists');
+  const cleanCode = readFileSync(`${HOME_DIR}skills/clean-code/SKILL.md`, 'utf8').replace(/\s+/g, ' ');
+  assert.ok(cleanCode.includes('Text a person reads follows `docs-writing` (X6-X8).'), 'clean-code');
+  assert.ok(agent('dev-ui').replace(/\s+/g, ' ').includes('U12 Plain sentence-case copy, no placeholder text; error and empty-state text by X6 (`docs-writing`).'), 'dev-ui');
+});

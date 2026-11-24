@@ -69,6 +69,10 @@ test('lex.md plans tasks that share no file, with the two lists, acceptance comm
   assert.match(text, /Edge cases dev must keep in mind: the trust boundary, two runs at once/);
 });
 
+test('lex.md ends each plan with a ship: line, set only when the owner names a release for real users', () => {
+  assert.ok(flat(read('home/agents/lex.md')).includes('End the plan with `ship: <target>` only when the owner\'s request names a release, deploy, publish or showcase for real users, else `ship: no`.'));
+});
+
 test('lex.md attacks its own plan once and probes a platform fact before deciding on it', () => {
   const text = flat(read('home/agents/lex.md'));
   const attack = text.slice(text.indexOf('Attack your own plan once'));
@@ -108,6 +112,12 @@ test('agents that run commands: Bash timeout 600000 for installs and long runs, 
   assert.match(flat(read('home/agents/dev-run.md')), /Never start a watcher, a poller or a dev server/);
 });
 
+test('dev starts dev-docs for a change\'s docs and user text, and never runs two parts on the same files at once', () => {
+  const text = flat(read('home/agents/dev.md'));
+  assert.ok(text.includes('`dev-docs`: the docs and user-facing text a change needs, started with the code parts from the plan\'s interfaces (a one-line doc change you write yourself); model as dev-part\'s table, `model: "opus"` for migration notes of a breaking change, a public API reference, or security or data-loss text. Nothing else.'), 'the dev-docs helper line');
+  assert.ok(text.includes('- One file, one writer: each part names the files it owns (`files:`); parts whose files overlap run one after another, never at once.'), 'the one-writer line');
+});
+
 test('dev: a design conflict with the plan is reported as a contract-dispute line', () => {
   assert.match(read('home/agents/dev.md'), /contract-dispute: <step> <why>/);
 });
@@ -131,13 +141,14 @@ test('home/CLAUDE.md: long-command line says over 3 min, with a timeout, keep wo
 
 const listDir = (path) => readdirSync(fileURLToPath(new URL(`../${path}`, import.meta.url)));
 const SUITE_SLOTS = 1; // the owner's default for the machine-wide suite queue (home/tools/suite DEFAULT_CONFIG)
-// The files of the no-Fable gate itself (agent-model-guard.mjs and its libs, with their READMEs): the only hook text that names Fable.
-const FABLE_GATE_FILES = ['README.md', 'agent-model-guard.mjs', 'lib/README.md', 'lib/agent-model-gates.mjs', 'lib/agent-pins.mjs'];
+// The files of the no-Fable gate itself (agent-model-guard.mjs and its libs, agent-budget.mjs and the reasons lib both name, with their
+// READMEs): the only hook text that names Fable.
+const FABLE_GATE_FILES = ['README.md', 'agent-budget.mjs', 'agent-model-guard.mjs', 'lib/README.md', 'lib/agent-model-gates.mjs', 'lib/agent-pins.mjs', 'lib/fable-model-reasons.mjs'];
 
-test('home/CLAUDE.md names the owner\'s cap of 3 lex, 3 dev and 3 tess (the guard\'s cap) and the 1-slot suite run queue', () => {
+test('home/CLAUDE.md names the owner\'s cap of 3 lex, 3 dev, 3 tess and 3 max (the guard\'s cap) and the 1-slot suite run queue', () => {
   const claude = flat(read('home/CLAUDE.md'));
   const cap = MAX_AGENTS_PER_TYPE;
-  assert.ok(claude.includes(`- At most ${cap} lex, ${cap} dev and ${cap} tess run at once; their helpers are not counted.`), `the cap line names ${cap} of each`);
+  assert.ok(claude.includes(`- At most ${cap} lex, ${cap} dev, ${cap} tess and ${cap} max run at once; their helpers are not counted.`), `the cap line names ${cap} of each`);
   assert.ok(claude.includes(`Full suites, installs and builds go through the \`suite run\` queue (${SUITE_SLOTS} slot)`), 'the suite queue line');
 });
 
