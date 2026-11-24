@@ -25,7 +25,6 @@ const BROKEN_CONTENTS = {
   'broken JSON': `{"env": {"${OPUS_VAR}": "x"`,
   'an array root': JSON.stringify([{ env: {} }]),
   'a null root': 'null',
-  'an empty file': '',
   'env as text': JSON.stringify({ env: `${OPUS_VAR}=x` }),
   'env null': JSON.stringify({ env: null }),
   'env an array': JSON.stringify({ env: [] }),

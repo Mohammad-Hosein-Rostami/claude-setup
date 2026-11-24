@@ -2,7 +2,7 @@
 // file inside a try, so a lib that fails to load denies the call instead of exiting 1 (fail open). Model routing: an Agent call with no `model` runs on the lead's own model and spends it silently, so a
 // call to a built-in type that pins no model (general-purpose, no subagent_type, Explore and the other built-ins) gets `sonnet` and a
 // Plan call gets `opus` (types matched in any case: `explore`, `plan`). Forks (subagent_type "fork"), plugin agents and an explicit
-// model are not routed, and nothing is routed while CLAUDE_CODE_SUBAGENT_MODEL_FORCE is on (Claude Code then ignores `model`). Input that is not a JSON object, and any crash of the guard, deny the call (the no-Fable gate fails closed).
+// model are not routed, and nothing is routed while CLAUDE_CODE_SUBAGENT_MODEL_FORCE is on under every env the session may run with (Claude Code then ignores `model`). Input that is not a JSON object, and any crash of the guard, deny the call (the no-Fable gate fails closed).
 // Pin floor (lib/agent-pins.mjs): the agent file Claude Code loads sets a floor for its own model and effort, so a lower per-call
 // value is left out (haiku < sonnet < opus; low < ... < max); this is how each agent keeps the pin of the plan (lex, dev, dev-ui,
 // dev-pixel, dev-debug, tess-review, tess-write on Opus; lex-web, pixel-qa, tess on Sonnet; lex-scout, dev-run on Haiku: the frontmatter of
@@ -22,7 +22,8 @@
 //      while ANTHROPIC_DEFAULT_OPUS_MODEL, _SONNET_, _HAIKU_ or ANTHROPIC_DEFAULT_MODEL names Fable (it re-points an alias); a pin that cannot be read or is not certain; a type
 //      with no agent file the gate reads (a plugin agent, a fork, an unknown type: it runs only with a non-Fable `model` in the call).
 //      These variables are read from the hook's env and from the settings files' `env` (lib/settings-env.mjs possibleEnvs: the call
-//      must pass under each env the session may run with); a settings file that exists but cannot be read denies every call.
+//      must pass under each env the session may run with, the force and CLAUDE_CODE_SUBAGENT_MODEL also taken from different ones);
+//      a settings file that exists but cannot be read denies every call, naming the file and the cause.
 //   1. Copy-branch brief (lib/copy-branch-brief.mjs): a writer brief that creates `<lane>-2` instead of continuing `<lane>` (deny once).
 //   2. UI brief (lib/ui-brief-gate.mjs): a dev-pixel or pixel-qa brief that names no usable coverage matrix (`MATRIX: <path>`, or
 //      `MATRIX: none: <reason>`) gets the ui-coverage init advice (deny once).
@@ -47,7 +48,7 @@ import { mainRouteReason } from './agent-route.mjs';
 import { copyBranchBriefAdvice } from './copy-branch-brief.mjs';
 import { recordAgentLaunch } from './agent-launches.mjs';
 import { isSessionId } from './session-store.mjs';
-import { possibleEnvs } from './settings-env.mjs';
+import { mixedEnvs, possibleEnvs, unreadableCause } from './settings-env.mjs';
 import { FABLE_RULE, NAME_A_MODEL, callModelReason, forcedModelReason, foundPinReason, isModelForced, remappedAliasReason,
   unreadableSettingsReason } from './fable-model-reasons.mjs';
 import { uiBriefDeny } from './ui-brief-gate.mjs';
@@ -158,6 +159,8 @@ export async function copyBranchBriefDeny(input, env = process.env) {
 
 /** The deny reason for unreadable hook input (the guard denies the Agent call rather than let the no-Fable gate pass). */
 export const UNREADABLE_INPUT = 'agent-model-guard could not read its input';
+// read together: the force decides whether the model variable is used, and each may come from another source (mixedEnvs)
+const FORCE_AND_MODEL_VARS = ['CLAUDE_CODE_SUBAGENT_MODEL_FORCE', 'CLAUDE_CODE_SUBAGENT_MODEL'];
 
 /**
  * The no-Fable gate (see the header). It fails closed: whenever the model the agent would run on is not known, the call is denied.
@@ -168,8 +171,8 @@ export const UNREADABLE_INPUT = 'agent-model-guard could not read its input';
  * Denied: a Fable model; an alias resolved only at run time (`best`, `default`, `opusplan`); `inherit` or no model at all (the lead's model, which may be Fable); a pin that cannot be read or is not
  * certain; a type with no agent file this gate reads (a plugin agent, a fork, an unknown type). Plugin agent files are not read: a
  * plugin agent runs only with a non-Fable `model` in the call.
- * The model variables count from the hook's env and from the settings files' `env` alike (lib/settings-env.mjs possibleEnvs); a
- * settings file that exists but cannot be read denies the call.
+ * The model variables count from the hook's env and from the settings files' `env` alike (lib/settings-env.mjs possibleEnvs), the
+ * force and CLAUDE_CODE_SUBAGENT_MODEL also from different ones (mixedEnvs); a settings file that exists but cannot be read denies.
  * @param {unknown} input the hook input: tool_input {subagent_type, model}, cwd
  * @param {Record<string, string | undefined>} env HOME / CLAUDE_CONFIG_DIR (where the agent files and the user settings are),
  *   CLAUDE_PROJECT_DIR (the project settings), CLAUDE_CODE_SUBAGENT_MODEL, CLAUDE_CODE_SUBAGENT_MODEL_FORCE
@@ -181,8 +184,8 @@ export async function fableReason(input, env = process.env) {
   // the model variables may be set only in a settings file's `env`, which the hook's process.env lacks (lib/settings-env.mjs);
   // the call must pass under every env the session may run with, and a file that cannot be read may name Fable
   const { envs, unreadableFile } = possibleEnvs(env, input.cwd);
-  if (unreadableFile !== null) return unreadableSettingsReason(unreadableFile);
-  for (const sessionEnv of envs) {
+  if (unreadableFile !== null) return unreadableSettingsReason(unreadableFile, unreadableCause(unreadableFile));
+  for (const sessionEnv of mixedEnvs(envs, FORCE_AND_MODEL_VARS)) {
     const reason = await modelReason(input, sessionEnv);
     if (reason !== '') return reason;
   }
@@ -267,8 +270,9 @@ export async function runGuard(text) {
     process.stdout.write(deny);
     return;
   }
-  // with the force on (as Claude Code reads it), Claude Code drops `model` from the Agent tool and ignores it, so the routing adds none
-  const forced = possibleEnvs(process.env, input.cwd).envs.some(isModelForced); // the force may be set only in a settings file
+  // with the force on (as Claude Code reads it), Claude Code drops `model` from the Agent tool and ignores it, so the routing adds none;
+  // only when it is on under every env the session may run with (it may be set only in a settings file, or only in one that never applies)
+  const forced = possibleEnvs(process.env, input.cwd).envs.every(isModelForced);
   const routed = forced ? null : guardedAgentInput(input.tool_input);
   let floored = routed; // the pin floor fails open: a load or read error in lib/agent-pins.mjs leaves the input as it is
   try {

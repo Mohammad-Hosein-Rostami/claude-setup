@@ -9,11 +9,14 @@
 // file from the session's primary working directory and the local file from the git root, in a worktree the main checkout's root
 // (same page, "Where Claude Code keeps the local file"); after a `/cd` it reads them from the new folder.
 // Exports: envValue(name, env) -> the hook's value, else the user file's (the CLAUDE_GUARD_ASK switch, lib/timed-ask.mjs);
-//   possibleEnvs(env, cwd) -> {envs, unreadableFile} (the no-Fable gate, lib/agent-model-gates.mjs).
+//   possibleEnvs(env, cwd) -> {envs, unreadableFile}, unreadableCause(file) -> why, and mixedEnvs(envs, names) -> envs (the no-Fable
+//   gate, lib/agent-model-gates.mjs).
 // Invariants: envValue never throws; possibleEnvs throws only when a folder on the way to a git root cannot be looked at (lib/agent-brief.mjs
 // nearestGitEntry), and the gate's entry then denies the call; each file is read at most once per hook run (one hook run is one node process), never waits on a FIFO
-// (lib/plain-file.mjs) and at most MAX_SETTINGS_BYTES; a missing file is no settings, a file that exists but cannot be read or is not
-// a settings object is "unreadable", which envValue treats as unset and possibleEnvs reports, so the gate can fail closed.
+// (lib/plain-file.mjs) and at most MAX_SETTINGS_BYTES; a missing file is no settings, and so is an empty or blank one (Claude Code
+// loads it as `{}`); a leading UTF-8 BOM is dropped before parsing; a file that exists but cannot be read or is not a settings object
+// is "unreadable", which envValue treats as unset and possibleEnvs reports, so the gate can fail closed; its cause names at most a variable,
+// never a value or other text of the file (an `env` may hold a secret).
 import { realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { gitDirOf, nearestGitEntry, sharedGitDir } from './agent-brief.mjs';
@@ -27,7 +30,8 @@ const GIT_FOLDER = '.git';
 const MAX_SETTINGS_BYTES = 1024 * 1024; // our merged user file is about 8 KiB; a real settings file is a few KiB
 const PLAIN_VALUE_TYPES = ['string', 'number', 'boolean']; // env values Claude Code can write as text
 const MISSING_CODES = new Set(['ENOENT', 'ENOTDIR']); // no such file: no settings, not an unreadable one
-const UNREADABLE = { unreadable: true };
+const UTF8_BOM = /^\uFEFF/; // an editor may save one; JSON.parse rejects it
+const JSON_PLACE = /at position \d+(?: \(line \d+ column \d+\))?/; // where V8 found the error; the rest of its text quotes the file
 const NO_SETTINGS = { values: {} };
 const readByFile = new Map(); // settings path -> what readSettingsEnv gave: one read per hook run
 
@@ -37,25 +41,41 @@ const envKey = (key) => (process.platform === 'win32' ? key.toUpperCase() : key)
 /** @returns {boolean} whether value is a plain JSON object (not null, not an array) */
 const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
+/** @returns {{unreadable: true, cause: string}} the read of a file that exists but gives no settings, and why */
+const unreadable = (cause) => ({ unreadable: true, cause });
+
+/** @returns {string} why the text is not JSON, with V8's place of the error but none of the file's text */
+function syntaxCause(error) {
+  const place = JSON_PLACE.exec(String(error?.message));
+  return place ? `it is not valid JSON (${place[0]})` : 'it is not valid JSON';
+}
+
 /**
  * The `env` block of one settings file, with its values as text (Claude Code copies them into the environment as written).
  * @param {string} file the settings file
- * @returns {{values: Record<string, string>} | {unreadable: true}} no file gives empty values; a file that cannot be read, is not
- *   JSON, is not an object, or has an `env` that is not an object of plain values is unreadable
+ * @returns {{values: Record<string, string>} | {unreadable: true, cause: string}} no file, an empty or blank one give empty values; a
+ *   file that cannot be read, is not JSON, is not an object, or has an `env` that is not an object of plain values is unreadable
  */
 function readSettingsEnv(file) {
+  let text;
+  try {
+    text = readPlainFile(realpathSync(file), MAX_SETTINGS_BYTES).replace(UTF8_BOM, '');
+  } catch (error) {
+    return MISSING_CODES.has(error?.code) ? NO_SETTINGS : unreadable(String(error?.message)); // a link loop, a FIFO, a folder, too big
+  }
+  if (text.trim() === '') return NO_SETTINGS; // Claude Code loads an empty file as `{}`
   let settings;
   try {
-    settings = JSON.parse(readPlainFile(realpathSync(file), MAX_SETTINGS_BYTES));
+    settings = JSON.parse(text);
   } catch (error) {
-    return MISSING_CODES.has(error?.code) ? NO_SETTINGS : UNREADABLE; // a link loop, a FIFO, a folder, too big, broken JSON
+    return unreadable(syntaxCause(error));
   }
-  if (!isPlainObject(settings)) return UNREADABLE;
+  if (!isPlainObject(settings)) return unreadable('it is not a JSON object');
   if (settings.env === undefined) return NO_SETTINGS;
-  if (!isPlainObject(settings.env)) return UNREADABLE;
+  if (!isPlainObject(settings.env)) return unreadable('its `env` is not an object');
   const values = {};
   for (const [key, value] of Object.entries(settings.env)) {
-    if (!PLAIN_VALUE_TYPES.includes(typeof value)) return UNREADABLE; // what it would mean is unknown
+    if (!PLAIN_VALUE_TYPES.includes(typeof value)) return unreadable(`its \`env\` value ${key} is not text, a number or true/false`);
     values[envKey(key)] = String(value);
   }
   return { values };
@@ -137,4 +157,30 @@ export function possibleEnvs(env, cwd) {
     if (Object.keys(layered.values).length > 0) envs.push({ ...env, ...layered.values });
   }
   return { envs, unreadableFile: null };
+}
+
+/**
+ * Why a settings file that possibleEnvs named as unreadable cannot be used (read once per hook run, like possibleEnvs's read).
+ * @param {string} file the file possibleEnvs gave as unreadableFile
+ * @returns {string} the cause (at most a variable name, never a value); '' when the file is readable or missing
+ */
+export function unreadableCause(file) {
+  return settingsEnvOf(file).cause ?? '';
+}
+
+/**
+ * The envs with each of `names` also taken from any other env: Claude Code applies each settings variable on its own, so the shell
+ * may win for one variable while a settings file supplies another (CLAUDE_CODE_SUBAGENT_MODEL_FORCE from a file, the model from the
+ * shell). Only values some env sets are mixed in; each env keeps its own value as one choice too.
+ * @param {Record<string, string | undefined>[]} envs from possibleEnvs
+ * @param {string[]} names the variables a gate reads together
+ * @returns {Record<string, string | undefined>[]} each env, followed by its copies with those variables set to the other values
+ */
+export function mixedEnvs(envs, names) {
+  let mixed = envs;
+  for (const name of names) {
+    const values = [...new Set(envs.map((env) => env[name]).filter((value) => value !== undefined))];
+    mixed = mixed.flatMap((env) => [env, ...values.filter((value) => value !== env[name]).map((value) => ({ ...env, [name]: value }))]);
+  }
+  return mixed;
 }

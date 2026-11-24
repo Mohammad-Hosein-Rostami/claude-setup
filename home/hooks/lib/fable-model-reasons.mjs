@@ -12,7 +12,7 @@
 // `default`) to another model (2.1.330 names them in its model env list); one that names Fable turns every agent on that alias into
 // a Fable agent, so while one does, every Agent call is denied (remappedAliasReason).
 // Exports: FABLE_RULE, NAME_A_MODEL, callModelReason(model), foundPinReason(type, pin, env, isPlainModelName), isModelForced(env),
-// forcedModelReason(callModel, env), remappedAliasReason(env), unreadableSettingsReason(file).
+// forcedModelReason(callModel, env), remappedAliasReason(env), unreadableSettingsReason(file, cause).
 // Invariants: pure (reads only its arguments); each reason is one line of fixed text plus quoted values.
 import { quotedValue } from './agent-brief.mjs';
 
@@ -90,10 +90,12 @@ export function remappedAliasReason(env) {
 /**
  * The no-Fable reason while a settings file exists but cannot be read: its `env` may name Fable (lib/settings-env.mjs).
  * @param {string} file the settings file
- * @returns {string} one line naming the file
+ * @param {string} cause why it cannot be read (lib/settings-env.mjs unreadableCause; never a value from the file)
+ * @returns {string} one line naming the file, the cause and what a readable file looks like
  */
-export function unreadableSettingsReason(file) {
-  return `${FABLE_RULE}: the settings file \`${quotedValue(file)}\` cannot be read, so its \`env\` may point an agent at Fable; fix the file, then launch again.`;
+export function unreadableSettingsReason(file, cause) {
+  return `${FABLE_RULE}: the settings file \`${quotedValue(file)}\` cannot be read (${quotedValue(cause)}), so its \`env\` may point an agent at Fable; `
+    + 'fix the file, then launch again: it must be empty or a JSON object whose `env` is an object of text, number or true/false values.';
 }
 
 /**

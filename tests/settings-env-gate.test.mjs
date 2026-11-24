@@ -14,6 +14,7 @@ import {
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const OPUS_CALL = devCall({ model: 'opus' }); // a good model and a pinned type: only a Fable env can deny it
+const ROUTED_MODEL = 'sonnet'; // what the routing adds to a general-purpose call with no model
 const aliasNote = (name, value) => `${name} points a model alias at \`${value}\``;
 
 /**
@@ -110,10 +111,11 @@ test('FORCE=1 only in a settings file, with no CLAUDE_CODE_SUBAGENT_MODEL anywhe
   }
 });
 
-test('FORCE on only in the user settings file: the routing adds no model to a general-purpose call', () => {
+test('FORCE on only in the user settings file keeps the sonnet routing of a general-purpose call (the hook env has no force)', () => {
   const setup = guardSetup();
   writeSettings(userFile(setup), { env: { [FORCE]: '1', [SUBAGENT_MODEL]: SHIPPED_SUBAGENT_MODEL } });
-  assert.equal(runHook(setup, helperCall, FROM_AGENT), null, 'the call runs as sent, with no updatedInput');
+  const out = runHook(setup, helperCall, FROM_AGENT);
+  assert.equal(out?.updatedInput?.model, ROUTED_MODEL, `the routing stays while the force may be off: ${JSON.stringify(out)}`);
 });
 
 test('types: FORCE written as JSON true or 1 in the user settings counts as on', () => {

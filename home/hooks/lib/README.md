@@ -107,7 +107,9 @@ Other hooks:
   `fableReason` picks which one applies.
 - `settings-env.mjs`: the `env` blocks of the settings files, which a hook's own env lacks (it inherits only the env claude started
   with): `envValue` (the hook's env, else the user file; the `CLAUDE_GUARD_ASK` switch) and `possibleEnvs` (the hook's env, and the
-  user, project and local files' `env` layered over it; the no-Fable gate must pass under each, and a file it cannot read denies).
+  user, project and local files' `env` layered over it; the no-Fable gate must pass under each, and a file it cannot read denies
+  with `unreadableCause`; an empty file is no settings, a BOM is dropped), `mixedEnvs` (the force and the model variable taken from
+  different envs too).
 - `main-agents-store.mjs`: the main-agent record of `agent-budget.mjs` (`withRecord` under the session lock, `peekRecord` without it,
   `PENDING_MS`, `STALE_MS`). `agent-ends.mjs`: when the lead's transcript shows a background agent ended (its task notice), for an
   agent that died with no SubagentStop.
