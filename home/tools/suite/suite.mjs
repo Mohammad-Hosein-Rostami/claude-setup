@@ -31,7 +31,7 @@ const USAGE = [
 ].join('\n');
 const EXIT_OK = 0;
 const EXIT_USAGE = 2;
-const DEFAULT_CONFIG = { slots: 2, cache: true }; // slots: measured, see README.md "How many suites at once"
+const DEFAULT_CONFIG = { slots: 1, cache: true }; // slots: measured, see README.md "How many suites at once"
 const MAX_SLOTS = 64;
 const EXIT_CANNOT_START = 127; // as a shell reports a command it cannot find
 const STOP_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'];
