@@ -9,7 +9,7 @@ repo. `settings.json` is generated from `settings/` (it holds machine paths).
 | ---- | ---- |
 | `home/CLAUDE.md` | Short global rules: language, who does what (boss, lex, dev, tess), questions, git, safety |
 | `home/rules`, `home/standards` | One-line rules (path-scoped) and the longer reference behind them |
-| `home/skills`, `home/agents` | Skills and agents (the Opus session is the boss and delegates; `lex` plans, `dev` builds, `tess` tests and reviews when asked; Haiku helpers look up and run commands) |
+| `home/skills`, `home/agents` | Skills and agents (the Opus session is the boss and delegates; `lex` plans, `dev` builds, `tess` checks, reviews and writes tests by risk; Haiku helpers look up and run commands) |
 | `home/hooks`, `home/statusline.mjs` | Bash guard, post-edit formatter, status line |
 | `home/tools/ui-check` | Figma baseline pull, visual compare, responsive and column checks |
 | `settings/`, `plugins/` | Settings layers (base, OS, local) and the plugin list |
@@ -42,7 +42,8 @@ Run tests (the second needs the ui-check deps that `install.sh` installs):
     node --test tests/*.test.mjs
     pnpm --dir home/tools/ui-check test
 
-No test runs by itself: the commit hook and a push run none. Run the whole suite by hand (or ask `tess`) when you want to know everything still works.
+No test runs by itself: the commit hook and a push run none; the boss sends changes to `tess` by the "Quality checks" table in
+`home/CLAUDE.md`. Run the whole suite by hand (or ask `tess`) when you want to know everything still works.
 
 Windows: `powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-Update [-To <tag>]] [-Uninstall]` (not verified on Windows yet). Needs git (Git for Windows).
 Existing targets are moved to

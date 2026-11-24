@@ -29,7 +29,7 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 
 1. You start Claude with `claude --model <m> --effort <e>`. The main session is the boss.
 2. Claude reads `home/CLAUDE.md`, your `personal/CLAUDE.md` and the rules whose paths match the files it works on.
-3. The boss hands the work to `lex` (plan), `dev` (build) or `tess` (tests and reviews, mostly when you ask), at most 6 at
+3. The boss hands the work to `lex` (plan), `dev` (build) or `tess` (tests, reviews and test writing), at most 6 at
    once. Each agent file lists its model, tools, preloaded skills and the helpers it may start. Only the boss starts lex, dev and
    tess (the guard denies it from any other agent): an agent that needs one asks the boss with a `needs:` line.
 4. Before each Bash command, `pre-bash-guard.mjs` checks it. Risky commands (push, `rm -rf`, prod-host writes) open a dialog. When a
@@ -37,8 +37,11 @@ what it does. Everything is plain text and Node scripts. You can read, change an
    only at run time), the first send is sent back to Claude with the fix instead; the same command sent again opens the dialog.
    A literal secret in a command (a test password) asks nothing; the log names its kind (owner decision R22-G1).
 5. After each edit, `post-edit.mjs` runs the project's formatter.
-6. Tests, type check, lint and reviews run mostly when you ask for them (`tess`, `tess-review`); lex and dev may also ask the
-   boss for `tess` with a `needs:` line where a check is needed. No check runs by itself when an agent stops.
+6. Tests, type check, lint and reviews run by the "Quality checks" table in `home/CLAUDE.md`: dev's report names the change's
+   risk (`node ~/.claude/tools/risk/risk.mjs`), a risky change waits for `tess` before it lands, other code changes get one
+   background `tess` run at the end of the job, docs and text only get none, and what you ask for runs at once. tess starts
+   `tess-review` for a review and `tess-write` for missing tests. No check runs by itself when an agent stops; no hook calls the
+   risk command.
 
 The hook list with exact triggers is in `docs/catalog.md` (section Hooks) and `home/hooks/README.md`.
 
@@ -99,7 +102,8 @@ From the repo root:
 
 Never run bare `node --test`. The `ui-check` tool has its own tests: `pnpm --dir home/tools/ui-check test`.
 
-No test runs by itself: the pre-commit hook and a push run none. Run the whole suite, or one file
+No test runs by itself: the pre-commit hook and a push run none; the boss sends changes to `tess` by the "Quality checks"
+table in `home/CLAUDE.md`. Run the whole suite, or one file
 (`node --test tests/principles.test.mjs`), when you want to know that everything still works, or ask `tess` to.
 
 ## Install on another machine

@@ -18,8 +18,11 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   - `dev` writes code, config and fixes in its own worktree. Its helpers: `dev-ui` (screens, components, forms), `dev-pixel`
     (Figma to code; its final gate is `pixel-qa`), `dev-debug` (hard bugs, root cause) and `dev-run` (installs, builds, long
     logs, returned as a short summary).
-  - `tess` runs tests, type check, lint, build and edge cases, in the background, mostly when you ask (or when lex or dev asks the boss for a check); `tess-review` reviews
-    the code against lex's spec when you ask for a review.
+  - `tess` runs the quality checks in the background, by the table under "Quality checks" in `home/CLAUDE.md`: a risky change
+    (security, data, money, concurrency, the setup's guards, very large) waits for tess before it lands; other code changes get
+    one background check at the end of the job; docs and text only get none; and anything you ask for runs at once. Its helpers:
+    `tess-review` (reviews the code against lex's spec) and `tess-write` (writes the missing tests in its own worktree; tess then
+    proves each one can fail).
 - Only the boss starts `lex`, `dev` and `tess`. An agent that needs one asks the boss with a `needs:` line (by message while it
   runs in the background, else in its report); the boss starts it, keeps track of who is on what and sends the result back.
 - Helpers are not counted in the 6. Technical choices are made and stated in one line; your decisions are asked.
@@ -78,7 +81,8 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   `sleep` loop or one long `sleep`) is advice, not a dialog: Claude gets the fix once (let the package manager write the lockfile;
   rebase or `--ff-only`; run the long command in the background with a `timeout`), and the same
   command sent again runs. Every ask and its outcome is in `~/.claude/logs/guard.jsonl`.
-- `tess` always runs in the background and reports to the boss; nobody waits for it.
+- `tess` always runs in the background and reports to the boss. Only the landing of a risky change waits for its
+  `landing: ok`; when it finds a real bug in work that already landed, the boss starts the fix at once and tells you in one line.
 - To bring your other machines along after the last landing, run the machine sync on the machine you landed on, in the repo
   folder, as `docs/setup.md` ("Sync the machines") gives it; it never pushes.
 

@@ -9,7 +9,8 @@ the brief come first; these lines hold for everyone.
 - Purpose: the boss talks only to `lex`, `dev` and `tess`, never reads code or runs work itself, and keeps its context small;
   they manage the levels below and report back in at most 150 words, with the detail in a file.
 - Routing: needs thinking, research or a design first -> `lex`, then `dev` on its plan; clear build, fix or command -> `dev`;
-  tests, checks or a review -> `tess`. Each job ends in one state: landed, waiting on the owner, or stopped with a reason.
+  tests, checks, reviews or test writing -> `tess` (by the table under "Quality checks"). Each job ends in one state: landed,
+  waiting on the owner, or stopped with a reason.
 - The boss starts only `lex`, `dev` and `tess`, never a helper directly (the guard denies it); research goes through `lex`,
   which starts `lex-web` or `lex-scout`.
 - At most 6 main agents (lex, dev, tess started by the boss) run at once; the helpers they start are not counted.
@@ -17,10 +18,25 @@ the brief come first; these lines hold for everyone.
   `needs: <agent> to <task>, blocks: <what>`, sent to `main` by SendMessage from a background run, else in its report.
 - A `needs:` line arrives: the boss starts that agent, keeps track of who is on what, and sends the result to the asking agent by
   its id (SendMessage).
-- Tests and reviews (`tess`, `tess-review`) run mostly when the owner asks, or when an agent's `needs:` asks for a check,
-  never after every small step. The compare loop of `dev-pixel` is part of its job.
 - The final answer says what changed and what was not run.
   A command the owner must run is given with the machine and the folder it runs in.
+
+## Quality checks (tess)
+- dev's report carries `risk:` (the `risk` command); lex's plan names `risk:` and `qa:` per task. The boss routes on the higher
+  of the two; `risk: unknown` counts as risky. tess always runs in the background; dev and lex ask for it with `needs:`.
+
+| Change | tess work (`qa:`) | When | Landing |
+|---|---|---|---|
+| docs, comments or text only, `risk: none` | none | - | lands |
+| code with `risk: none` (dependency and non-pixel UI changes too) | `checks` (+ `deps`, `ui` by kind); tess-write fills untested acceptance lines | once per job, after its last landing, over base..main; nothing waits for it | lands at once |
+| risky: security, data, money, concurrency, gate, large | `full`: full suite, build, review, edge cases | at once on dev's tip; dev's worktree held | waits: lands on `landing: ok` |
+| the owner asks (test, review, write tests, check X) | what was asked | at once | as asked |
+| pixel work | none: dev-pixel and pixel-qa own it; its logic code follows the rows above | - | - |
+
+- Brief: `qa:`, `repo:`, `base:`, `tip:`, `spec:`, `acceptance:`, `risk:`, `landing-waits:`; with a held worktree also `worktree:`
+  and `hold: yes` (the boss neither lands nor reuses it until tess returns). The compare loop of `dev-pixel` is part of its job.
+- Findings after landing: a must-fix with a repro -> the boss starts dev at once with `Fix:` on tess-write's test branch and
+  tells the owner in one line; a follow-up -> listed in the final answer.
 
 ## Questions for the owner
 - `lex` asks at the start of a job. Any agent that needs the owner stops and returns a `questions:` block: each question in plain
