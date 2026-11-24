@@ -6,7 +6,7 @@
 // (e-mail addresses, phone-like numbers) and texts with no letter or digit never make a row. Graphics on both sides pass the same
 // size filter. A row no decision covers gets the default class of its type (classifyRow); a decision needs a written reason of
 // MIN_REASON_CHARS+ characters (the ui-coverage rule) and no owner approval: the owner checks the report after the work.
-// Ported and cut from the ICE harness `figma-diff/` (match.mjs, compare-frame.mjs, collect-figma.mjs, decisions.mjs).
+// Ported and cut from an earlier web app project's harness `figma-diff/` (match.mjs, compare-frame.mjs, collect-figma.mjs, decisions.mjs).
 import { MIN_REASON_CHARS, isReason } from '../../ui-coverage/lib/shape.mjs';
 import { UsageError } from './errors.mjs';
 
@@ -216,7 +216,7 @@ export const CLASSES = { fix: 'fix', keep: 'keep', ask: 'ask the owner' };
 const MINOR_WORDING = new Set(['case', 'punctuation']);
 
 /**
- * Default class of a row no decision covers. Rule (ICE decisions.mjs: a difference no decision knows is not passed unseen;
+ * Default class of a row no decision covers. Rule (that harness's decisions.mjs: a difference no decision knows is not passed unseen;
  * the setup's standing rule: an element not in Figma defaults to "match Figma"): a part only in Figma or only in the build is `fix`
  * (match Figma); a case, punctuation or spacing difference is `fix` (use Figma's exact text); a different spelling or wording is
  * `ask the owner` (copy is a product decision, and either side may hold the typo).

@@ -112,7 +112,7 @@ test('untranslated?: English text of any length in an rtl context is ONE hint wi
 });
 
 test('untranslated?: Persian, a Persian sentence with a Latin brand, other scripts, numbers, an acronym, a brand-shaped word, an email, a URL, short words and an rtl-free context are not reported', () => {
-  const quiet = ['کشور خود را انتخاب کنید', 'ورود با Google Pay', 'ثبت نام در ICE Platform', 'Привет hello', '1234 5678', 'PDF', 'SMS', 'iOS', 'YouTube', '5 MB', 'support@example.com', 'https://example.com/docs', 'OK', 'Go to it', 'Wi-Fi', '© 2026 ICE'];
+  const quiet = ['کشور خود را انتخاب کنید', 'ورود با Google Pay', 'ثبت نام در ZEN Platform', 'Привет hello', '1234 5678', 'PDF', 'SMS', 'iOS', 'YouTube', '5 MB', 'support@example.com', 'https://example.com/docs', 'OK', 'Go to it', 'Wi-Fi', '© 2026 ZEN'];
   assert.deepEqual(untranslated(quiet.map((text) => page(text))), []);
   assert.deepEqual(untranslated([page('Select your country', { direction: 'ltr' })]), [], 'an ltr island or an ltr page');
 });
@@ -120,24 +120,24 @@ test('untranslated?: Persian, a Persian sentence with a Latin brand, other scrip
 test('untranslated?: translate="no", an other lang, dir="ltr", code, hidden text are not reported; text beside a brand or an email is still English', () => {
   assert.deepEqual(untranslated([page('Visual Studio Code', { keepLatin: true }), page('Select your country', { visible: false })]), []);
   assert.equal(untranslated([page('Contact support@example.com')]).length, 1);
-  assert.equal(untranslated([page('Sign in with Google Pay')], ['ICE']).length, 1);
+  assert.equal(untranslated([page('Sign in with Google Pay')], ['ZEN']).length, 1);
 });
 
 test('untranslated?: the allow-list matches whole words and phrases in any letter case, never a part of a word', () => {
-  assert.deepEqual(untranslated([page('Google Pay'), page('ICE Auth')], ['Google Pay', 'ICE Auth']), []);
+  assert.deepEqual(untranslated([page('Google Pay'), page('ZEN Auth')], ['Google Pay', 'ZEN Auth']), []);
   assert.deepEqual(untranslated([page('Sign in with Google Pay')], ['Google Pay', 'Sign in with']), []);
-  assert.deepEqual(untranslated([page('ice auth google PAY')], ['Ice Auth', 'google', 'pay']), [], 'any letter case');
-  assert.equal(untranslated([page('Notice service')], ['ICE']).length, 1, '"ICE" is not "Notice"');
-  assert.equal(untranslated([page('Invoice office')], ['ICE']).length, 1, '"ICE" is not "Invoice"');
-  assert.equal(untranslated([page('Nice')], ['ICE']).length, 1, 'the end of a word is not the term');
+  assert.deepEqual(untranslated([page('zen auth google PAY')], ['Zen Auth', 'google', 'pay']), [], 'any letter case');
+  assert.equal(untranslated([page('Citizen service')], ['ZEN']).length, 1, '"ZEN" is not "Citizen"');
+  assert.equal(untranslated([page('Frozen dozen')], ['ZEN']).length, 1, '"ZEN" is not "Frozen"');
+  assert.equal(untranslated([page('Dozen')], ['ZEN']).length, 1, 'the end of a word is not the term');
   assert.equal(untranslated([page('Signs')], ['Sign']).length, 1, 'removing a part of a word would leave "s" and hide the text');
-  assert.equal(untranslated([page('Sign in with ICE')], ['ICE']).length, 1, 'real English next to the brand stays');
+  assert.equal(untranslated([page('Sign in with ZEN')], ['ZEN']).length, 1, 'real English next to the brand stays');
   assert.equal(untranslated([page('Google Payments')], ['Google Pay']).length, 1, 'a phrase is not a prefix');
 });
 
 test('parseAllowList: comma text and arrays are trimmed and empty terms dropped', () => {
-  assert.deepEqual(parseAllowList(' ICE , Google ,,'), ['ICE', 'Google']);
-  assert.deepEqual(parseAllowList(['ICE', ' ']), ['ICE']);
+  assert.deepEqual(parseAllowList(' ZEN , Google ,,'), ['ZEN', 'Google']);
+  assert.deepEqual(parseAllowList(['ZEN', ' ']), ['ZEN']);
   assert.deepEqual(parseAllowList(undefined), []);
 });
 
@@ -147,11 +147,11 @@ test('comparableTexts: only texts of 2+ words, distinct, whitespace squashed, hi
 });
 
 test('same-as-default?: the same 2+ word text in the first locale and in another is a hint; a different text, one word and an all-allow-listed text are not', () => {
-  const facts = { reference: ['Create your account', 'Sign in', 'ICE Auth', 'Welcome back friend'], other: ['Create your account', 'Anmelden jetzt', 'ICE Auth', 'Welcome back friend'], referenceLocale: 'en', locale: 'de' };
-  const found = sameAsDefaultHints(facts, ['ICE']);
+  const facts = { reference: ['Create your account', 'Sign in', 'ZEN Auth', 'Welcome back friend'], other: ['Create your account', 'Anmelden jetzt', 'ZEN Auth', 'Welcome back friend'], referenceLocale: 'en', locale: 'de' };
+  const found = sameAsDefaultHints(facts, ['ZEN']);
   assert.deepEqual(found.map((h) => [h.check, h.element]), [['same-as-default?', 'de page']], 'one row per record');
   assert.match(found[0].detail, /^2 texts identical in en and de: "Create your account", "Welcome back friend"\./);
-  assert.match(sameAsDefaultHints(facts, [])[0].detail, /^3 texts /, 'without the allow-list ICE Auth counts');
+  assert.match(sameAsDefaultHints(facts, [])[0].detail, /^3 texts /, 'without the allow-list ZEN Auth counts');
   assert.deepEqual(sameAsDefaultHints({ ...facts, other: ['Anmelden jetzt'] }, []), []);
 });
 
@@ -186,9 +186,9 @@ test('batch same-as-default?: the second locale gets the hint in its record, rep
 
 test('batch same-as-default?: records without a texts file (compare, error) are skipped, and the allow-list of the compared state applies', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'same-default-'));
-  const en = reportFolder(root, 'en', ['ICE Auth', 'Create your account']);
-  const de = reportFolder(root, 'de', ['ICE Auth', 'Konto erstellen jetzt']);
-  const states = [{ surface: 'login', state: 'rest', locale: 'en', sameInAllLocales: [] }, { surface: 'login', state: 'rest', locale: 'de', sameInAllLocales: ['ICE'] }];
+  const en = reportFolder(root, 'en', ['ZEN Auth', 'Create your account']);
+  const de = reportFolder(root, 'de', ['ZEN Auth', 'Konto erstellen jetzt']);
+  const states = [{ surface: 'login', state: 'rest', locale: 'en', sameInAllLocales: [] }, { surface: 'login', state: 'rest', locale: 'de', sameInAllLocales: ['ZEN'] }];
   const compare = record('en', path.join(root, 'compare', 'report.md'));
   const error = record('de', root);
   assert.deepEqual(addSameAsDefaultHints([compare, error], states), [compare, error]);
@@ -198,9 +198,9 @@ test('batch same-as-default?: records without a texts file (compare, error) are 
 const base = { surface: 's', state: 'rest', url: 'http://x/', widths: [320] };
 
 test('states file: sameInAllLocales is an array of terms in defaults and per state; the state value replaces the default; bad shapes name the field', () => {
-  const states = parseStates({ defaults: { sameInAllLocales: ['ICE'] }, states: [base, { ...base, state: 'a', sameInAllLocales: ['Google'] }] }, os.tmpdir());
-  assert.deepEqual(states.map((s) => s.sameInAllLocales), [['ICE'], ['Google']]);
+  const states = parseStates({ defaults: { sameInAllLocales: ['ZEN'] }, states: [base, { ...base, state: 'a', sameInAllLocales: ['Google'] }] }, os.tmpdir());
+  assert.deepEqual(states.map((s) => s.sameInAllLocales), [['ZEN'], ['Google']]);
   assert.deepEqual(parseStates({ states: [base] }, os.tmpdir())[0].sameInAllLocales, []);
-  assert.throws(() => parseStates({ states: [{ ...base, sameInAllLocales: 'ICE' }] }, os.tmpdir()), /states\[0\]\.sameInAllLocales: must be an array of non-empty strings/);
+  assert.throws(() => parseStates({ states: [{ ...base, sameInAllLocales: 'ZEN' }] }, os.tmpdir()), /states\[0\]\.sameInAllLocales: must be an array of non-empty strings/);
   assert.throws(() => parseStates({ defaults: { sameInAllLocales: [''] }, states: [base] }, os.tmpdir()), /defaults\.sameInAllLocales/);
 });

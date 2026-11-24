@@ -1,6 +1,6 @@
 // Purpose: attribute the colour metric's leftover pixels of one compare to the topmost Figma node and a class: accepted, text
 // anti-aliasing, flagged text (displaced or ink change), graphic, other; plus the clusters the crops are cut around. Ported and cut
-// from the ICE harness (diff-attribution.mjs and attribution/: geometry, text-metrics, clusters, attribute).
+// from an earlier web app project's harness (diff-attribution.mjs and attribution/: geometry, text-metrics, clusters, attribute).
 // Exports: CLASSES, CLASS_LABELS, MIN_TEXT_DIFF_PX, textScopeBoxes, leftoverPixels, attributePixels, acceptedBox.
 // Invariants: pure (no files). A pixel index is y * width + x into two PNGs of the same size. The leftover metric is the colour metric
 // of lib/pixels.mjs colorDrift (any RGBA channel off by more than 2 levels, anti-aliasing counted); the caller checks the recount

@@ -189,7 +189,7 @@ test('untranslated? is one row naming English in a closed select, an open menu a
   const [row, ...others] = noList.hints.filter((h) => h.check === 'untranslated?');
   assert.deepEqual(others, [], 'one row per page');
   assert.match(row.detail, /^3 texts in English on a right-to-left page: "Select your language", "Google Pay", "United Arab Emirates"\./);
-  const allowed = await audit('untranslated.html', ['--same-in-all-locales', 'Google Pay, ICE']);
+  const allowed = await audit('untranslated.html', ['--same-in-all-locales', 'Google Pay, ZEN']);
   assert.match(allowed.hints.find((h) => h.check === 'untranslated?').detail, /^2 texts .*"Select your language", "United Arab Emirates"\./);
 });
 
@@ -197,7 +197,7 @@ test('batch same-as-default?: the same text in en and de is a hint on the de rec
   const dir = tmp();
   const statesFile = path.join(dir, 'states.json');
   const stateFor = (locale, page) => ({ surface: 'home', state: 'rest', locale, url: fixture(page), widths: [320] });
-  fs.writeFileSync(statesFile, JSON.stringify({ defaults: { sameInAllLocales: ['ICE'] }, states: [stateFor('en', 'same-en.html'), stateFor('de', 'same-de.html')] }));
+  fs.writeFileSync(statesFile, JSON.stringify({ defaults: { sameInAllLocales: ['ZEN'] }, states: [stateFor('en', 'same-en.html'), stateFor('de', 'same-de.html')] }));
   const out = path.join(dir, 'out');
   const result = await ui('batch', '--states', statesFile, '--out', out, '--jobs', '1');
   assert.equal(result.code, 0, result.stdout + result.stderr);
@@ -206,7 +206,7 @@ test('batch same-as-default?: the same text in en and de is a hint on the de rec
   assert.equal(JSON.stringify(records).includes('Create your account'), false, 'the texts are not in results.json');
   const summary = fs.readFileSync(path.join(out, 'summary.md'), 'utf8');
   assert.match(summary, /same-as-default\? de page: 1 text identical in en and de: "Create your account"/);
-  assert.equal(summary.includes('ICE Auth'), false, 'the allow-listed brand is not reported');
+  assert.equal(summary.includes('ZEN Auth'), false, 'the allow-listed brand is not reported');
   const resumed = await ui('batch', '--states', statesFile, '--out', out, '--jobs', '1', '--resume');
   assert.equal(resumed.code, 0);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(out, 'results.json'), 'utf8')).map((r) => r.hints), [0, 1], 'a resumed run does not add the hint twice');

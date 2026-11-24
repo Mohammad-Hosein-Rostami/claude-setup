@@ -16,7 +16,7 @@ const MIN_DIGITS_WITHOUT_PLUS = 9; // "912 345 6789" is a phone number, "12 03 2
 const LETTER = /\p{L}/u;
 const LATIN_WORD = /\p{Script=Latin}{3,}/u;
 const NON_LATIN_LETTER = /(?!\p{Script=Latin})\p{L}/u;
-const SHORT_ACRONYM = /^\p{Lu}{1,5}$/u; // PDF, SMS, ICE
+const SHORT_ACRONYM = /^\p{Lu}{1,5}$/u; // PDF, SMS, API
 const INNER_CAPITAL = /\p{Ll}\p{Lu}/u; // iOS, macOS, YouTube: brand-shaped, never a translatable word
 const MIN_WORDS_TO_COMPARE = 2;
 const MAX_COMPARABLE_TEXTS = 1000; // per page and width: enough for a full screen, small enough to keep next to the report
@@ -36,7 +36,7 @@ export function parseAllowList(input) {
   return items.map((item) => item.trim()).filter(Boolean);
 }
 
-/** The text with every allow-listed term replaced by a space. A term matches whole words or a whole phrase in any letter case, never a part of a word ("ICE" does not hide "Notice"). */
+/** The text with every allow-listed term replaced by a space. A term matches whole words or a whole phrase in any letter case, never a part of a word ("ZEN" does not hide "Citizen"). */
 function withoutAllowed(text, allowList) {
   return allowList.reduce((rest, term) => rest.replace(new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(squash(term))}(?![\\p{L}\\p{N}])`, 'giu'), ' '), squash(text));
 }

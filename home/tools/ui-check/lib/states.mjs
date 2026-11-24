@@ -46,7 +46,7 @@ function resolveUrl(value, baseUrl, label) {
 /** Terms that are the same in every language: an array of non-empty strings. */
 function readTerms(value, label) {
   if (value === undefined) return undefined;
-  if (!Array.isArray(value) || value.some((term) => typeof term !== 'string' || term.trim() === '')) throw new UsageError(`${label}: must be an array of non-empty strings (example: ["ICE", "Google"])`);
+  if (!Array.isArray(value) || value.some((term) => typeof term !== 'string' || term.trim() === '')) throw new UsageError(`${label}: must be an array of non-empty strings (example: ["Acme", "Google"])`);
   return value.map((term) => term.trim());
 }
 

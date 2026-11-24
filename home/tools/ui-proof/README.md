@@ -62,4 +62,4 @@ reviews before a UI fix is reported as done (pixel-qa's final gate runs it and g
 - Prints the page path on stdout. Exit `0` written, `2` on a bad flag, a missing `--results`/`--out`, or a `results.json` or
   matrix that cannot be read or has the wrong shape.
 - Code: `review-page.mjs` (`run`, `buildModel`: reading and image copies) and `lib/review-html.mjs` (`renderPage`, the pure
-  page builder). Ported and cut down from the ICE parity job's `review/build-review.mjs`.
+  page builder). Ported and cut down from an earlier web app project's parity job, `review/build-review.mjs`.

@@ -1,8 +1,8 @@
 // Purpose: `first-paint` probe: load one page with a class of files held back (every script, or every font), record every frame
 // from navigation until the page settles (an in-page sampler on every animation frame), and judge the screens a visitor saw, in order.
-// Ported and cut from the ICE harness `harness/first-paint/` (capture.mjs holdRequests and trackRequests, fonts.mjs and
-// sequence.mjs frame logs, in-page.js layout shifts): one generic hold by Playwright resource type instead of ICE's asset paths,
-// no font-gate timer, no gallery driver, no screenshots (the frames are DOM records, so the verdict stays numeric).
+// Ported and cut from an earlier web app project's harness `harness/first-paint/` (capture.mjs holdRequests and trackRequests,
+// fonts.mjs and sequence.mjs frame logs, in-page.js layout shifts): one generic hold by Playwright resource type instead of that
+// project's asset paths, no font-gate timer, no gallery driver, no screenshots (the frames are DOM records, so the verdict stays numeric).
 // Exports: HOLDS, HOLD_MS, SETTLE_DEADLINE_MS, MAX_FRAMES, measurePass, judgeFrames, frameLabel, samplerScript.
 // Invariants: nothing is injected into the page except the read-only sampler (it never changes the DOM, focus, scroll or styles) and
 // the opt-in storage seed: no freeze style, no transition-off style, reduced motion is NOT requested, because transitions and late
@@ -11,7 +11,7 @@
 // router, so the page must be http(s). judgeFrames is pure.
 // A frame is one of four kinds:
 //   blank    nothing a visitor could read or use: no visible text, form control, link, button, heading or image. Backgrounds
-//            and shapes only, so a CSS or SVG spinner without a role is blank too (ICE: "the empty page, background only").
+//            and shapes only, so a CSS or SVG spinner without a role is blank too (the harness: "the empty page, background only").
 //   loader   the neutral loader: everything readable or usable that is visible sits inside an element with role="progressbar"
 //            (MUI CircularProgress and LinearProgress have it); a "Loading..." label outside such an element makes a screen.
 //   fallback (fonts hold only) a screen shown while one of its font faces is still loading: fallback or invisible text.
@@ -24,9 +24,9 @@ import { UsageError } from './errors.mjs';
 
 /** Hold name -> the Playwright resource type that is held back in that pass (scripts first, then fonts). */
 export const HOLDS = Object.freeze({ scripts: 'script', fonts: 'font' });
-export const HOLD_MS = 1500; // ICE: long enough to see what paints first, under a 3 s font block period
+export const HOLD_MS = 1500; // the harness: long enough to see what paints first, under a 3 s font block period
 const STABLE_MS = 1000; // settled = no frame changed for this long ...
-const QUIET_MS = 500; // ... and no request in flight for this long (ICE capture.mjs) ...
+const QUIET_MS = 500; // ... and no request in flight for this long (the harness's capture.mjs) ...
 const NETWORK_WAIT_MAX_MS = 5000; // ... unless the network never goes quiet (long polling, websockets), as in lib/browser.mjs
 export const SETTLE_DEADLINE_MS = 15_000; // a page still changing after this does not settle (a violation, not an error)
 const POLL_MS = 50;
@@ -34,7 +34,7 @@ const HTTP_ERROR_MIN = 400;
 const BINDING = '__uiCheckFirstPaint';
 const SEEDED_MARKER = '__ui-check-seeded';
 export const MAX_FRAMES = 600; // more different frames than this: the page never stops changing (an endless animation)
-const FRAME_TOLERANCE_MS = 20; // a layout shift in the frame that first shows content belongs to that frame (ICE fonts.mjs)
+const FRAME_TOLERANCE_MS = 20; // a layout shift in the frame that first shows content belongs to that frame (the harness's fonts.mjs)
 const LOADER_SELECTOR = '[role=progressbar]';
 // Elements that count as content even without own text (a field, a button, an image, a heading, a progress bar).
 const CONTENT_SELECTOR = 'input:not([type=hidden]), select, textarea, button, a[href], img, picture, video, canvas, iframe, h1, h2, h3, h4, h5, h6, [role=progressbar]';
