@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The setup's own checks: its settings, plugins, hooks, accounts, caps and desktop notes (sourced by scripts/doctor.sh, which
 # holds the helpers ok, bad, warn and warn_unless_accepted, the variables REPO, CLAUDE_DIR, LINK_ROOT and BAD, and the run order in run_checks).
-# Defines functions only; nothing runs when this file is sourced, so no output comes from it. Exports: check_settings, check_deny_rules, check_plugins, check_plugin_parity, check_effort_env, check_projects, check_env_names, check_plugin_session_start, check_workflows_gone, check_project_agents, check_accounts, check_stop_cap, check_agent_cap, check_notify.
+# Defines functions only; nothing runs when this file is sourced, so no output comes from it. Exports: check_settings, check_deny_rules, check_plugins, check_plugin_parity, check_effort_env, check_projects, check_env_names, check_plugin_session_start, check_workflows_gone, check_project_agents, check_accounts, check_agent_cap, check_notify.
 # Invariants: read-only, as doctor.sh is; every line is `ok`, `WARN`, `FAIL` or `INFO` text on stdout; a check that fails calls bad (BAD=1).
 
 # Drift: rebuild the expected settings.json in memory and compare with the live one.
@@ -145,22 +145,6 @@ check_accounts() {
     esac
   done <<<"$out"
   [ "$rc" = 0 ] || bad "account checks could not run (scripts/doctor-accounts.mjs exit $rc)"
-}
-
-# Stop-hook block cap (hooks/lib/stop-block-count.mjs): Claude Code overrides the next Stop block after CLAUDE_CODE_STOP_HOOK_BLOCK_CAP
-# blocks in a row. The live settings must set it to the counter's STOP_BLOCK_CAP (unset or 0 is a FAIL: the counter would count against
-# a number Claude Code does not use), and every `gate overridden` / `gate crashed or timed out` record of the last 7 days is listed.
-check_stop_cap() {
-  local live="$CLAUDE_DIR/settings.json" lib="$REPO/home/hooks/lib/stop-block-count.mjs" cap expected records
-  cap="$(jq -r '.env.CLAUDE_CODE_STOP_HOOK_BLOCK_CAP // ""' "$live" 2>/dev/null)"
-  expected="$(node -e 'import(require("node:url").pathToFileURL(process.argv[1]).href).then((m) => console.log(m.STOP_BLOCK_CAP))' "$lib" 2>/dev/null)"
-  if [ -z "$cap" ] || [ "$cap" = "0" ]; then bad "settings.json env CLAUDE_CODE_STOP_HOOK_BLOCK_CAP is ${cap:-unset}: set it to ${expected:-8} in settings/base.json and re-run scripts/install.sh"
-  elif [ "$cap" != "$expected" ]; then bad "settings.json env CLAUDE_CODE_STOP_HOOK_BLOCK_CAP is $cap, the stop-block counter counts to ${expected:-?} (home/hooks/lib/stop-block-count.mjs STOP_BLOCK_CAP)"
-  else ok "stop-hook block cap $cap matches the counter"; fi
-  records="$(node -e 'import(require("node:url").pathToFileURL(process.argv[1]).href).then((m) => { for (const r of m.readRecords(process.env, { sinceMs: Date.now() - 7 * 864e5, max: 20 })) console.log(`${new Date(r.at).toISOString()} ${r.agent}: ${r.text}`); })' "$lib" 2>/dev/null)"
-  if [ -z "$records" ]; then ok "no stop gate overridden, crashed or timed out in the last 7 days"; return 0; fi
-  while IFS= read -r line; do warn "stop gate record: $line"; done <<<"$records"
-  return 0
 }
 
 # Agent cap: the hooks cap the main agents of a session; the live settings must also switch workflows off (setting, env and deny

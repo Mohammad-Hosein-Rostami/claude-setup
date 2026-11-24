@@ -1,7 +1,7 @@
 // The desktop notes of display design 7.10, only for "needs you", "agent failed" and "limit stopped work" (owner, 2026-11-19):
 // their texts, the terminal sequence that carries them (a hook's `terminalSequence` output: OSC 9, 99 or 777, or a bare BEL;
 // hooks docs "Emit terminal notifications"), the channel the owner picked, and a small queue for the note no hook event carries.
-// Exports: needsYouText(type, marker, now), stoppedText(sample), quotaText(type), failedText(agent), noteSequence(text, channel),
+// Exports: needsYouText(type, marker, now), stoppedText(sample), quotaText(type), noteSequence(text, channel),
 // effectiveChannel(env), terminalName(env), queueNote(session, text, env), takeNotes(session, env); NOTE_TITLE.
 // Channel: `preferredNotifChannel` of Claude Code's global config (`$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`);
 // `notifications_disabled` gives no note; `auto` (or none) picks by the terminal: Ghostty OSC 777, Kitty OSC 99, Apple Terminal a
@@ -78,9 +78,6 @@ export function quotaText(type) {
   if (type === 'quota_auto_resume_disabled') return 'Stopped: usage limit · it will not resume by itself';
   return null;
 }
-
-/** @returns {string} `Failed: api-redo dev · lane waits for you` (for a note when an agent or lane turns failed; no caller in this repo yet) */
-export const failedText = ({ name, role }) => `Failed: ${clean(name)}${role ? ` ${clean(role)}` : ''} · lane waits for you`;
 
 /**
  * @param {string} text the note

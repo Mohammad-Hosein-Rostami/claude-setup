@@ -2,7 +2,7 @@
 // spec-p5 `r9-notify`). Notification `permission_prompt` and `elicitation_*` give `Needs you: ...` (with the asking marker's
 // count and time to the default), `quota_auto_resume_stale|disabled` give `Stopped: ...`; StopFailure `rate_limit` gives
 // `Stopped: 5-hour limit, resumes 17:40` from this account's last limit sample (CLAUDE_ACCOUNT, limits-store.mjs); Stop sends the
-// notes queued for the session (agent failed: the board queues them, there is no hook event for it).
+// notes queued for the session (lib/notify-note.mjs queueNote; nothing queues one today).
 // The note goes out as `terminalSequence` (hooks docs, "Emit terminal notifications": kept on Notification and StopFailure, whose
 // other output is discarded; written only in an interactive session); no other output field is printed.
 // Exports: noteFor(input, env, now) -> text | null, hookOutput(text, env) -> stdout string. `--channel` prints the terminal and the
