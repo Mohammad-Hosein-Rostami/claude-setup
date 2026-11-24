@@ -12,7 +12,7 @@ import { hookEnv } from './hook-env.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 process.env.TMPDIR = makeTempDir('agent-cap-tmp-'); // the call counters (callCounterPath) go under the temp root of this process
-import { IDLE_MS, PENDING_MS, recordAgentLaunch, recordAgentStart, recordAgentStop, runningAgentsOf } from '../home/hooks/lib/agent-launches.mjs';
+import { IDLE_MS, LATE_CALL_MS, PENDING_MS, recordAgentLaunch, recordAgentStart, recordAgentStop, runningAgentsOf } from '../home/hooks/lib/agent-launches.mjs';
 import { callCounterPath } from '../home/hooks/lib/writer-agents.mjs';
 import { MAX_MAIN_AGENTS } from '../home/hooks/agent-budget.mjs';
 
@@ -21,7 +21,7 @@ const GUARD = join(REPO, 'home', 'hooks', 'agent-model-guard.mjs');
 const DOCTOR = join(REPO, 'scripts', 'doctor.sh');
 const HOOK_TIMEOUT_MS = 5000;
 const SECOND_MS = 1000;
-const PAUSE_MS = 25; // so a file's mtime is later than a time read just before (resume tests)
+const RESUME_MARGIN_MS = 200; // a resumed call this far past LATE_CALL_MS after the stop; far above any file system's mtime step here
 const hasJq = spawnSync('jq', ['--version']).status === 0;
 const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
 let counter = 0;
@@ -135,10 +135,15 @@ test('F2: an agent with no SubagentStop stops counting after IDLE_MS since its s
   assert.equal(runningAgentsOf(s.session, s.env, lastCall + IDLE_MS + SECOND_MS).length, 0);
 });
 
-test('F2: a launch dated ahead of the clock never counts', () => {
+test('H16: a launch dated ahead of the clock (the clock stepped back) counts as dated now, and is stored so on the next write', () => {
   const s = newSession();
-  seedStore(s, { launches: [{ type: 'scout', at: Date.now() + 10 * 60 * SECOND_MS }] });
-  assert.deepEqual(runningAgentsOf(s.session, s.env, Date.now()), []);
+  const now = Date.now();
+  seedStore(s, { launches: [{ type: 'implementer', at: now + 2 * 60 * 60 * SECOND_MS, writer: true }] });
+  assert.deepEqual(runningAgentsOf(s.session, s.env, now).map(({ type, at }) => [type, at]), [['implementer', now]]);
+  assert.equal(launch(s, 'implementer', { writer: true, unlessRunning: true }).state, 'running', 'it still bounces a second plain writer');
+  assert.equal(launch(s, 'scout').state, 'recorded');
+  assert.ok(readStore(s).launches.every(({ at }) => at <= Date.now()), 'no stored launch is dated ahead any more');
+  assert.equal(runningAgentsOf(s.session, s.env, Date.now() + PENDING_MS + SECOND_MS).length, 0, 'it ages from now');
 });
 
 // ---- F3 resume (U3) ----
@@ -154,9 +159,12 @@ test('F3: a stopped agent that makes a tool call counts again; one whose counter
   touchCounter(s, 'agent-resume-1', stoppedAt - 5 * SECOND_MS);
   assert.deepEqual(runningAgentsOf(s.session, s.env, stoppedAt + SECOND_MS), [], 'a counter older than the stop is the agent before its stop');
   touchCounter(s, 'agent-resume-1', stoppedAt + 5 * SECOND_MS);
-  const resumed = runningAgentsOf(s.session, s.env, stoppedAt + 10 * SECOND_MS);
+  assert.deepEqual(runningAgentsOf(s.session, s.env, stoppedAt + 10 * SECOND_MS), [], 'a call just after the stop is its own late PostToolUse (I1)');
+  const resumedAt = stoppedAt + LATE_CALL_MS + 5 * SECOND_MS;
+  touchCounter(s, 'agent-resume-1', resumedAt);
+  const resumed = runningAgentsOf(s.session, s.env, resumedAt + 5 * SECOND_MS);
   assert.deepEqual(resumed.map(({ type, agent }) => ({ type, agent })), [{ type: 'reviewer', agent: 'agent-resume-1' }]);
-  assert.deepEqual(runningAgentsOf(s.session, s.env, stoppedAt + 5 * SECOND_MS + IDLE_MS + SECOND_MS), [], 'idle again after IDLE_MS');
+  assert.deepEqual(runningAgentsOf(s.session, s.env, resumedAt + IDLE_MS + SECOND_MS), [], 'idle again after IDLE_MS');
 });
 
 test('F3: a resumed agent is listed as running, and its next stop ends it again', async () => {
@@ -165,10 +173,11 @@ test('F3: a resumed agent is listed as running, and its next stop ends it again'
   recordAgentStart(s.session, 'agent-resume-2', 'scout', s.env);
   recordAgentStop(s.session, 'agent-resume-2', 'scout', s.env);
   for (let n = 0; n < 4; n += 1) launch(s);
-  await sleep(PAUSE_MS);
-  touchCounter(s, 'agent-resume-2', Date.now());
-  assert.equal(runningAgentsOf(s.session, s.env, Date.now()).length, 5);
-  await sleep(PAUSE_MS);
+  const stoppedAt = readStore(s).stoppedAt['agent-resume-2'];
+  const resumedAt = stoppedAt + LATE_CALL_MS + RESUME_MARGIN_MS;
+  touchCounter(s, 'agent-resume-2', resumedAt);
+  assert.equal(runningAgentsOf(s.session, s.env, resumedAt + RESUME_MARGIN_MS).length, 5);
+  await sleep(2 * RESUME_MARGIN_MS); // so the resumed call lies within LATE_CALL_MS of the second stop: no resume after it
   assert.equal(recordAgentStop(s.session, 'agent-resume-2', 'scout', s.env), true, 'the second stop of a resumed agent counts');
   assert.equal(runningAgentsOf(s.session, s.env, Date.now()).length, 4);
   assert.equal(recordAgentStop(s.session, 'agent-resume-2', 'scout', s.env), false, 'a stop that comes again ends nothing more');

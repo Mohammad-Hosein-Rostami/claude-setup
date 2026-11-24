@@ -184,10 +184,11 @@ test('a tool call of the started writer (its call counter) keeps it running past
   rmSync(counterFile, { force: true });
 });
 
-test('a launch dated ahead of the clock never counts (clock step back, a planted record)', () => {
+test('H16: a launch dated ahead of the clock (clock step back, a planted record) counts as dated now: a plain writer bounces once', () => {
   const s = writerSession();
   s.store({ launches: [{ type: 'dev', at: Date.now() + 10 * MINUTE_MS }], stopped: [] });
-  assert.ok(!denied(s.launch(writer('dev'))));
+  assert.ok(denied(s.launch(writer('dev'))), 'the launch dated ahead is a running plain writer');
+  assert.ok(!denied(s.launch(writer('dev'))), 'the identical call sent again runs');
 });
 
 test('a stop ends the launch of its own agent id first', () => {

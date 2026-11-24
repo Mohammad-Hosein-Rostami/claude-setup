@@ -18,6 +18,7 @@ import { makeTempDir } from './temp-dir-helpers.mjs';
 process.env.TMPDIR = makeTempDir('agent-budget-tmp-'); // the call counters (callCounterPath) go under the temp root of this process
 const { MAX_MAIN_AGENTS, PENDING_MS, STALE_MS, claimMainSlot, recordMainStart, recordMainStop, releaseMainSlot } = await import('../home/hooks/agent-budget.mjs');
 const { callCounterPath } = await import('../home/hooks/lib/writer-agents.mjs');
+const { runningAgentsOf } = await import('../home/hooks/lib/agent-launches.mjs');
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const GUARD = join(REPO, 'home', 'hooks', 'agent-model-guard.mjs');
@@ -25,6 +26,7 @@ const BUDGET = join(REPO, 'home', 'hooks', 'agent-budget.mjs');
 const HOOK_TIMEOUT_MS = 5000;
 const SECOND_MS = 1000;
 const MINUTE_MS = 60 * SECOND_MS;
+const HOUR_MS = 60 * MINUTE_MS;
 const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
 let counter = 0;
 
@@ -222,7 +224,7 @@ test('four launches in one message (parallel hook processes) run exactly 3 and d
   }
 });
 
-test('a launch that never started stops counting after PENDING_MS; one dated ahead of the clock never counts', () => {
+test('a launch that never started stops counting after PENDING_MS; one dated ahead of the clock counts as dated now (H16)', () => {
   const s = newSession();
   const now = Date.now();
   seedStore(s, { launches: [
@@ -230,7 +232,50 @@ test('a launch that never started stops counting after PENDING_MS; one dated ahe
     { key: 'b', type: 'dev', at: now - PENDING_MS + 30 * SECOND_MS },
     { key: 'c', type: 'tess', at: now + 10 * MINUTE_MS },
   ], stopped: [] });
-  assert.equal(running(s), 1, 'only the launch of a moment ago may still be starting');
+  assert.equal(running(s), 2, 'the launch of a moment ago may still be starting, and the one dated ahead keeps its slot');
+  const redated = readStore(s).launches.find(({ key }) => key === 'c');
+  assert.ok(redated.at <= Date.now(), 'stored re-dated to now, so it ages from now');
+});
+
+test('H16: the clock moved back 2 h between launches: the 4th main agent is still denied, and the store is re-dated', (t) => {
+  const s = newSession();
+  for (let n = 0; n < MAX_MAIN_AGENTS; n += 1) assert.equal(claim(s, 'dev').state, 'recorded', `launch ${n + 1}`);
+  const movedBack = Date.now() - 2 * HOUR_MS;
+  t.mock.timers.enable({ apis: ['Date'], now: movedBack });
+  const fourth = claim(s, 'lex');
+  assert.equal(fourth.state, 'full');
+  assert.equal(fourth.running.length, MAX_MAIN_AGENTS);
+  assert.ok(readStore(s).launches.every(({ at }) => at === movedBack), 'each launch is stored as dated now');
+  t.mock.timers.reset();
+});
+
+test('H16: a corrupt main-agent record is unusable: the guard denies, naming it, until it is fixed or deleted', () => {
+  const corrupt = ['not json', '[]', 'null', '{"launches": {}}', '{"launches": [{"type": "lex"}]}', '{"launches": [], "stopped": [1]}'];
+  for (const text of corrupt) {
+    const s = newSession();
+    mkdirSync(dirOf(s), { recursive: true, mode: 0o700 });
+    writeFileSync(storeOf(s), text, { mode: 0o600 });
+    assert.equal(claim(s).state, 'unusable', text);
+    assert.equal(guard(s, mainCall(1)).permissionDecisionReason,
+      `agent cap: the main-agent record ${storeOf(s)} cannot be read or stays locked; fix or delete it, then launch again`, text);
+    assert.equal(readFileSync(storeOf(s), 'utf8'), text, 'the file is left as it is');
+  }
+  const s = newSession();
+  seedStore(s, { launches: [] });
+  assert.equal(claim(s).state, 'recorded', 'a whole empty record is fine');
+});
+
+test('I1: a PostToolUse that lands after the SubagentStop (a late async hook) leaves the agent stopped, and its slot free', () => {
+  const s = newSession();
+  for (let n = 0; n < MAX_MAIN_AGENTS; n += 1) assert.ok(!denied(guard(s, mainCall(n, 'dev'))), `launch ${n + 1}`);
+  assert.equal(budgetEvent(s, 'SubagentStart', 'agent-late-1', 'dev'), '');
+  assert.equal(budgetEvent(s, 'PostToolUse', 'agent-late-1', 'dev', { tool_name: 'Bash' }), '');
+  assert.equal(budgetEvent(s, 'SubagentStop', 'agent-late-1', 'dev'), '');
+  assert.equal(budgetEvent(s, 'PostToolUse', 'agent-late-1', 'dev', { tool_name: 'Bash' }), '', 'the late append');
+  assert.equal(existsSync(callCounterPath(s.session, 'agent-late-1')), true, 'the late append made the counter again');
+  assert.equal(running(s), MAX_MAIN_AGENTS - 1, 'the stopped agent holds no main-agent slot');
+  assert.ok(!runningAgentsOf(s.session, s.env, Date.now()).some(({ agent }) => agent === 'agent-late-1'), 'nor counts as running for the writer gate');
+  assert.ok(!denied(guard(s, mainCall('next', 'dev'))), 'the cap freed its slot');
 });
 
 test('a started main agent counts until its stop, or until STALE_MS with no tool call of its own', () => {

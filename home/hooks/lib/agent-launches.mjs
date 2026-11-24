@@ -2,7 +2,7 @@
 // launch it lets start (PreToolUse) as pending; agent-budget.mjs marks it started on SubagentStart and ends it on SubagentStop.
 // Why a record of its own: agent-budget's counter file appears only after an agent's first tool call and holds no agent type, so agents
 // launched in parallel in one message would all see none running, and the writer isolation rule needs the others.
-// Exports: PENDING_MS, IDLE_MS, recordAgentLaunch(session, type, env, options), recordAgentStart(session, agentId, type,
+// Exports: PENDING_MS, IDLE_MS, LATE_CALL_MS, recordAgentLaunch(session, type, env, options), recordAgentStart(session, agentId, type,
 // env), recordAgentStop(session, agentId, type, env), runningAgentsOf(session, env, now), readLaunchRecord(session, env, now).
 // Store: ~/.claude/state/agent-writers/<session>.json through lib/session-store.mjs (lstat-checked, locked, 0600). The folder is called
 // "writers" for historic reasons (it held writer launches only); it keeps its name, there is no migration:
@@ -15,9 +15,13 @@
 //     sibling hook denies, or Esc cuts, gets no SubagentStart and no SubagentStop);
 //   started: while its last sign of work is under IDLE_MS old: the later of its start and its last tool call (the mtime of the call
 //     counter agent-budget.mjs appends to, callCounterPath); one that ended without SubagentStop stops counting after IDLE_MS;
-//   resumed: a stopped agent whose call counter is newer than its stop (SendMessage continues it; the counter is removed at its stop)
-//     and under IDLE_MS old (U3: whether SubagentStart fires again is not known, so the counter decides);
-//   never: a launch dated more than CLOCK_SKEW_MS ahead of the clock (a clock step back or a planted record).
+//   resumed: a stopped agent whose call counter is more than LATE_CALL_MS newer than its stop (SendMessage continues it; the counter is
+//     removed at its stop) and under IDLE_MS old (U3: whether SubagentStart fires again is not known, so the counter decides). A
+//     counter touched within LATE_CALL_MS of the stop is the stopped agent's own last PostToolUse arriving late (an async hook may
+//     run after the SubagentStop, I1), so a stopped agent never counts again for it; a real resume counts from its first tool call
+//     past that window.
+// Clock (H16): a launch or call counter dated ahead of the clock (the clock stepped back, or a planted record) counts as dated now,
+// and a launch is stored so on the next write: it keeps counting and ages from now, never dropped.
 // A SubagentStart that matches no pending launch of its type (a fork, a nested launch, a launch older than PENDING_MS) is recorded as an
 // `unmatched` started launch: it is listed as running and never counts for writer isolation (U4: over-count, never under-count).
 // Writer isolation keeps its old rule: only a running launch of a writer with no `isolated` / `readOnly` flag (and not `unmatched`)
@@ -37,7 +41,7 @@ import { agentTypeOf, callCounterPath, writersDirOf } from './writer-agents.mjs'
 
 export const PENDING_MS = 2 * 60 * 1000;
 export const IDLE_MS = 30 * 60 * 1000;
-const CLOCK_SKEW_MS = 60 * 1000;
+export const LATE_CALL_MS = 30 * 1000; // a late async PostToolUse lands within a few seconds of the stop; a resume comes after a new message
 const MAX_STORE_BYTES = 64 * 1024; // the writer trims to it and the reader refuses more (P6)
 const LAUNCHES_KEPT = 100;
 const STOPPED_IDS_KEPT = 200;
@@ -53,9 +57,8 @@ function lastToolCall(session, agentId) {
   }
 }
 
-/** Whether a stored launch still counts as running (the rules in the header). */
+/** Whether a stored launch (dated no later than now) still counts as running (the rules in the header). */
 function isRunning(launch, now, session) {
-  if (launch.at > now + CLOCK_SKEW_MS) return false;
   if (typeof launch.agent !== 'string') return now - launch.at < PENDING_MS;
   return now - Math.max(launch.at, lastToolCall(session, launch.agent)) < IDLE_MS;
 }
@@ -71,7 +74,9 @@ function parseRecord(text, now, session) {
   try {
     const record = text === null ? {} : JSON.parse(text);
     const launches = (Array.isArray(record?.launches) ? record.launches : [])
-      .filter((launch) => typeof launch?.type === 'string' && Number.isFinite(launch.at) && isRunning(launch, now, session));
+      .filter((launch) => typeof launch?.type === 'string' && Number.isFinite(launch.at))
+      .map((launch) => (launch.at > now ? { ...launch, at: now } : launch))
+      .filter((launch) => isRunning(launch, now, session));
     return {
       launches,
       stoppedAt: idMap(record?.stoppedAt, Number.isFinite),
@@ -98,13 +103,16 @@ function serialized(record) {
 
 const store = (env, session, record) => writeSessionFile(writersDirOf(env), session, serialized(record));
 
+/** Whether a tool call at `callAt` comes from a resume of an agent stopped at `stoppedAt`, not its own late PostToolUse (header). */
+const isResumedCall = (callAt, stoppedAt) => callAt > stoppedAt + LATE_CALL_MS;
+
 /** The running agents of a parsed record: its running launches, and the stopped agents that made a tool call after their stop. */
 function runningOf(record, session, now) {
   const started = new Set(record.launches.map((launch) => launch.agent));
   const resumed = Object.entries(record.stoppedAt)
     .filter(([agent]) => !started.has(agent))
     .map(([agent, stoppedAt]) => ({ agent, at: lastToolCall(session, agent), stoppedAt }))
-    .filter(({ at, stoppedAt }) => at > stoppedAt && at <= now + CLOCK_SKEW_MS && now - at < IDLE_MS)
+    .filter(({ at, stoppedAt }) => isResumedCall(at, stoppedAt) && now - Math.min(at, now) < IDLE_MS)
     .map(({ agent, at }) => ({ type: record.stoppedTypes[agent] ?? 'agent', agent, at }));
   const launched = record.launches.map(({ type, agent, at }) => ({ type, ...(typeof agent === 'string' ? { agent } : {}), at }));
   return [...launched, ...resumed];
@@ -204,7 +212,7 @@ export function recordAgentStop(session, agentId, type, env) {
       ...record, launches, open, stoppedAt: { ...record.stoppedAt, [agentId]: now }, stoppedTypes: { ...record.stoppedTypes, [agentId]: name },
     });
     if (Object.hasOwn(record.stoppedAt, agentId)) {
-      return lastToolCall(session, agentId) > record.stoppedAt[agentId] && stopped(record.launches, record.open); // resumed, stops again
+      return isResumedCall(lastToolCall(session, agentId), record.stoppedAt[agentId]) && stopped(record.launches, record.open); // resumed, stops again
     }
     const own = record.launches.findIndex((launch) => launch.agent === agentId);
     const index = own !== -1 ? own : record.launches.findIndex((launch) => launch.type === name && typeof launch.agent !== 'string');

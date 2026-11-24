@@ -10,12 +10,15 @@
 //                    lib/agent-launches.mjs recordAgentStart for the guard's writer gate.
 //   SubagentStop  -> its main launch ends; lib/agent-launches.mjs recordAgentStop; its call counter is removed.
 // Running: a pending launch (no SubagentStart yet) for PENDING_MS, so a denied or cut launch frees its slot; a started one until its
-// SubagentStop, or until STALE_MS passes with no tool call of its own (an agent that ended unseen); never a launch dated more than
-// CLOCK_SKEW_MS ahead. Limit: SubagentStart names no parent, so a helper of the same type that starts while a main launch of that
+// SubagentStop, or until STALE_MS passes with no tool call of its own (an agent that ended unseen). Clock (H16): the store's order
+// is the order of its launches (each is appended), never their times; a launch dated ahead of the clock (the clock stepped back, or
+// a planted record) is re-dated to now and stored so, so it keeps its slot and ages from now instead of being dropped. A call counter
+// that a late PostToolUse writes after the agent's SubagentStop changes nothing: a stopped agent holds no launch. Limit: SubagentStart names no parent, so a helper of the same type that starts while a main launch of that
 // type is pending takes its place; the count stays right until the first of the two stops.
 // Store: ~/.claude/state/main-agents/<session>.json through lib/session-store.mjs under lib/session-lock.mjs (0600, at most
 // MAX_STORE_BYTES for writer and reader): {"launches": [{"key", "type", "at", "agent"?}], "stopped": [agent ids]}. A corrupt file
-// reads as empty; an unusable store or a lock that stays taken is `unusable`, and the guard denies (the owner's cap fails closed).
+// (not JSON, not that shape, or an entry outside it), an unusable store or a lock that stays taken is `unusable`, and the guard
+// denies (the owner's cap fails closed) until the file is fixed or deleted.
 // Main-agent route (mainRouteReason, the guard's first gate): only the boss starts lex, dev and tess, and they start their helpers.
 // A main-session call of any other type is denied every time with the route to take. Default for Claude Code's built-ins: an
 // omitted subagent_type (general-purpose), general-purpose, Explore, Plan, claude, fork and any plugin or unknown type are denied
@@ -40,7 +43,6 @@ import { agentTypeOf, callCounterPath } from './lib/writer-agents.mjs';
 export const MAX_MAIN_AGENTS = 3; // the owner's limit of main agents at once (owner, 2026-11-24; it was 6)
 export const PENDING_MS = 2 * 60 * 1000; // a launch the permission dialog, Esc or another hook stops gets no SubagentStart
 export const STALE_MS = 3 * 60 * 60 * 1000; // 3 h with no tool call: longer than a main agent waits on its helpers
-const CLOCK_SKEW_MS = 60 * 1000;
 const MAX_STORE_BYTES = 64 * 1024;
 const STOPPED_KEPT = 200; // stopped main agent ids kept for a resume
 const KEY_BYTES = 8;
@@ -91,9 +93,8 @@ function lastToolCall(session, agentId) {
   }
 }
 
-/** Whether a stored launch still holds a slot (the rules in the header). */
+/** Whether a stored launch (dated no later than now) still holds a slot (the rules in the header). */
 function isRunning(launch, now, session) {
-  if (launch.at > now + CLOCK_SKEW_MS) return false;
   if (typeof launch.agent !== 'string') return now - launch.at < PENDING_MS;
   return now - Math.max(launch.at, lastToolCall(session, launch.agent)) < STALE_MS;
 }
@@ -101,21 +102,35 @@ function isRunning(launch, now, session) {
 const isLaunch = (launch) => typeof launch?.key === 'string' && typeof launch.type === 'string' && Number.isFinite(launch.at)
   && (launch.agent === undefined || SAFE_ID.test(launch.agent));
 
-/** The store's running launches and stopped ids; a missing or corrupt file reads as empty. */
+const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+const isListOrMissing = (value) => value === undefined || Array.isArray(value);
+
+/**
+ * The store's running launches and stopped ids (a missing file is an empty record).
+ * @returns {{ record: {launches: object[], stopped: string[]}, redated: boolean } | null} `redated`: a launch dated ahead of `now`
+ *   was re-dated to now; null for a corrupt file (not JSON, not the store's shape, or an entry outside it)
+ */
 function parseRecord(text, now, session) {
+  let stored;
   try {
-    const record = text === null ? {} : JSON.parse(text);
-    const launches = (Array.isArray(record?.launches) ? record.launches : []).filter((launch) => isLaunch(launch) && isRunning(launch, now, session));
-    const stopped = (Array.isArray(record?.stopped) ? record.stopped : []).filter((id) => typeof id === 'string' && SAFE_ID.test(id));
-    return { launches, stopped };
+    stored = text === null ? {} : JSON.parse(text);
   } catch {
-    return { launches: [], stopped: [] };
+    return null; // corrupt: the caller answers `unusable`
   }
+  if (!isPlainObject(stored) || !isListOrMissing(stored.launches) || !isListOrMissing(stored.stopped)) return null;
+  const launches = stored.launches ?? [];
+  const stopped = stored.stopped ?? [];
+  if (!launches.every(isLaunch) || !stopped.every((id) => typeof id === 'string' && SAFE_ID.test(id))) return null;
+  const dated = launches.map((launch) => (launch.at > now ? { ...launch, at: now } : launch));
+  const redated = dated.some((launch, at) => launch !== launches[at]);
+  return { record: { launches: dated.filter((launch) => isRunning(launch, now, session)), stopped }, redated };
 }
 
 /**
- * Runs change(record, now) on the session's record under its lock and stores what it returns as `record`.
- * @returns {object | undefined} change's answer; NO_STORE when the store cannot be read or written; undefined when the lock stays taken
+ * Runs change(record, now) on the session's record under its lock and stores what it returns as `record` (or the re-dated record
+ * when it returns none).
+ * @returns {object | undefined} change's answer; NO_STORE when the store cannot be read, parsed or written; undefined when the lock
+ *   stays taken
  */
 function withRecord(session, env, change) {
   const dir = mainAgentsDir(env);
@@ -123,9 +138,12 @@ function withRecord(session, env, change) {
     const now = Date.now();
     const text = readSessionFile(dir, session, MAX_STORE_BYTES);
     if (text === undefined) return NO_STORE;
-    const answer = change(parseRecord(text, now, session), now);
-    if (answer.record === undefined) return answer;
-    const stored = JSON.stringify({ launches: answer.record.launches, stopped: answer.record.stopped.slice(-STOPPED_KEPT) });
+    const parsed = parseRecord(text, now, session);
+    if (parsed === null) return NO_STORE;
+    const answer = change(parsed.record, now);
+    const record = answer.record ?? (parsed.redated ? parsed.record : undefined);
+    if (record === undefined) return answer;
+    const stored = JSON.stringify({ launches: record.launches, stopped: record.stopped.slice(-STOPPED_KEPT) });
     return writeSessionFile(dir, session, stored) ? answer : NO_STORE;
   });
 }
