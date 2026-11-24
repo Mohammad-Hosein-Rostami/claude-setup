@@ -4,8 +4,8 @@
 // markerExpiresAt(openedAt, waitS, count) -> epoch ms, cleanHeader(value) -> string, STALE_MARGIN_S, MAX_HEADER_CHARS, UNSAFE_TEXT.
 // File: ~/.claude/state/asking/<session>.json = { session, kind: 'question'|'permission', tool, count, openedAt, expiresAt, header } (epoch ms;
 // `header` is the first question's short label, '' when there is none; a marker written before it existed has no `header` and reads as '').
-// Cleared when the question popups answered every question (question-reply.mjs), when a permission dialog ends, and by age (an
-// answer typed in the terminal fires no hook of ours since the PostToolUse hook was removed): a manual deny of a permission prompt fires no hook event outside auto mode (ALIGN-1 A121), so a marker
+// Cleared by the close event (PostToolUse or PostToolUseFailure of AskUserQuestion, question-answered.mjs), when a permission
+// dialog ends, and by age: a manual deny of a permission prompt fires no hook event outside auto mode (ALIGN-1 A121), so a marker
 // past expiresAt (the question's wait plus STALE_MARGIN_S) reads as none. Probe P5-12 (owed) confirms which events close a prompt.
 // Invariants: no session id, no file; written and read through session-store.mjs (no links, 0600, temp file and rename); holds no
 // question text, only the short header label, which is untrusted too: the writer and readAsking both pass it through cleanHeader (control, format and
