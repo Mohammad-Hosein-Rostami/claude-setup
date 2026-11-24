@@ -1,5 +1,5 @@
 // Tests for the main-agent cap of home/hooks/agent-budget.mjs, enforced through agent-model-guard.mjs (PreToolUse Agent|Task): at
-// most MAX_MAIN_AGENTS (3) agents launched from the main session run at once, helpers (a call with agent_id) never count, a launch
+// most MAX_AGENTS_PER_TYPE (3) lex, 3 dev and 3 tess launched from the main session run at once (a full type blocks no other), helpers (a call with agent_id) never count, a launch
 // another gate denies holds no slot, pending launches expire, a started one runs until its SubagentStop (or STALE_MS idle), a
 // resumed main agent counts again, and an unusable record denies (fail closed). The route gate: the boss (no agent_id) starts only
 // lex, dev, tess, claude-code-guide and statusline-setup; any other type is denied with the route; a subagent starting lex, dev or
@@ -17,7 +17,7 @@ import { agentHomeEnv } from './agent-home-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 process.env.TMPDIR = makeTempDir('agent-budget-tmp-'); // the call counters (callCounterPath) go under the temp root of this process
-const { MAX_MAIN_AGENTS, PENDING_MS, STALE_MS, claimMainSlot, recordMainStart, recordMainStop, releaseMainSlot } = await import('../home/hooks/agent-budget.mjs');
+const { MAX_AGENTS_PER_TYPE, PENDING_MS, STALE_MS, claimMainSlot, recordMainStart, recordMainStop, releaseMainSlot } = await import('../home/hooks/agent-budget.mjs');
 const { callCounterPath } = await import('../home/hooks/lib/writer-agents.mjs');
 const { runningAgentsOf } = await import('../home/hooks/lib/agent-launches.mjs');
 
@@ -89,38 +89,51 @@ const touchCounter = (session, agent, ms) => {
   utimesSync(path, ms / SECOND_MS, ms / SECOND_MS);
 };
 
-test('the cap is 3 main agents (owner, 2026-11-24)', () => {
-  assert.equal(MAX_MAIN_AGENTS, 3);
+test('the cap is 3 of each main agent type (owner, 2026-11-24)', () => {
+  assert.equal(MAX_AGENTS_PER_TYPE, 3);
 });
 
-test('the guard runs 3 main agents and denies the 4th every time, naming the running types; a stop frees a slot', () => {
+const capReason = (s, type, ids) => `agent cap: 3 ${type} agents of this session run (${ids.join(', ')}); wait for one of them to return; `
+  + `the other types have their own 3 (store: ${storeOf(s)})`;
+
+test('the guard runs 3 dev, 3 tess and 3 lex (9 in all) and denies the 4th of a type every time, naming the type and its ids', () => {
   const s = newSession();
-  const types = ['lex', 'dev', 'tess'];
-  types.forEach((type, n) => assert.ok(!denied(guard(s, mainCall(n, type))), `launch ${n + 1}`));
-  const expected = `agent cap: 3 main agents of this session run (${types.join(', ')}); wait for one to return `
-    + `(store: ${storeOf(s)})`;
-  assert.equal(guard(s, mainCall(7)).permissionDecisionReason, expected);
-  assert.ok(denied(guard(s, mainCall(7))), 'the identical call sent again is denied too');
-  assert.equal(budgetEvent(s, 'SubagentStart', 'agent-lex-1', 'lex'), '');
-  assert.ok(denied(guard(s, mainCall(8))), 'a started agent still holds its slot');
-  assert.equal(budgetEvent(s, 'SubagentStop', 'agent-lex-1', 'lex'), '');
-  assert.ok(!denied(guard(s, mainCall(9))), 'one agent returned: the next launch runs');
+  for (const type of ['dev', 'tess', 'lex']) {
+    for (let n = 0; n < MAX_AGENTS_PER_TYPE; n += 1) assert.ok(!denied(guard(s, mainCall(`${type}-${n}`, type))), `${type} ${n + 1}`);
+  }
+  assert.equal(readStore(s).launches.length, 9);
+  ['agent-dev-1', 'agent-dev-2'].forEach((id) => assert.equal(budgetEvent(s, 'SubagentStart', id, 'dev'), ''));
+  for (const send of [1, 2]) {
+    assert.equal(guard(s, mainCall('dev-4', 'dev')).permissionDecisionReason, capReason(s, 'dev', ['agent-dev-1', 'agent-dev-2', 'starting']), `send ${send}`);
+  }
+  assert.equal(guard(s, mainCall('tess-4', 'tess')).permissionDecisionReason, capReason(s, 'tess', ['starting', 'starting', 'starting']));
+  assert.equal(budgetEvent(s, 'SubagentStop', 'agent-dev-1', 'dev'), '');
+  assert.ok(!denied(guard(s, mainCall('dev-5', 'dev'))), 'one dev returned: the next dev runs');
+  assert.ok(denied(guard(s, mainCall('lex-4', 'lex'))), 'lex is still full');
 });
 
-test('helpers are never capped: a call from inside a subagent (agent_id) runs while 3 main agents run, and takes no slot', () => {
+test('a full type blocks no other: 3 dev run, and lex and tess still start', () => {
   const s = newSession();
-  for (let n = 0; n < MAX_MAIN_AGENTS; n += 1) assert.ok(!denied(guard(s, mainCall(n))));
+  for (let n = 0; n < MAX_AGENTS_PER_TYPE; n += 1) assert.ok(!denied(guard(s, mainCall(n, 'dev'))));
+  assert.ok(denied(guard(s, mainCall('dev-4', 'dev'))));
+  assert.ok(!denied(guard(s, mainCall('lex-1', 'lex'))));
+  assert.ok(!denied(guard(s, mainCall('tess-1', 'tess'))));
+});
+
+test('helpers are never capped: a call from inside a subagent (agent_id) runs while 3 lex run, and takes no slot', () => {
+  const s = newSession();
+  for (let n = 0; n < MAX_AGENTS_PER_TYPE; n += 1) assert.ok(!denied(guard(s, mainCall(n))));
   for (const type of ['lex-scout', 'dev-run', 'tess-review', 'lex-web']) {
     assert.ok(!denied(guard(s, mainCall(type, type), { agent_id: 'agent-dev-1', agent_type: 'dev' })), type);
   }
-  assert.equal(readStore(s).launches.length, MAX_MAIN_AGENTS);
+  assert.equal(readStore(s).launches.length, MAX_AGENTS_PER_TYPE);
 });
 
-test('the boss\'s Claude Code built-ins (claude-code-guide, statusline-setup) run while 3 main agents run, and take no slot', () => {
+test('the boss\'s Claude Code built-ins (claude-code-guide, statusline-setup) run while 3 lex run, and take no slot', () => {
   const s = newSession();
-  for (let n = 0; n < MAX_MAIN_AGENTS; n += 1) assert.ok(!denied(guard(s, mainCall(n))));
+  for (let n = 0; n < MAX_AGENTS_PER_TYPE; n += 1) assert.ok(!denied(guard(s, mainCall(n))));
   for (const type of ['claude-code-guide', 'statusline-setup']) assert.ok(!denied(guard(s, mainCall(type, type))), type);
-  assert.equal(readStore(s).launches.length, MAX_MAIN_AGENTS);
+  assert.equal(readStore(s).launches.length, MAX_AGENTS_PER_TYPE);
   assert.equal(claim(s, 'claude-code-guide').state, 'helper');
 });
 
@@ -212,16 +225,16 @@ test('each agent starts its own helpers from inside its run; the boss starts lex
 
 test('a hook input with no usable session id is not capped (no store can be named)', () => {
   const s = newSession();
-  for (let n = 0; n <= MAX_MAIN_AGENTS + 1; n += 1) assert.ok(!denied(guard(s, mainCall(n), { session_id: undefined })));
+  for (let n = 0; n <= MAX_AGENTS_PER_TYPE + 1; n += 1) assert.ok(!denied(guard(s, mainCall(n), { session_id: undefined })));
   assert.equal(claimMainSlot({ tool_input: { subagent_type: 'lex' } }, s.env).state, 'unrecorded');
 });
 
-test('four launches in one message (parallel hook processes) run exactly 3 and deny 1, every round', async () => {
+test('four lex launches in one message (parallel hook processes) run exactly 3 and deny 1, every round', async () => {
   for (let round = 0; round < 3; round += 1) {
     const s = newSession();
-    const outs = await Promise.all(Array.from({ length: MAX_MAIN_AGENTS + 1 }, (_, n) => guardAsync(s, mainCall(n))));
-    assert.equal(outs.filter((out) => !denied(out)).length, MAX_MAIN_AGENTS, JSON.stringify(outs));
-    assert.equal(readStore(s).launches.length, MAX_MAIN_AGENTS, 'the store holds exactly the 3 recorded, whole');
+    const outs = await Promise.all(Array.from({ length: MAX_AGENTS_PER_TYPE + 1 }, (_, n) => guardAsync(s, mainCall(n))));
+    assert.equal(outs.filter((out) => !denied(out)).length, MAX_AGENTS_PER_TYPE, JSON.stringify(outs));
+    assert.equal(readStore(s).launches.length, MAX_AGENTS_PER_TYPE, 'the store holds exactly the 3 recorded, whole');
   }
 });
 
@@ -238,14 +251,14 @@ test('a launch that never started stops counting after PENDING_MS; one dated ahe
   assert.ok(redated.at <= Date.now(), 'stored re-dated to now, so it ages from now');
 });
 
-test('H16: the clock moved back 2 h between launches: the 4th main agent is still denied, and the store is re-dated', (t) => {
+test('H16: the clock moved back 2 h between launches: the 4th dev is still denied, and the store is re-dated', (t) => {
   const s = newSession();
-  for (let n = 0; n < MAX_MAIN_AGENTS; n += 1) assert.equal(claim(s, 'dev').state, 'recorded', `launch ${n + 1}`);
+  for (let n = 0; n < MAX_AGENTS_PER_TYPE; n += 1) assert.equal(claim(s, 'dev').state, 'recorded', `launch ${n + 1}`);
   const movedBack = Date.now() - 2 * HOUR_MS;
   t.mock.timers.enable({ apis: ['Date'], now: movedBack });
-  const fourth = claim(s, 'lex');
+  const fourth = claim(s, 'dev');
   assert.equal(fourth.state, 'full');
-  assert.equal(fourth.running.length, MAX_MAIN_AGENTS);
+  assert.equal(fourth.running.length, MAX_AGENTS_PER_TYPE);
   assert.ok(readStore(s).launches.every(({ at }) => at === movedBack), 'each launch is stored as dated now');
   t.mock.timers.reset();
 });
@@ -268,13 +281,13 @@ test('H16: a corrupt main-agent record is unusable: the guard denies, naming it,
 
 test('I1: a PostToolUse that lands after the SubagentStop (a late async hook) leaves the agent stopped, and its slot free', () => {
   const s = newSession();
-  for (let n = 0; n < MAX_MAIN_AGENTS; n += 1) assert.ok(!denied(guard(s, mainCall(n, 'dev'))), `launch ${n + 1}`);
+  for (let n = 0; n < MAX_AGENTS_PER_TYPE; n += 1) assert.ok(!denied(guard(s, mainCall(n, 'dev'))), `launch ${n + 1}`);
   assert.equal(budgetEvent(s, 'SubagentStart', 'agent-late-1', 'dev'), '');
   assert.equal(budgetEvent(s, 'PostToolUse', 'agent-late-1', 'dev', { tool_name: 'Bash' }), '');
   assert.equal(budgetEvent(s, 'SubagentStop', 'agent-late-1', 'dev'), '');
   assert.equal(budgetEvent(s, 'PostToolUse', 'agent-late-1', 'dev', { tool_name: 'Bash' }), '', 'the late append');
   assert.equal(existsSync(callCounterPath(s.session, 'agent-late-1')), true, 'the late append made the counter again');
-  assert.equal(running(s), MAX_MAIN_AGENTS - 1, 'the stopped agent holds no main-agent slot');
+  assert.equal(running(s), MAX_AGENTS_PER_TYPE - 1, 'the stopped agent holds no main-agent slot');
   assert.ok(!runningAgentsOf(s.session, s.env, Date.now()).some(({ agent }) => agent === 'agent-late-1'), 'nor counts as running for the writer gate');
   assert.ok(!denied(guard(s, mainCall('next', 'dev'))), 'the cap freed its slot');
 });

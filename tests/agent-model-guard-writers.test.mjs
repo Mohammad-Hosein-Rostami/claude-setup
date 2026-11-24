@@ -99,7 +99,7 @@ test('a writer with isolation "worktree" runs next to running writers, and does 
 test('read-only agents are exempt and never count as running writers; an omitted type is general-purpose (a writer)', () => {
   const readOnlyTypes = ['lex', 'lex-scout', 'lex-web', 'pixel-qa', 'dev-run', 'tess', 'tess-review', 'Explore', 'Plan'];
   for (const type of readOnlyTypes) {
-    const s = writerSession(); // one session per type: the main-agent cap (3 at once) counts every launch of the main session
+    const s = writerSession(); // one session per type: the main-agent cap (3 of a type at once) counts every launch of the main session
     // pixel-qa briefs name a matrix (the UI brief gate); `MATRIX: none:` with a reason passes it for the other types too
     const reader = (agentType, prompt) => writer(agentType, { prompt: `${prompt}\nMATRIX: none: a lookup with no visual part` });
     mkdirSync(join(s.home, '.claude', 'agents'), { recursive: true });

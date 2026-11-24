@@ -14,7 +14,7 @@ import { makeTempDir } from './temp-dir-helpers.mjs';
 process.env.TMPDIR = makeTempDir('agent-cap-tmp-'); // the call counters (callCounterPath) go under the temp root of this process
 import { IDLE_MS, LATE_CALL_MS, PENDING_MS, recordAgentLaunch, recordAgentStart, recordAgentStop, runningAgentsOf } from '../home/hooks/lib/agent-launches.mjs';
 import { callCounterPath } from '../home/hooks/lib/writer-agents.mjs';
-import { MAX_MAIN_AGENTS } from '../home/hooks/agent-budget.mjs';
+import { MAIN_AGENT_TYPES, MAX_AGENTS_PER_TYPE } from '../home/hooks/agent-budget.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const GUARD = join(REPO, 'home', 'hooks', 'agent-model-guard.mjs');
@@ -282,7 +282,7 @@ test('settings/base.json refuses agent forks: a fork runs on the main session\'s
 
 test('the CLI subagent cap stays far above the hook caps and the CLI default, so helpers are not capped', () => {
   const cap = Number(base.env.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS);
-  assert.ok(cap > CLI_DEFAULT_SUBAGENT_CAP && cap > MAX_MAIN_AGENTS, String(cap));
+  assert.ok(cap > CLI_DEFAULT_SUBAGENT_CAP && cap > MAX_AGENTS_PER_TYPE * MAIN_AGENT_TYPES.length, String(cap));
 });
 
 const GOOD_LIVE = {

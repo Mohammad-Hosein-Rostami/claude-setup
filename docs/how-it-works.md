@@ -29,7 +29,7 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 
 1. You start Claude with `claude --model <m> --effort <e>`. The main session is the boss.
 2. Claude reads `home/CLAUDE.md`, your `personal/CLAUDE.md` and the rules whose paths match the files it works on.
-3. The boss hands the work to `lex` (plan), `dev` (build) or `tess` (tests, reviews and test writing), at most 3 at
+3. The boss hands the work to `lex` (plan), `dev` (build) or `tess` (tests, reviews and test writing), at most 3 of each at
    once. Each agent file lists its model, tools, preloaded skills and the helpers it may start. Only the boss starts lex, dev and
    tess (the guard denies it from any other agent): an agent that needs one asks the boss with a `needs:` line.
 4. Before each Bash command, `pre-bash-guard.mjs` checks it. Risky commands (push, `rm -rf`, prod-host writes) open a dialog. When a

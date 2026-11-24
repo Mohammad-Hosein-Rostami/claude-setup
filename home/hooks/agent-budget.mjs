@@ -1,5 +1,5 @@
-// The main-agent cap: at most MAX_MAIN_AGENTS (3) main agents (lex, dev or tess started by the main session) run at once; helpers,
-// started by another agent, and the boss's Claude Code built-ins (claude-code-guide, statusline-setup) are never capped. Nothing else: no call counts shown, no nudges, no
+// The main-agent cap, per type: at most MAX_AGENTS_PER_TYPE (3) of each main agent type (lex, dev, tess started by the main session)
+// run at once, so 9 in all; a full type never blocks the others. Helpers, started by another agent, and the boss's Claude Code built-ins (claude-code-guide, statusline-setup) are never capped. Nothing else: no call counts shown, no nudges, no
 // report caps.
 // Events: agent-model-guard.mjs (PreToolUse Agent|Task) calls claimMainSlot before a launch and releaseMainSlot when a later gate
 // denies it; this hook records the rest. A call with `agent_id` in its input comes from inside a subagent, so it is a helper's.
@@ -26,7 +26,7 @@
 // through. A call from inside a subagent (`agent_id`) that starts lex, dev or tess is denied every time (owner rule: the boss
 // knows who is on what, and the cap counts only its starts); the agent asks the boss with a `needs:` line instead. Any other
 // type from inside a subagent is free: which helper each agent starts is set by its agent file, not here.
-// Exports: MAX_MAIN_AGENTS, PENDING_MS, STALE_MS, MAIN_AGENT_TYPES, mainRouteReason, claimMainSlot, releaseMainSlot, mainCapReason,
+// Exports: MAX_AGENTS_PER_TYPE, PENDING_MS, STALE_MS, MAIN_AGENT_TYPES, mainRouteReason, claimMainSlot, releaseMainSlot, mainCapReason,
 // recordMainStart, recordMainStop.
 // Invariants: never throws; the hook's own events fail open (exit 0, no output); output is fixed text, types and the store path.
 import { appendFileSync, mkdirSync, realpathSync, rmSync, statSync } from 'node:fs';
@@ -40,7 +40,7 @@ import { withSessionLock } from './lib/session-lock.mjs';
 import { isSessionId, readSessionFile, writeSessionFile } from './lib/session-store.mjs';
 import { agentTypeOf, callCounterPath } from './lib/writer-agents.mjs';
 
-export const MAX_MAIN_AGENTS = 3; // the owner's limit of main agents at once (owner, 2026-11-24; it was 6)
+export const MAX_AGENTS_PER_TYPE = 3; // the owner's limit of running lex, of dev and of tess, each counted alone (owner, 2026-11-24)
 export const PENDING_MS = 2 * 60 * 1000; // a launch the permission dialog, Esc or another hook stops gets no SubagentStart
 export const STALE_MS = 3 * 60 * 60 * 1000; // 3 h with no tool call: longer than a main agent waits on its helpers
 const MAX_STORE_BYTES = 64 * 1024;
@@ -48,6 +48,7 @@ const STOPPED_KEPT = 200; // stopped main agent ids kept for a resume
 const KEY_BYTES = 8;
 const SAFE_ID = /^[\w-]{1,128}$/;
 const NO_STORE = { state: 'unusable', running: [] };
+const STARTING = 'starting'; // a launch with no SubagentStart yet has no agent id
 
 /** The agents the main session may start (the owner's design: the boss routes to lex, dev and tess only). */
 export const MAIN_AGENT_TYPES = ['lex', 'dev', 'tess'];
@@ -152,9 +153,9 @@ function withRecord(session, env, change) {
  * Claims a slot for an Agent or Task call of the main session, under the session's lock so parallel launches see each other.
  * @param {unknown} input the PreToolUse hook input: session_id, agent_id (set inside a subagent), tool_input.subagent_type
  * @param {Record<string, string | undefined>} env HOME / USERPROFILE (the store)
- * @returns {{state: 'helper' | 'unrecorded' | 'recorded' | 'full' | 'unusable', key?: string, running: Array<{type: string}>, storePath?: string}}
+ * @returns {{state: 'helper' | 'unrecorded' | 'recorded' | 'full' | 'unusable', type?: string, key?: string, running: Array<{type: string, agent?: string}>, storePath?: string}}
  *   helper: a call from inside a subagent, or of a type that is no main agent (never capped); unrecorded: no usable session id (no store can be named); recorded: the
- *   slot is taken under `key`; full: MAX_MAIN_AGENTS run; unusable: the store cannot be read or written, or its lock stays taken
+ *   slot is taken under `key` (`running`: every running launch); full: MAX_AGENTS_PER_TYPE of `type` run (`running`: those); unusable: the store cannot be read or written, or its lock stays taken
  */
 export function claimMainSlot(input, env = process.env) {
   try {
@@ -163,13 +164,14 @@ export function claimMainSlot(input, env = process.env) {
     const session = input?.session_id;
     if (!isSessionId(session)) return { state: 'unrecorded', running: [] };
     const done = withRecord(session, env, (record, now) => {
-      if (record.launches.length >= MAX_MAIN_AGENTS) return { state: 'full', running: record.launches };
+      const sameType = record.launches.filter((launch) => launch.type === type);
+      if (sameType.length >= MAX_AGENTS_PER_TYPE) return { state: 'full', running: sameType };
       const key = randomBytes(KEY_BYTES).toString('hex');
       const launches = [...record.launches, { key, type, at: now }];
       return { state: 'recorded', key, running: launches, record: { ...record, launches } };
     });
     const { state, key, running } = done ?? NO_STORE;
-    return { state, ...(key ? { key } : {}), running, storePath: join(mainAgentsDir(env), `${session}.json`) };
+    return { state, type, ...(key ? { key } : {}), running, storePath: join(mainAgentsDir(env), `${session}.json`) };
   } catch {
     return NO_STORE;
   }
@@ -197,14 +199,16 @@ export function releaseMainSlot(session, key, env = process.env) {
 
 /**
  * The deny reason for a claim, or '' when the launch may go on.
- * @param {{state: string, running: Array<{type: string}>, storePath?: string}} claim claimMainSlot's answer
- * @returns {string} the cap text naming the running types (`full`), the fail-closed text naming the store (`unusable`), else ''
+ * @param {{state: string, type?: string, running: Array<{type: string, agent?: string}>, storePath?: string}} claim claimMainSlot's answer
+ * @returns {string} the cap text naming the full type and its running agent ids (`starting` for one with no SubagentStart yet)
+ *   (`full`), the fail-closed text naming the store (`unusable`), else ''
  */
-export function mainCapReason({ state, running, storePath }) {
+export function mainCapReason({ state, type, running, storePath }) {
   if (state === 'unusable') return `agent cap: the main-agent record ${storePath ?? mainAgentsDir(process.env)} cannot be read or stays locked; fix or delete it, then launch again`;
   if (state !== 'full') return '';
-  const types = running.map(({ type }) => quotedValue(type)).join(', ');
-  return `agent cap: ${MAX_MAIN_AGENTS} main agents of this session run (${types}); wait for one to return (store: ${storePath})`;
+  const ids = running.map(({ agent }) => (typeof agent === 'string' ? quotedValue(agent) : STARTING)).join(', ');
+  return `agent cap: ${MAX_AGENTS_PER_TYPE} ${quotedValue(String(type))} agents of this session run (${ids}); wait for one of them to return; `
+    + `the other types have their own ${MAX_AGENTS_PER_TYPE} (store: ${storePath})`;
 }
 
 /**
