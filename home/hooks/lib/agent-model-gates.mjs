@@ -4,14 +4,14 @@
 // Plan call gets `opus` (types matched in any case: `explore`, `plan`). Forks (subagent_type "fork"), plugin agents and an explicit
 // model are not routed, and nothing is routed while CLAUDE_CODE_SUBAGENT_MODEL_FORCE is on under every env the session may run with (Claude Code then ignores `model`). Input that is not a JSON object, and any crash of the guard, deny the call (the no-Fable gate fails closed).
 // Pin floor (lib/agent-pins.mjs): the agent file Claude Code loads sets a floor for its own model and effort, so a lower per-call
-// value is left out (haiku < sonnet < opus; low < ... < max); this is how each agent keeps the pin of the plan (lex, dev, tess, dev-ui,
-// dev-pixel, dev-debug, tess-review on Opus; lex-web, pixel-qa, dev-part, tess-write, tess-simple, tess-edge on Sonnet; lex-scout,
-// dev-run on Haiku: the frontmatter of home/agents/<name>.md). A failure there leaves the input as it is (stderr line). A rewrite is
-// allow + the full updatedInput.
+// value is left out (haiku < sonnet < opus; low < ... < max); this is how each agent keeps the pin of the plan (lex, dev, tess, max,
+// dev-ui, dev-pixel, dev-debug, tess-review on Opus; lex-web, pixel-qa, dev-part, dev-docs, tess-write, tess-simple, tess-edge on
+// Sonnet; lex-scout, dev-run on Haiku: the frontmatter of home/agents/<name>.md). A failure there leaves the input as it is (stderr
+// line). A rewrite is allow + the full updatedInput.
 // Gates, in order (the first deny wins; each deny-once gate lets the identical call through when it is sent again):
-//   R. Main-agent route (lib/agent-route.mjs mainRouteReason): the main session starts only lex, dev and tess (and Claude Code's
+//   R. Main-agent route (lib/agent-route.mjs mainRouteReason): the main session starts only lex, dev, tess and max (and Claude Code's
 //      claude-code-guide and statusline-setup); any other type from the main session is denied every time with the route to take.
-//      A call from inside a subagent (`agent_id`) that starts lex, dev or tess is denied every time too: only the boss starts them,
+//      A call from inside a subagent (`agent_id`) that starts lex, dev, tess or max is denied every time too: only the boss starts them,
 //      and the agent asks for one with a `needs:` line; its other calls (its helpers) are not routed. First, so a wrong route spends
 //      no deny-once gate.
 //   0. No Fable (owner rule: Fable is chosen by hand only, never for an agent), denied every time with a one-line reason (fableReason;
@@ -28,16 +28,16 @@
 //   1. Copy-branch brief (lib/copy-branch-brief.mjs): a writer brief that creates `<lane>-2` instead of continuing `<lane>` (deny once).
 //   2. UI brief (lib/ui-brief-gate.mjs): a dev-pixel or pixel-qa brief that names no usable coverage matrix (`MATRIX: <path>`, or
 //      `MATRIX: none: <reason>`) gets the ui-coverage init advice (deny once).
-//   3. Main-agent cap (agent-budget.mjs claimMainSlot): at most MAX_AGENTS_PER_TYPE (3) lex, 3 dev and 3 tess launched from the main session run at once;
+//   3. Main-agent cap (agent-budget.mjs claimMainSlot): at most MAX_AGENTS_PER_TYPE (3) lex, 3 dev, 3 tess and 3 max launched from the main session run at once;
 //      denied every time while full, and when the record cannot be read (fail closed). A call from inside a subagent (a helper) is
 //      never capped. A launch a later gate denies gives its slot back (releaseMainSlot).
 //   4. Writer isolation (lib/writer-agents.mjs, lib/agent-launches.mjs): a writer launched while another plain writer of this session
 //      runs must be isolated (`isolation: "worktree"`, or a `worktree: <abs path>` brief field naming a linked worktree no open writer
 //      holds) or read-only (a line starting `read-only:` or `scratchpad-only:`), else it is denied once with advice; a brief naming
-//      more than one worktree is denied once too. Who writes: lib/agent-roles.mjs isWriterRole (dev, dev-part, dev-ui, dev-pixel, dev-debug, tess-write;
+//      more than one worktree is denied once too. Who writes: lib/agent-roles.mjs isWriterRole (dev, dev-part, dev-docs, dev-ui, dev-pixel, dev-debug, tess-write, max;
 //      never lex or the read-only agents; other types by their agent file). A record that cannot be read denies (fail closed).
 // SendMessage (its own PreToolUse entry) runs none of the gates above: its only gate is the main-agent cap for a message that would resume a stopped lex,
-// dev or tess (agent-budget.mjs resumeCapReason), denied every time while 3 of its type run. It fails open: a record it cannot read,
+// dev, tess or max (agent-budget.mjs resumeCapReason), denied every time while 3 of its type run. It fails open: a record it cannot read,
 // a target it cannot classify and a crash let the message go (a message starts no new agent, so it cannot start Fable).
 // Exports: guardedAgentInput (pure), parseHookInput (pure), fableReason, UNREADABLE_INPUT, writerIsolationDeny, copyBranchBriefDeny, runGuard.
 // Invariants: the routing never blocks; each deny-once gate denies an identical call at most once per session; the hook never lets an
@@ -85,7 +85,7 @@ const denyOutput = (reason) => `${JSON.stringify({ hookSpecificOutput: { hookEve
 const WORKTREE_ISOLATION = 'worktree';
 const PARALLEL_WRITER_ADVICE = 'Another writing agent of this session is still running in the shared folder: give this one `isolation: "worktree"`, '
   + 'or make its worktree first (`git worktree add -b <branch> <path> <base>`) and add the brief line `worktree: <absolute path>`, or wait for the '
-  + 'running writer. Roles: `dev`, `dev-part`, `dev-ui`, `dev-pixel`, `dev-debug` and `tess-write` write; a reading job goes to `lex-scout`, `dev-run`, `tess` or `tess-review` '
+  + 'running writer. Roles: `dev`, `dev-part`, `dev-docs`, `dev-ui`, `dev-pixel`, `dev-debug`, `tess-write` and `max` write; a reading job goes to `lex-scout`, `dev-run`, `tess` or `tess-review` '
   + '(or starts `read-only:`).';
 const MANY_WORKTREES_ADVICE = 'A writer works in one lane worktree, and this brief names more than one, so none was taken: name one worktree, '
   + 'this writer\'s own, in its `worktree:` field.';

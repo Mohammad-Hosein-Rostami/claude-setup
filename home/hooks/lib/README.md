@@ -104,8 +104,8 @@ Other hooks:
   worktree and the open writer launches; used by `gated-folder.mjs`, `agent-launches.mjs` and the board.
 - `agent-model-gates.mjs`: the gates and model routing of `agent-model-guard.mjs` (`runGuard`, `fableReason`, `guardedAgentInput`); the hook
   file only loads it inside a try, so a lib that fails to load denies the Agent call instead of exiting 1 (Claude Code would let it run).
-- `agent-route.mjs`: the main-agent route, the guard's first gate (`mainRouteReason`, `MAIN_AGENT_TYPES`): the boss starts only lex, dev and
-  tess, and a subagent never starts them. `fable-model-reasons.mjs`: the no-Fable gate's deny reasons for the call's `model`, the agent
+- `agent-route.mjs`: the main-agent route, the guard's first gate (`mainRouteReason`, `MAIN_AGENT_TYPES`): the boss starts only lex, dev,
+  tess and max, and a subagent never starts them. `fable-model-reasons.mjs`: the no-Fable gate's deny reasons for the call's `model`, the agent
   file's pin and `CLAUDE_CODE_SUBAGENT_MODEL` (run-time aliases and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` too); `agent-model-gates.mjs`
   `fableReason` picks which one applies.
 - `settings-env.mjs`: the `env` blocks of the settings files, which a hook's own env lacks (it inherits only the env claude started

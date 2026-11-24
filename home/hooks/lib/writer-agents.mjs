@@ -32,10 +32,10 @@ const WRITING_TOOLS = /\b(?:Write|Edit|MultiEdit|NotebookEdit)\b/;
 const DEFAULT_TYPE = 'general-purpose'; // what an Agent call with no subagent_type runs
 // A brief line that declares the agent read-only; exact case, at the start of a trimmed line
 const READ_ONLY_BRIEF_PREFIXES = ['read-only:', 'scratchpad-only:'];
-// The agents of home/agents (lex-dev-tess plan): dev, its part builder dev-part and its UI and debug forms, and tess's test writer
-// tess-write, write in their own worktree; lex writes plans, never product code, and the rest only read. Built-in types: general-purpose and claude write,
+// The agents of home/agents (lex-dev-tess plan): dev, its part builder dev-part, its docs writer dev-docs and its UI and debug forms,
+// tess's test writer tess-write and the ship agent max write in their own worktree; lex writes plans, never product code, and the rest only read. Built-in types: general-purpose and claude write,
 // Explore and Plan only read.
-const WRITER_TYPES = new Set(['dev', 'dev-part', 'dev-ui', 'dev-pixel', 'dev-debug', 'tess-write', 'general-purpose', 'claude']);
+const WRITER_TYPES = new Set(['dev', 'dev-part', 'dev-docs', 'dev-ui', 'dev-pixel', 'dev-debug', 'tess-write', 'max', 'general-purpose', 'claude']);
 const READ_ONLY_TYPES = new Set(['lex', 'lex-scout', 'lex-web', 'pixel-qa', 'dev-run', 'tess', 'tess-review', 'tess-simple', 'tess-edge', 'Explore', 'Plan']);
 const NEAR_MISS = /worktree:/i; // a line that meant to name a worktree, quoted (at most MAX_QUOTED_LINE_CHARS) when nothing was taken
 const MAX_QUOTED_LINE_CHARS = 160;

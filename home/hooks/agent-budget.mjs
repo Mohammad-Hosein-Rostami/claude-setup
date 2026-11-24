@@ -1,5 +1,5 @@
-// The main-agent cap, per type: at most MAX_AGENTS_PER_TYPE (3) of each main agent type (lex, dev, tess started by the main session)
-// run at once, so 9 in all; a full type never blocks the others. Helpers, started by another agent, and the boss's Claude Code
+// The main-agent cap, per type: at most MAX_AGENTS_PER_TYPE (3) of each main agent type (lex, dev, tess and max started by the main
+// session) run at once, so 12 in all; a full type never blocks the others. Helpers, started by another agent, and the boss's Claude Code
 // built-ins (claude-code-guide, statusline-setup) are never capped. Nothing else: no call counts shown, no nudges, no report caps.
 // Events: agent-model-guard.mjs (PreToolUse Agent|Task) calls claimMainSlot before a launch and releaseMainSlot when a later gate
 // denies it, and (PreToolUse SendMessage) resumeCapReason before a message that would resume a stopped main agent; this hook
@@ -39,7 +39,7 @@ import { NO_STORE, PENDING_MS, SAFE_ID, STALE_MS, mainAgentsDir, peekRecord, wit
 import { isSessionId } from './lib/session-store.mjs';
 import { agentTypeOf, callCounterPath } from './lib/writer-agents.mjs';
 
-export const MAX_AGENTS_PER_TYPE = 3; // the owner's limit of running lex, of dev and of tess, each counted alone (owner, 2026-11-24)
+export const MAX_AGENTS_PER_TYPE = 3; // the owner's limit of running lex, dev, tess and max, each type counted alone (owner, 2026-11-24/25)
 const KEY_BYTES = 8;
 const STARTING = 'starting'; // a launch with no SubagentStart yet has no agent id
 const MAIN_SESSION = 'main'; // SendMessage's name for the lead session, never a resume
