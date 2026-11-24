@@ -16,6 +16,7 @@
 // The stream is real `--output-format stream-json` shapes: a system init line, assistant lines, user tool_result lines, a result line.
 import { chmodSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { linkSharedTool } from './shared-tools.mjs';
 
 export const FAKE_CLAUDE_SOURCE = `#!/usr/bin/env node
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -124,11 +125,16 @@ process.stderr.write('unknown fake mode ' + mode + '\\n');
 finish(2);
 `;
 
-/** Writes the fake as `<bin>/claude` (and a `claude.cmd` shim for Windows). @returns {string} the fake's path. */
+/**
+ * Puts the fake at `<bin>/claude` (and a `claude.cmd` shim for Windows). On POSIX it is a link to one shared copy (a new executable
+ * is slow to start; the fake reads everything per test from env), on Windows a file of its own. @returns {string} the fake's path.
+ */
 export function installFakeClaude(bin) {
   const path = join(bin, 'claude');
-  writeFileSync(path, FAKE_CLAUDE_SOURCE);
-  chmodSync(path, 0o755);
+  if (process.platform === 'win32') {
+    writeFileSync(path, FAKE_CLAUDE_SOURCE);
+    chmodSync(path, 0o755);
+  } else linkSharedTool(bin, 'claude', FAKE_CLAUDE_SOURCE);
   writeFileSync(join(bin, 'claude.cmd'), '@node "%~dp0claude" %*\r\n');
   return path;
 }
