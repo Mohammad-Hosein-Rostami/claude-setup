@@ -26,9 +26,10 @@
 // - No content is skipped for its size or its bytes: binary and UTF-16 files are searched too (match.mjs); a file too large to read
 //   is an error.
 // - Fail closed: an unreadable list, an unreadable tracked file or a git failure exits 2 with why; never a silent 0. So is a default
-//   list missing beside an existing personal/ folder: that checkout has the person's layer, so "not run" would hide a lost list.
+//   list missing beside an existing personal/ entry (a folder, or a link even one that leads nowhere): that checkout has the
+//   person's layer, so "not run" would hide a lost list.
 import { spawnSync } from 'node:child_process';
-import { lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
+import { lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { readPlainFile } from '../home/hooks/lib/plain-file.mjs';
@@ -208,15 +209,16 @@ export function main(argv, cwd = process.cwd()) {
 }
 
 /**
- * The answer when the default list does not exist: "not run" in a checkout without a personal/ folder (a clone of the shared repo),
- * an error naming the fix when personal/ is there (the person's layer is installed, so the list was lost or never copied).
+ * The answer when the default list does not exist: "not run" in a checkout with nothing at personal/ (a clone of the shared repo),
+ * an error naming the fix when anything is there (the person's layer is installed, so the list was lost or never copied). lstat, so
+ * a link that cannot be followed counts as there: following it would read a lost folder as a clone and let the commit through.
  * @param {string} path the default list, <main checkout>/personal/share-deny.txt
  * @returns {number} EXIT.clean after printing "not run"
- * @throws {CheckError} when the personal folder exists
+ * @throws {CheckError} when anything exists at personal/
  */
 function missingList(path) {
   const personal = dirname(path);
-  if (!statSync(personal, { throwIfNoEntry: false })?.isDirectory()) return notRun(`no deny list at ${path}`);
+  if (lstatSync(personal, { throwIfNoEntry: false }) === undefined) return notRun(`no deny list at ${path}`);
   const template = join(dirname(personal), ...DENY_LIST_TEMPLATE);
   throw new CheckError(`no deny list at ${path}, but ${personal} exists; start it from the template: cp '${template}' '${path}'`);
 }

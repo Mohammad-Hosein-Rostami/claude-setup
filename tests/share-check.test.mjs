@@ -56,9 +56,8 @@ test('no list: not run, exit 0; an empty or comment-only list: not run too', () 
   assert.match(empty.stdout, /^share-check: not run \(no words in .*deny\.txt\)$/m);
 });
 
-test('no list beside a personal/ folder: every check fails (exit 2) and names the template to copy', () => {
-  const dir = makeRepo();
-  mkdirSync(join(dir, 'personal'));
+/** Asserts that every check in `dir` fails (exit 2) with the missing-list error and the template to copy. */
+function assertMissingListRefused(dir) {
   const message = join(makeTempDir('share-msg-'), 'COMMIT_EDITMSG');
   writeFileSync(message, 'docs: a subject\n');
   for (const args of [[], ['--staged'], ['--history'], ['--commit-msg', message]]) {
@@ -68,6 +67,20 @@ test('no list beside a personal/ folder: every check fails (exit 2) and names th
     const fix = `cp '${join(dir, 'personal.example', 'share-deny.txt')}' '${list}'`;
     assert.equal(result.stderr, `share-check: error: no deny list at ${list}, but ${join(dir, 'personal')} exists; start it from the template: ${fix}\n`);
   }
+}
+
+test('no list beside a personal/ folder: every check fails (exit 2) and names the template to copy', () => {
+  const dir = makeRepo();
+  mkdirSync(join(dir, 'personal'));
+  assertMissingListRefused(dir);
+});
+
+test('no list behind a personal link that leads nowhere: refused the same way, never "not run"', () => {
+  const dir = makeRepo();
+  symlinkSync(join(dir, '..', 'gone'), join(dir, 'personal'));
+  writeFileSync(join(dir, 'b.md'), `${WORD}\n`);
+  git(dir, 'add', 'b.md');
+  assertMissingListRefused(dir);
 });
 
 test('a lane worktree without personal/ finds the main checkout list through git', () => {
