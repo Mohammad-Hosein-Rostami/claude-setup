@@ -146,7 +146,8 @@ export async function copyBranchBriefDeny(input, env = process.env) {
 const FABLE_MODEL = /fable/i; // the alias `fable` and every Fable model id
 const INHERIT_MODEL = /^inherit$/i; // the agent runs on the lead's model, which the hook cannot see
 const FABLE_RULE = 'Not started: Fable is never used for an agent (the owner chooses it by hand only)';
-const NAME_A_MODEL = 'name a model other than Fable in the Agent call (`model: "sonnet"` or `"opus"`)';
+// Names the model the agent should run on, never a lower one: the shipped pins are opus for lex and dev, sonnet for tess
+const NAME_A_MODEL = 'name the model its agent file should pin in the Agent call, never Fable (`model: "opus"` for lex and dev, `"sonnet"` for tess)';
 /** The deny reason for unreadable hook input (the guard denies the Agent call rather than let the no-Fable gate pass). */
 export const UNREADABLE_INPUT = 'agent-model-guard could not read its input';
 
@@ -159,13 +160,16 @@ function callModelReason(model) {
 }
 
 /** The reason for the pin of an agent file found for `type`, or '' when it runs on a known model other than Fable. */
-function foundPinReason(type, pin, env) {
+function foundPinReason(type, pin, env, isPlainModelName) {
   const shown = quotedValue(type);
   if (typeof pin.model === 'string' && FABLE_MODEL.test(pin.model)) {
     return `${FABLE_RULE}: the \`${shown}\` agent file pins \`${quotedValue(pin.model)}\`; change its \`model\` line, and leave \`model\` out of the Agent call.`;
   }
   const fallback = env.CLAUDE_CODE_SUBAGENT_MODEL; // what Claude Code uses for a file with no model line (lib/agent-pins.mjs header)
   const model = pin.model ?? (typeof fallback === 'string' && fallback !== '' ? fallback : null);
+  if (model !== null && !isPlainModelName(model)) { // quoted with escapes, a block scalar, a value below its line: not read as written
+    return `${FABLE_RULE}: the \`${shown}\` agent's model \`${quotedValue(model)}\` is not a plain model name, so what it runs on is unknown; ${NAME_A_MODEL}.`;
+  }
   if (pin.model === null && model !== null && FABLE_MODEL.test(model)) {
     return `${FABLE_RULE}: the \`${shown}\` agent file pins no model and CLAUDE_CODE_SUBAGENT_MODEL is \`${quotedValue(model)}\`; ${NAME_A_MODEL}.`;
   }
@@ -194,15 +198,16 @@ export async function fableReason(input, env = process.env) {
   const name = agentTypeOf(type);
   const shown = quotedValue(name);
   let verdict;
+  let pins;
   try {
-    const { pinVerdict } = await import('./lib/agent-pins.mjs');
-    verdict = pinVerdict(name, typeof input.cwd === 'string' ? input.cwd : process.cwd(), env);
+    pins = await import('./lib/agent-pins.mjs');
+    verdict = pins.pinVerdict(name, typeof input.cwd === 'string' ? input.cwd : process.cwd(), env);
   } catch (error) {
     return `${FABLE_RULE}: the pin of \`${shown}\` cannot be read (${quotedValue(String(error?.message))}); fix the file, or ${NAME_A_MODEL}.`;
   }
   switch (verdict.state) {
     case 'found':
-      return foundPinReason(name, verdict.pin, env);
+      return foundPinReason(name, verdict.pin, env, pins.isPlainModelName);
     case 'unsure':
       return `${FABLE_RULE}: which \`${shown}\` agent file Claude Code loads is not certain, so its model is unknown; ${NAME_A_MODEL}.`;
     case 'none':

@@ -1,5 +1,5 @@
 // The model and effort an agent file pins, and the floor they set: a per-call value may raise a pin, never lower it.
-// Exports: pinVerdict(agentType, cwd, env), readPin(agentType, cwd, env), floorDrops(call, pin), flooredAgentInput(toolInput, cwd, env).
+// Exports: pinVerdict(agentType, cwd, env), readPin(agentType, cwd, env), isPlainModelName(value), floorDrops(call, pin), flooredAgentInput(toolInput, cwd, env).
 // Why: Claude Code ranks the Agent call's `model` above the agent file's frontmatter, so a lower per-call value silently
 // undoes the pin (recommendations item 2). agent-model-guard.mjs drops such a value from the call; it never adds one.
 // Which file: the one Claude Code loads. Read from the Claude Code 2.1.329 bundle (minified names), re-read in 2.1.330:
@@ -29,7 +29,7 @@ import { readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, sep } from 'node:path';
 import { gitDirOf, nearestGitEntry, readFileHead, sharedGitDir } from './agent-brief.mjs';
-import { frontmatterOf, plainFrontmatter } from './agent-frontmatter.mjs';
+import { frontmatterOf, keyLines, plainFrontmatter } from './agent-frontmatter.mjs';
 import { agentFolders } from './agent-folders.mjs';
 
 const TYPE_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -44,8 +44,9 @@ const AGENT_FILE_SUFFIX = '.md';
 const FAMILY_ORDER = ['haiku', 'sonnet', 'opus'];
 const EFFORT_ORDER = ['low', 'medium', 'high', 'xhigh', 'max'];
 const KNOWN_MODEL_TEXT = /^[A-Za-z0-9._\-[\]]{1,100}$/; // aliases and full ids such as claude-opus-5-5[1m]; anything else is unknown
-const PIN_LINE = /^(model|effort|description):[ \t]*(.*?)[ \t]*$/; // a top-level key line; deeper lines belong to other keys
-const LINE_END = /\r\n|\n|\r/;
+const PIN_KEYS = ['model', 'effort', 'description'];
+// The value of a pin key whose value goes on below its line (a block scalar, a folded value): not read, so never a known model
+const VALUE_BELOW = '(a value on the lines below)';
 const TRAILING_COMMENT = /[ \t]+#.*$/;
 const QUOTED = /^(["'])(.*)\1$/;
 const UNSURE = Object.freeze({ state: 'unsure' });
@@ -74,9 +75,9 @@ function fileVerdict(path, agentType) {
   if (!plain.plain) return 'unsure';
   if (plain.name !== agentType) return 'skip';
   const lines = { model: null, effort: null, description: null };
-  for (const line of found.text.split(LINE_END)) {
-    const match = PIN_LINE.exec(line);
-    if (match) lines[match[1]] = pinValue(match[2]);
+  // the key lines at the mapping's own indent (an indented mapping too); a deeper line belongs to the key above it
+  for (const { key, value, continued } of keyLines(found.text)) {
+    if (PIN_KEYS.includes(key)) lines[key] = continued ? VALUE_BELOW : pinValue(value);
   }
   return lines.description === null ? 'skip' : { model: lines.model, effort: lines.effort };
 }
@@ -182,9 +183,17 @@ export function readPin(agentType, cwd, env = process.env) {
   return verdict.state === 'found' ? verdict.pin : null;
 }
 
+/**
+ * Whether a model value is plain text Claude Code reads as written: an alias or a full id, with no quote, escape, space or block
+ * marker left in it (the no-Fable gate denies any other pin, since what YAML makes of it is not read here).
+ * @param {unknown} value - a pin or env value
+ * @returns {boolean}
+ */
+export const isPlainModelName = (value) => typeof value === 'string' && KNOWN_MODEL_TEXT.test(value);
+
 /** @returns {number[] | null} [family, major, minor] of a model value (-1 for no version), or null when it is unknown */
 function modelRank(value) {
-  if (typeof value !== 'string' || !KNOWN_MODEL_TEXT.test(value)) return null;
+  if (!isPlainModelName(value)) return null;
   const families = FAMILY_ORDER.filter((name) => value.includes(name));
   if (families.length !== 1) return null;
   const [family] = families;

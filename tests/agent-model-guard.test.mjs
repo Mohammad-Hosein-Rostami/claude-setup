@@ -197,6 +197,8 @@ test('hook: a failure inside the pin floor lets the call run unchanged, with a s
 });
 
 // H2: the no-Fable gate fails closed. Each case names what the agent would run on when it is not known.
+// R1: the advice names the agent's own pin first (opus for lex and dev), so a resend never runs them lower than their pin
+const NAME_A_MODEL = 'name the model its agent file should pin in the Agent call, never Fable (`model: "opus"` for lex and dev, `"sonnet"` for tess)';
 const pinFile = (name, pins) => `---\nname: ${name}\ndescription: test agent\n${pins}---\nbody\n`;
 
 test('hook: an agent file that cannot be read (mode 000) denies with the reason; readable again, the call runs', (t) => {
@@ -212,7 +214,7 @@ test('hook: an agent file that cannot be read (mode 000) denies with the reason;
   try {
     const reason = deniedReason(call(project));
     assert.ok(reason.startsWith(`${FABLE_REASON}: the pin of \`worker\` cannot be read (EACCES`), reason);
-    assert.ok(reason.endsWith('); fix the file, or name a model other than Fable in the Agent call (`model: "sonnet"` or `"opus"`).'), reason);
+    assert.ok(reason.endsWith(`); fix the file, or ${NAME_A_MODEL}.`), reason);
   } finally {
     chmodSync(file, 0o600);
   }
@@ -252,4 +254,33 @@ test('hook: lower-case explore and plan are built-ins: routed to sonnet and opus
     assert.equal(r.status, 0, r.stderr);
     assert.equal(JSON.parse(r.stdout).hookSpecificOutput.updatedInput.model, model, subagent_type);
   }
+});
+
+test('hook: a Fable pin in a form not read as written (indented mapping, block scalar, value below, escapes) is denied (R3)', () => {
+  const project = makeTempDir('fable-forms-');
+  execFileSync('git', ['init', '-q', project]);
+  const agents = join(project, '.claude', 'agents');
+  mkdirSync(agents, { recursive: true });
+  const forms = {
+    'indented mapping': '---\n  name: lex\n  description: d\n  model: fable\n---\nbody\n',
+    'CRLF indented': '---\r\n  name: lex\r\n  description: d\r\n  model: claude-fable-5\r\n---\r\n',
+    'block scalar': '---\nname: lex\ndescription: d\nmodel: >-\n  fable\n---\n',
+    'value below': '---\nname: lex\ndescription: d\nmodel:\n  fable\n---\n',
+    'hex escape': '---\nname: lex\ndescription: d\nmodel: "f\\x61ble"\n---\n',
+    'unicode escape': '---\nname: lex\ndescription: d\nmodel: "\\u0066able"\n---\n',
+  };
+  for (const [form, text] of Object.entries(forms)) {
+    writeFileSync(join(agents, 'lex.md'), text);
+    const reason = deniedReason(runWithAgents({ ...BASE, subagent_type: 'lex' }, () => {}, { cwd: project }));
+    assert.match(reason, /^Not started: Fable is never used for an agent/, form);
+  }
+  writeFileSync(join(agents, 'lex.md'), '---\n  name: lex\n  description: d\n  model: claude-opus-5-5\n---\n');
+  const plain = runWithAgents({ ...BASE, subagent_type: 'lex' }, () => {}, { cwd: project });
+  assert.deepEqual([plain.status, plain.stdout], [0, ''], 'an indented opus pin runs');
+});
+
+test('hook: the deny advice for an unknown model names opus for lex and dev first, never sonnet first (R1)', () => {
+  const reason = deniedReason(runWithAgents({ ...BASE, subagent_type: 'some-plugin:agent' }));
+  assert.ok(reason.endsWith(`; ${NAME_A_MODEL}.`), reason);
+  assert.ok(reason.indexOf('"opus"') < reason.indexOf('"sonnet"'), reason);
 });

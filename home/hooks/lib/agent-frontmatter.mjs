@@ -1,5 +1,5 @@
 // The frontmatter of an agent file: found the way Claude Code finds it, then read only when it is in a strict plain subset of YAML.
-// Exports: frontmatterOf(head), plainFrontmatter(text).
+// Exports: frontmatterOf(head), plainFrontmatter(text), keyLines(text) (lib/agent-pins.mjs reads the pin lines through it).
 // Read from the Claude Code 2.1.328 bundle (function names are the minified ones) and probed on that CLI with
 // `claude --agent zzz-none -p hi` in a temp HOME; re-read and re-probe when the CLI changes its parser:
 //   fR(e){return e.charCodeAt(0)===65279?e.slice(1):e}     a leading BOM is dropped
@@ -78,7 +78,7 @@ export function frontmatterOf(head) {
  *   when a deeper line or a list item follows it, `valueBelow` when the key line itself holds no value; undefined when a line is
  *   outside the subset.
  */
-function keyLines(text) {
+export function keyLines(text) {
   if (UNSAFE_CHARACTER.test(text)) return undefined;
   const found = [];
   let indent;
