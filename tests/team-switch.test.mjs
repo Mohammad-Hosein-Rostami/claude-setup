@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +13,7 @@ import { switchDirs, switchNames, trustedSwitch } from '../home/hooks/lib/team-s
 import { git as runGit } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 import { cleanEnv } from './clean-env.mjs';
+import { linkSharedTool } from './shared-tools.mjs';
 
 const hookPath = (name) => fileURLToPath(new URL(`../home/hooks/${name}`, import.meta.url));
 const SETTINGS = '.claude/settings.json';
@@ -156,13 +157,16 @@ test('hostile settings: a link, a huge file and a switch past 200 env keys are a
 // ---- post-edit ----
 const posix = { skip: process.platform === 'win32' };
 
+// The fake prettier is one shared script (shared-tools.mjs: no first-run check per project), linked into each project's
+// node_modules/.bin like a real install. Run through the link, argv[1] is the link's own path, so ran.txt lands in that project.
+const FAKE_PRETTIER = `#!${process.execPath}\nif (process.env.FAKE_WARM) process.exit(0);\nconst { dirname, join } = require('node:path');\nrequire('node:fs').appendFileSync(join(dirname(process.argv[1]), '..', '..', 'ran.txt'), 'x');\n`;
+
 /** A package whose broad format script runs a fake prettier that records each run in ran.txt. */
 function formatProject(files, git) {
   const dir = project({ ...files, 'package.json': JSON.stringify({ scripts: { format: 'prettier --write .' } }), 'src/a.ts': 'export const a = 1;\n' }, git);
   const bin = join(dir, 'node_modules', '.bin');
   mkdirSync(bin, { recursive: true });
-  writeFileSync(join(bin, 'prettier'), `#!${process.execPath}\nrequire('node:fs').appendFileSync(${JSON.stringify(join(dir, 'ran.txt'))}, 'x');\n`);
-  chmodSync(join(bin, 'prettier'), 0o755);
+  linkSharedTool(bin, 'prettier', FAKE_PRETTIER);
   return dir;
 }
 
