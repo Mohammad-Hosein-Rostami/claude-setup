@@ -598,23 +598,32 @@ test('a test that leaves an untracked file in the lane worktree: the tested sha 
   assert.ok(existsSync(join(worktree, 'test-artifact.txt')), 'the untracked file is not deleted');
 });
 
-test('a test that edits a tracked file in the lane worktree: the committed tested sha lands, the edit stays, the clean-up stops', () => {
+test('a test that edits a tracked file in the lane worktree is refused: nothing lands, the lane branch and the edit stay', () => {
   const { repo, worktree } = overlapRepo();
+  const before = heads(repo);
   const edited = 'edited by the test\n';
   const command = scriptCommand(repo, 'edit-tracked.mjs', [
     "import { writeFileSync } from 'node:fs';",
     `writeFileSync(${JSON.stringify(SHARED)}, ${JSON.stringify(edited)});`,
   ].join('\n'));
   const result = land([LANE, '--repo', repo, '--test', command], { cwd: repo });
-  const tip = git(repo, 'rev-parse', 'main');
-  assert.equal(testedSha(result.stdout), tip, 'the tested commit landed');
-  assert.ok(result.stdout.includes(`test passed on ${tip}\nlanded ${LANE} on main at ${tip} (1 commit(s))\n`), result.stdout);
-  assert.equal(readFileSync(join(repo, SHARED), 'utf8'), text(MERGED_LINES), 'the base holds the committed file, not the edit');
-  assert.equal(result.status, 1, result.stderr);
-  assert.ok(result.stderr.startsWith(`land: ${LANE} landed on main at ${tip}, but the clean-up stopped:`), result.stderr);
-  assert.equal(readFileSync(join(worktree, SHARED), 'utf8'), edited, 'the edit is left in the worktree');
-  assert.ok(branchExists(repo, LANE), 'the branch is not deleted after the worktree removal stopped');
-  assert.equal(git(repo, 'rev-parse', LANE), tip);
+  assert.equal(result.status, 1, result.stdout);
+  const tip = testedSha(result.stdout);
+  assertRebasedOnto(repo, tip, before[0]);
+  assert.ok(result.stdout.includes(`test passed on ${tip}\n`), result.stdout);
+  assert.equal(result.stdout.includes('landed '), false);
+  const refusal = `land: the test changed tracked files in the worktree of ${LANE} (${worktree}), so what it tested is not the commit that would land; nothing landed. Undo the changes (git status there), make the test leave them alone, then land again`;
+  // Recorded as land does it now; README step 4 says every refusal puts the worktree back on the branch, but the edited file
+  // differs between the lane and the tested sha, so git switch refuses and the worktree is left detached at the tested sha.
+  const leftDetached = `the worktree ${worktree} could not switch back to ${LANE} and is left detached at ${tip}; clean it, then run git switch ${LANE} there`;
+  assert.deepEqual(outputLines(result.stderr), [refusal, leftDetached]);
+  assert.deepEqual(heads(repo), before, 'neither the base nor the lane branch moved');
+  assert.ok(existsSync(worktree), 'the worktree is kept');
+  assert.equal(git(worktree, 'rev-parse', 'HEAD'), tip);
+  assert.equal(readFileSync(join(worktree, SHARED), 'utf8'), edited, 'the edit is left for the owner to undo');
+  assert.equal(git(worktree, 'diff', '--name-only'), SHARED, 'only the edited file differs, and it is not staged');
+  assert.equal(git(worktree, 'diff', '--cached', '--name-only'), '');
+  assert.equal(readFileSync(join(repo, SHARED), 'utf8'), text(MOVED_BASE_LINES), 'the base checkout is untouched');
 });
 
 test('a test that edits the base checkout is refused after the test: nothing lands and the lane is as it was', () => {
