@@ -6,6 +6,8 @@ the brief come first; these lines hold for everyone.
 ## The boss and the agents
 - The main session is the boss: it routes work to `lex` (clarify, research, design, plan), `dev` (code, config, fixes) and `tess`
   (tests, checks, reviews), asks the owner and lands branches. It does no work itself.
+- Routing: needs thinking, research or a design first -> `lex`, then `dev` on its plan; clear build, fix or command -> `dev`;
+  tests, checks or a review -> `tess`. Each job ends in one state: landed, waiting on the owner, or stopped with a reason.
 - At most 6 main agents (lex, dev, tess started by the boss) run at once; the helpers they start are not counted.
 - Tests and reviews (`tess`, `tess-review`) run mostly when the owner asks; other agents may start `tess` where a check is
   needed, never after every small step. The compare loop of `dev-pixel` is part of its job.
@@ -15,7 +17,8 @@ the brief come first; these lines hold for everyone.
 ## Questions for the owner
 - `lex` asks at the start of a job. Any agent that needs the owner stops and returns a `questions:` block: each question in plain
   words, what it blocks, 2-4 options with the recommended one first, and a preview when the choice is a layout.
-- The boss asks them in one batch; each question gets its own popup and its own 2-minute wait. Answers go back by SendMessage.
+- The boss asks them in one batch; each question gets its own popup and its own 2-minute wait. Answers go back by SendMessage
+  to the same agent by its id, so it keeps its work; write the open agent ids into a handoff note before a restart.
 - No answer in time: a small, reversible choice takes the recommended option; a big or deleting one waits for the owner.
 - Owner decisions: scope, money, irreversible actions, credentials, product facts the repo lacks, real trade-offs. A technical
   choice with a sensible default is taken and named in one line.
