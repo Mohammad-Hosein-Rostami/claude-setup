@@ -12,7 +12,10 @@ $NodeMajorMin = 22 # the Node the tools and hooks are written for
 
 $node = Get-Command node -ErrorAction SilentlyContinue
 if (-not $node) { Write-Error "missing required tool: node $NodeMajorMin+ (winget install OpenJS.NodeJS.LTS)"; exit 1 }
-$major = [int](& node -p 'process.versions.node.split(".")[0]')
+# Parsed here from `node --version` (v22.15.0): an argument holding `"` (a `node -p` script) loses its quotes on PowerShell 5.1.
+$nodeVersion = [string](& node --version)
+if (-not ($nodeVersion -match '^v(\d+)\.')) { Write-Error "node --version printed '$nodeVersion', not vX.Y.Z"; exit 1 }
+$major = [int]$Matches[1]
 if ($major -lt $NodeMajorMin) { Write-Error "node $major found; the setup needs node $NodeMajorMin+"; exit 1 }
 
 $Repo = Split-Path -Parent $PSScriptRoot
