@@ -58,7 +58,6 @@ stops and returns a `questions:` block (plain words, what it blocks, 2-4 options
 
 | File | Applies to | Ids |
 | ---- | ---------- | --- |
-| `core.md` | always on | C1-C37 (C37: linear git history, rebase and `--ff-only`, a re-done lane continues the same branch, enforced by `git-tidy` and `git-tidy-gate.mjs`) |
 | `ui.md` | `**/*.css`, `**/*.scss`, `**/*.tsx`, `**/*.jsx`, `**/*.vue`, `**/*.html`, `**/styles/**`, `**/tokens/**` | U1-U12 |
 | `frontend.md` | `**/*.tsx`, `**/components/**` | F1-F10 |
 | `backend.md` | `**/server/**`, `**/api/**`, `**/*.service.ts`, `**/routes/**` | S1-S11, B1-B10 |
