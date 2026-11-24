@@ -6,7 +6,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { UNREADABLE_INPUT, guardedAgentInput } from '../home/hooks/agent-model-guard.mjs';
+import { UNREADABLE_INPUT, guardedAgentInput } from '../home/hooks/lib/agent-model-gates.mjs';
 import { FROM_AGENT, originOf } from './agent-call-origin.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 

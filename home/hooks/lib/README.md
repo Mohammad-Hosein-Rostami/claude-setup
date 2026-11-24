@@ -95,6 +95,8 @@ Other hooks:
 - `tidy-gate-store.mjs`: the per-session state file of `git-tidy-gate.mjs` (the check verdict per repo and fingerprint).
 - `writer-agents.mjs`: which agent types write files (agent files' `tools:` line, `WRITER_TYPES`, `READ_ONLY_TYPES`), a brief's lane
   worktree and the open writer launches; used by `gated-folder.mjs`, `agent-launches.mjs` and the board.
+- `agent-model-gates.mjs`: the gates and model routing of `agent-model-guard.mjs` (`runGuard`, `fableReason`, `guardedAgentInput`); the hook
+  file only loads it inside a try, so a lib that fails to load denies the Agent call instead of exiting 1 (Claude Code would let it run).
 - `agent-launches.mjs`: the launch record of every agent of a session, read by the guard's writer isolation gate (it has no cap; the main-agent cap is `agent-budget.mjs`'s):
   `agent-model-guard.mjs` records each launch (writers with the `isolated` and `readOnly` flags), `agent-budget.mjs` marks it started and
   ended on SubagentStart and SubagentStop; a stopped agent that makes a tool call more than 30 s after its stop counts again (`LATE_CALL_MS`: a closer one is its own late PostToolUse); a launch dated ahead of the clock counts as dated now. The store is

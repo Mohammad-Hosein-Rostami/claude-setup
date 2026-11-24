@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { copyBranchBriefDeny } from '../home/hooks/agent-model-guard.mjs';
+import { copyBranchBriefDeny } from '../home/hooks/lib/agent-model-gates.mjs';
 import { git, makeRepo } from './git-tidy-helpers.mjs';
 import { FROM_AGENT, FROM_BOSS, originOf } from './agent-call-origin.mjs';
 import { hookEnv } from './hook-env.mjs';
