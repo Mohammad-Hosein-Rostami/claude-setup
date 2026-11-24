@@ -13,13 +13,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { KEYCHAIN_SERVICE, SECURITY_TIMEOUT_MS, keychainStore, runSecurity } from '../home/tools/account/lib/keychain-store.mjs';
 import { AccountError } from '../home/tools/account/lib/names.mjs';
 import { KEYCHAIN_PROBE_TIMEOUT_MS } from '../scripts/doctor-accounts.mjs';
 import { fakeToken } from './account-helpers.mjs';
+import { sharedToolDir } from './shared-tools.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const SECURITY = '/usr/bin/security';
@@ -119,14 +120,17 @@ if (words[0] === 'delete-generic-password') { delete items[key]; save(); process
 console.error('fake security: unknown command'); process.exit(2);
 `;
 
-/** A cs-test- folder with the fake `security`, a scratch keychain file and the fake's stand-in default keychain. */
+/**
+ * A cs-test- folder with a scratch keychain file and the fake's stand-in default keychain, and `bin`: one shared read-only folder
+ * (shared-tools.mjs: no first-run check per test) with the fake `security` and its script; it reads all it needs from its env.
+ */
 function fakeSecurityBox() {
   const dir = realpathSync(makeTempDir('account-keychain-')); // /var is a link on macOS: the store refuses a path with a link in it
-  const bin = join(dir, 'bin');
-  mkdirSync(bin);
-  writeFileSync(join(dir, 'fake-security.mjs'), FAKE_SECURITY);
-  writeFileSync(join(bin, 'security'), `#!/bin/sh\nexec "${process.execPath}" "${join(dir, 'fake-security.mjs')}" "$@"\n`);
-  chmodSync(join(bin, 'security'), 0o755);
+  const bin = realpathSync(sharedToolDir({
+    'fake-security.mjs': FAKE_SECURITY,
+    // ${0%/*} is the wrapper's own folder without `dirname`, which the store's PATH (bin only) does not hold
+    security: `#!/bin/sh\n[ -n "$FAKE_WARM" ] && exit 0\nexec "${process.execPath}" "\${0%/*}/fake-security.mjs" "$@"\n`,
+  }));
   const keychain = join(dir, 'scratch dir', 'scratch.keychain-db');
   mkdirSync(join(dir, 'scratch dir'));
   writeFileSync(keychain, '');
