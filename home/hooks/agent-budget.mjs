@@ -1,299 +1,228 @@
-// PostToolUse (all tools), PreToolUse Bash, SubagentStart and SubagentStop: enforces the budgets the prompt only asked for.
-//   PostToolUse in a subagent -> counts its tool calls; the first call that sees 80 or more injects "commit what is green"
-//                   once, and the first that sees 120 or more injects the checkpoint "commit, update the hand-over note, go on"
-//                   (owner rule R22-B1: a checkpoint, never a stop; each once, by a marker file next to the counter, so parallel
-//                   calls that step past the number neither skip nor repeat it; frequent harness text after tool results reads as
-//                   possible injection). Advisory: it never blocks a call.
-//   PostToolUse Read in the lead -> warns when the result is over ~20k chars (use scout / a small range; lead rules: no Read > ~20k).
-//   PostToolUse Bash in the lead -> every 15 Bash calls since the last Agent/Task call, a nudge to delegate that states the
-//                   context size (lib/transcript.mjs contextTokens); an Agent/Task call resets the count. A nudge followed by
-//                   another Bash call (no Agent/Task call between) counts as ignored, in a per-session file next to the count.
-//   PreToolUse Bash in the lead -> after 2 ignored nudges, at 150k+ context, the next lead Bash call that is not git or
-//                   read-only (lib/read-only-command.mjs) is denied once with "delegate to runner/implementer" (lib/bounce-once.mjs
-//                   adviceOnce with a store of its own, ~/.claude/state/budget-denied: the identical retry runs; the guard's bounce store
-//                   is never touched, so the guard's own bounce of that call still comes) and the ignored count starts over, so it never loops. Subagents are
-//                   never blocked; an unknown context size never denies.
-//   SubagentStop -> blocks once when the final report's body is over the cap the spawn prompt states (first user message of the
-//                   agent transcript); the Constraints, Not run and Caveats sections are not counted (lib/reply-cap.mjs reportBody);
-//                   no stated cap means no check, so agents that return data are never sent back.
-//                   A stop it lets through also ends the agent's launch; SubagentStart marks it started (lib/agent-launches.mjs: the agent cap, the writer gate).
-// Verified against Claude Code 2.1.323: hook input has `agent_id` only inside a subagent (agent_type alongside it);
-// PostToolUse accepts hookSpecificOutput.additionalContext; SubagentStop gets agent_id, agent_type, agent_transcript_path,
-// last_assistant_message and stop_hook_active, and exit 2 sends stderr to the subagent and keeps it running.
-// Exports: CALL_CAP, EARLY_NOTICE_AT, READ_WARN_CHARS, LEAD_BASH_NUDGE_AT, ESCALATE_AT_TOKENS, countCall, leadBashCalls,
-// leadBashDeny, readChars, postToolUseContext, spawnCap, subagentStopReason.
-// Invariants: fast (one append + one stat per call, nothing else on the main thread except Read); fails open (any error
-// exits 0, silent); output is fixed text plus numbers, never tool input, tool output or paths; unsafe ids write nothing.
-import { appendFileSync, closeSync, mkdirSync, openSync, readSync, realpathSync, rmSync, statSync } from 'node:fs';
+// The main-agent cap: at most MAX_MAIN_AGENTS (6) agents started from the main session (lex, dev, tess and any other the boss
+// starts) run at once; helpers, started by another agent, are never capped. Nothing else: no call counts shown, no nudges, no
+// report caps.
+// Events: agent-model-guard.mjs (PreToolUse Agent|Task) calls claimMainSlot before a launch and releaseMainSlot when a later gate
+// denies it; this hook records the rest. A call with `agent_id` in its input comes from inside a subagent, so it is a helper's.
+//   PostToolUse in a subagent -> one byte appended to its call counter (lib/writer-agents.mjs callCounterPath): its mtime is the
+//                                agent's last sign of work, read here and by lib/agent-launches.mjs (the writer gate).
+//   SubagentStart -> the oldest pending main launch of that type becomes this agent; a stopped main agent that starts again (a
+//                    resume by SendMessage) runs again; any other start is a helper's and is not recorded here. Also
+//                    lib/agent-launches.mjs recordAgentStart for the guard's writer gate.
+//   SubagentStop  -> its main launch ends; lib/agent-launches.mjs recordAgentStop; its call counter is removed.
+// Running: a pending launch (no SubagentStart yet) for PENDING_MS, so a denied or cut launch frees its slot; a started one until its
+// SubagentStop, or until STALE_MS passes with no tool call of its own (an agent that ended unseen); never a launch dated more than
+// CLOCK_SKEW_MS ahead. Limit: SubagentStart names no parent, so a helper of the same type that starts while a main launch of that
+// type is pending takes its place; the count stays right until the first of the two stops.
+// Store: ~/.claude/state/main-agents/<session>.json through lib/session-store.mjs under lib/session-lock.mjs (0600, at most
+// MAX_STORE_BYTES for writer and reader): {"launches": [{"key", "type", "at", "agent"?}], "stopped": [agent ids]}. A corrupt file
+// reads as empty; an unusable store or a lock that stays taken is `unusable`, and the guard denies (the owner's cap fails closed).
+// Exports: MAX_MAIN_AGENTS, PENDING_MS, STALE_MS, claimMainSlot, releaseMainSlot, mainCapReason, recordMainStart, recordMainStop.
+// Invariants: never throws; the hook's own events fail open (exit 0, no output); output is fixed text, types and the store path.
+import { appendFileSync, mkdirSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { checkedTempRoot } from './lib/edit-log.mjs';
-import { overCap, parseCap, reportBody } from './lib/reply-cap.mjs';
-import { isReadOnlyCommand } from './lib/read-only-command.mjs';
-import { contextTokens } from './lib/transcript.mjs';
-import { readPlainFileWith } from './lib/plain-file.mjs';
-import { countedGate, markToolCall } from './lib/stop-block-count.mjs';
+import { quotedValue } from './lib/agent-brief.mjs';
 import { recordAgentStart, recordAgentStop } from './lib/agent-launches.mjs';
-import { callCounterPath } from './lib/writer-agents.mjs';
+import { withSessionLock } from './lib/session-lock.mjs';
+import { isSessionId, readSessionFile, writeSessionFile } from './lib/session-store.mjs';
+import { agentTypeOf, callCounterPath } from './lib/writer-agents.mjs';
 
-// The agent files (implementer, ui-implementer) and the lead rules say "about 120 tool calls"; a test keeps them equal.
-// Since R22-B1 it is the checkpoint call, not a limit: the name stays so that text test and its callers hold.
-export const CALL_CAP = 120;
-export const EARLY_NOTICE_AT = 80;
-export const READ_WARN_CHARS = 20_000;
-export const LEAD_BASH_NUDGE_AT = 15;
-export const ESCALATE_AT_TOKENS = 150_000; // from here a long lead context costs turns and answer quality: a fresh agent keeps both
-const IGNORED_NUDGES_TO_DENY = 2;
-const IGNORED_SUFFIX = '.ignored'; // next to the lead Bash count: nudges the lead went on past
-const TOKENS_PER_K = 1000;
-const NOTICE_SUFFIX = '.notice'; // marker next to the counter file: the early notice was given
-const CHECKPOINT_SUFFIX = '.checkpoint'; // marker next to the counter file: the 120-call checkpoint was given
-const SPAWN_PROMPT_BYTES = 512 * 1024;
+export const MAX_MAIN_AGENTS = 6; // the owner's limit of main agents at once (lex-dev-tess plan, "Rules")
+export const PENDING_MS = 2 * 60 * 1000; // a launch the permission dialog, Esc or another hook stops gets no SubagentStart
+export const STALE_MS = 3 * 60 * 60 * 1000; // 3 h with no tool call: longer than a main agent waits on its helpers
+const CLOCK_SKEW_MS = 60 * 1000;
+const MAX_STORE_BYTES = 64 * 1024;
+const STOPPED_KEPT = 200; // stopped main agent ids kept for a resume
+const KEY_BYTES = 8;
 const SAFE_ID = /^[\w-]{1,128}$/;
-const SHELL_TOOLS = new Set(['Bash', 'PowerShell']); // Windows can run the PowerShell tool; both count as shell calls
-const DELEGATING_TOOLS = new Set(['Agent', 'Task']); // the calls that hand work to an agent, so they reset the lead's Bash count
+const NO_STORE = { state: 'unusable', running: [] };
 
-const budgetPath = callCounterPath; // its mtime is also the writer gate's sign that the agent still works
+const mainAgentsDir = (env) => join(env.HOME || env.USERPROFILE || homedir(), '.claude', 'state', 'main-agents');
+
+/** The time of an agent's last tool call (its call counter's mtime), or 0 when it has made none. */
+function lastToolCall(session, agentId) {
+  const path = callCounterPath(session, agentId);
+  try {
+    return path === null ? 0 : statSync(path).mtimeMs;
+  } catch {
+    return 0; // no tool call yet
+  }
+}
+
+/** Whether a stored launch still holds a slot (the rules in the header). */
+function isRunning(launch, now, session) {
+  if (launch.at > now + CLOCK_SKEW_MS) return false;
+  if (typeof launch.agent !== 'string') return now - launch.at < PENDING_MS;
+  return now - Math.max(launch.at, lastToolCall(session, launch.agent)) < STALE_MS;
+}
+
+const isLaunch = (launch) => typeof launch?.key === 'string' && typeof launch.type === 'string' && Number.isFinite(launch.at)
+  && (launch.agent === undefined || SAFE_ID.test(launch.agent));
+
+/** The store's running launches and stopped ids; a missing or corrupt file reads as empty. */
+function parseRecord(text, now, session) {
+  try {
+    const record = text === null ? {} : JSON.parse(text);
+    const launches = (Array.isArray(record?.launches) ? record.launches : []).filter((launch) => isLaunch(launch) && isRunning(launch, now, session));
+    const stopped = (Array.isArray(record?.stopped) ? record.stopped : []).filter((id) => typeof id === 'string' && SAFE_ID.test(id));
+    return { launches, stopped };
+  } catch {
+    return { launches: [], stopped: [] };
+  }
+}
 
 /**
- * Counts one tool call of a subagent: appends one byte and reads the file size, so parallel calls never lose a count.
- * @param {string | null} path counter file (null for unsafe ids)
- * @returns {number} calls so far, 0 when it cannot be counted
+ * Runs change(record, now) on the session's record under its lock and stores what it returns as `record`.
+ * @returns {object | undefined} change's answer; NO_STORE when the store cannot be read or written; undefined when the lock stays taken
  */
-export function countCall(path) {
-  if (!path) return 0;
+function withRecord(session, env, change) {
+  const dir = mainAgentsDir(env);
+  return withSessionLock(dir, session, () => {
+    const now = Date.now();
+    const text = readSessionFile(dir, session, MAX_STORE_BYTES);
+    if (text === undefined) return NO_STORE;
+    const answer = change(parseRecord(text, now, session), now);
+    if (answer.record === undefined) return answer;
+    const stored = JSON.stringify({ launches: answer.record.launches, stopped: answer.record.stopped.slice(-STOPPED_KEPT) });
+    return writeSessionFile(dir, session, stored) ? answer : NO_STORE;
+  });
+}
+
+/**
+ * Claims a slot for an Agent or Task call of the main session, under the session's lock so parallel launches see each other.
+ * @param {unknown} input the PreToolUse hook input: session_id, agent_id (set inside a subagent), tool_input.subagent_type
+ * @param {Record<string, string | undefined>} env HOME / USERPROFILE (the store)
+ * @returns {{state: 'helper' | 'unrecorded' | 'recorded' | 'full' | 'unusable', key?: string, running: Array<{type: string}>, storePath?: string}}
+ *   helper: a call from inside a subagent (never capped); unrecorded: no usable session id (no store can be named); recorded: the
+ *   slot is taken under `key`; full: MAX_MAIN_AGENTS run; unusable: the store cannot be read or written, or its lock stays taken
+ */
+export function claimMainSlot(input, env = process.env) {
+  try {
+    if (input?.agent_id) return { state: 'helper', running: [] };
+    const session = input?.session_id;
+    if (!isSessionId(session)) return { state: 'unrecorded', running: [] };
+    const type = agentTypeOf(input.tool_input?.subagent_type);
+    const done = withRecord(session, env, (record, now) => {
+      if (record.launches.length >= MAX_MAIN_AGENTS) return { state: 'full', running: record.launches };
+      const key = randomBytes(KEY_BYTES).toString('hex');
+      const launches = [...record.launches, { key, type, at: now }];
+      return { state: 'recorded', key, running: launches, record: { ...record, launches } };
+    });
+    const { state, key, running } = done ?? NO_STORE;
+    return { state, ...(key ? { key } : {}), running, storePath: join(mainAgentsDir(env), `${session}.json`) };
+  } catch {
+    return NO_STORE;
+  }
+}
+
+/**
+ * Frees a slot claimMainSlot took for a launch that another gate then denied (it will never start).
+ * @param {unknown} session hook input session_id
+ * @param {unknown} key the `key` claimMainSlot returned
+ * @param {Record<string, string | undefined>} env HOME / USERPROFILE
+ * @returns {boolean} true when a pending launch with that key was removed
+ */
+export function releaseMainSlot(session, key, env = process.env) {
+  try {
+    if (!isSessionId(session) || typeof key !== 'string') return false;
+    const done = withRecord(session, env, (record) => {
+      const launches = record.launches.filter((launch) => launch.key !== key || typeof launch.agent === 'string');
+      return { released: launches.length < record.launches.length, record: { ...record, launches } };
+    });
+    return done?.released === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The deny reason for a claim, or '' when the launch may go on.
+ * @param {{state: string, running: Array<{type: string}>, storePath?: string}} claim claimMainSlot's answer
+ * @returns {string} the cap text naming the running types (`full`), the fail-closed text naming the store (`unusable`), else ''
+ */
+export function mainCapReason({ state, running, storePath }) {
+  if (state === 'unusable') return `agent cap: the main-agent record ${storePath ?? mainAgentsDir(process.env)} cannot be read or stays locked; fix or delete it, then launch again`;
+  if (state !== 'full') return '';
+  const types = running.map(({ type }) => quotedValue(type)).join(', ');
+  return `agent cap: ${MAX_MAIN_AGENTS} main agents of this session run (${types}); wait for one to return, or let a running agent start this one as its helper (store: ${storePath})`;
+}
+
+/**
+ * Marks a started agent as the main launch it belongs to (see the header); a helper's start changes nothing.
+ * @returns {boolean} true when a main launch was marked started (or a stopped main agent runs again)
+ */
+export function recordMainStart(session, agentId, type, env = process.env) {
+  try {
+    if (!isSessionId(session) || typeof agentId !== 'string' || !SAFE_ID.test(agentId)) return false;
+    const name = agentTypeOf(type);
+    const done = withRecord(session, env, (record, now) => {
+      if (record.launches.some((launch) => launch.agent === agentId)) return { started: false };
+      if (record.stopped.includes(agentId)) {
+        const launch = { key: randomBytes(KEY_BYTES).toString('hex'), type: name, at: now, agent: agentId };
+        return { started: true, record: { launches: [...record.launches, launch], stopped: record.stopped.filter((id) => id !== agentId) } };
+      }
+      const index = record.launches.findIndex((launch) => launch.type === name && typeof launch.agent !== 'string');
+      if (index === -1) return { started: false }; // a helper
+      const launches = record.launches.map((launch, at) => (at === index ? { ...launch, at: now, agent: agentId } : launch));
+      return { started: true, record: { ...record, launches } };
+    });
+    return done?.started === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Ends the main launch of a stopped agent and keeps its id for a resume; a helper's stop changes nothing.
+ * @returns {boolean} true when a main launch ended
+ */
+export function recordMainStop(session, agentId, env = process.env) {
+  try {
+    if (!isSessionId(session) || typeof agentId !== 'string' || !SAFE_ID.test(agentId)) return false;
+    const done = withRecord(session, env, (record) => {
+      const launches = record.launches.filter((launch) => launch.agent !== agentId);
+      if (launches.length === record.launches.length) return { stopped: false };
+      return { stopped: true, record: { launches, stopped: [...record.stopped, agentId] } };
+    });
+    return done?.stopped === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Appends one byte to a subagent's call counter (its mtime is the agent's last sign of work). */
+function markToolCall(session, agentId) {
+  const path = callCounterPath(session, agentId);
+  if (path === null) return;
   mkdirSync(dirname(path), { recursive: true });
   appendFileSync(path, '.');
-  return statSync(path).size;
 }
 
-/**
- * Claims one notice of an agent (the early notice or the checkpoint): the first caller creates the marker file, every later
- * caller finds it. Exclusive create is atomic, so parallel calls that all see a count past the number give it exactly once.
- * @param {string | null} path counter file (null for unsafe ids)
- * @param {string} suffix the notice's marker suffix (NOTICE_SUFFIX or CHECKPOINT_SUFFIX)
- * @returns {boolean} true for the one caller that may print the notice
- */
-function claimNotice(path, suffix) {
-  if (!path) return false;
-  try {
-    closeSync(openSync(`${path}${suffix}`, 'wx'));
-    return true;
-  } catch (error) {
-    if (error.code === 'EEXIST') return false;
-    throw error; // main() fails open
+/** Runs one hook event (see the header). */
+function handle(input, env) {
+  const { hook_event_name: event, session_id: session, agent_id: agentId, agent_type: type } = input ?? {};
+  if (event === 'PostToolUse' && agentId) markToolCall(session, agentId);
+  if (event === 'SubagentStart') {
+    recordAgentStart(session, agentId, type, env); // the guard's writer gate: it really runs
+    recordMainStart(session, agentId, type, env);
   }
-}
-
-/** The lead's Bash counter of a session, or null when the hook temp root is refused (lib/edit-log.mjs checkedTempRoot). */
-function leadBashPath(sessionId) {
-  const root = checkedTempRoot();
-  return root === null ? null : join(root, 'lead-bash', sessionId);
-}
-/** Its ignored-nudge counter next to it, or null when the root is refused. */
-function ignoredPath(sessionId) {
-  const path = leadBashPath(sessionId);
-  return path === null ? null : `${path}${IGNORED_SUFFIX}`;
-}
-const kTokens = (tokens) => `~${Math.round(tokens / TOKENS_PER_K)}k`;
-
-/** Nudges the lead went on past this session (since the last deny); 0 when there is no file. */
-function ignoredNudges(sessionId) {
-  const path = ignoredPath(sessionId);
-  if (path === null) return 0;
-  try {
-    return statSync(path).size;
-  } catch {
-    return 0; // no file yet
+  if (event === 'SubagentStop') {
+    recordAgentStop(session, agentId, type, env);
+    recordMainStop(session, agentId, env);
+    const path = callCounterPath(session, agentId);
+    if (path !== null) rmSync(path, { force: true });
   }
-}
-
-/**
- * Counts one lead Bash call since the last Agent/Task call, or resets the count when `tool` delegates.
- * @param {string} sessionId hook input session id
- * @param {string} tool tool name: 'Bash' counts, Agent or Task resets, anything else is ignored
- * @returns {number} Bash calls since the last delegation (0 for other tools, an unsafe id or a refused temp root)
- */
-export function leadBashCalls(sessionId, tool) {
-  if (!SAFE_ID.test(sessionId ?? '')) return 0;
-  const path = leadBashPath(sessionId);
-  if (path === null) return 0;
-  if (DELEGATING_TOOLS.has(tool)) {
-    rmSync(path, { force: true });
-    return 0;
-  }
-  return SHELL_TOOLS.has(tool) ? countCall(path) : 0;
-}
-
-/**
- * The nudge after one lead Bash, Agent or Task call, or null. Counts an ignored nudge when this Bash call comes right after one.
- * @param {object} input PostToolUse hook JSON of the lead (session_id, tool_name, transcript_path)
- * @returns {Promise<string | null>}
- */
-async function leadBashNudge(input) {
-  const calls = leadBashCalls(input.session_id, input.tool_name);
-  if (calls > LEAD_BASH_NUDGE_AT && calls % LEAD_BASH_NUDGE_AT === 1) countCall(ignoredPath(input.session_id));
-  if (calls === 0 || calls % LEAD_BASH_NUDGE_AT !== 0) return null;
-  const tokens = await contextTokens(input.transcript_path);
-  const size = tokens === undefined ? '(context size unknown)' : `at ${kTokens(tokens)} context`;
-  const nudge = `${calls} Bash calls in a row ${size}: delegate the rest to runner/implementer (a fresh agent keeps the lead turns and context small).`;
-  const ignored = ignoredNudges(input.session_id);
-  if (ignored < IGNORED_NUDGES_TO_DENY - 1) return nudge;
-  return `${nudge} ${ignored} nudge${ignored === 1 ? '' : 's'} ignored so far; if this one is ignored too, the next lead Bash call that `
-    + `is not git or read-only is denied once (at ${ESCALATE_AT_TOKENS / TOKENS_PER_K}k+ context).`;
-}
-
-/**
- * The escalation (see the header): the deny for the lead's next non-read-only Bash call after 2 ignored nudges at 150k+ context.
- * @param {object} input PreToolUse hook JSON (session_id, agent_id?, tool_input.command, cwd, transcript_path)
- * @param {Record<string, string | undefined>} env HOME (the advice store), CLAUDE_GUARD_LOG
- * @returns {Promise<string>} the deny JSON line, or '' (the call runs)
- */
-export async function leadBashDeny(input, env = process.env) {
-  const command = input?.tool_input?.command;
-  if (input.agent_id || !SHELL_TOOLS.has(input.tool_name) || !SAFE_ID.test(input.session_id ?? '') || typeof command !== 'string') return '';
-  const ignored = ignoredNudges(input.session_id);
-  if (ignored < IGNORED_NUDGES_TO_DENY || isReadOnlyCommand(command)) return '';
-  const tokens = await contextTokens(input.transcript_path);
-  if (tokens === undefined || tokens < ESCALATE_AT_TOKENS) return '';
-  const advice = `${kTokens(tokens)} context and ${ignored} delegate nudges ignored: delegate to runner/implementer `
-    + '(a fresh agent keeps the lead turns and context small). git and read-only commands stay with the lead.';
-  const { adviceOnce } = await import('./lib/bounce-once.mjs');
-  const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
-  const store = join(env.HOME || env.USERPROFILE || homedir(), '.claude', 'state', 'budget-denied'); // never the guard's: see adviceOnce
-  const deny = adviceOnce([advice], { command, cwd, input, hook: 'agent-budget', tool: 'Bash', store }, env);
-  if (deny !== '') rmSync(ignoredPath(input.session_id), { force: true }); // one deny per escalation: never a loop
-  return deny;
-}
-
-/** Characters in a Read result (file content when present, else the serialized response). */
-export function readChars(response) {
-  if (typeof response === 'string') return response.length;
-  const content = response?.file?.content ?? response?.content;
-  return typeof content === 'string' ? content.length : JSON.stringify(response ?? '').length;
-}
-
-/**
- * Context to inject after a tool call, or null.
- * @param {object} input PostToolUse hook JSON
- * @returns {Promise<string | null>}
- */
-export async function postToolUseContext(input) {
-  if (input.agent_id) {
-    const path = budgetPath(input.session_id, input.agent_id);
-    const calls = countCall(path);
-    // "80 or more", not "exactly 80": parallel calls can step the count past 80 without any call seeing 80.
-    if (calls >= EARLY_NOTICE_AT && calls < CALL_CAP && claimNotice(path, NOTICE_SUFFIX)) {
-      return `Budget: ${EARLY_NOTICE_AT} tool calls used. Commit what is green now. At ${CALL_CAP} calls comes a checkpoint, not a stop: commit, update the hand-over note, then go on.`;
-    }
-    // Owner rule R22-B1: a checkpoint, never a stop, so a lane is not cut in half; the commit and the note make a dropped connection lose nothing.
-    return calls >= CALL_CAP && claimNotice(path, CHECKPOINT_SUFFIX)
-      ? `Budget: ${calls} tool calls used (checkpoint at ${CALL_CAP}, not a stop). Commit what is green and update the hand-over note (the file your brief names, else HANDOFF.md in your worktree, not committed): done, left, next step, don't redo. Then go on with the brief while it progresses; stop only at the 2nd compaction or when blocked, and the next agent starts from your commit and that note.`
-      : null;
-  }
-  if (SHELL_TOOLS.has(input.tool_name) || DELEGATING_TOOLS.has(input.tool_name)) return leadBashNudge(input);
-  if (input.tool_name !== 'Read') return null;
-  const chars = readChars(input.tool_response);
-  return chars > READ_WARN_CHARS
-    ? `That Read returned about ${Math.round(chars / 1000)}k chars (warn at ${READ_WARN_CHARS / 1000}k). The lead does not read bulk files: have scout return a digest of at most 3k chars plus the file path, or read a small range with offset and limit.`
-    : null;
-}
-
-/**
- * The cap the spawn prompt names: first user message of the agent transcript. Read through lib/plain-file.mjs, so a FIFO, device or
- * link at the path is refused at once instead of holding the stop.
- * @param {unknown} transcriptPath agent_transcript_path (empty when unavailable)
- * @returns {{limit: number, unit: string} | null}
- * @throws {Error} when the transcript is missing, a link (`ELOOP`) or not a regular file (code NOT_PLAIN_FILE)
- */
-export function spawnCap(transcriptPath) {
-  if (typeof transcriptPath !== 'string' || !transcriptPath) return null;
-  const head = readPlainFileWith(transcriptPath, (fd, size) => {
-    const buf = Buffer.alloc(Math.min(size, SPAWN_PROMPT_BYTES));
-    readSync(fd, buf, 0, buf.length, 0);
-    return buf.toString('utf8');
-  });
-  for (const line of head.split('\n')) {
-    let entry;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue; // partial or corrupt line
-    }
-    if (entry?.message?.role !== 'user') continue;
-    const content = entry.message.content;
-    const text = typeof content === 'string' ? content : (Array.isArray(content) ? content : []).map((b) => b?.text ?? '').join('\n');
-    return parseCap(text);
-  }
-  return null;
-}
-
-/**
- * Why a subagent may not stop yet, or null.
- * @param {object} input SubagentStop hook JSON
- * @returns {string | null} message for the subagent when its report body (reportBody: the three required sections left out)
- *   is over the cap its spawn prompt states
- */
-export function subagentStopReason(input) {
-  if (input.stop_hook_active === true || !input.agent_id || typeof input.last_assistant_message !== 'string') return null;
-  let cap = null;
-  try {
-    cap = spawnCap(input.agent_transcript_path);
-  } catch {
-    // transcript unreadable: no stated cap, so no check
-  }
-  if (!cap) return null;
-  const { over, size } = overCap(reportBody(input.last_assistant_message), cap);
-  return over
-    ? `Your report body is ${size} ${cap.unit}; the cap is ${cap.limit} ${cap.unit}. The Constraints, Not run and Caveats sections are not counted `
-      + 'when they come last, each under its own heading (## Name, **Name** or Name:) and no heading of another name at their level or above after them. '
-      + 'Rewrite the body within the cap: verdict first, put detail in a file and give its path; keep the three sections whole.'
-    : null;
-}
-
-async function main() {
-  let raw = '';
-  for await (const chunk of process.stdin) raw += chunk;
-  const input = JSON.parse(raw);
-  if (input?.hook_event_name === 'PreToolUse') {
-    process.stdout.write(await leadBashDeny(input));
-  } else if (input?.hook_event_name === 'PostToolUse') {
-    markToolCall(input); // lib/stop-block-count.mjs: a tool call starts Claude Code's stop-block count over
-    const additionalContext = await postToolUseContext(input);
-    if (additionalContext) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext } }));
-  } else if (input?.hook_event_name === 'SubagentStart') {
-    recordAgentStart(input.session_id, input.agent_id, input.agent_type, process.env); // agent-model-guard's cap and writer gate: it really runs
-  } else if (input?.hook_event_name === 'SubagentStop') {
-    await countedGate('agent-budget', input, () => subagentStop(input)); // lib/stop-block-count.mjs: the cap record
-  }
-}
-
-/** The SubagentStop step: an over-long report is sent back (exit 2), else the agent's records end; true when it blocked. */
-function subagentStop(input) {
-  const reason = subagentStopReason(input);
-  if (reason) {
-    // blocked: the agent keeps running and its calls must keep counting
-    process.stderr.write(`${reason}\n`);
-    process.exitCode = 2;
-    return true;
-  }
-  recordAgentStop(input.session_id, input.agent_id, input.agent_type, process.env); // agent-model-guard's cap and writer gate: it finished
-  const path = budgetPath(input.session_id, input.agent_id);
-  if (path) {
-    // the agent is ending: its counter and notice markers are done
-    rmSync(path, { force: true });
-    rmSync(`${path}${NOTICE_SUFFIX}`, { force: true });
-    rmSync(`${path}${CHECKPOINT_SUFFIX}`, { force: true });
-  }
-  return false;
 }
 
 // ~/.claude/hooks is a symlink into this repo and import.meta.url is the resolved path, so compare real paths.
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   try {
-    await main();
+    let raw = '';
+    for await (const chunk of process.stdin) raw += chunk;
+    handle(JSON.parse(raw), process.env);
   } catch {
-    // fail open: a budget hook must never block or trap an agent
+    // fail open: a record hook must never block or trap an agent
   }
 }

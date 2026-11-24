@@ -16,7 +16,7 @@
 import { spawnSync } from 'node:child_process';
 import { devNull } from 'node:os';
 import { isAbsolute } from 'node:path';
-import { isWritingAgent } from './writer-agents.mjs';
+import { isWriterRole } from './agent-roles.mjs';
 
 const MAX_NAMES = 8; // a brief names a few branches; the cap bounds the git calls of one send
 const MAX_SCAN_CHARS = 32 * 1024; // a brief is a few KB; text past this is pasted material, not instructions
@@ -41,7 +41,7 @@ const CREATING_PHRASES = [
 ];
 const BRANCH_OFF = /\bnew branch\s+(?:off|from|based on)\s+(\S+)/gi;
 const ADVICE = 'A re-done lane continues the same branch: remove its old worktree, then `git switch <lane> && git rebase <base>` '
-  + '(implementer.md, "Same branch on a re-do"). Do not create a copy of an existing branch (`<lane>-2`, `-fix`, `-v2`, `-redo`).';
+  + '(dev.md: a re-done task continues its branch). Do not create a copy of an existing branch (`<lane>-2`, `-fix`, `-v2`, `-redo`).';
 
 /** The word without quotes, brackets and sentence punctuation around it (a loop, not a regex: a long run of them must not cost quadratic time). */
 function cleaned(word) {
@@ -103,7 +103,7 @@ export function copyBranchStem(name, repoDir, deadline = Infinity) {
 export function copyBranchBriefAdvice(input, env) {
   try {
     const { subagent_type: type, prompt } = input?.tool_input ?? {};
-    if (typeof prompt !== 'string' || !isWritingAgent(type, env)) return { deny: false };
+    if (typeof prompt !== 'string' || !isWriterRole(type, env)) return { deny: false };
     const repoDir = typeof input.cwd === 'string' ? input.cwd : env.CLAUDE_PROJECT_DIR;
     const { created, offOf } = branchNames(prompt);
     const deadline = performance.now() + positiveMs(DEADLINE_ENV, TOTAL_DEADLINE_MS);

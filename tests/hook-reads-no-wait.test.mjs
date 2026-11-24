@@ -65,14 +65,6 @@ try { readTranscriptTail(${JSON.stringify(fifo)}); console.log('read'); } catch 
   assert.equal(runChild(code), 'ENOTPLAIN');
 });
 
-test('agent-budget spawnCap refuses a FIFO agent transcript at once, and the stop check skips', { skip: SKIP }, () => {
-  const { fifo } = fifoBox('agent-budget-');
-  const code = `const { spawnCap, subagentStopReason } = await import(${JSON.stringify(hookUrl('agent-budget.mjs'))});
-try { spawnCap(${JSON.stringify(fifo)}); console.log('read'); } catch (error) { console.log(error.code); }
-console.log(subagentStopReason({ agent_id: 'a1', last_assistant_message: 'done', agent_transcript_path: ${JSON.stringify(fifo)} }));`;
-  assert.equal(runChild(code), 'ENOTPLAIN\nnull');
-});
-
 test('gated-folder readHead and startFolder answer null for a FIFO swapped in after the stat', { skip: SKIP }, () => {
   const box = fifoBox('gated-folder-');
   const code = `${STAT_RACE}const { readHead, startFolder } = await import(${JSON.stringify(hookUrl('lib/gated-folder.mjs'))});

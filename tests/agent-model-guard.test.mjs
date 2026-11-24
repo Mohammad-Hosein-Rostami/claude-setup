@@ -37,13 +37,13 @@ test('guardedAgentInput: an empty model counts as absent (it would inherit the l
 
 test('guardedAgentInput: forks, the repo agents (they pin their own model) and odd input are untouched', () => {
   assert.equal(guardedAgentInput({ ...BASE, subagent_type: 'fork' }), null);
-  for (const type of ['scout', 'security-auditor', 'architect', 'reviewer', 'implementer', 'toString', 'some-plugin:agent']) {
+  for (const type of ['lex-scout', 'security-auditor', 'lex', 'tess-review', 'dev', 'toString', 'some-plugin:agent']) {
     assert.equal(guardedAgentInput({ ...BASE, subagent_type: type }), null);
   }
   for (const bad of [undefined, null, 'Explore', 42]) assert.equal(guardedAgentInput(bad), null);
 });
 
-// The hook runs in the temp HOME, so no STATUS.md of this repo adds a line to the brief.
+// The hook runs in a temp HOME with the session's mode file and no agent files.
 function run(mode, stdin) {
   const home = makeTempDir('model-guard-');
   mkdirSync(join(home, '.claude', 'state', 'modes'), { recursive: true });
@@ -57,7 +57,7 @@ test('hook: a Plan call without model gets opus in all five modes; an explicit m
   const plan = (extra) => JSON.stringify({ session_id: 'sess1', tool_input: { ...BASE, subagent_type: 'Plan', ...extra } });
   for (const mode of ['normal', 'medium', 'high', 'extra-high', 'ultra-high']) {
     assert.equal(JSON.parse(run(mode, plan({})).stdout).hookSpecificOutput.updatedInput.model, 'opus', mode);
-    assert.equal(JSON.parse(run(mode, plan({ model: 'sonnet' })).stdout).hookSpecificOutput.updatedInput.model, 'sonnet', `${mode}: explicit`);
+    assert.equal(run(mode, plan({ model: 'sonnet' })).stdout, '', `${mode}: an explicit model is kept, so nothing is rewritten`);
   }
 });
 
@@ -94,7 +94,7 @@ test('hook: explicit model, a fork, a pinned repo agent and bad JSON exit 0 with
   }
 });
 
-// Pin floor (lib/agent-pins.mjs): the repo's own implementer and ui-implementer files are copied into a temp HOME, so the test reads
+// Pin floor (lib/agent-pins.mjs): the repo's own dev and dev-ui files are copied into a temp HOME, so the test reads
 // the pins that ship. No session_id: the launch-record gates stay out of these calls.
 const AGENTS = fileURLToPath(new URL('../home/agents/', import.meta.url));
 
@@ -102,7 +102,7 @@ function runWithAgents(toolInput, prepare = () => {}) {
   const home = makeTempDir('pin-floor-');
   const agents = join(home, '.claude', 'agents');
   mkdirSync(agents, { recursive: true });
-  for (const name of ['implementer', 'ui-implementer']) copyFileSync(join(AGENTS, `${name}.md`), join(agents, `${name}.md`));
+  for (const name of ['dev', 'dev-ui']) copyFileSync(join(AGENTS, `${name}.md`), join(agents, `${name}.md`));
   prepare(agents);
   const env = { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CODE_SUBAGENT_MODEL: 'claude-sonnet-5-5' };
   delete env.CLAUDE_CONFIG_DIR; // the personal folder is the temp HOME's
@@ -111,15 +111,15 @@ function runWithAgents(toolInput, prepare = () => {}) {
 }
 
 test('hook: a per-call model or effort below the agent file pin is left out; an equal, unknown or unpinned value passes', () => {
-  const lower = runWithAgents({ ...BASE, subagent_type: 'implementer', model: 'sonnet' });
+  const lower = runWithAgents({ ...BASE, subagent_type: 'dev', model: 'sonnet' });
   assert.equal(lower.status, 0);
   assert.deepEqual(JSON.parse(lower.stdout).hookSpecificOutput, {
-    hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: { ...BASE, subagent_type: 'implementer' },
+    hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: { ...BASE, subagent_type: 'dev' },
   });
-  const effort = JSON.parse(runWithAgents({ ...BASE, subagent_type: 'ui-implementer', effort: 'low', prompt: 'MATRIX: none: a one-file copy tweak' }).stdout);
-  assert.deepEqual(effort.hookSpecificOutput.updatedInput, { ...BASE, subagent_type: 'ui-implementer', prompt: 'MATRIX: none: a one-file copy tweak' });
-  for (const kept of [{ subagent_type: 'implementer', model: 'opus' }, { subagent_type: 'implementer', model: 'fable' },
-    { subagent_type: 'implementer', effort: 'max' }, { subagent_type: '../x', model: 'haiku' }, { subagent_type: 'scout', model: 'haiku' }]) {
+  const effort = JSON.parse(runWithAgents({ ...BASE, subagent_type: 'dev-ui', effort: 'low', prompt: 'MATRIX: none: a one-file copy tweak' }).stdout);
+  assert.deepEqual(effort.hookSpecificOutput.updatedInput, { ...BASE, subagent_type: 'dev-ui', prompt: 'MATRIX: none: a one-file copy tweak' });
+  for (const kept of [{ subagent_type: 'dev', model: 'opus' }, { subagent_type: 'dev', model: 'fable' },
+    { subagent_type: 'dev', effort: 'max' }, { subagent_type: '../x', model: 'haiku' }, { subagent_type: 'lex-scout', model: 'haiku' }]) {
     const r = runWithAgents({ ...BASE, ...kept });
     assert.equal(r.status, 0, JSON.stringify(kept));
     assert.equal(r.stdout, '', JSON.stringify(kept));
@@ -129,10 +129,10 @@ test('hook: a per-call model or effort below the agent file pin is left out; an 
 
 test('hook: a failure inside the pin floor lets the call run unchanged, with a stderr line and no deny', () => {
   const loop = (agents) => {
-    rmSync(join(agents, 'implementer.md'));
-    symlinkSync('implementer.md', join(agents, 'implementer.md')); // a link to itself: stat throws ELOOP
+    rmSync(join(agents, 'dev.md'));
+    symlinkSync('dev.md', join(agents, 'dev.md')); // a link to itself: stat throws ELOOP
   };
-  const r = runWithAgents({ ...BASE, subagent_type: 'implementer', model: 'sonnet' }, loop);
+  const r = runWithAgents({ ...BASE, subagent_type: 'dev', model: 'sonnet' }, loop);
   assert.equal(r.status, 0);
   assert.equal(r.stdout, '');
   assert.match(r.stderr, /^agent-model-guard: pin floor skipped: /);

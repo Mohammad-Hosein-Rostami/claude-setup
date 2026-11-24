@@ -1,4 +1,4 @@
-// The UI brief gate of agent-model-guard.mjs: denies once with advice for UI briefs. A `ui-implementer` or `visual-qa` call is quiet when
+// The UI brief gate of agent-model-guard.mjs: denies once with advice for UI briefs. A `dev-pixel` or `pixel-qa` call is quiet when
 // its prompt has a line that starts (after optional blanks) with `MATRIX: <path>` naming a coverage matrix (a JSON object with a
 // `surfaces` array; a relative path starts at the call's cwd, `~` is the home folder; the whole value, else matrixPathToken, so a trailing
 // note is allowed) or with `MATRIX: none: <reason>` for any change with no visual part (15+ characters, and only when the brief names no
@@ -19,7 +19,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { quotedValue, readFileHead } from './agent-brief.mjs';
 
-const UI_AGENT_TYPES = ['ui-implementer', 'visual-qa'];
+const UI_AGENT_TYPES = ['dev-pixel', 'pixel-qa']; // the agents of the pixel path (dev-pixel builds, pixel-qa is its final gate)
 // A line that starts with `MATRIX:` after optional blanks. Lines end at \n; a CRLF line's \r is left out of the value.
 const MATRIX_LINE = /(?:^|\n)[ \t]*MATRIX:([^\r\n]*)/g;
 const MAX_MATRIX_LINES = 5; // a brief names one matrix; the cap bounds the files read for one call
@@ -115,7 +115,7 @@ export function matrixPathToken(value) {
 const denyOutput = (reason) => `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } })}\n`;
 
 /**
- * The UI brief gate (see the header): the deny for a ui-implementer or visual-qa call whose prompt names no usable coverage matrix,
+ * The UI brief gate (see the header): the deny for a dev-pixel or pixel-qa call whose prompt names no usable coverage matrix,
  * given once per identical call.
  * @param {unknown} input the hook input: tool_input {subagent_type, prompt}, cwd (else this process's folder), session_id
  * @param {Record<string, string | undefined>} env process environment (HOME for `~` and the store, CLAUDE_GUARD_LOG)

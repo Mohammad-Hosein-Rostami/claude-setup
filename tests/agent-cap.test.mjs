@@ -1,10 +1,9 @@
-// Tests for the agent cap (lane agent-cap, plan "no workflows" C7/C9): at most MAX_RUNNING_AGENTS (5) agents of any kind run at once per
-// session, enforced by the PreToolUse(Agent|Task) hook (home/hooks/agent-model-guard.mjs) over the launch record
-// home/hooks/lib/agent-launches.mjs keeps; the settings turn workflows off and set the CLI's own env cap as a backstop (equal to the
-// hook's number); scripts/doctor.sh `check_agent_cap` fails when the live settings drift from that.
+// Tests for the launch record home/hooks/lib/agent-launches.mjs keeps for the writer isolation gate of agent-model-guard.mjs (pending,
+// started, idle, resumed and stopped agents, its own `cap` option, fail closed on an unusable store), and for the settings that turn
+// workflows off with scripts/doctor.sh `check_agent_cap`. The main-agent cap itself is tested in agent-budget.test.mjs.
 // Each test has a private HOME (the launch record) and its own session id; call counters live in a private TMPDIR.
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
@@ -18,12 +17,10 @@ import { callCounterPath } from '../home/hooks/lib/writer-agents.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const GUARD = join(REPO, 'home', 'hooks', 'agent-model-guard.mjs');
-const BUDGET = join(REPO, 'home', 'hooks', 'agent-budget.mjs');
 const DOCTOR = join(REPO, 'scripts', 'doctor.sh');
 const HOOK_TIMEOUT_MS = 5000;
 const SECOND_MS = 1000;
 const PAUSE_MS = 25; // so a file's mtime is later than a time read just before (resume tests)
-const PARALLEL_LAUNCHES = 6;
 const hasJq = spawnSync('jq', ['--version']).status === 0;
 const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
 let counter = 0;
@@ -61,22 +58,10 @@ const parseOutput = ({ status, stdout, stderr }) => {
   return stdout === '' ? null : JSON.parse(stdout).hookSpecificOutput;
 };
 const guard = (s, toolInput, extra) => parseOutput(spawnSync(process.execPath, [GUARD], { input: hookInput(s, toolInput, extra), encoding: 'utf8', env: guardEnv(s), timeout: HOOK_TIMEOUT_MS }));
-const guardAsync = (s, toolInput) => new Promise((resolve) => {
-  const child = spawn(process.execPath, [GUARD], { env: guardEnv(s) });
-  let stdout = '';
-  child.stdout.on('data', (chunk) => { stdout += chunk; });
-  child.on('close', (status) => resolve(parseOutput({ status, stdout, stderr: '' })));
-  child.stdin.end(hookInput(s, toolInput));
-});
-const budgetEvent = (s, event, agentId, agentType) => {
-  const input = { hook_event_name: event, session_id: s.session, agent_id: agentId, agent_type: agentType, last_assistant_message: 'done', stop_hook_active: false };
-  const { status, stderr } = spawnSync(process.execPath, [BUDGET], { input: JSON.stringify(input), encoding: 'utf8', env: guardEnv(s) });
-  assert.equal(status, 0, stderr);
-};
 const denied = (out) => out?.permissionDecision === 'deny';
 const scoutCall = (n) => ({ subagent_type: 'scout', description: 'look', prompt: `job ${n}` });
 
-// ---- acceptance: the 6th launch ----
+// ---- the launch record: its own cap option (the guard caps main agents in agent-budget.mjs instead) ----
 
 test('MAX_RUNNING_AGENTS is 5', () => {
   assert.equal(MAX_RUNNING_AGENTS, 5);
@@ -93,52 +78,15 @@ test('the 6th recorded launch returns full with 5 running entries and records no
   assert.equal(runningAgentsOf(s.session, s.env, Date.now()).length, 5);
 });
 
-test('the hook denies the 6th agent every time with the cap text that lists the running ones; a stop frees a slot', () => {
-  const s = newSession();
-  for (let n = 0; n < MAX_RUNNING_AGENTS; n += 1) assert.ok(!denied(guard(s, scoutCall(n))), `launch ${n + 1}`);
-  const expected = `agent cap: 5 agents of this session run (${Array(5).fill('scout pending').join(', ')}); wait for one to return (store: ${storeOf(s)})`;
-  assert.equal(guard(s, scoutCall(6)).permissionDecisionReason, expected);
-  assert.ok(denied(guard(s, scoutCall(6))), 'the identical call sent again is denied too');
-  budgetEvent(s, 'SubagentStart', 'agentaaaa-1111', 'scout');
-  assert.match(guard(s, scoutCall(7)).permissionDecisionReason, /\(scout agentaaa, scout pending/);
-  budgetEvent(s, 'SubagentStop', 'agentaaaa-1111', 'scout');
-  assert.ok(!denied(guard(s, scoutCall(8))), 'one agent returned: the next launch runs');
-});
-
-test('every kind counts: writers, isolated writers and read-only agents share the 5 slots', () => {
-  const s = newSession();
-  const calls = [
-    { subagent_type: 'implementer', prompt: 'one' },
-    { subagent_type: 'implementer', prompt: 'two', isolation: 'worktree' },
-    { subagent_type: 'reviewer', prompt: 'three' },
-    { subagent_type: 'Explore', prompt: 'four' },
-    { subagent_type: 'some-plugin:helper', prompt: 'five' },
-  ];
-  for (const call of calls) assert.ok(!denied(guard(s, call)), call.subagent_type);
-  assert.match(guard(s, { subagent_type: 'runner', prompt: 'six' }).permissionDecisionReason, /^agent cap: 5 agents of this session run \(implementer pending, implementer pending, reviewer pending/);
-  assert.ok(denied(guard(s, { subagent_type: 'implementer', prompt: 'seven', isolation: 'worktree' })));
-});
-
-test('a call that another gate of the hook denies holds no slot', () => {
-  const s = newSession();
-  assert.ok(denied(guard(s, { subagent_type: 'ui-implementer', description: 'ui', prompt: 'build the screen' })), 'a UI brief with no MATRIX line is denied once');
-  assert.deepEqual(runningAgentsOf(s.session, s.env, Date.now()), []);
-});
-
-test('a hook input with no usable session id is not capped (no store can be named)', () => {
-  const s = newSession();
-  for (let n = 0; n < PARALLEL_LAUNCHES; n += 1) assert.ok(!denied(guard(s, scoutCall(n), { session_id: undefined })));
-});
-
 // ---- fail closed (P3, OD-6) ----
 
-test('a launch record that cannot be read gives the fail-closed deny that names it', (t) => {
+test('a launch record that cannot be read gives the writer gate a fail-closed deny that names it', (t) => {
   if (isRoot) return t.diagnostic('not run: root reads a mode 000 file');
   const s = newSession();
   assert.ok(!denied(guard(s, scoutCall(1))));
   chmodSync(storeOf(s), 0);
   const out = guard(s, scoutCall(2));
-  assert.equal(out.permissionDecisionReason, `agent cap: the launch record ${storeOf(s)} cannot be read or stays locked; fix or delete it, then launch again`);
+  assert.equal(out.permissionDecisionReason, `writer gate: the launch record ${storeOf(s)} cannot be read or stays locked; fix or delete it, then launch again`);
   assert.equal(launch(s).state, 'unusable');
   chmodSync(storeOf(s), 0o600);
   assert.ok(!denied(guard(s, scoutCall(3))), 'readable again: the launch runs');
@@ -152,18 +100,6 @@ test('a lock that stays taken is unusable too (fail closed, not "no one runs")',
   assert.equal(result.state, 'unusable');
   assert.deepEqual(result.running, []);
   assert.equal(result.storePath, storeOf(s));
-});
-
-// ---- F1 two at once ----
-
-test('F1: six launches in one message (parallel hook processes) record exactly 5 and deny 1, every round', async () => {
-  for (let round = 0; round < 3; round += 1) {
-    const s = newSession();
-    const outs = await Promise.all(Array.from({ length: PARALLEL_LAUNCHES }, (_, n) => guardAsync(s, scoutCall(n))));
-    assert.equal(outs.filter((out) => !denied(out)).length, MAX_RUNNING_AGENTS, JSON.stringify(outs));
-    assert.equal(outs.filter(denied).length, 1);
-    assert.equal(readStore(s).launches.length, MAX_RUNNING_AGENTS, 'the store holds exactly the 5 recorded, whole');
-  }
 });
 
 // ---- F2 stale ----
@@ -318,10 +254,6 @@ test('settings/base.json turns workflows off by setting, env and deny rule, and 
   assert.ok(base.permissions.deny.includes('Workflow'));
   assert.ok(!base.permissions.allow.includes('Workflow'));
   assert.ok(!(base.permissions.additionalDirectories ?? []).some((dir) => dir.endsWith('/workflows')));
-});
-
-test('the env backstop equals the hook cap', () => {
-  assert.equal(Number(base.env.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS), MAX_RUNNING_AGENTS);
 });
 
 const GOOD_LIVE = {

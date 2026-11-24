@@ -1,486 +1,229 @@
-// Tests for home/hooks/agent-budget.mjs (call counter and its 120-call checkpoint, Read-size warning, SubagentStop word cap on
-// the report body), home/hooks/final-reply-cap.mjs (Stop line cap) and home/hooks/lib/reply-cap.mjs (cap parser, reportBody).
-import test from 'node:test';
+// Tests for the main-agent cap of home/hooks/agent-budget.mjs, enforced through agent-model-guard.mjs (PreToolUse Agent|Task): at
+// most MAX_MAIN_AGENTS (6) agents launched from the main session run at once, helpers (a call with agent_id) never count, a launch
+// another gate denies holds no slot, pending launches expire, a started one runs until its SubagentStop (or STALE_MS idle), a
+// resumed main agent counts again, and an unusable record denies (fail closed). The budget hook itself prints nothing.
+// Each test has a private HOME (the records) and its own session id; call counters live in a private TMPDIR.
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { spawn, spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { CALL_CAP, EARLY_NOTICE_AT, READ_WARN_CHARS, readChars } from '../home/hooks/agent-budget.mjs';
-import { tempRoot } from '../home/hooks/lib/edit-log.mjs';
-import { isReadOnlyCommand } from '../home/hooks/lib/read-only-command.mjs';
-import { measure, overCap, parseCap, reportBody } from '../home/hooks/lib/reply-cap.mjs';
+import { hookEnv } from './hook-env.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
-const BUDGET = fileURLToPath(new URL('../home/hooks/agent-budget.mjs', import.meta.url));
-const REPLY_CAP = fileURLToPath(new URL('../home/hooks/final-reply-cap.mjs', import.meta.url));
+process.env.TMPDIR = makeTempDir('agent-budget-tmp-'); // the call counters (callCounterPath) go under the temp root of this process
+const { MAX_MAIN_AGENTS, PENDING_MS, STALE_MS, claimMainSlot, recordMainStart, recordMainStop, releaseMainSlot } = await import('../home/hooks/agent-budget.mjs');
+const { callCounterPath } = await import('../home/hooks/lib/writer-agents.mjs');
+
+const REPO = fileURLToPath(new URL('..', import.meta.url));
+const GUARD = join(REPO, 'home', 'hooks', 'agent-model-guard.mjs');
+const BUDGET = join(REPO, 'home', 'hooks', 'agent-budget.mjs');
+const HOOK_TIMEOUT_MS = 5000;
+const SECOND_MS = 1000;
+const MINUTE_MS = 60 * SECOND_MS;
+const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
 let counter = 0;
-const uid = (prefix) => `${prefix}${process.pid}x${Date.now()}x${counter++}`; // counter files live in the shared temp dir
 
-async function home() {
-  const dir = makeTempDir('agent-budget-');
-  await mkdir(join(dir, '.claude', 'state', 'modes'), { recursive: true });
-  return dir;
+/** A private HOME and a session id; `env` is what the lib functions take. */
+function newSession() {
+  const home = makeTempDir('agent-budget-home-');
+  return { home, env: { HOME: home, USERPROFILE: home }, session: `budget-${process.pid}-${counter++}` };
 }
-const run = (script, dir, input, raw) =>
-  spawnSync(process.execPath, [script], { input: raw ?? JSON.stringify(input), encoding: 'utf8', env: { ...process.env, HOME: dir, USERPROFILE: dir, CLAUDE_MODE: '' } });
-const words = (n) => Array.from({ length: n }, (_, i) => `w${i}`).join(' ');
-const userLine = (text) => JSON.stringify({ type: 'user', message: { role: 'user', content: text } });
-
-test('parseCap reads caps tied to the reply', () => {
-  assert.deepEqual(parseCap('Return ≤ 12 lines'), { limit: 12, unit: 'lines' });
-  assert.deepEqual(parseCap('Report ≤ 250 words with file:line'), { limit: 250, unit: 'words' });
-  assert.deepEqual(parseCap('Final reply max 25 lines, no tables'), { limit: 25, unit: 'lines' });
-  assert.deepEqual(parseCap('The final answer has a 25-line cap'), { limit: 25, unit: 'lines' });
-  assert.deepEqual(parseCap('Reply in 20 lines.'), { limit: 20, unit: 'lines' });
-  assert.deepEqual(parseCap('Send a 25-line report please'), { limit: 25, unit: 'lines' });
-  assert.deepEqual(parseCap('Return a report of at most 3 lines.'), { limit: 3, unit: 'lines' });
-});
-
-test('parseCap ignores rule quotes and per-file or per-function limits (regression)', () => {
-  for (const text of [
-    'C4 files <=300 lines', 'Files <=300 lines; C3 one job per function: <=40 lines', 'Keep files under 300 lines.',
-    'Return functions of at most 40 lines', 'Report files under 300 lines', 'Keep each report section to 5 lines',
-    'no more than 3 words in the label', 'C3 | One job per function: <=40 lines, <=4 params', 'هر فایل حداکثر ۳۰۰ خط باشد', undefined,
-  ]) assert.equal(parseCap(text), null, String(text));
-});
-
-test('parseCap reads Persian caps, with Persian and Arabic-Indic digits', () => {
-  assert.deepEqual(parseCap('حداکثر ۳۰۰ کلمه'), { limit: 300, unit: 'words' });
-  assert.deepEqual(parseCap('گزارش حداکثر ۳۰۰ کلمه باشد'), { limit: 300, unit: 'words' });
-  assert.deepEqual(parseCap('پاسخ در ۲۰ خط'), { limit: 20, unit: 'lines' });
-  assert.deepEqual(parseCap('حداکثر ٢٥ سطر'), { limit: 25, unit: 'lines' });
-  assert.deepEqual(parseCap('حداکثر 120 کلمه'), { limit: 120, unit: 'words' });
-});
-
-test('measure counts words and non-empty lines; overCap is strict', () => {
-  assert.equal(measure('a b\n\nc', 'words'), 3);
-  assert.equal(measure('a b\n\nc', 'lines'), 2);
-  assert.deepEqual(overCap(words(5), { limit: 5, unit: 'words' }), { over: false, size: 5 });
-  assert.equal(overCap(words(6), { limit: 5, unit: 'words' }).over, true);
-});
-
-test('readChars uses file content, a string, or the serialized response', () => {
-  assert.equal(readChars({ file: { content: 'abcd' } }), 4);
-  assert.equal(readChars('abc'), 3);
-  assert.equal(readChars({ x: 1 }), '{"x":1}'.length);
-});
-
-const NOTICE_80 = 'Budget: 80 tool calls used. Commit what is green now. At 120 calls comes a checkpoint, not a stop: commit, update the hand-over note, then go on.';
-const limitText = (calls) => `Budget: ${calls} tool calls used (checkpoint at 120, not a stop). Commit what is green and update the hand-over note (the file your brief names, else HANDOFF.md in your worktree, not committed): done, left, next step, don't redo. Then go on with the brief while it progresses; stop only at the 2nd compaction or when blocked, and the next agent starts from your commit and that note.`;
-
-// Runs one subagent for `calls` tool calls and returns what the hook printed for each call ('' when silent).
-async function budgetOutputs(calls) {
-  const dir = await home();
-  const input = { hook_event_name: 'PostToolUse', session_id: uid('s'), agent_id: uid('a'), tool_name: 'Bash' };
-  return Array.from({ length: calls }, () => run(BUDGET, dir, input).stdout);
+const dirOf = (s) => join(s.home, '.claude', 'state', 'main-agents');
+const storeOf = (s) => join(dirOf(s), `${s.session}.json`);
+const readStore = (s) => JSON.parse(readFileSync(storeOf(s), 'utf8'));
+const seedStore = (s, record) => {
+  mkdirSync(dirOf(s), { recursive: true, mode: 0o700 });
+  writeFileSync(storeOf(s), JSON.stringify(record), { mode: 0o600 });
+};
+const claim = (s, type = 'lex', extra = {}) => claimMainSlot({ session_id: s.session, tool_input: { subagent_type: type }, ...extra }, s.env);
+/** How many launches hold a slot now: a claim lists every running launch, its own included, and is given back at once. */
+function running(s) {
+  const probe = claim(s, 'probe');
+  assert.equal(releaseMainSlot(s.session, probe.key, s.env), true);
+  return probe.running.length - 1;
 }
-const contextOf = (output) => JSON.parse(output).hookSpecificOutput.additionalContext;
 
-test('the call limit is 120 and the early notice is at 80', () => {
-  assert.equal(CALL_CAP, 120);
-  assert.equal(EARLY_NOTICE_AT, 80);
+// ---- the hooks, spawned the way Claude Code runs them ----
+
+const hookEnvOf = (s) => hookEnv({ HOME: s.home, USERPROFILE: s.home, CLAUDE_PROJECT_DIR: s.home });
+const guardInput = (s, toolInput, extra = {}) => JSON.stringify({
+  hook_event_name: 'PreToolUse', session_id: s.session, cwd: s.home, tool_name: 'Agent', tool_input: toolInput, ...extra,
+});
+const parseOutput = ({ status, stdout, stderr }) => {
+  assert.equal(status, 0, stderr);
+  return stdout === '' ? null : JSON.parse(stdout).hookSpecificOutput;
+};
+const guard = (s, toolInput, extra) => parseOutput(spawnSync(process.execPath, [GUARD], {
+  input: guardInput(s, toolInput, extra), encoding: 'utf8', env: hookEnvOf(s), timeout: HOOK_TIMEOUT_MS,
+}));
+const guardAsync = (s, toolInput) => new Promise((resolve) => {
+  const child = spawn(process.execPath, [GUARD], { env: hookEnvOf(s) });
+  let stdout = '';
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  child.on('close', (status) => resolve(parseOutput({ status, stdout, stderr: '' })));
+  child.stdin.end(guardInput(s, toolInput));
+});
+/** Runs the budget hook for one event; returns its stdout (always '' when it works as it should). */
+function budgetEvent(s, event, agentId, agentType, extra = {}) {
+  const input = { hook_event_name: event, session_id: s.session, agent_id: agentId, agent_type: agentType, ...extra };
+  const run = spawnSync(process.execPath, [BUDGET], { input: JSON.stringify(input), encoding: 'utf8', env: { ...hookEnvOf(s), TMPDIR: process.env.TMPDIR } });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.stderr, '');
+  return run.stdout;
+}
+const denied = (out) => out?.permissionDecision === 'deny';
+// isolation "worktree" keeps the writer isolation gate out of the cap tests; lex, tess and lex-scout are no writers anyway
+const mainCall = (n, type = 'lex') => ({ subagent_type: type, description: 'job', prompt: `job ${n}`, isolation: 'worktree' });
+const touchCounter = (session, agent, ms) => {
+  const path = callCounterPath(session, agent);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, '.');
+  utimesSync(path, ms / SECOND_MS, ms / SECOND_MS);
+};
+
+test('the cap is 6 main agents', () => {
+  assert.equal(MAX_MAIN_AGENTS, 6);
 });
 
-test('a subagent is silent up to call 79, gets the commit notice at 80 exactly once, and is silent 81-119', async () => {
-  const outputs = await budgetOutputs(CALL_CAP - 1);
-  assert.ok(outputs.slice(0, EARLY_NOTICE_AT - 1).every((o) => o === ''), 'silent at 1-79');
-  const notice = JSON.parse(outputs[EARLY_NOTICE_AT - 1]).hookSpecificOutput;
-  assert.equal(notice.hookEventName, 'PostToolUse');
-  assert.equal(notice.additionalContext, NOTICE_80);
-  assert.ok(outputs.slice(EARLY_NOTICE_AT, CALL_CAP - 1).every((o) => o === ''), 'silent at 81-119');
+test('the guard runs 6 main agents and denies the 7th every time, naming the running types; a stop frees a slot', () => {
+  const s = newSession();
+  const types = ['lex', 'dev', 'tess', 'lex', 'dev', 'tess'];
+  types.forEach((type, n) => assert.ok(!denied(guard(s, mainCall(n, type))), `launch ${n + 1}`));
+  const expected = `agent cap: 6 main agents of this session run (${types.join(', ')}); wait for one to return, or let a running agent start `
+    + `this one as its helper (store: ${storeOf(s)})`;
+  assert.equal(guard(s, mainCall(7)).permissionDecisionReason, expected);
+  assert.ok(denied(guard(s, mainCall(7))), 'the identical call sent again is denied too');
+  assert.equal(budgetEvent(s, 'SubagentStart', 'agent-lex-1', 'lex'), '');
+  assert.ok(denied(guard(s, mainCall(8))), 'a started agent still holds its slot');
+  assert.equal(budgetEvent(s, 'SubagentStop', 'agent-lex-1', 'lex'), '');
+  assert.ok(!denied(guard(s, mainCall(9))), 'one agent returned: the next launch runs');
 });
 
-test('a subagent gets the limit text once at call 120 and no reminder after it (one nudge after 120)', async () => {
-  const outputs = await budgetOutputs(CALL_CAP + 20);
-  assert.equal(contextOf(outputs[CALL_CAP - 1]), limitText(120));
-  assert.ok(outputs.slice(CALL_CAP, CALL_CAP + 20).every((o) => o === ''), 'no reminder after the one nudge');
-});
-
-test('owner rule R22-B1: at 120 calls the text is a checkpoint (commit, hand-over note, go on), never "return your report"', async () => {
-  const text = contextOf((await budgetOutputs(CALL_CAP)).at(-1));
-  for (const clause of ['Commit what is green', 'update the hand-over note', 'Then go on with the brief while it progresses',
-    'stop only at the 2nd compaction or when blocked']) assert.ok(text.includes(clause), clause);
-  assert.doesNotMatch(text, /return your report|marked "unfinished"|\(limit /);
-  assert.doesNotMatch(NOTICE_80, /stopping point/, 'the 80 notice no longer plans a stop at 120');
-});
-
-test('the checkpoint survives a count that jumps past 120 (parallel calls): one checkpoint, not skipped, not repeated', async () => {
-  const dir = await home();
-  const ids = { session_id: uid('s'), agent_id: uid('a') };
-  const counter = join(tempRoot(), 'budget', `${ids.session_id}--${ids.agent_id}`);
-  await mkdir(dirname(counter), { recursive: true });
-  await writeFile(counter, '.'.repeat(CALL_CAP)); // call 120 was handled by a racing process that saw 121
-  const input = { hook_event_name: 'PostToolUse', ...ids, tool_name: 'Bash' };
-  assert.equal(contextOf(run(BUDGET, dir, input).stdout), limitText(121), 'the call that sees 121 gives the checkpoint');
-  assert.equal(run(BUDGET, dir, input).stdout, '', 'the call that sees 122 gives none');
-  run(BUDGET, dir, { hook_event_name: 'SubagentStop', ...ids, agent_type: 'implementer', last_assistant_message: 'done' });
-  assert.ok(!existsSync(counter) && !existsSync(`${counter}.checkpoint`), 'counter and checkpoint marker removed at the stop');
-});
-
-test('the early notice survives a count that jumps past 80 (parallel calls): one notice, not skipped, not repeated', async () => {
-  const dir = await home();
-  const ids = { session_id: uid('s'), agent_id: uid('a') };
-  const counter = join(tempRoot(), 'budget', `${ids.session_id}--${ids.agent_id}`);
-  await mkdir(dirname(counter), { recursive: true });
-  await writeFile(counter, '.'.repeat(81)); // calls 80 and 81 were handled by racing processes that both saw 82
-  const input = { hook_event_name: 'PostToolUse', ...ids, tool_name: 'Bash' };
-  assert.equal(contextOf(run(BUDGET, dir, input).stdout), NOTICE_80, 'the call that sees 82 gives the notice');
-  assert.equal(run(BUDGET, dir, input).stdout, '', 'the call that sees 83 gives none');
-  assert.equal(run(BUDGET, dir, input).stdout, '');
-});
-
-test('the notice marker goes away with the counter when the agent ends', async () => {
-  const dir = await home();
-  const ids = { session_id: uid('s'), agent_id: uid('a') };
-  const counter = join(tempRoot(), 'budget', `${ids.session_id}--${ids.agent_id}`);
-  await mkdir(dirname(counter), { recursive: true });
-  await writeFile(counter, '.'.repeat(EARLY_NOTICE_AT - 1));
-  run(BUDGET, dir, { hook_event_name: 'PostToolUse', ...ids, tool_name: 'Bash' });
-  assert.ok(existsSync(`${counter}.notice`), 'marker written with the notice');
-  run(BUDGET, dir, { hook_event_name: 'SubagentStop', ...ids, agent_type: 'implementer', last_assistant_message: 'done' });
-  assert.ok(!existsSync(counter) && !existsSync(`${counter}.notice`), 'both removed');
-});
-
-test('the limit in the hook matches the budget the implementer agents and the lead rules state', () => {
-  for (const file of ['home/CLAUDE.md', 'home/agents/ui-implementer.md']) { // r9-dedupe part 2: the worker budget line lives in CLAUDE.md
-    assert.match(readFileSync(fileURLToPath(new URL(`../${file}`, import.meta.url)), 'utf8'), new RegExp(`about ${CALL_CAP} tool calls`), file);
+test('helpers are never capped: a call from inside a subagent (agent_id) runs while 6 main agents run, and takes no slot', () => {
+  const s = newSession();
+  for (let n = 0; n < MAX_MAIN_AGENTS; n += 1) assert.ok(!denied(guard(s, mainCall(n))));
+  for (const type of ['lex-scout', 'dev-run', 'tess-review', 'lex-web']) {
+    assert.ok(!denied(guard(s, mainCall(type, type), { agent_id: 'agent-dev-1', agent_type: 'dev' })), type);
   }
-  assert.match(readFileSync(fileURLToPath(new URL('../home/lead-rules.md', import.meta.url)), 'utf8'), new RegExp(`~${CALL_CAP} tool calls`));
+  assert.equal(readStore(s).launches.length, MAX_MAIN_AGENTS);
 });
 
-test('the main thread is never counted; unsafe ids write nothing and stay silent', async () => {
-  const dir = await home();
-  const main = run(BUDGET, dir, { hook_event_name: 'PostToolUse', session_id: uid('s'), tool_name: 'Bash' });
-  assert.equal(main.status, 0);
-  assert.equal(main.stdout, '');
-  const unsafe = run(BUDGET, dir, { hook_event_name: 'PostToolUse', session_id: '../x', agent_id: '../y', tool_name: 'Bash' });
-  assert.equal(unsafe.status, 0);
-  assert.equal(unsafe.stdout, '');
+test('a call another gate denies holds no slot: the UI gate before the cap, the writer gate after it gives the slot back', () => {
+  const s = newSession();
+  assert.ok(denied(guard(s, { subagent_type: 'dev-pixel', description: 'ui', prompt: 'build the screen' })), 'no MATRIX line: denied once');
+  assert.equal(existsSync(storeOf(s)), false, 'nothing recorded');
+  const plainWriter = (prompt) => ({ subagent_type: 'dev', description: 'build', prompt });
+  assert.ok(!denied(guard(s, plainWriter('lane one'))), 'the first writer runs');
+  assert.ok(denied(guard(s, plainWriter('lane two'))), 'a second plain writer is denied once by the writer gate');
+  assert.equal(readStore(s).launches.length, 1, 'the denied writer gave its slot back');
 });
 
-test('a big Read warns every lead session (lead rules: no Read > ~20k)', async () => {
-  const dir = await home();
-  const sid = uid('s');
-  const big = { hook_event_name: 'PostToolUse', session_id: sid, tool_name: 'Read', tool_response: { file: { content: 'x'.repeat(READ_WARN_CHARS + 1) } } };
-  const out = JSON.parse(run(BUDGET, dir, big).stdout).hookSpecificOutput;
-  assert.match(out.additionalContext, /about 20k chars.*scout/);
-  await writeFile(join(dir, '.claude', 'state', 'modes', sid), 'high\n'); // a mode file an older setup left: read by nothing
-  assert.match(run(BUDGET, dir, big).stdout, /about 20k chars/);
-  const small = { ...big, tool_response: { file: { content: 'x'.repeat(READ_WARN_CHARS) } } };
-  assert.equal(run(BUDGET, dir, small).stdout, '', 'at the limit is fine');
-  assert.equal(run(BUDGET, dir, { ...big, tool_name: 'Grep' }).stdout, '', 'only Read');
-  assert.equal(run(BUDGET, dir, { ...big, agent_id: uid('a') }).stdout, '', 'a subagent is counted, not Read-warned');
+test('a hook input with no usable session id is not capped (no store can be named)', () => {
+  const s = newSession();
+  for (let n = 0; n <= MAX_MAIN_AGENTS + 1; n += 1) assert.ok(!denied(guard(s, mainCall(n), { session_id: undefined })));
+  assert.equal(claimMainSlot({ tool_input: { subagent_type: 'lex' } }, s.env).state, 'unrecorded');
 });
 
-test('SubagentStop with no cap in the spawn prompt never blocks, however long the report', async () => {
-  const dir = await home();
-  const transcript = join(dir, 'agent.jsonl');
-  await writeFile(transcript, `${userLine('Extract the rows and return the data. Keep files under 300 lines.')}\n`);
-  const base = { hook_event_name: 'SubagentStop', session_id: uid('s'), agent_id: uid('a'), agent_type: 'general-purpose' };
-  assert.equal(run(BUDGET, dir, { ...base, agent_transcript_path: transcript, last_assistant_message: words(5000) }).status, 0);
-  assert.equal(run(BUDGET, dir, { ...base, last_assistant_message: words(5000) }).status, 0, 'no transcript path');
-  assert.equal(run(BUDGET, dir, { ...base, agent_transcript_path: join(dir, 'missing.jsonl'), last_assistant_message: words(5000) }).status, 0, 'unreadable transcript');
-});
-
-test('SubagentStop blocks once, only for a subagent', async () => {
-  const dir = await home();
-  const transcript = join(dir, 'agent.jsonl');
-  await writeFile(transcript, `${userLine('Report <= 50 words.')}\n`);
-  const base = { hook_event_name: 'SubagentStop', session_id: uid('s'), agent_id: uid('a'), agent_type: 'implementer', agent_transcript_path: transcript };
-  assert.equal(run(BUDGET, dir, { ...base, last_assistant_message: words(60), stop_hook_active: true }).status, 0, 'never twice');
-  assert.equal(run(BUDGET, dir, { ...base, agent_id: undefined, last_assistant_message: words(60) }).status, 0, 'no agent id');
-});
-
-test('SubagentStop uses the cap named in the spawn prompt (words or lines)', async () => {
-  const dir = await home();
-  const transcript = join(dir, 'agent.jsonl');
-  const base = { hook_event_name: 'SubagentStop', session_id: uid('s'), agent_id: uid('a'), agent_type: 'general-purpose', agent_transcript_path: transcript };
-  await writeFile(transcript, `${userLine('Do the work. Report <= 50 words.')}\n${JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: 'x' } })}\n`);
-  const over = run(BUDGET, dir, { ...base, last_assistant_message: words(60) });
-  assert.equal(over.status, 2);
-  assert.match(over.stderr, /60 words; the cap is 50 words/);
-  assert.equal(run(BUDGET, dir, { ...base, last_assistant_message: words(50) }).status, 0);
-  await writeFile(transcript, `${userLine('Return a report of at most 3 lines.')}\n`);
-  assert.equal(run(BUDGET, dir, { ...base, last_assistant_message: 'a\nb\nc\nd' }).status, 2);
-  assert.equal(run(BUDGET, dir, { ...base, last_assistant_message: 'a\nb\nc' }).status, 0);
-});
-
-test('reportBody finds the three sections as #, ** or plain headings, in any order; no sections means the whole report', () => {
-  const sections = [
-    'body\n## Constraints\nc\n## Not run\nn\n## Caveats\nv',
-    'body\n**Caveats**\nv\n**Constraints:** none\n### Not run (why)\nn',
-    'body\nNot run: none\nConstraints:\n- kept\nCaveats\n- v',
-    'body\n# not run\nn\n## CAVEATS\nv\nCommits: abc', // case-insensitive; a "Label: text" line is no heading
-  ];
-  for (const report of sections) assert.equal(reportBody(report), 'body', report);
-  assert.equal(reportBody('just a body\nCommits: abc'), 'just a body\nCommits: abc');
-  assert.equal(reportBody('body\n```\n# Constraints\n```\nmore'), 'body\n```\n# Constraints\n```\nmore', 'a fenced # line is no heading');
-  assert.equal(reportBody('body\nNot running: x'), 'body\nNot running: x', 'only the whole name counts');
-  assert.equal(reportBody(undefined), '');
-});
-
-test('reportBody counts the whole report when a heading of another name at the sections\' level or above follows them (body moved there)', () => {
-  for (const report of [
-    'ok\n## Caveats\nv\n## Details\nthe real body',
-    'ok\n## Caveats\nv\n# Details\nthe real body',
-    'ok\n**Constraints**\nc\n**Findings**\nthe real body',
-    'ok\n**Caveats**\nv\n## Findings\nthe real body',
-    'ok\nCaveats: v\n**Findings**\nthe real body',
-  ]) assert.equal(reportBody(report), report, report);
-});
-
-// Review R1 of 4f9d4b91: a label inside a section was taken for a heading of another name, so a fair report was counted whole.
-test('reportBody: labels inside the sections never end them, and decisions needed may follow them', () => {
-  for (const report of [
-    'done\n## Constraints\nk\n## Not run\nn\n## Caveats\n**Unproven:** x',
-    'done\n## Constraints\nk\n## Not run\nTests:\n- s\n## Caveats\nv',
-    'done\n## Constraints\nk\n## Not run\nn\n## Caveats\nv\ndecisions needed:\n- q',
-    'done\n## Constraints\nk\n## Caveats\n### Unproven\n- x\n**Open**\n- y\n## Decisions needed\n- q', // deeper heading, bold line below ##
-    'done\n**Not run**\nn\n**Unproven:** x\n**Decisions needed:** none',
-    'done\nCaveats: v\nDetails:\n- a plain label is a line of its section', // a plain label can not be told from "Tests:"
-  ]) assert.equal(reportBody(report), 'done', report);
-});
-
-test('SubagentStop counts the body only: long sections pass, a long body is sent back naming the exemption', async () => {
-  const dir = await home();
-  const transcript = join(dir, 'agent.jsonl');
-  await writeFile(transcript, `${userLine('Do the work. Report <= 50 words.')}\n`);
-  const base = { hook_event_name: 'SubagentStop', session_id: uid('s'), agent_id: uid('a'), agent_type: 'implementer', agent_transcript_path: transcript };
-  const sections = `\n## Constraints\n${words(40)}\n## Not run\n${words(40)}\n## Caveats\n${words(40)}`;
-  assert.equal(run(BUDGET, dir, { ...base, last_assistant_message: `${words(50)}${sections}` }).status, 0, 'body within cap + long sections');
-  const labelled = `${words(50)}\n## Constraints\n${words(40)}\n## Not run\nTests:\n- ${words(40)}\n## Caveats\n**Unproven:** ${words(40)}\ndecisions needed: none`;
-  assert.equal(run(BUDGET, dir, { ...base, last_assistant_message: labelled }).status, 0, 'labels inside the sections (review R1)');
-  const over = run(BUDGET, dir, { ...base, last_assistant_message: `${words(51)}${sections}` });
-  assert.equal(over.status, 2, 'body over the cap');
-  assert.match(over.stderr, /report body is 51 words; the cap is 50 words\. The Constraints, Not run and Caveats sections are not counted/);
-  const moved = run(BUDGET, dir, { ...base, last_assistant_message: `done\n## Caveats\n${words(10)}\n## Details\n${words(60)}` });
-  assert.equal(moved.status, 2, 'a body under its own heading after Caveats is counted');
-  assert.match(moved.stderr, /report body is 75 words/);
-});
-
-const bash = (sid) => ({ hook_event_name: 'PostToolUse', session_id: sid, tool_name: 'Bash' });
-
-test('the lead gets one delegate nudge after 15 Bash calls, silent before and after', async () => {
-  const dir = await home();
-  const sid = uid('s');
-  const outputs = [];
-  for (let i = 1; i <= 20; i += 1) outputs.push(run(BUDGET, dir, bash(sid)).stdout);
-  assert.ok(outputs.slice(0, 14).every((o) => o === ''));
-  const out = JSON.parse(outputs[14]).hookSpecificOutput;
-  assert.equal(out.hookEventName, 'PostToolUse');
-  assert.equal(out.additionalContext, '15 Bash calls in a row (context size unknown): delegate the rest to runner/implementer (a fresh agent keeps the lead turns and context small).');
-  assert.ok(outputs.slice(15).every((o) => o === ''), 'one line only until the 30th');
-});
-
-const CONTEXT_TOKENS = 212_345;
-const SMALL_CONTEXT_TOKENS = 149_000;
-/** A main-session transcript whose last assistant message was sent with `tokens` of context. */
-async function transcriptAt(dir, tokens) {
-  const path = join(dir, `t-${uid('c')}.jsonl`);
-  const usage = { input_tokens: 1000, cache_read_input_tokens: tokens - 1500, cache_creation_input_tokens: 500 };
-  await writeFile(path, `${userLine('go')}\n${JSON.stringify({ type: 'assistant', isSidechain: false, message: { role: 'assistant', usage } })}\n`);
-  return path;
-}
-const leadBash = (sid, transcript) => ({ ...bash(sid), transcript_path: transcript });
-const preBash = (sid, transcript, command, extra = {}) => ({
-  hook_event_name: 'PreToolUse', session_id: sid, tool_name: 'Bash', tool_input: { command }, cwd: '/work', transcript_path: transcript, ...extra,
-});
-/** The PreToolUse decision for one lead Bash command: the deny reason, or null when the hook is silent. */
-function preDecision(dir, input) {
-  const r = spawnSync(process.execPath, [BUDGET], {
-    input: JSON.stringify(input), encoding: 'utf8', env: { ...process.env, HOME: dir, USERPROFILE: dir, CLAUDE_MODE: '', CLAUDE_GUARD_LOG: join(dir, 'guard.jsonl') },
-  });
-  assert.equal(r.status, 0, r.stderr);
-  if (r.stdout === '') return null;
-  const out = JSON.parse(r.stdout).hookSpecificOutput;
-  assert.equal(out.permissionDecision, 'deny');
-  return out.permissionDecisionReason;
-}
-
-test('the nudge states the context size and comes again every 15 Bash calls of the same run', async () => {
-  const dir = await home();
-  const sid = uid('s');
-  const transcript = await transcriptAt(dir, CONTEXT_TOKENS);
-  const outputs = [];
-  for (let i = 1; i <= 30; i += 1) outputs.push(run(BUDGET, dir, leadBash(sid, transcript)).stdout);
-  assert.equal(JSON.parse(outputs[14]).hookSpecificOutput.additionalContext,
-    '15 Bash calls in a row at ~212k context: delegate the rest to runner/implementer (a fresh agent keeps the lead turns and context small).');
-  assert.match(JSON.parse(outputs[29]).hookSpecificOutput.additionalContext, /^30 Bash calls in a row at ~212k context: .* 1 nudge ignored so far; .*denied once/);
-  assert.equal(outputs.filter((o) => o !== '').length, 2);
-});
-
-test('after 2 ignored nudges at 150k+ context the next lead Bash call that is not git or read-only is denied once, then the count starts over', async () => {
-  const dir = await home();
-  const sid = uid('s');
-  const transcript = await transcriptAt(dir, CONTEXT_TOKENS);
-  for (let i = 0; i < 31; i += 1) run(BUDGET, dir, leadBash(sid, transcript)); // nudges at 15 and 30, both followed by more Bash
-  for (const command of ['git status && git log --oneline -3', 'ls -la | head -5', 'rg TODO src; sed -n 1,20p a.txt', 'cat a.txt | wc -l']) {
-    assert.equal(preDecision(dir, preBash(sid, transcript, command)), null, command);
-  }
-  assert.equal(preDecision(dir, preBash(sid, transcript, 'npm test', { agent_id: uid('a') })), null, 'a subagent is never blocked');
-  const reason = preDecision(dir, preBash(sid, transcript, 'npm test'));
-  assert.match(reason, /delegate to runner\/implementer \(a fresh agent keeps the lead turns and context small\)/);
-  assert.match(reason, /~212k context/);
-  assert.equal(preDecision(dir, preBash(sid, transcript, 'npm test')), null, 'the identical retry runs');
-  assert.equal(preDecision(dir, preBash(sid, transcript, 'npm run build')), null, 'one deny per escalation: no loop');
-  assert.equal(preDecision(dir, preBash(sid, transcript, 'sed -i s/a/b/ a.txt')), null);
-});
-
-// Audit of db40977 (S2): both hooks run on the same Bash call. The budget's deny-once shared the guard's bounce store, so after the budget
-// denied a command with a literal secret the guard found that command "already bounced" and asked instead: the rewrite advice and the
-// "tell the owner, rotate it" line were never given. Since owner rule G1 (0823e7b8) a literal secret is only noted, never bounced, so
-// the case uses a command the guard still sends back once with advice: a hand-edited lockfile.
-const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
-test('the budget deny keeps its own store: the guard still bounces the same command with its own advice', async () => {
-  const dir = await home();
-  const sid = uid('s');
-  const transcript = await transcriptAt(dir, CONTEXT_TOKENS);
-  for (let i = 0; i < 31; i += 1) run(BUDGET, dir, leadBash(sid, transcript));
-  const command = 'echo y > yarn.lock';
-  assert.match(preDecision(dir, preBash(sid, transcript, command)), /delegate to runner\/implementer/);
-  const guard = spawnSync(process.execPath, [GUARD], {
-    input: JSON.stringify({ hook_event_name: 'PreToolUse', session_id: sid, cwd: '/work', tool_name: 'Bash', tool_input: { command } }),
-    encoding: 'utf8', env: { ...process.env, HOME: dir, USERPROFILE: dir, SSH_CONNECTION: 'test', CLAUDE_PROJECT_DIR: '/work', CLAUDE_GUARD_LOG: join(dir, 'guard.jsonl') },
-  });
-  const out = JSON.parse(guard.stdout).hookSpecificOutput;
-  assert.equal(out.permissionDecision, 'deny', guard.stdout);
-  assert.match(out.permissionDecisionReason, /yarn\.lock is generated: let the package manager write it/);
-});
-
-test('isReadOnlyCommand: git and reading commands only, with no writing option and no output sent to a file', () => {
-  for (const command of ['git commit -m x && git log', 'ls 2>/dev/null', 'git log 2>&1 | head -3', '/bin/cat a | sort | uniq', 'sed -n 1,5p a',
-    'find . -name "*.mjs"', 'cd /tmp && pwd', 'FOO=1 rg x']) assert.equal(isReadOnlyCommand(command), true, command);
-  for (const command of ['npm test', 'echo hi > f', 'cat a >>b', 'ls &>out', 'sed -i "" s/a/b/ f', 'sed -ni p f', 'sed --in-place s/a/b/ f',
-    'find . -delete', 'find . -exec rm {} ;', 'echo $(rm -rf x)', 'git status; node x.mjs', '', 'cat <<EOF > f\nx\nEOF']) {
-    assert.equal(isReadOnlyCommand(command), false, command);
-  }
-});
-
-test('no deny below 150k context, after one ignored nudge, or when the nudges were followed by a delegation', async () => {
-  const dir = await home();
-  const small = await transcriptAt(dir, SMALL_CONTEXT_TOKENS);
-  const big = await transcriptAt(dir, CONTEXT_TOKENS);
-  const lowSid = uid('s');
-  for (let i = 0; i < 31; i += 1) run(BUDGET, dir, leadBash(lowSid, small));
-  assert.equal(preDecision(dir, preBash(lowSid, small, 'npm test')), null, 'below 150k');
-  const oneSid = uid('s');
-  for (let i = 0; i < 16; i += 1) run(BUDGET, dir, leadBash(oneSid, big));
-  assert.equal(preDecision(dir, preBash(oneSid, big, 'npm test')), null, 'one ignored nudge');
-  const heedSid = uid('s');
+test('seven launches in one message (parallel hook processes) run exactly 6 and deny 1, every round', async () => {
   for (let round = 0; round < 3; round += 1) {
-    for (let i = 0; i < 15; i += 1) run(BUDGET, dir, leadBash(heedSid, big));
-    run(BUDGET, dir, { hook_event_name: 'PostToolUse', session_id: heedSid, tool_name: 'Agent' });
-  }
-  assert.equal(preDecision(dir, preBash(heedSid, big, 'npm test')), null, 'each nudge was followed by an Agent call');
-  assert.equal(preDecision(dir, preBash(heedSid, undefined, 'npm test')), null, 'no transcript: context unknown, no deny');
-});
-
-test('an Agent or Task call resets the lead Bash count; other tools neither count nor reset', async () => {
-  const dir = await home();
-  for (const delegate of ['Agent', 'Task']) {
-    const sid = uid('s');
-    for (let i = 0; i < 14; i += 1) run(BUDGET, dir, bash(sid));
-    run(BUDGET, dir, { hook_event_name: 'PostToolUse', session_id: sid, tool_name: 'Edit' });
-    assert.equal(run(BUDGET, dir, { hook_event_name: 'PostToolUse', session_id: sid, tool_name: delegate }).stdout, '');
-    for (let i = 1; i < 15; i += 1) assert.equal(run(BUDGET, dir, bash(sid)).stdout, '', `${delegate} call ${i} after reset`);
-    assert.match(run(BUDGET, dir, bash(sid)).stdout, /15 Bash calls in a row/, `${delegate}: 15th after reset`);
-  }
-  const sid = uid('s');
-  for (let i = 0; i < 14; i += 1) run(BUDGET, dir, bash(sid));
-  run(BUDGET, dir, { hook_event_name: 'PostToolUse', session_id: sid, tool_name: 'Edit' });
-  assert.match(run(BUDGET, dir, bash(sid)).stdout, /15 Bash calls/, 'Edit does not reset');
-});
-
-test('subagent Bash calls never trigger the lead nudge and unsafe session ids are silent', async () => {
-  const dir = await home();
-  const sid = uid('s');
-  const agent = uid('a');
-  for (let i = 0; i < 20; i += 1) assert.equal(run(BUDGET, dir, { ...bash(sid), agent_id: agent }).stdout, '');
-  for (let i = 0; i < 20; i += 1) assert.equal(run(BUDGET, dir, bash('../x')).stdout, '');
-});
-
-test('both hooks fail open on bad input', async () => {
-  const dir = await home();
-  for (const script of [BUDGET, REPLY_CAP]) {
-    for (const raw of ['not json', '', 'null', '[]']) {
-      const r = run(script, dir, null, raw);
-      assert.equal(r.status, 0, `${script} ${raw}`);
-      assert.equal(r.stdout, '');
-    }
+    const s = newSession();
+    const outs = await Promise.all(Array.from({ length: MAX_MAIN_AGENTS + 1 }, (_, n) => guardAsync(s, mainCall(n))));
+    assert.equal(outs.filter((out) => !denied(out)).length, MAX_MAIN_AGENTS, JSON.stringify(outs));
+    assert.equal(readStore(s).launches.length, MAX_MAIN_AGENTS, 'the store holds exactly the 6 recorded, whole');
   }
 });
 
-test('Stop blocks a final reply over the line cap named in the last prompt, once', async () => {
-  const dir = await home();
-  const transcript = join(dir, 't.jsonl');
-  const lines = Array.from({ length: 30 }, (_, i) => `line ${i}`).join('\n');
-  await writeFile(transcript, `${userLine('build it, final reply max 25 lines')}\n`);
-  const blocked = run(REPLY_CAP, dir, { hook_event_name: 'Stop', last_assistant_message: lines, transcript_path: transcript });
-  assert.equal(blocked.status, 0);
-  const out = JSON.parse(blocked.stdout);
-  assert.equal(out.decision, 'block');
-  assert.match(out.reason, /30 lines; the owner's cap is 25 lines.*No tables/);
-  assert.equal(run(REPLY_CAP, dir, { last_assistant_message: lines, transcript_path: transcript, stop_hook_active: true }).stdout, '');
-  assert.equal(run(REPLY_CAP, dir, { last_assistant_message: 'short', transcript_path: transcript }).stdout, '');
+test('a launch that never started stops counting after PENDING_MS; one dated ahead of the clock never counts', () => {
+  const s = newSession();
+  const now = Date.now();
+  seedStore(s, { launches: [
+    { key: 'a', type: 'lex', at: now - PENDING_MS - SECOND_MS },
+    { key: 'b', type: 'dev', at: now - PENDING_MS + 30 * SECOND_MS },
+    { key: 'c', type: 'tess', at: now + 10 * MINUTE_MS },
+  ], stopped: [] });
+  assert.equal(running(s), 1, 'only the launch of a moment ago may still be starting');
 });
 
-test('Stop reads only the last real prompt: no cap there, or a cap in an older prompt, means allow', async () => {
-  const dir = await home();
-  const transcript = join(dir, 't.jsonl');
-  const lines = Array.from({ length: 30 }, (_, i) => `line ${i}`).join('\n');
-  await writeFile(transcript, `${userLine('final reply max 25 lines')}\n${userLine('now do the next thing')}\n`);
-  assert.equal(run(REPLY_CAP, dir, { last_assistant_message: lines, transcript_path: transcript }).stdout, '');
-  assert.equal(run(REPLY_CAP, dir, { last_assistant_message: lines }).stdout, '', 'no transcript');
+test('a started main agent counts until its stop, or until STALE_MS with no tool call of its own', () => {
+  const s = newSession();
+  const now = Date.now();
+  seedStore(s, { launches: [
+    { key: 'a', type: 'dev', at: now - STALE_MS - MINUTE_MS, agent: 'agent-idle' },
+    { key: 'b', type: 'dev', at: now - STALE_MS - MINUTE_MS, agent: 'agent-busy' },
+    { key: 'c', type: 'lex', at: now - 5 * MINUTE_MS, agent: 'agent-new' },
+  ], stopped: [] });
+  touchCounter(s.session, 'agent-busy', now - MINUTE_MS);
+  assert.equal(running(s), 2, 'the idle one ended unseen; the busy one and the new one run');
 });
 
-test('a compaction summary is not owner text: its quoted caps are skipped, the owner prompt before it rules', async () => {
-  const dir = await home();
-  const transcript = join(dir, 't.jsonl');
-  const lines = Array.from({ length: 30 }, (_, i) => `line ${i}`).join('\n');
-  const reply = { last_assistant_message: lines, transcript_path: transcript };
-  const summary = JSON.stringify({ type: 'user', isCompactSummary: true, isVisibleInTranscriptOnly: true, message: { role: 'user', content: 'This session is being continued. A peer said: aim for reply max 5 lines.' } });
-  await writeFile(transcript, `${userLine('build it')}\n${summary}\n`);
-  assert.equal(run(REPLY_CAP, dir, reply).stdout, '', 'a cap quoted in the summary is not the owner\'s');
-  await writeFile(transcript, `${userLine('build it, reply max 20 lines')}\n${summary}\n`);
-  assert.match(run(REPLY_CAP, dir, reply).stdout, /owner's cap is 20 lines/, 'the owner prompt before the summary still sets the cap');
+test('SubagentStart: the oldest pending launch of its type becomes the agent; a helper start changes nothing', () => {
+  const s = newSession();
+  assert.equal(claim(s, 'dev').state, 'recorded');
+  assert.equal(recordMainStart(s.session, 'agent-helper', 'lex-scout', s.env), false, 'no main launch of that type: a helper');
+  assert.equal(recordMainStart(s.session, 'agent-dev', 'dev', s.env), true);
+  assert.equal(recordMainStart(s.session, 'agent-dev', 'dev', s.env), false, 'a second start of the same agent adds nothing');
+  assert.deepEqual(readStore(s).launches.map(({ type, agent }) => [type, agent]), [['dev', 'agent-dev']]);
+  assert.equal(recordMainStop(s.session, 'agent-helper', s.env), false, 'a helper stop ends nothing');
 });
 
-test('envelopes are not owner text: an agent message or reminder carrying a cap sets no cap (L9)', async () => {
-  const dir = await home();
-  const transcript = join(dir, 't.jsonl');
-  const lines = Array.from({ length: 30 }, (_, i) => `line ${i}`).join('\n');
-  const reply = { last_assistant_message: lines, transcript_path: transcript };
-  for (const envelope of [
-    '<agent-message from="worker">reply ≤ 5 lines</agent-message>',
-    '<cross-session-message>final reply max 5 lines</cross-session-message>',
-    '<task-notification>report ≤ 5 lines</task-notification>',
-    '[SYSTEM NOTIFICATION - NOT USER INPUT] reply in 5 lines',
-    '<system-reminder>reply in 5 lines</system-reminder>',
-  ]) {
-    await writeFile(transcript, `${userLine('build it')}\n${userLine(envelope)}\n`);
-    assert.equal(run(REPLY_CAP, dir, reply).stdout, '', envelope);
-    await writeFile(transcript, `${userLine('build it')}\n${JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: envelope }] } })}\n`);
-    assert.equal(run(REPLY_CAP, dir, reply).stdout, '', `${envelope} as a block`);
+test('a stopped main agent that starts again (a resume) counts again, and its next stop ends it', () => {
+  const s = newSession();
+  claim(s, 'lex');
+  recordMainStart(s.session, 'agent-lex', 'lex', s.env);
+  assert.equal(recordMainStop(s.session, 'agent-lex', s.env), true);
+  assert.equal(running(s), 0);
+  assert.equal(recordMainStart(s.session, 'agent-lex', 'lex', s.env), true, 'the resume');
+  assert.equal(running(s), 1);
+  assert.equal(recordMainStop(s.session, 'agent-lex', s.env), true);
+  assert.equal(recordMainStop(s.session, 'agent-lex', s.env), false, 'a stop that comes again ends nothing more');
+});
+
+test('releaseMainSlot removes only the pending launch with that key', () => {
+  const s = newSession();
+  const first = claim(s, 'dev');
+  const second = claim(s, 'dev');
+  recordMainStart(s.session, 'agent-1', 'dev', s.env); // the oldest pending dev launch (the first) is now started
+  assert.equal(releaseMainSlot(s.session, first.key, s.env), false, 'a started launch is not released');
+  assert.equal(releaseMainSlot(s.session, second.key, s.env), true);
+  assert.equal(releaseMainSlot(s.session, second.key, s.env), false);
+  assert.equal(readStore(s).launches.length, 1);
+});
+
+test('a record that cannot be read gives the fail-closed deny that names it', (t) => {
+  if (isRoot) return t.diagnostic('not run: root reads a mode 000 file');
+  const s = newSession();
+  assert.ok(!denied(guard(s, mainCall(1))));
+  chmodSync(storeOf(s), 0);
+  assert.equal(guard(s, mainCall(2)).permissionDecisionReason,
+    `agent cap: the main-agent record ${storeOf(s)} cannot be read or stays locked; fix or delete it, then launch again`);
+  chmodSync(storeOf(s), 0o600);
+  assert.ok(!denied(guard(s, mainCall(3))), 'readable again: the launch runs');
+});
+
+test('a lock that stays taken is unusable too (fail closed, not "no one runs")', () => {
+  const s = newSession();
+  claim(s);
+  writeFileSync(join(dirOf(s), `${s.session}.lock`), `${process.pid} ${'a'.repeat(32)}`, { flag: 'wx', mode: 0o600 }); // a live holder, fresh lock
+  assert.equal(claim(s).state, 'unusable');
+});
+
+test('the budget hook prints nothing: a subagent tool call marks its counter, its stop removes it, the main session leaves none', () => {
+  const s = newSession();
+  const path = callCounterPath(s.session, 'agent-counted');
+  assert.equal(budgetEvent(s, 'PostToolUse', 'agent-counted', 'dev', { tool_name: 'Bash' }), '');
+  assert.equal(budgetEvent(s, 'PostToolUse', 'agent-counted', 'dev', { tool_name: 'Read' }), '');
+  assert.equal(readFileSync(path, 'utf8'), '..');
+  assert.equal(budgetEvent(s, 'PostToolUse', undefined, undefined, { tool_name: 'Bash' }), '', 'the main session: no count, no nudge');
+  assert.equal(budgetEvent(s, 'PreToolUse', undefined, undefined, { tool_name: 'Bash', tool_input: { command: 'npm test' } }), '');
+  assert.equal(budgetEvent(s, 'SubagentStop', 'agent-counted', 'dev', { last_assistant_message: 'x '.repeat(5000), stop_hook_active: false }), '');
+  assert.equal(existsSync(path), false, 'the counter goes with the agent; a long report is never sent back');
+});
+
+test('the budget hook fails open on bad input', () => {
+  for (const input of ['not json', '', '{"hook_event_name":"SubagentStart"}', 'null']) {
+    const run = spawnSync(process.execPath, [BUDGET], { input, encoding: 'utf8' });
+    assert.deepEqual([run.status, run.stdout, run.stderr], [0, '', ''], input);
   }
-  await writeFile(transcript, `${userLine('build it, reply max 5 lines')}\n${userLine('<agent-message>reply max 99 lines</agent-message>')}\n`);
-  assert.match(run(REPLY_CAP, dir, reply).stdout, /owner's cap is 5 lines/, 'the envelope is skipped; the owner prompt before it (cap 5, not 99) is the last real prompt');
-  await writeFile(transcript, `${userLine('build it, reply max 5 lines <system-reminder>reply max 99 lines</system-reminder>')}\n`);
-  assert.match(run(REPLY_CAP, dir, reply).stdout, /30 lines; the owner's cap is 5 lines/, 'typed text keeps its own cap, the envelope inside is cut');
-});
-
-test('SubagentStop keeps the call counter when it blocks and deletes it when it does not', async () => {
-  const dir = await home();
-  const transcript = join(dir, 'agent.jsonl');
-  await writeFile(transcript, `${userLine('Report <= 50 words.')}\n`);
-  const ids = { session_id: uid('s'), agent_id: uid('a') };
-  const counter = join(tempRoot(), 'budget', `${ids.session_id}--${ids.agent_id}`);
-  const stop = { hook_event_name: 'SubagentStop', ...ids, agent_type: 'implementer', agent_transcript_path: transcript };
-  run(BUDGET, dir, { hook_event_name: 'PostToolUse', ...ids, tool_name: 'Bash' });
-  assert.ok(existsSync(counter), 'counter written');
-  assert.equal(run(BUDGET, dir, { ...stop, last_assistant_message: words(60) }).status, 2);
-  assert.ok(existsSync(counter), 'kept after agent-budget blocks');
-  assert.equal(run(BUDGET, dir, { ...stop, last_assistant_message: words(10) }).status, 0);
-  assert.ok(!existsSync(counter), 'deleted when it does not block');
 });

@@ -1,5 +1,5 @@
 // Tests for the hook temp root of home/hooks/lib/edit-log.mjs (tempRoot, checkedTempRoot) and every user of it: the agent call
-// counters (callCounterPath, lib/writer-agents.mjs) and the lead Bash counters (leadBashCalls, agent-budget.mjs). The root is per user and checked before every use: a real folder of this uid with no group or other bits; one with
+// counters (callCounterPath, lib/writer-agents.mjs; agent-budget.mjs appends to them). The root is per user and checked before every use: a real folder of this uid with no group or other bits; one with
 // read bits only is tightened to 0700; anything else is refused, nothing is kept there and one guard-log line says so per process.
 // Each test points TMPDIR at a fresh folder of its own and the guard log at a temp file, and puts both back after.
 import './pin-home.mjs';
@@ -9,7 +9,6 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, 
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { leadBashCalls } from '../home/hooks/agent-budget.mjs';
 import { checkedTempRoot, tempRoot } from '../home/hooks/lib/edit-log.mjs';
 import { callCounterPath } from '../home/hooks/lib/writer-agents.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -41,8 +40,6 @@ const mode = (path) => statSync(path).mode & 0o7777;
 function assertRefused() {
   assert.equal(checkedTempRoot(), null);
   assert.equal(callCounterPath('s1', 'a1'), null);
-  assert.equal(leadBashCalls('s1', 'Bash'), 0);
-  assert.equal(leadBashCalls('s1', 'Agent'), 0);
 }
 /** The root check in a second process (a hook is its own process), with TMPDIR as set now: its answer. */
 function checkedRootInChildProcess() {
@@ -59,7 +56,6 @@ test('(a) a private temp folder: the root keeps its old name and is 0700 after t
     assert.equal(checkedTempRoot(), join(tmp, NAME));
     assert.equal(mode(join(tmp, NAME)), 0o700);
     assert.equal(callCounterPath('s1', 'a1'), join(tmp, NAME, 'budget', 's1--a1'));
-    assert.equal(leadBashCalls('s1', 'Bash'), 1);
   });
   assert.deepEqual(lines, []);
 });
