@@ -1,8 +1,9 @@
-// Our skip switches (today only CLAUDE_POST_EDIT_SKIP) as a hook may honour them. A switch that a
-// project's committed `.claude/settings.json` (the team file) sets and its `.claude/settings.local.json` does not is ignored: a team
-// file never turns our checks off (layering-spec.md section 3; owner R22-Q3 "the stricter rule applies", R22-L4 "warn clearly").
+// Our switches as a hook may honour them: CLAUDE_POST_EDIT_SKIP (skips the format run) and CLAUDE_POST_EDIT_TRUST_FORMAT (lets a
+// project's own format script run, lib/format-trust.mjs). A switch that a project's committed `.claude/settings.json` (the team file)
+// sets and its `.claude/settings.local.json` does not is ignored: a team file never turns our checks off or trusts its own scripts
+// (layering-spec.md section 3; owner R22-Q3 "the stricter rule applies", R22-L4 "warn clearly").
 // Exports: switchDirs(env, ...folders), trustedSwitch(env, key, dirs, platform), switchNames(env, key, dirs), noticeOnce(sessionId, key).
-// Trust: only the shell environment or a project's local settings file can switch a check off. A settings.local.json that git
+// Trust: only the shell environment or a project's local settings file can set a switch. A settings.local.json that git
 //   tracks (or git cannot vouch for) is a team file. The project folders are CLAUDE_PROJECT_DIR and the folders a hook knows (its
 //   cwd, the git tops it checks); more folders can only ignore more switches. The home folder left out is the account's real one
 //   (os.userInfo), never HOME or USERPROFILE, which a team file's env can set. On Windows env names ignore case, so team keys do too.

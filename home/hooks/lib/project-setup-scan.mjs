@@ -25,7 +25,9 @@ import { readHead, runGit } from './gated-folder.mjs';
 import { readPlainFile } from './plain-file.mjs';
 import { quotedPath, shownPath } from './shown-name.mjs';
 
-export const OUR_SWITCHES = ['DONE_CHECK_SKIP', 'CLAUDE_POST_EDIT_SKIP', 'CLAUDE_SKILL_ROUTER'];
+// The env switches of our hooks; a team file that sets one is flagged (lib/team-switch.mjs ignores it). CLAUDE_POST_EDIT_TRUST_FORMAT
+// is TRUST_ENV of lib/format-trust.mjs, written out because that file imports this one through team-switch.mjs.
+export const OUR_SWITCHES = ['DONE_CHECK_SKIP', 'CLAUDE_POST_EDIT_SKIP', 'CLAUDE_POST_EDIT_TRUST_FORMAT', 'CLAUDE_SKILL_ROUTER'];
 export const SHOWN_VALUE_KEYS = ['model', 'effortLevel', 'ANTHROPIC_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL_FORCE',
   'CLAUDE_CODE_EFFORT_LEVEL', 'permissions.defaultMode', 'disableAllHooks', ...OUR_SWITCHES]; // every other value: key only
 
