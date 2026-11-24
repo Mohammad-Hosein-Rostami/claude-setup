@@ -196,6 +196,7 @@ test('overlapping files with a passing --test land the sha the test saw, after l
     `landed ${LANE} on main at ${tip} (1 commit(s))`,
     `removed worktree ${worktree}`,
     `deleted branch ${LANE}`,
+    'left: none',
   ]);
   assert.equal(readFileSync(join(repo, SHARED), 'utf8'), text(MERGED_LINES), 'both edits are in the landed file');
   assert.equal(git(repo, 'log', '--merges', '--oneline', 'main'), '', 'no merge commit');
@@ -318,7 +319,7 @@ test('with no overlap, no --test lands without testing, a passing --test lands a
   const untested = land([LANE, '--repo', plain.repo], { cwd: plain.repo });
   assert.equal(untested.status, 0, untested.stderr);
   const plainTip = git(plain.repo, 'rev-parse', 'main');
-  assert.deepEqual(outputLines(untested.stdout), [`landed ${LANE} on main at ${plainTip} (1 commit(s))`, `removed worktree ${plain.worktree}`, `deleted branch ${LANE}`]);
+  assert.deepEqual(outputLines(untested.stdout), [`landed ${LANE} on main at ${plainTip} (1 commit(s))`, `removed worktree ${plain.worktree}`, `deleted branch ${LANE}`, 'left: none']);
 
   const passing = laneBehindBase();
   const tested = land([LANE, '--repo', passing.repo, '--test', PASS], { cwd: passing.repo });
@@ -330,6 +331,7 @@ test('with no overlap, no --test lands without testing, a passing --test lands a
     `landed ${LANE} on main at ${tip} (1 commit(s))`,
     `removed worktree ${passing.worktree}`,
     `deleted branch ${LANE}`,
+    'left: none',
   ]);
 
   const failing = laneBehindBase();
@@ -509,7 +511,7 @@ test('overlapping files on a branch with no worktree are refused before anything
   git(plain.repo, 'worktree', 'remove', plain.worktree);
   const landed = land([LANE, '--repo', plain.repo], { cwd: plain.repo });
   assert.equal(landed.status, 0, landed.stderr);
-  assert.match(landed.stdout, /^landed feat\/lane on main at [0-9a-f]{40} \(1 commit\(s\)\)\ndeleted branch feat\/lane\n$/);
+  assert.match(landed.stdout, /^landed feat\/lane on main at [0-9a-f]{40} \(1 commit\(s\)\)\ndeleted branch feat\/lane\nleft: none\n$/);
 });
 
 test('a lane with no commit in common with the base is refused before anything changes', () => {
