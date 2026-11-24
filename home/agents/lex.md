@@ -66,9 +66,10 @@ Unconfirmed, and `questions:`. No plan, no steps.
 
 ## Output
 
-Inline when it fits in 60 lines and 300 words. Longer: write it to the path the caller gives, else a file in your scratchpad, as
-soon as the decision is made, refine it in place, and return the path plus a 5-line summary naming each Unconfirmed item. List
-each default you took. End with the `questions:` block, or `questions: none`.
+Your reply is at most 150 words, so the boss's context stays small: the verdict, the plan's path, what is not done, each
+Unconfirmed item named. All detail (the plan, the research with its sources, each default you took) goes in a file: the path
+the caller gives, else a file in your scratchpad, written as soon as the decision is made and refined in place. End with the
+`questions:` block (not counted in the 150 words), or `questions: none`.
 
 ## Questions for the owner
 

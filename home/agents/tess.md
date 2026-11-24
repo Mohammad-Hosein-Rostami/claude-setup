@@ -35,10 +35,13 @@ comes back as the case to add, not as a file.
 ## Review
 
 When the request says "review", start `tess-review` with the spec from lex (its path or text), the acceptance lines, the repo
-path, the base and the tip; return its JSON and verdict line unchanged next to your own results.
+path, the base and the tip; put its JSON unchanged in your detail file and return its verdict line unchanged next to your own
+results.
 
-## Report (at most 30 lines)
+## Report (at most 150 words; all detail in a file, give its path)
 
-`tip:`; `PASS` or `FAIL` per command with its exit code; each distinct failure once as `file:line  message` with at most 3
-lines of context, marked `new` or `old`; the edge cases tried and what each showed; the cases a test should cover but none does.
-Then **Not run** and **Caveats** ("none" when empty).
+The reply keeps the caller's context small: `tip:`; `PASS` or `FAIL` per command with its exit code; how many failures are `new`
+and `old`; the detail file's path; one line each for **Not run** and **Caveats** ("none" when empty). The detail file (the path
+the brief gives, else a file in your scratchpad, never in the repo) holds each distinct failure once as `file:line  message`
+with at most 3 lines of context, marked `new` or `old`; the edge cases tried and what each showed; the cases a test should
+cover but none does; the full **Not run** and **Caveats**.

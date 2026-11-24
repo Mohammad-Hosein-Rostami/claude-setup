@@ -44,7 +44,7 @@ descriptions are quoted from their frontmatter; those descriptions are what make
 | `tess-review` | Only on "review": reads a change against lex's spec, its acceptance lines and threat model. Read-only; at most 8 findings as JSON, each with a repro or marked follow-up, and a one-line verdict. | claude-opus-5-5 |
 
 The main session starts only lex, dev and tess (a helper or another built-in from it is denied; `agent-budget.mjs`) and runs at most 6 of them at once; they start their
-helpers themselves. Writers (dev, dev-ui, dev-pixel, dev-debug) each work in their own worktree. An agent that needs the owner
+helpers themselves and report back in at most 150 words, with the detail in a file. Writers (dev, dev-ui, dev-pixel, dev-debug) each work in their own worktree. An agent that needs the owner
 stops and returns a `questions:` block (plain words, what it blocks, 2-4 options with the recommended first). Each agent file's
 `model` and `effort` are kept as a floor: `agent-model-guard.mjs` leaves a lower per-call value out (see its row).
 

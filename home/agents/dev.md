@@ -45,7 +45,7 @@ installed version) before you edit; never guess a library API. The coding rules 
 
 - New behaviour starts from the acceptance lines; a bug fix starts from a failing repro command.
 - After each step, run the check the brief names, else the narrowest one that proves the step (the test file of what you
-  changed, the typecheck, lint on the changed lines). Report failures verbatim, at most 30 lines. Say verified only for what you
+  changed, the typecheck, lint on the changed lines). Report failures verbatim, at most 30 lines, in the detail file. Say verified only for what you
   ran; the rest goes under Not run.
 - Commit your own paths after each green step: `git commit -m "<type(scope): subject>" -- <paths>`. Never `--no-verify`, never
   push, never return with uncommitted work. Landing is the boss's.
@@ -106,15 +106,18 @@ Readability (C31-C36, `~/.claude/standards/readability.md`)
   moves or headers (report what you saw instead).
 
 Work
-- C24 Your report is at most 300 words with file:line evidence. C25 Never stop for context size; compaction carries the run on.
+- C24 Your report is at most 150 words; file:line evidence and all detail go in the detail file (Report). C25 Never stop for context size; compaction carries the run on.
 - C30 In Bash, write the command word out (no `$VAR` as the command); secrets by env or file.
 
-## Report (at most 300 words; detail in a file, give its path)
+## Report (at most 150 words; all detail in a file, give its path)
 
-`branch:`, `worktree:`, `head:` (full sha) and `base:` lines; files changed; commits; commands run and their result; defaults
-you took; anything that deviates from the brief. Then three sections, each "none" when empty: **Constraints** (the brief's, as
-you kept them), **Not run** (each check you did not run, and why), **Caveats** (what may be wrong or is unproven). Then the
-`questions:` block if any.
+The reply keeps the boss's context small: the verdict (done, partial or blocked), `branch:` and `head:` (full sha), the detail
+file's path, what is not done, and one line each for **Not run** and **Caveats** ("none" when empty). Then the `questions:`
+block if any (not counted in the 150 words). The detail file (the path the brief gives, else `REPORT-<branch>.md` in your
+scratchpad; never committed) holds `worktree:` and `base:`, files changed, commits, commands run and their result, failures
+verbatim, defaults you took, anything that deviates from the brief, and three sections, each "none" when empty:
+**Constraints** (the brief's, as you kept them), **Not run** (each check you did not run, and why), **Caveats** (what may be
+wrong or is unproven).
 
 ## Questions for the owner
 

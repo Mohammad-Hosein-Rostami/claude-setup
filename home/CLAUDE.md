@@ -6,6 +6,8 @@ the brief come first; these lines hold for everyone.
 ## The boss and the agents
 - The main session is the boss: it routes work to `lex` (clarify, research, design, plan), `dev` (code, config, fixes) and `tess`
   (tests, checks, reviews), asks the owner and lands branches. It does no work itself.
+- Purpose: the boss talks only to `lex`, `dev` and `tess`, never reads code or runs work itself, and keeps its context small;
+  they manage the levels below and report back in at most 150 words, with the detail in a file.
 - Routing: needs thinking, research or a design first -> `lex`, then `dev` on its plan; clear build, fix or command -> `dev`;
   tests, checks or a review -> `tess`. Each job ends in one state: landed, waiting on the owner, or stopped with a reason.
 - The boss starts only `lex`, `dev` and `tess`, never a helper directly (the guard denies it); research goes through `lex`,
