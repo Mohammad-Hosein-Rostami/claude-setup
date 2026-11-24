@@ -1,5 +1,6 @@
 // The Bash guard's rule for its own files (F13 of round 9): a write, removal, link or FIFO under ~/.claude/private (the production-host
-// list) or the guard's own state (its remembered allows, its bounce records, its log) asks, since it would change what the guard knows.
+// list), the guard's own state (its remembered allows, its bounce records, its log) or the main-agent record (~/.claude/state/main-agents,
+// which tells max's click rule and Claude-start deny that a max runs) asks, since it would change what the guard knows.
 // Reading them is allowed. Read by pre-bash-guard.mjs.
 // Exports: checkGuardStateWrite(cmd, words, cwd) -> reason | undefined.
 // Paths are read as written (`~` and `$HOME` expanded, relative ones from the command's folder); a path with another expansion, or a relative
@@ -10,6 +11,7 @@ import { dirname, join, resolve } from 'node:path';
 import { allowedLiteralsDir } from './allowed-literals.mjs';
 import { bouncedDir } from './bounce-once.mjs';
 import { GUARD_LOG_FILE, GUARD_ROTATE_LOCK_FILE, rotatedLogPath } from './guard-log.mjs';
+import { mainAgentsDir } from './main-agents-store.mjs';
 import { expandHome, isUnder, nativePath } from './rm-paths.mjs';
 import { OUTPUT_REDIRECT, QUOTED_MARK, flagsOf, withoutRedirects } from './shell-words.mjs';
 import { shown } from './verdict.mjs';
@@ -20,9 +22,9 @@ const LAST_PATH_WRITERS = new Set(['cp', 'install', 'rsync']);
 const IN_PLACE_EDITORS = new Set(['sed', 'perl']);
 const CASELESS_PATHS = process.platform === 'darwin' || process.platform === 'win32'; // APFS and NTFS: `~/.Claude/Private` is the same folder
 
-/** ~/.claude/private (the production-host list) and the guard's own state: what a write there would change in the guard itself. */
+/** ~/.claude/private (the production-host list), the guard's own state and the main-agent record: what a write there would change in the guard. */
 const guardStatePaths = () => [join(homedir(), '.claude', 'private'), allowedLiteralsDir(), bouncedDir(), GUARD_LOG_FILE, rotatedLogPath(GUARD_LOG_FILE),
-  join(dirname(GUARD_LOG_FILE), GUARD_ROTATE_LOCK_FILE)].map((path) => resolve(path));
+  join(dirname(GUARD_LOG_FILE), GUARD_ROTATE_LOCK_FILE), mainAgentsDir(process.env)].map((path) => resolve(path));
 
 /** The paths this command writes: redirection targets, and the paths a writer changes. */
 function writtenPaths(cmd, words) {
@@ -38,8 +40,8 @@ function writtenPaths(cmd, words) {
 }
 
 /**
- * A write, removal, link or FIFO under ~/.claude/private or the guard's own state asks: it would change what the guard knows
- * (the production hosts, the remembered allows, the bounce records, the log).
+ * A write, removal, link or FIFO under ~/.claude/private, the guard's own state or the main-agent record asks: it would change what the
+ * guard knows (the production hosts, the remembered allows, the bounce records, the log, whether a max runs).
  * @param {string} cmd the command name
  * @param {string[]} words the words before the command and its arguments
  * @param {string | null} cwd the folder the command runs in (null: relative paths are not judged)

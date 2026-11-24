@@ -11,7 +11,9 @@
 // ahead of the clock (the clock stepped back, or a planted record) is re-dated to now and stored so, so it keeps its slot and ages
 // from now instead of being dropped.
 // Across sessions (plan M2b): anyRunning(type) reads every session's record without the lock, by the same running rules, so a
-// max that died unseen counts only until STALE_MS passes with no tool call of its own (never for good).
+// max that died unseen counts only until STALE_MS passes with no tool call of its own (never for good). It reads all of them, in no
+// order a file's name or time could game; more than MAX_SESSION_FILES files (old ones are pruned after 7 days, so only a flood of
+// planted files gets there) is `unusable`, which the callers treat as a running max.
 // Exports: PENDING_MS, STALE_MS, SAFE_ID, NO_STORE, MAX_SESSION_FILES, mainAgentsDir(env), withRecord(session, env, change),
 // peekRecord(session, env, now), anyRunning(type, env, now).
 // Invariants: every write of the file goes through withRecord, under the lock (peekRecord and anyRunning only read, and a caller of
@@ -31,8 +33,8 @@ export const SAFE_ID = /^[\w-]{1,128}$/;
 export const NO_STORE = { state: 'unusable', running: [] };
 const MAX_STORE_BYTES = 64 * 1024;
 const STOPPED_KEPT = 200; // stopped main agent ids kept for a resume
-/** Session files anyRunning reads at most, newest first: a hook has a 5 s budget, and old sessions hold no running agent. */
-export const MAX_SESSION_FILES = 64;
+/** Session files anyRunning reads at most (a hook has a 5 s budget); a store with more is `unusable`, never read in part. */
+export const MAX_SESSION_FILES = 1024;
 const SESSION_FILE = /^(.+)\.json$/;
 
 /** The folder of the main-agent records, one file per session. */
@@ -125,22 +127,20 @@ export function peekRecord(session, env, now = Date.now()) {
 }
 
 /**
- * The session ids of the store's plain `<session>.json` files, newest first, at most MAX_SESSION_FILES. A name that is no session id
- * (a planted or hostile name) is skipped; a link or a folder is no plain file, so it is skipped too.
- * @returns {string[] | null} the ids ([] when the store folder does not exist yet); null when the folder is no real folder
+ * The session ids of the store's plain `<session>.json` files. A name that is no session id (a planted or hostile name) is skipped; a
+ * link or a folder is no plain file, so it is skipped too.
+ * @returns {string[] | null} the ids ([] when the store folder does not exist yet); null when the folder is no real folder or holds
+ *   more than MAX_SESSION_FILES of them (reading only some would let planted files hide a record)
  */
-function newestSessions(dir) {
+function allSessions(dir) {
   const folder = lstatOrNull(dir);
   if (folder === null) return [];
   if (!folder.isDirectory()) return null;
-  return readdirSync(dir, { withFileTypes: true })
+  const sessions = readdirSync(dir, { withFileTypes: true })
     .filter((entry) => entry.isFile())
-    .map((entry) => ({ session: SESSION_FILE.exec(entry.name)?.[1], name: entry.name }))
-    .filter(({ session }) => isSessionId(session))
-    .map(({ session, name }) => ({ session, at: statSync(join(dir, name)).mtimeMs }))
-    .sort((first, second) => second.at - first.at)
-    .slice(0, MAX_SESSION_FILES)
-    .map(({ session }) => session);
+    .map((entry) => SESSION_FILE.exec(entry.name)?.[1])
+    .filter(isSessionId);
+  return sessions.length > MAX_SESSION_FILES ? null : sessions;
 }
 
 /**
@@ -150,12 +150,13 @@ function newestSessions(dir) {
  * @param {string} type the main agent type ('max')
  * @param {Record<string, string | undefined>} env process environment (HOME, USERPROFILE)
  * @param {number} now clock in epoch ms (a test passes its own)
- * @returns {'yes' | 'no' | 'unusable'} 'unusable' when the folder or any file read cannot be read or parsed: the caller fails closed
+ * @returns {'yes' | 'no' | 'unusable'} 'unusable' when the folder or any file cannot be read or parsed, or the folder holds more than
+ *   MAX_SESSION_FILES session files: the caller fails closed
  */
 export function anyRunning(type, env, now = Date.now()) {
   const dir = mainAgentsDir(env);
   try {
-    const sessions = newestSessions(dir);
+    const sessions = allSessions(dir);
     if (sessions === null) return 'unusable';
     for (const session of sessions) {
       const record = peekRecord(session, env, now);

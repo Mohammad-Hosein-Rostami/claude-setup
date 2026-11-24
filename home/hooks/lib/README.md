@@ -38,7 +38,7 @@ Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
   container's anonymous volumes on disk; the first send gets the fix (`docker rm -fv`, or `run --rm`), the same command again runs.
 - `credential-send.mjs`: asks when a private credential file (`~/.ssh/id_*`, `.aws/credentials`, `.netrc` ...) and a network sender (curl, scp, nc, a cloud upload) are in one command line.
 - `git-run-values.mjs`: the values git runs from a variable or config entry (`GIT_EDITOR`, `GIT_SSH_COMMAND` ...); asks when the guard cannot read what would run. Used by `git-runs.mjs`.
-- `guard-state-write.mjs`: asks before a write, removal, link or FIFO under `~/.claude/private` or the guard's own state (remembered allows, bounce records, log); reading is allowed.
+- `guard-state-write.mjs`: asks before a write, removal, link or FIFO under `~/.claude/private`, the guard's own state (remembered allows, bounce records, log) or the main-agent record (`~/.claude/state/main-agents`); reading is allowed.
 - `captured-read.mjs`: drops the "prints a stored secret" ask of a line that only captures the read in a variable (`X=$(security find-generic-password -s gh -w)`); a read that is printed, piped or redirected still asks.
 - `account-reads.mjs`: the one exemption from the stored-secret ask: a Keychain read of the account tool's own service
   (`claude-setup-account`), which the owner allows (2026-11-19); any other service keeps the ask.
@@ -114,7 +114,7 @@ Other hooks:
   with `unreadableCause`; an empty file is no settings, a BOM is dropped), `mixedEnvs` (the force and the model variable taken from
   different envs too).
 - `main-agents-store.mjs`: the main-agent record of `agent-budget.mjs` (`withRecord` under the session lock, `peekRecord` without it,
-  `PENDING_MS`, `STALE_MS`; `anyRunning(type)` reads the 64 newest session files without the lock, for max's rules). `agent-ends.mjs`: when the lead's transcript shows a background agent ended (its task notice), for an
+  `PENDING_MS`, `STALE_MS`; `anyRunning(type)` reads every session file without the lock, for max's rules; more than 1024 is unusable). `agent-ends.mjs`: when the lead's transcript shows a background agent ended (its task notice), for an
   agent that died with no SubagentStop.
 - `agent-launches.mjs`: the launch record of every agent of a session, read by the guard's writer isolation gate (it has no cap; the main-agent cap is `agent-budget.mjs`'s):
   `agent-model-guard.mjs` records each launch (writers with the `isolated` and `readOnly` flags), `agent-budget.mjs` marks it started and
