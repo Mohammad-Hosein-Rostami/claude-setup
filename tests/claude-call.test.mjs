@@ -2,13 +2,15 @@
 // which account's token the `claude -p` child gets, that no child starts without one (a stored login is never spent),
 // that an auth or usage-limit error never leads to a call on another account, and that the usage row names the account.
 // The child is the fake `claude` of claude-fakes.mjs, patched to log a hash of its token; the store is in memory.
+// Also the child's billing variables and claudePlan (moved here from the removed recall-checkpoint tests with the lib).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AccountError } from '../home/tools/account/lib/names.mjs';
-import { callHaiku } from '../home/tools/account/lib/claude-call.mjs';
+import { HAIKU_ARGS, callHaiku, claudePlan } from '../home/tools/account/lib/claude-call.mjs';
 import { accountSandbox, assertNoLeak, fakeToken, memoryStore, tokenHash } from './account-helpers.mjs';
+import { fakeStack } from './claude-fakes.mjs';
 
 const TOKEN_A = fakeToken('AccountA');
 const TOKEN_B = fakeToken('AccountB');
@@ -190,4 +192,35 @@ test('a store that cannot be read (a locked Keychain): no child, one auth row, k
   await assert.rejects(callHaiku({ ...CALL, env, store }), (error) => error.kind === 'auth' && /Keychain is locked/.test(error.message));
   assert.deepEqual(usageRows(box).map((row) => [row.account, row.error, row.is_error]), [[null, 'auth', true]]);
   assert.deepEqual(box.claudeCalls(), []);
+});
+
+const FAKE_LOG_CALL = 'JSON.stringify({ args: process.argv.slice(2), stdin })';
+const FAKE_LOG_CALL_WITH_BILLING = 'JSON.stringify({ args: process.argv.slice(2), stdin, leaked: Object.keys(process.env).filter((n) => /^(ANTHROPIC_|CLAUDE_CODE_USE_|AWS_BEARER_TOKEN_BEDROCK)/.test(n)) })';
+
+test('the Haiku child gets no ANTHROPIC_*, Bedrock or Vertex variables and loads no settings sources, so it stays on the subscription', async () => {
+  const { bin, env, claudeCalls } = fakeStack();
+  const fake = join(bin, 'claude');
+  const patched = readFileSync(fake, 'utf8').replace(FAKE_LOG_CALL, FAKE_LOG_CALL_WITH_BILLING);
+  assert.ok(patched.includes('leaked:'), 'the fake claude of claude-fakes.mjs changed: its log line was not patched');
+  writeFileSync(fake, patched);
+  const dirty = { ...env, ANTHROPIC_API_KEY: 'sk-test', ANTHROPIC_AUTH_TOKEN: 't', ANTHROPIC_BASE_URL: 'http://x', ANTHROPIC_FOUNDRY_API_KEY: 'f', CLAUDE_CODE_USE_BEDROCK: '1', CLAUDE_CODE_USE_VERTEX: '1', AWS_BEARER_TOKEN_BEDROCK: 'b' };
+  await callHaiku({ ...CALL, env: dirty });
+  const calls = claudeCalls();
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].leaked, []);
+  assert.equal(calls[0].args[calls[0].args.indexOf('--setting-sources') + 1], '', 'no settings sources are loaded');
+});
+
+test('claudePlan: plain claude with the prompt as an argument elsewhere; claude.cmd through a shell with quoted args and a prompt file on win32', () => {
+  const system = 'Say "hi" & %PATH%\nsecond line';
+  const posix = claudePlan('darwin', system, '/work');
+  assert.deepEqual([posix.command, posix.shell, posix.systemFile], ['claude', false, null]);
+  assert.deepEqual(posix.args.slice(-2), ['--system-prompt', system]);
+  const win = claudePlan('win32', system, 'C:\\work');
+  assert.deepEqual([win.command, win.shell], ['claude.cmd', true]);
+  assert.ok(win.args.every((arg) => /^".*"$/.test(arg)), 'every argument is quoted for cmd.exe');
+  assert.ok(!win.args.some((arg) => arg.includes('second line')), 'the free-text prompt never reaches the command line');
+  assert.equal(win.args.at(-2), '"--system-prompt-file"');
+  assert.match(win.systemFile, /system-prompt\.txt$/);
+  assert.ok(HAIKU_ARGS.every((arg) => win.args.includes(`"${arg.replace(/"/g, '\\"')}"`)), 'the fixed flags are all kept');
 });
