@@ -16,7 +16,7 @@
 // Dangerous words (looked up as words of the quote-stripped, ANSI-C-decoded text): git push (by position) / git alias, rm with a recursive or forced flag and (also find -delete / -exec rm with)
 // an absolute, `~`, `$` or `..` path (once the line has a `cd`, `pushd` or `popd`, any path of a recursive rm or a deleting find: the
 // hidden text may run in another folder, X3), npm-style publish, gh mutations (judged by position: `gh <group> <verb>`), disk tools and raw device paths,
-// psql/mysql/ssh near a production name. An unquoted `rm` right after docker|podman|nerdctl (or their container|image|volume|network), kubectl, git,
+// psql/mysql/ssh near a production name, a deploy or cloud verb read as lib/deploy.mjs reads it (`kubectl apply`, `vercel --prod`). An unquoted `rm` right after docker|podman|nerdctl (or their container|image|volume|network), kubectl, git,
 // npm, pnpm, yarn, brew, cargo, go, pip or gh as the statement's command word is its sub-command, and an unquoted redirect's target is no rm path. Message text of `git commit` and `gh pr|issue create|edit|comment` is data (message-text.mjs), so
 // `git commit -m "$(cat <<'EOF' ... git push ... EOF)"` is silent; a message with another `$(` or a backtick is still scanned.
 // A single-quoted argument of a program that never runs its arguments (echo, printf, grep, rg, jq, sed, git log) is data too (lib/inert-arguments.mjs).
@@ -25,6 +25,7 @@
 import { ANSI_C_WORD, decodeAnsiC } from './ansi-c.mjs';
 import { quotedChars } from './braces.mjs';
 import { asGitSubcommand, commandName } from './command-of.mjs';
+import { DEPLOY_TOOLS, deployAsk } from './deploy.mjs';
 import { withoutInertArguments } from './inert-arguments.mjs';
 import { withoutMessageText } from './message-text.mjs';
 import { WINDOW, deletesInMovedText, findDeletes } from './moved-text.mjs';
@@ -176,6 +177,7 @@ function dangerIn(marked, prodText, prodNames) {
     if (word === 'find' && findDeletes(after) && riskyPath) return 'destructive';
     if (word === 'publish' && words.slice(Math.max(0, i - 3), i).some((w) => PUBLISHERS.has(w))) return 'publish';
     if (word === 'gh' && ghMutation(after)) return 'gh';
+    if (DEPLOY_TOOLS.includes(word) && deployAsk(word, after) !== undefined) return 'deploy';
     if (word === 'dd' && after.some((w) => w.startsWith('of='))) return 'destructive';
     if (DISK_TOOLS.test(word) && (word !== 'diskutil' || after.some((w) => /^(?:erase|partition|zero|secureerase|reformat|apfs|delete)/i.test(w)))) return 'destructive';
     if (RAW_DEVICE.test(word)) return 'destructive';

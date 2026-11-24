@@ -4,13 +4,16 @@
 // lib/outward.mjs outwardAsk calls deployAsk first; lib/reason-classes.mjs gives every reason the outward class "deploy or cloud change",
 // so it keeps its dialog under CLAUDE_GUARD_ASK=allow, and an outward ask from max runs only on a click (lib/timed-ask.mjs).
 // Asks: docker|podman push (also `image|manifest|compose push`, `build|buildx build --push`); kubectl apply|create|delete|replace|patch|
-// scale|set|edit|rollout (not `rollout status|history`)|drain|cordon|uncordon; helm install|upgrade|rollback|uninstall (and its aliases
-// delete|del|un)|push; terraform|tofu apply|destroy|import; pulumi up|update|destroy|refresh; vercel with no sub-command, with a path, with
-// deploy|redeploy|promote|rollback|remove|rm, or with --prod; netlify|ntl deploy; fly|flyctl deploy|scale|secrets set|unset; wrangler
-// deploy|publish, pages|versions deploy|publish, secret put|delete; firebase deploy (and `hosting:channel:deploy`); gcloud with deploy among
-// its first three command words; aws s3 cp|sync to an s3:// target, s3 mv with an s3:// path, s3 rm|rb, cloudformation deploy, ecs
-// update-service; serverless|sls deploy; eas submit|update. Stay allowed: every other verb (kubectl get|describe|logs|diff, terraform
-// plan, helm list|template, docker build, vercel ls|dev, wrangler dev ...) and every dry run (`--dry-run`, `--dry-run=client|server`,
+// scale|set|edit|rollout (not `rollout status|history`)|drain|cordon|uncordon|label|annotate|taint|expose|run (not with `--local`, which
+// changes only the printed copy); helm install|upgrade|rollback|uninstall (and its aliases delete|del|un)|push; terraform|tofu
+// apply|destroy|import|state rm|mv|push; pulumi up|update|destroy|refresh; vercel with no sub-command, with a path, with
+// deploy|redeploy|promote|rollback|remove|rm, with --prod, alias (not `alias ls|list`), env add|rm|remove|update; netlify|ntl deploy;
+// fly|flyctl deploy|scale|secrets set|unset|apps destroy; wrangler deploy|publish, pages|versions deploy|publish, secret put|delete;
+// firebase deploy (and `hosting:channel:deploy`); gcloud with deploy among its first three command words; aws s3 cp|sync to an s3://
+// target, s3 mv with an s3:// path, s3 rm|rb, s3api put-*|delete-*|create-*, cloudformation deploy|create-*|update-*|delete-*|
+// execute-change-set, ecs update-service; serverless|sls deploy|remove; eas submit|update and `eas build --auto-submit`. Stay allowed:
+// every other verb (kubectl get|describe|logs|diff, terraform plan|state list|show, helm list|template, docker build, vercel ls|dev|env ls,
+// wrangler dev, aws s3api get-*|list-*|head-*, cloudformation describe-* ...) and every dry run (`--dry-run`, `--dry-run=client|server`,
 // aws `--dryrun`; not `--dry-run=none|false|f|0`, which run for real, nor a dry-run flag after `--`).
 // Command words are read after the tool's options that take a value (`kubectl -n prod apply`); the words after `--` belong to another
 // program (`kubectl exec pod -- rm x`) and are not read. A reason holds only fixed text (the tool and verb names of this file), never a
@@ -55,31 +58,46 @@ function containerAsk([group, action], args) {
   return builds && args.some((word) => PUSH_FLAG.test(word)) ? 'build --push' : undefined;
 }
 
-const KUBECTL_WRITES = new Set(['apply', 'create', 'delete', 'replace', 'patch', 'scale', 'set', 'edit', 'rollout', 'drain', 'cordon', 'uncordon']);
+const KUBECTL_WRITES = new Set(['apply', 'create', 'delete', 'replace', 'patch', 'scale', 'set', 'edit', 'rollout', 'drain', 'cordon', 'uncordon',
+  'label', 'annotate', 'taint', 'expose', 'run']);
 const ROLLOUT_READS = new Set(['status', 'history']); // they watch or list a rollout; max needs them to follow one
+const LOCAL_FLAG = /^--local(?:=true)?$/; // `kubectl label|annotate|set --local -f x -o yaml` edits only the printed copy, never the cluster
 
-function kubectlAsk([verb, action]) {
+function kubectlAsk([verb, action], args) {
   if (!KUBECTL_WRITES.has(verb) || (verb === 'rollout' && ROLLOUT_READS.has(action))) return undefined;
-  return verb;
+  return args.some((word) => LOCAL_FLAG.test(word)) ? undefined : verb;
+}
+
+const TERRAFORM_WRITES = new Set(['apply', 'destroy', 'import']);
+const TERRAFORM_STATE_WRITES = new Set(['rm', 'mv', 'push']); // `state list|show|pull` only read the state
+
+function terraformAsk([verb, action]) {
+  if (TERRAFORM_WRITES.has(verb)) return verb;
+  return verb === 'state' && TERRAFORM_STATE_WRITES.has(action) ? `state ${action}` : undefined;
 }
 
 // Vercel's commands that do not deploy. Any other first word is a project path, which `vercel <path>` deploys; a command missing here
 // only costs a dialog.
-const VERCEL_OTHER_COMMANDS = new Set(['alias', 'api', 'bisect', 'blob', 'build', 'cache', 'certs', 'curl', 'dev', 'dns', 'domains', 'env',
-  'git', 'help', 'httpstat', 'init', 'inspect', 'install', 'integration', 'link', 'list', 'login', 'logout', 'logs', 'ls', 'open', 'project',
+const VERCEL_OTHER_COMMANDS = new Set(['api', 'bisect', 'blob', 'build', 'cache', 'certs', 'curl', 'dev', 'dns', 'domains', 'git',
+  'help', 'httpstat', 'init', 'inspect', 'install', 'integration', 'link', 'list', 'login', 'logout', 'logs', 'ls', 'open', 'project',
   'projects', 'pull', 'switch', 'target', 'teams', 'telemetry', 'whoami']);
 const VERCEL_DEPLOYS = new Set(['deploy', 'redeploy', 'promote', 'rollback', 'remove', 'rm']);
 const PROD_FLAG = /^--prod(?:=|$)/;
+const VERCEL_LIST = new Set(['ls', 'list']); // `vercel alias ls`; any other alias form (`set`, `rm`, `alias <deployment> <domain>`) points a domain
+const VERCEL_ENV_WRITES = new Set(['add', 'rm', 'remove', 'update']); // `env ls|pull` only read the project's variables
 
-function vercelAsk([first], args) {
+function vercelAsk([first, action], args) {
   if (args.some((word) => PROD_FLAG.test(word))) return '--prod';
   if (first === undefined) return '(no sub-command)';
   if (VERCEL_DEPLOYS.has(first)) return first;
+  if (first === 'alias') return VERCEL_LIST.has(action) ? undefined : 'alias';
+  if (first === 'env') return VERCEL_ENV_WRITES.has(action) ? `env ${action}` : undefined;
   return VERCEL_OTHER_COMMANDS.has(first) ? undefined : 'with a project path';
 }
 
 function flyAsk([group, action]) {
   if (group === 'deploy' || group === 'scale') return group;
+  if (group === 'apps' && action === 'destroy') return 'apps destroy';
   return group === 'secrets' && (action === 'set' || action === 'unset') ? `secrets ${action}` : undefined;
 }
 
@@ -102,14 +120,24 @@ const gcloudAsk = (words) => (words.slice(0, GCLOUD_COMMAND_DEPTH).includes('dep
 const S3_URL = /^s3:\/\//i;
 const S3_COPIES = new Set(['cp', 'sync']);
 const S3_REMOVES = new Set(['rm', 'rb']);
+const S3API_WRITE = /^(?:put|delete|create)-/; // put-object, delete-bucket, create-bucket ...; get-|list-|head- only read
+const STACK_CHANGE = /^(?:deploy|execute-change-set|(?:create|update|delete)-.+)$/; // describe-|list-|validate- only read
 
-/** aws: s3 writes (a copy to s3://, a move from or to it, a remove) and the two deploy calls of the plan. */
-function awsAsk([service, operation, ...paths]) {
+/** aws: s3 writes (a copy to s3://, a move from or to it, a remove), s3api writes, CloudFormation stack changes, ecs update-service. */
+function awsAsk([service, operation = '', ...paths]) {
   if (service === 's3' && S3_COPIES.has(operation) && paths.slice(1).some((path) => S3_URL.test(path))) return `s3 ${operation} to s3://`;
   if (service === 's3' && operation === 'mv' && paths.some((path) => S3_URL.test(path))) return 's3 mv';
   if (service === 's3' && S3_REMOVES.has(operation)) return `s3 ${operation}`;
-  if (service === 'cloudformation' && operation === 'deploy') return 'cloudformation deploy';
+  if (service === 's3api' && S3API_WRITE.test(operation)) return 's3api write'; // fixed text: the operation name is a command word
+  if (service === 'cloudformation' && STACK_CHANGE.test(operation)) return 'cloudformation stack change';
   return service === 'ecs' && operation === 'update-service' ? 'ecs update-service' : undefined;
+}
+
+const AUTO_SUBMIT_FLAG = /^--auto-submit(?:-with-profile)?(?:=|$)/; // `eas build --auto-submit` sends the build to the app stores
+
+function easAsk([verb], args) {
+  if (verb === 'submit' || verb === 'update') return verb;
+  return verb === 'build' && args.some((word) => AUTO_SUBMIT_FLAG.test(word)) ? 'build --auto-submit' : undefined;
 }
 
 const DOCKER_VALUE_OPTIONS = ['-c', '--context', '-H', '--host', '--config', '-l', '--log-level', '--tlscacert', '--tlscert', '--tlskey'];
@@ -137,8 +165,8 @@ const RULES = new Map([
   ['podman', rule([...DOCKER_VALUE_OPTIONS, '--connection', '--url', '--identity', '--root', '--runroot'], containerAsk)],
   ['kubectl', rule(KUBE_VALUE_OPTIONS, kubectlAsk)],
   ['helm', rule(HELM_VALUE_OPTIONS, firstWordIn(new Set(['install', 'upgrade', 'rollback', 'uninstall', 'delete', 'del', 'un', 'push'])))],
-  ['terraform', rule([], firstWordIn(new Set(['apply', 'destroy', 'import'])))], // `-chdir=dir` is one word
-  ['tofu', rule([], firstWordIn(new Set(['apply', 'destroy', 'import'])))],
+  ['terraform', rule([], terraformAsk)], // `-chdir=dir` is one word
+  ['tofu', rule([], terraformAsk)],
   ['pulumi', rule(PULUMI_VALUE_OPTIONS, firstWordIn(new Set(['up', 'update', 'destroy', 'refresh'])))],
   ['vercel', rule(VERCEL_VALUE_OPTIONS, vercelAsk)],
   ['netlify', rule(NETLIFY_VALUE_OPTIONS, firstWordIn(new Set(['deploy'])))],
@@ -149,9 +177,9 @@ const RULES = new Map([
   ['firebase', rule(FIREBASE_VALUE_OPTIONS, firebaseAsk)],
   ['gcloud', rule(GCLOUD_VALUE_OPTIONS, gcloudAsk)],
   ['aws', rule(AWS_VALUE_OPTIONS, awsAsk)],
-  ['serverless', rule(SERVERLESS_VALUE_OPTIONS, firstWordIn(new Set(['deploy'])))],
-  ['sls', rule(SERVERLESS_VALUE_OPTIONS, firstWordIn(new Set(['deploy'])))],
-  ['eas', rule([], firstWordIn(new Set(['submit', 'update'])))],
+  ['serverless', rule(SERVERLESS_VALUE_OPTIONS, firstWordIn(new Set(['deploy', 'remove'])))], // remove tears the service down
+  ['sls', rule(SERVERLESS_VALUE_OPTIONS, firstWordIn(new Set(['deploy', 'remove'])))],
+  ['eas', rule([], easAsk)],
 ]);
 
 /** The command names deployAsk has a rule for (lib/dangerous-scan.mjs tries them behind an unknown wrapper or a package runner). */
