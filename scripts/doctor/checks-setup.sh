@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# The setup's own checks: its settings, plugins, hooks, accounts, caps and desktop notes (sourced by scripts/doctor.sh, which
+# The setup's own checks: its settings, plugins, hooks, git hook path, accounts, caps and desktop notes (sourced by scripts/doctor.sh, which
 # holds the helpers ok, bad, warn and warn_unless_accepted, the variables REPO, CLAUDE_DIR, LINK_ROOT and BAD, and the run order in run_checks).
-# Defines functions only; nothing runs when this file is sourced, so no output comes from it. Exports: check_settings, check_deny_rules, check_plugins, check_plugin_parity, check_effort_env, check_projects, check_env_names, check_plugin_session_start, check_workflows_gone, check_project_agents, check_accounts, check_agent_cap, check_notify, check_share_deny.
+# Defines functions only; nothing runs when this file is sourced, so no output comes from it. Exports: check_settings, check_deny_rules, check_plugins, check_plugin_parity, check_effort_env, check_projects, check_env_names, check_plugin_session_start, check_workflows_gone, check_project_agents, check_accounts, check_agent_cap, check_notify, check_share_deny, check_git_hooks_path.
 # Invariants: read-only, as doctor.sh is; every line is `ok`, `WARN`, `FAIL` or `INFO` text on stdout; a check that fails calls bad (BAD=1).
 
 # Drift: rebuild the expected settings.json in memory and compare with the live one.
@@ -198,4 +198,15 @@ check_share_deny() {
     || { bad "share-check deny list $list is not readable"; return; }
   if [ "$count" -gt 0 ]; then ok "share-check deny list: $count words"
   else warn "add your private names to personal/share-deny.txt so share-check can protect them"; fi
+}
+
+# The setup repo's commit hook (.githooks/pre-commit: the gitleaks secret scan and the hook syntax check) runs only while git's
+# core.hooksPath is .githooks. Only scripts/install.sh sets it, so a fresh clone commits unscanned until the first install (audit H7).
+# The value git uses is read, so a global hooksPath that hides .githooks fails too.
+GIT_HOOKS_PATH=.githooks
+check_git_hooks_path() {
+  local value
+  value="$(git -C "$REPO" config --get core.hooksPath 2>/dev/null || true)"
+  if [ "$value" = "$GIT_HOOKS_PATH" ]; then ok "git hooksPath = $GIT_HOOKS_PATH in $REPO (commits run the secret scan)"
+  else bad "git hooksPath is ${value:-not set} in $REPO: commits there run no secret scan; run in $REPO: git config core.hooksPath $GIT_HOOKS_PATH (or re-run scripts/install.sh)"; fi
 }
