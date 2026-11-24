@@ -3,8 +3,8 @@
 //   only find Node and call this file.
 // Usage: node scripts/install.mjs [--update [--to <tag>]] [--uninstall] [--dry-run] [--no-plugins] [--no-tools]
 //          [--ps-profile <path>] [--claude-version <x.y.z>]
-//   (no flag) / --update   link home/ into ~/.claude (and remove the links of the retired modes, workflows and lead rule files and,
-//                          once, the stores of removed parts: scripts/install/retired-state.mjs), make personal/
+//   (no flag) / --update   link home/ into ~/.claude (and remove the links of the retired modes, workflows and lead rule files and
+//                          move, once, the stores of removed parts to the backup folder: scripts/install/retired-state.mjs), make personal/
 //                          from personal.example/ when missing; on the layer's first install move the notes of home/project-notes git does not
 //                          track (or deleted in a pull) into it; link ~/.claude/project-notes to personal/project-notes, write ~/.claude/CLAUDE.md (the marker line and
 //                          @ imports of home/CLAUDE.md and personal/CLAUDE.md; scripts/install/personal.mjs), the claude-as

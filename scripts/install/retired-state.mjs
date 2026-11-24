@@ -1,17 +1,21 @@
 // Purpose: the one-time cleanup of the state that removed parts of this setup left in ~/.claude (lex-dev-tess plan, 2026-11-24):
 //   the recall index, checkpoints and usage log, the ask queue, the estimate tables and caches, the done-check ledger and runs,
-//   the commit-gate and call-window logs, the session-mode files, the last-seen costs and the ui-proof-gate blocks.
+//   the commit-gate and call-window logs, the session-mode files, the last-seen costs, the ui-proof-gate blocks, the stop-gate
+//   blocks, the agent-budget denials and the MCP discovery verdicts.
 // Exports: RETIRED_STATE (paths relative to ~/.claude), removeRetiredState(ctx, record).
-// Invariants (P15): only the paths in RETIRED_STATE are looked at; one is removed only when lstat shows a real folder or file
-//   owned by the user who runs the install (no uid check on Windows, which has none); a link there is never followed or removed,
-//   only named in a WARNING. A missing path is nothing to do, so a second run changes nothing. Each removal is recorded in the
-//   install record (`retiredState`: path and time). --dry-run lists what would go and removes nothing. A failed removal is a
-//   WARNING, and the next install tries again. Kept stores (state/question-answered, limits, board, ui-proof...) are not listed.
-import { lstatSync, rmSync } from 'node:fs';
+// Invariants (P15): only the paths in RETIRED_STATE are looked at; one is moved only when lstat shows a real folder or file
+//   owned by the user who runs the install (no uid check on Windows, which has none); a link there is never followed or moved,
+//   only named in a WARNING. Nothing is deleted: a store goes into the install backup folder (~/.claude-backup-<stamp>/) through
+//   record.mjs backup(), which names it in the record's `backups`, and the record's `retiredState` names it again (path, backup,
+//   time). A missing path is nothing to do, so a second run changes nothing. --dry-run lists what would move and moves nothing.
+//   A failed move is a WARNING, and the next install tries again. Kept stores (state/question-answered, limits, board,
+//   ui-proof...) and ~/.claude/jobs (Claude Code's own) are not listed.
+import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
-import { act, note, warn } from './context.mjs';
+import { warn } from './context.mjs';
+import { backup } from './record.mjs';
 
-/** The stores of the removed parts, relative to ~/.claude, as their code at 752f6442 named them. */
+/** The stores of the removed parts, relative to ~/.claude, as their code at 752f6442 named them (the last three: audit R10). */
 export const RETIRED_STATE = Object.freeze([
   'recall', // recall: index.db, checkpoints/, usage.jsonl (the account usage log now lives in state/account)
   'ask', // the ask queue
@@ -24,6 +28,9 @@ export const RETIRED_STATE = Object.freeze([
   'state/modes', // session-notes mode files
   'state/last-seen', // the status line's last-seen cost for /where
   'state/ui-proof-gate', // the ui-proof-gate hook's once-per-state block keys
+  'state/stop-blocks', // the removed stop-gate's block counts
+  'state/budget-denied', // an older agent-budget's denial markers; no code reads or writes them
+  'state/mcp-discover-verdicts.json', // the removed MCP discovery's verdicts
 ]);
 
 const lstatOrNull = (path) => {
@@ -39,9 +46,11 @@ const lstatOrNull = (path) => {
 const ownedByUs = (stat) => typeof process.getuid !== 'function' || stat.uid === process.getuid();
 
 /**
- * Removes the stores of removed parts from ~/.claude, once: a removed path is gone, so the next run finds nothing.
- * @param {{claudeDir: string, dryRun: boolean, done: string[]}} ctx the run context
- * @param {{retiredState?: {path: string, removedAt: string}[]}} record the install record (gains one entry per removal)
+ * Moves the stores of removed parts out of ~/.claude into the install backup folder, once: a moved path is gone, so the next
+ * run finds nothing. --uninstall puts them back like any other backup.
+ * @param {{claudeDir: string, home: string, backupDir: string, dryRun: boolean, done: string[]}} ctx the run context
+ * @param {{backups: object[], retiredState?: {path: string, backup: string, removedAt: string}[]}} record the install record
+ *   (gains one `backups` and one `retiredState` entry per moved store)
  * @returns {void}
  */
 export function removeRetiredState(ctx, record) {
@@ -50,18 +59,22 @@ export function removeRetiredState(ctx, record) {
     const stat = lstatOrNull(path);
     if (!stat) continue;
     if (stat.isSymbolicLink() || !ownedByUs(stat)) {
-      warn(`${path} is left as it is: a store of a removed part, but a link or another user's (remove it by hand if it is yours)`);
+      warn(`${path} is left as it is: a store of a removed part, but a link or another user's (move it away by hand if it is yours)`);
       continue;
     }
-    act(ctx, `remove ${path} (store of a removed part)`, () => {
-      try {
-        rmSync(path, { recursive: true, force: true });
-      } catch (error) {
-        warn(`could not remove ${path} (${error.code ?? error.message}); the next install tries again`);
-        return;
-      }
-      record.retiredState = [...(record.retiredState ?? []), { path, removedAt: new Date().toISOString() }];
-      note(ctx, `removed ${path} (store of a removed part)`);
-    });
+    moveToBackup(ctx, record, path);
   }
+}
+
+/** One store into the backup folder; a failed move (a busy file, no permission) is a WARNING and the next install tries again. */
+function moveToBackup(ctx, record, path) {
+  let saved;
+  try {
+    saved = backup(ctx, record, path);
+  } catch (error) {
+    warn(`could not move ${path} to the backup folder (${error.code ?? error.message}); the next install tries again`);
+    return;
+  }
+  if (ctx.dryRun) return; // backup() only printed the move
+  record.retiredState = [...(record.retiredState ?? []), { path, backup: saved, removedAt: new Date().toISOString() }];
 }
