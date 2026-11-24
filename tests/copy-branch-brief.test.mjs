@@ -4,7 +4,7 @@
 // scan-speed test measures CPU time, so a busy machine cannot fail them (A-owed X4).
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
-import childProcess, { spawnSync } from 'node:child_process';
+import childProcess from 'node:child_process';
 import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { delimiter, join } from 'node:path';
@@ -12,6 +12,7 @@ import { TOTAL_DEADLINE_MS, branchNames, copyBranchBriefAdvice, copyBranchStem }
 import { git, makeRepo } from './git-tidy-helpers.mjs';
 import { fastestCpuMs } from './timing.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { warmExecInert } from './warm-exec.mjs';
 
 const NO_FAKE_GIT = process.platform === 'win32' && 'the fake git is a shell script';
 const KNOBS = ['COPY_BRANCH_DEADLINE_MS', 'COPY_BRANCH_GIT_TIMEOUT_MS'];
@@ -101,7 +102,9 @@ function fakeGit(body, status) {
   const calls = join(bin, 'calls.log');
   writeFileSync(join(bin, 'git'), `#!/bin/sh\necho call >> '${calls}'\n${body}\nexit ${status}\n`);
   chmodSync(join(bin, 'git'), 0o755);
-  spawnSync(join(bin, 'git')); // the first run of a new script can take long (macOS scans it); keep that out of the measured calls
+  // the first run of a new script can take long (macOS scans it); keep that out of the measured calls. Inert (empty PATH): `body`
+  // finds no command, so a hanging body (`exec sleep 5`) does not hang the warm-up
+  warmExecInert(join(bin, 'git'));
   writeFileSync(calls, '');
   const savedPath = process.env.PATH;
   process.env.PATH = `${bin}${delimiter}${savedPath}`;
