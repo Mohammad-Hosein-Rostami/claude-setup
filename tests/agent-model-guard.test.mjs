@@ -198,8 +198,8 @@ test('hook: a failure inside the pin floor lets the call run unchanged, with a s
 });
 
 // H2: the no-Fable gate fails closed. Each case names what the agent would run on when it is not known.
-// R1: the advice names the agent's own pin first (opus for lex and dev), so a resend never runs them lower than their pin
-const NAME_A_MODEL = 'name the model its agent file should pin in the Agent call, never Fable (`model: "opus"` for lex and dev, `"sonnet"` for tess)';
+// R1: the advice names the agent's own pin (opus for lex, dev and tess), so a resend never runs them lower than their pin
+const NAME_A_MODEL = 'name the model its agent file should pin in the Agent call, never Fable (`model: "opus"` for lex, dev and tess)';
 const pinFile = (name, pins) => `---\nname: ${name}\ndescription: test agent\n${pins}---\nbody\n`;
 
 test('hook: an agent file that cannot be read (mode 000) denies with the reason; readable again, the call runs', (t) => {
@@ -280,8 +280,9 @@ test('hook: a Fable pin in a form not read as written (indented mapping, block s
   assert.deepEqual([plain.status, plain.stdout], [0, ''], 'an indented opus pin runs');
 });
 
-test('hook: the deny advice for an unknown model names opus for lex and dev first, never sonnet first (R1)', () => {
+test('hook: the deny advice for an unknown model names opus for lex, dev and tess, and no lower model (R1)', () => {
   const reason = deniedReason(runWithAgents({ ...BASE, subagent_type: 'some-plugin:agent' }));
   assert.ok(reason.endsWith(`; ${NAME_A_MODEL}.`), reason);
-  assert.ok(reason.indexOf('"opus"') < reason.indexOf('"sonnet"'), reason);
+  assert.ok(reason.includes('`model: "opus"` for lex, dev and tess'), reason);
+  assert.doesNotMatch(reason, /"(sonnet|haiku)"/, 'all three main agents pin opus: a lower model in the advice would run one below its pin');
 });
