@@ -4,7 +4,7 @@
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { delimiter, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +12,7 @@ import { isTrimmedRunner, TRIM_ENV, TRIM_LINES, trimmedCommand } from '../home/h
 import { hookEnv } from './hook-env.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 import { cleanEnv } from './clean-env.mjs';
+import { sharedToolDir } from './shared-tools.mjs';
 
 const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
 const PROJECT = resolve('/work/proj');
@@ -52,10 +53,8 @@ test('through the hook: the rewrite keeps every other field; background, Monitor
 });
 
 test('a fake runner that prints 400 lines and exits 3: the rewritten command prints the log path, then the last 150 lines, and exits 3', { skip: process.platform === 'win32' && 'needs a POSIX bash with mktemp and tail' }, () => {
-  const bin = makeTempDir('trim-bin-');
-  const runner = join(bin, 'pytest');
-  writeFileSync(runner, `#!/bin/sh\ni=1\nwhile [ $i -le ${FAKE_LINES} ]; do echo "line $i"; i=$((i + 1)); done\nexit ${FAKE_EXIT}\n`);
-  chmodSync(runner, 0o755);
+  // one shared copy (shared-tools.mjs: no first-run check per run); POSIX only, like this test
+  const bin = sharedToolDir({ pytest: `#!/bin/sh\ni=1\nwhile [ $i -le ${FAKE_LINES} ]; do echo "line $i"; i=$((i + 1)); done\nexit ${FAKE_EXIT}\n` });
   const { hookSpecificOutput } = JSON.parse(hookAnswer({ command: 'pytest -q' }));
   const env = cleanEnv({ PATH: `${bin}${delimiter}${process.env.PATH}` });
   const run = spawnSync('bash', ['-c', hookSpecificOutput.updatedInput.command], { cwd: makeTempDir('trim-run-'), encoding: 'utf8', env });
