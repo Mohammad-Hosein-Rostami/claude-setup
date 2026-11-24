@@ -80,7 +80,7 @@
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import {
-  checkDiskWipe, checkGhSecret, checkGit, checkHiddenRm, checkKeychainPrint, checkLockfileEdit, checkStdinRm, checkStdinScriptRm,
+  checkDiskWipe, checkGhSecret, checkGit, checkHiddenRm, checkKeychainPrint, checkLockfileEdit, checkStdinRm, checkStdinScriptRm, stdinRunnerOf,
 } from './lib/command-checks.mjs';
 import { withoutCapturedPrints } from './lib/captured-read.mjs';
 import { commandOf } from './lib/command-of.mjs';
@@ -98,6 +98,7 @@ import { GIT_UNREADABLE_REASON, gitRunReasons } from './lib/git-runs.mjs';
 import { gitAdvice } from './lib/git-advice.mjs';
 import { waitAdvice, withoutWaitAdvice } from './lib/wait-advice.mjs';
 import { outwardAsk } from './lib/outward.mjs';
+import { STDIN_ARGUMENTS } from './lib/deploy.mjs';
 import { trimAnswer } from './lib/output-trim.mjs';
 import { hostVariables, readProdHosts, remoteAsk } from './lib/remote.mjs';
 import { TOO_COMPLEX_REASON, checkRm, newScope, newWork, runsInOrder, substituteKnownWords, trackAssignments } from './lib/rm-paths.mjs';
@@ -143,7 +144,8 @@ function checkSimple({ cmd, args, assigns, before }, env) {
     checkGhSecret(cmd, args),
     checkDiskWipe(cmd, args),
     checkLockfileEdit(cmd, args), dockerRmAdvice(cmd, args), // two advice rules: they never ask (lib/reason-classes.mjs)
-    outwardAsk(cmd, args) ?? remoteAsk(cmd, args, [...assigns, ...hostVariables(env.vars)], env.prodHosts),
+    // `echo apply | xargs kubectl`: xargs or parallel adds words at run time, which the outward rules read as a hidden word
+    outwardAsk(cmd, stdinRunnerOf(before) === undefined ? args : [...args, STDIN_ARGUMENTS]) ?? remoteAsk(cmd, args, [...assigns, ...hostVariables(env.vars)], env.prodHosts),
     ...(cmd === 'alias' ? checkAlias(args, env) : []),
   ].filter((reason) => reason !== undefined);
 }

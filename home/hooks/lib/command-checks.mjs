@@ -4,7 +4,8 @@
 // Exports: checkGit(args, assigns) (also for hub, which runs git), UPDATE_REF_REASON, checkDiskWipe(cmd, args), checkLockfileEdit(cmd, args), checkHiddenRm(cmd, args),
 // checkStdinRm(cmd, args, before), checkStdinScriptRm(script, before), checkKeychainPrint(cmd, args), checkGhSecret(cmd, args) - each
 // returns an ask reason, or undefined when the command is fine; secretPrintOf(cmd, args) and isSecretPrintReason(reason) serve
-// lib/captured-read.mjs; LOCKFILES and lockfileAdvice(name) serve lib/reason-classes.mjs; configOf(option) and HOOKS_PATH_REASON serve lib/git-runs.mjs.
+// lib/captured-read.mjs; LOCKFILES and lockfileAdvice(name) serve lib/reason-classes.mjs; configOf(option) and HOOKS_PATH_REASON serve lib/git-runs.mjs;
+// stdinRunnerOf(before) serves pre-bash-guard.mjs.
 // Pure, no I/O. Every rule is an ask (the hook shows a timed dialog); a destructive one starts with "DESTRUCTIVE: ". The one exception is
 // checkLockfileEdit: a quality rule, its text is advice (lib/bounce-once.mjs: denied once with the fix, the identical retry runs).
 // git's own options before the subcommand are read by lib/git-options.mjs; when they can be read more than one way, every reading is checked.
@@ -186,8 +187,13 @@ export function checkStdinRm(cmd, args, before = []) {
   return runner === undefined ? undefined : stdinRmReason(runner);
 }
 
-/** The stdin runner (xargs, parallel) among the words before a command, unless a `:::` input list ends the runner's command first. */
-function stdinRunnerOf(before) {
+/**
+ * The stdin runner (xargs, parallel) among the words before a command, unless a `:::` input list ends the runner's command first.
+ * pre-bash-guard.mjs reads it too: such a runner adds words to the command at run time.
+ * @param {string[]} before the words before the command in its simple command
+ * @returns {string | undefined} `xargs` or `parallel`, or undefined
+ */
+export function stdinRunnerOf(before) {
   const runnerAt = before.findLastIndex((word) => STDIN_RUNNERS.has(commandName(word)));
   if (runnerAt === -1 || before.slice(runnerAt + 1).some((word) => PARALLEL_INPUTS.test(word))) return undefined;
   return commandName(before[runnerAt]);

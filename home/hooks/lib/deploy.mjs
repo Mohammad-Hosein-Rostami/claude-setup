@@ -1,6 +1,6 @@
 // Deploy and cloud CLIs whose verbs change live infrastructure: they ask the owner like a push or a publish (owner rule: confirm every
 // outward-facing action). Exports: DEPLOY_TOOLS (the command names with a rule), DEPLOY_REASON_TAIL (the fixed end of every reason),
-// deployAsk(cmd, args) -> reason | undefined.
+// STDIN_ARGUMENTS (stands for the words xargs or parallel adds), deployAsk(cmd, args) -> reason | undefined.
 // lib/outward.mjs outwardAsk calls deployAsk first; lib/reason-classes.mjs gives every reason the outward class "deploy or cloud change",
 // so it keeps its dialog under CLAUDE_GUARD_ASK=allow, and an outward ask from max runs only on a click (lib/timed-ask.mjs).
 // Asks: docker|podman push (also `image|manifest|compose push`, `build|buildx build --push`); kubectl apply|create|delete|replace|patch|
@@ -14,33 +14,56 @@
 // execute-change-set, ecs update-service; serverless|sls deploy|remove; eas submit|update and `eas build --auto-submit`. Stay allowed:
 // every other verb (kubectl get|describe|logs|diff, terraform plan|state list|show, helm list|template, docker build, vercel ls|dev|env ls,
 // wrangler dev, aws s3api get-*|list-*|head-*, cloudformation describe-* ...) and every dry run (`--dry-run`, `--dry-run=client|server`,
-// aws `--dryrun`; not `--dry-run=none|false|f|0`, which run for real, nor a dry-run flag after `--`).
-// Command words are read after the tool's options that take a value (`kubectl -n prod apply`); the words after `--` belong to another
-// program (`kubectl exec pod -- rm x`) and are not read. A reason holds only fixed text (the tool and verb names of this file), never a
-// word of the command. Pure, no I/O.
+// aws `--dryrun`; not `--dry-run=none|false|f|0`, which run for real, nor a dry-run flag after `--`, nor one right after an option
+// that may take it as its value: `kubectl apply -f --dry-run=client` applies a file named so).
+// Command words are read after the tool's options that take a value (`kubectl -n prod apply`); an option this file does not know is read
+// both ways, with and without a value (`kubectl --username u apply`), and either reading asking is enough. A lone `-` (stdin) is a word.
+// The words after `--` belong to another program (`kubectl exec pod -- rm x`) and are not read.
+// Run time (as the git rule, lib/command-checks.mjs): a command word the guard cannot read (`$V`, `$(cmd)`, a backtick body, the `{}`
+// that xargs or find fills in, or STDIN_ARGUMENTS) may be any word, also several, so the call asks when one of RUN_TIME_PHRASES in its
+// place would ask (`kubectl $V`, `aws s3 cp a "$DEST"`); a value of a known option (`-n "$NS"`) is no command word and stays allowed.
+// A reason holds only fixed text (the tool and verb names of this file), never a word of the command. Pure, no I/O.
 
 const DRY_RUN_FLAGS = new Set(['--dry-run', '--dryrun']); // --dryrun: aws s3
 // `--dry-run=none` (kubectl) and `--dry-run=false|f|0` (helm reads a Go boolean) change things for real; an empty value is not a mode
 const REAL_RUN_VALUES = new Set(['none', 'false', 'f', '0', '']);
 const END_OF_OPTIONS = '--';
+const STDIN_FILE = '-'; // `aws s3 cp - s3://b/k` uploads stdin: a word, not an option
 export const DEPLOY_REASON_TAIL = 'deploys or changes live infrastructure; confirm with the owner';
+/** Stands for the words xargs or parallel adds to the command at run time (pre-bash-guard.mjs appends it). */
+export const STDIN_ARGUMENTS = '$(stdin)';
+const RUN_TIME_WORD = /[$`]|\{\}/; // `$V`, `$(cmd)`, a backtick body, the `{}` of xargs -I{}, parallel and find -exec
+// For a word known only at run time: values that make some rule ask (each tool's verbs: the rules below), tried one by one in its place
+const RUN_TIME_PHRASES = ['apply', 'push', 'deploy', 'up', 'destroy', 'rm', 'set', 'delete', 'put-object', 'update-service', 'submit',
+  's3 rm', 's3://run-time-value'].map((phrase) => phrase.split(' '));
 
-/** True for a dry run before any `--`: `--dry-run`, `--dryrun`, or `--dry-run=<mode>` with a mode that only rehearses. */
-function isDryRun(args) {
-  const end = args.indexOf(END_OF_OPTIONS);
-  return (end === -1 ? args : args.slice(0, end)).some((word) => {
-    if (DRY_RUN_FLAGS.has(word)) return true;
-    const [flag, value] = word.split('=', 2);
-    return DRY_RUN_FLAGS.has(flag) && value !== undefined && !REAL_RUN_VALUES.has(value.toLowerCase());
-  });
+const isOption = (word) => word.startsWith('-') && word !== STDIN_FILE;
+/** True when `word` is an option that may take the next word as its value (no `=` of its own). */
+const mayTakeValue = (word) => word !== undefined && isOption(word) && !word.includes('=');
+
+/** `--dry-run`, `--dryrun`, or `--dry-run=<mode>` with a mode that only rehearses. */
+function isDryRunWord(word) {
+  if (DRY_RUN_FLAGS.has(word)) return true;
+  const [flag, value] = word.split('=', 2);
+  return DRY_RUN_FLAGS.has(flag) && value !== undefined && !REAL_RUN_VALUES.has(value.toLowerCase());
 }
 
-/** The command words of `args`: no option, no value of an option in `valueOptions`, nothing after `--`. */
-function commandWords(args, valueOptions) {
+/** True for a dry-run word before any `--` that is no option's value (the word before it is no option that may take one). */
+function isDryRun(args) {
+  const end = args.indexOf(END_OF_OPTIONS);
+  const options = end === -1 ? args : args.slice(0, end);
+  return options.some((word, at) => isDryRunWord(word) && !mayTakeValue(options[at - 1]));
+}
+
+/**
+ * The command words of `args`: no option, no value of an option in `valueOptions`, nothing after `--`.
+ * @param {boolean} unknownTakesValue the reading where an option missing from `valueOptions` takes the next word as its value
+ */
+function commandWords(args, valueOptions, unknownTakesValue) {
   const words = [];
   for (let i = 0; i < args.length && args[i] !== END_OF_OPTIONS; i++) {
-    if (!args[i].startsWith('-')) words.push(args[i]);
-    else if (valueOptions.has(args[i])) i += 1;
+    if (!isOption(args[i])) words.push(args[i]);
+    else if (valueOptions.has(args[i]) || (unknownTakesValue && mayTakeValue(args[i]))) i += 1;
   }
   return words;
 }
@@ -185,16 +208,28 @@ const RULES = new Map([
 /** The command names deployAsk has a rule for (lib/dangerous-scan.mjs tries them behind an unknown wrapper or a package runner). */
 export const DEPLOY_TOOLS = Object.freeze([...RULES.keys()]);
 
+const READINGS = [false, true]; // an unknown option without a value, then with one
+
+/** True when one of RUN_TIME_PHRASES in place of every run-time word of `words` makes the rule ask. */
+function runTimeAsks(toolRule, words, args) {
+  if (!words.some((word) => RUN_TIME_WORD.test(word))) return false;
+  return RUN_TIME_PHRASES.some((phrase) =>
+    toolRule.ask(words.flatMap((word) => (RUN_TIME_WORD.test(word) ? phrase : [word])), args) !== undefined);
+}
+
 /**
  * Reason to ask the owner before a deploy or cloud change, or undefined.
  * @param {string} cmd command name as lib/command-of.mjs commandName gives it (`vercel.cmd` is `vercel`)
  * @param {string[]} args words after the command
- * @returns {string | undefined} `<tool> <verb> deploys or changes live infrastructure; confirm with the owner`; undefined for another
- *   tool, another verb or a dry run
+ * @returns {string | undefined} `<tool> <verb> deploys or changes live infrastructure; confirm with the owner` (for a run-time word,
+ *   `<tool> with a word filled in at run time possibly ...`); undefined for another tool, another verb or a dry run
  */
 export function deployAsk(cmd, args) {
   const toolRule = RULES.get(cmd);
   if (toolRule === undefined || isDryRun(args)) return undefined;
-  const verb = toolRule.ask(commandWords(args, toolRule.valueOptions), args);
-  return verb === undefined ? undefined : `${cmd} ${verb} ${DEPLOY_REASON_TAIL}`;
+  const readings = READINGS.map((unknownTakesValue) => commandWords(args, toolRule.valueOptions, unknownTakesValue));
+  const verb = readings.map((words) => toolRule.ask(words, args)).find((asked) => asked !== undefined);
+  if (verb !== undefined) return `${cmd} ${verb} ${DEPLOY_REASON_TAIL}`;
+  const hidden = readings.some((words) => runTimeAsks(toolRule, words, args));
+  return hidden ? `${cmd} with a word filled in at run time possibly ${DEPLOY_REASON_TAIL}` : undefined;
 }
