@@ -1,12 +1,12 @@
 // Which agents write product code, for agent-model-guard.mjs's writer isolation gate and the copy-branch brief gate
-// (lib/copy-branch-brief.mjs). The agents of home/agents decide by name: dev, dev-ui, dev-pixel and dev-debug write in their own
-// worktree; lex (it writes plans, never product code) and the read-only agents never count. Any other type is a writer when
-// lib/writer-agents.mjs isWritingAgent says so (general-purpose, or an agent file whose tools may write).
+// (lib/copy-branch-brief.mjs). The agents of home/agents decide by name: dev, dev-ui, dev-pixel, dev-debug and tess-write (tess's test
+// writer) write in their own worktree; lex (it writes plans, never product code) and the read-only agents never count. Any other
+// type is a writer when lib/writer-agents.mjs isWritingAgent says so (general-purpose, or an agent file whose tools may write).
 // Exports: WRITER_ROLES, READ_ONLY_ROLES, isWriterRole(type, env).
 // Invariants: never throws (isWritingAgent reads agent files and answers false on any failure); names are compared exactly.
 import { agentTypeOf, isWritingAgent } from './writer-agents.mjs';
 
-export const WRITER_ROLES = ['dev', 'dev-ui', 'dev-pixel', 'dev-debug'];
+export const WRITER_ROLES = ['dev', 'dev-ui', 'dev-pixel', 'dev-debug', 'tess-write'];
 export const READ_ONLY_ROLES = ['lex', 'lex-scout', 'lex-web', 'pixel-qa', 'dev-run', 'tess', 'tess-review'];
 
 /**

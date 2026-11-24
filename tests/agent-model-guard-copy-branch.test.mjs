@@ -46,7 +46,7 @@ const denied = (out) => out?.permissionDecision === 'deny';
 const call = (type, prompt = 'do the job', extra = {}) => ({ description: 'job', prompt, subagent_type: type, model: 'sonnet', isolation: 'worktree', ...extra });
 
 test('no gate but the route redirects a plain Agent call: a main agent starts every other type, only the boss lex, dev and tess', () => {
-  const types = ['dev-ui', 'dev-pixel', 'dev-debug', 'dev-run', 'lex-scout', 'lex-web', 'tess-review', 'pixel-qa', 'test-writer', 'security-auditor', 'Explore', 'general-purpose'];
+  const types = ['dev-ui', 'dev-pixel', 'dev-debug', 'dev-run', 'lex-scout', 'lex-web', 'tess-review', 'tess-write', 'pixel-qa', 'test-writer', 'security-auditor', 'Explore', 'general-purpose'];
   const brief = 'do the job\nMATRIX: none: not a screen, a hook test'; // the MATRIX line keeps the UI gate quiet
   // one session per call: the main-agent cap (6 at once per session) is not what this test is about
   for (const type of types) assert.equal(denied(session().send(call(type, brief), FROM_AGENT)), false, type);

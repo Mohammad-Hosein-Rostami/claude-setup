@@ -231,6 +231,19 @@ test('a writer whose brief names its own lane worktree runs next to a running wr
   assert.ok(denied(s.launch(writer('dev', { prompt: 'lane four, no worktree line' }))), 'a plain writer still gets the advice');
 });
 
+test('tess-write is a writer: from inside an agent it needs its own lane worktree while another writer runs', () => {
+  const { repo, worktree } = repoWithLaneWorktree(['test-topic']);
+  const s = writerSession({ cwd: repo });
+  assert.ok(!denied(s.launch(writer('dev', { prompt: 'lane one' }))), 'the first writer runs');
+  const plain = s.launch(writer('tess-write', { prompt: 'write the gap tests' }));
+  assert.ok(denied(plain), 'tess-write with no worktree next to a running writer');
+  assert.match(plain.permissionDecisionReason, /`dev-debug` and `tess-write` write/);
+  const lane = writerSession({ cwd: repo });
+  assert.ok(!denied(lane.launch(writer('dev', { prompt: 'lane one' }))), 'the first writer runs');
+  assert.ok(!denied(lane.launch(writer('tess-write', { prompt: laneBrief(worktree) }))), 'tess-write naming its own linked worktree runs');
+  assert.deepEqual(recordOf(lane).launches.map((launch) => launch.isolated === true), [false, true]);
+});
+
 test('a `worktree:` line in a brief file the prompt names counts; a brief file naming no worktree does not', () => {
   const { repo, worktree } = repoWithLaneWorktree();
   const folder = makeTempDir('writer-gate-brief-');
@@ -300,7 +313,7 @@ test('a made-up path, the lead\'s folder, a relative path, a Windows drive path 
     const second = s.launch({ description: 'build', prompt: laneBrief(path), subagent_type: 'general-purpose' });
     assert.ok(denied(second), name);
     assert.match(second.permissionDecisionReason, /`worktree: <absolute path>`/, name);
-    assert.match(second.permissionDecisionReason, /`dev`, `dev-ui`, `dev-pixel` and `dev-debug` write; a reading job goes to `lex-scout`, `dev-run`, `tess` or `tess-review`/, `${name}: the advice names the roles`);
+    assert.match(second.permissionDecisionReason, /`dev`, `dev-ui`, `dev-pixel`, `dev-debug` and `tess-write` write; a reading job goes to `lex-scout`, `dev-run`, `tess` or `tess-review`/, `${name}: the advice names the roles`);
     assert.doesNotMatch(second.permissionDecisionReason, /general-purpose/, `${name}: the advice never sends the job to general-purpose`);
     assert.ok(!denied(s.launch({ description: 'build', prompt: laneBrief(path), subagent_type: 'general-purpose' })), `${name}: the identical resend runs`);
   }

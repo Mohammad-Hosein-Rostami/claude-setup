@@ -138,7 +138,7 @@ test('the boss starting lex-web is denied every time with the route through lex;
 });
 
 test('every helper from the boss is denied with its own main agent named', () => {
-  const owners = { 'lex-scout': 'lex', 'lex-web': 'lex', 'dev-ui': 'dev', 'dev-pixel': 'dev', 'pixel-qa': 'dev', 'dev-debug': 'dev', 'dev-run': 'dev', 'tess-review': 'tess' };
+  const owners = { 'lex-scout': 'lex', 'lex-web': 'lex', 'dev-ui': 'dev', 'dev-pixel': 'dev', 'pixel-qa': 'dev', 'dev-debug': 'dev', 'dev-run': 'dev', 'tess-review': 'tess', 'tess-write': 'tess' };
   const s = newSession();
   for (const [type, owner] of Object.entries(owners)) assert.equal(guard(s, mainCall(type, type)).permissionDecisionReason, helperRoute(type, owner), type);
 });
@@ -170,7 +170,7 @@ const subagentRoute = (type) => `agent route: only the boss starts lex, dev and 
   + 'blocks: <what>\' (SendMessage to main from a background run, else in your report) and go on with what does not depend on it';
 // Each main agent and helper of the plan (lex-dev-tess plan, "Helpers it may start") with the helpers it starts
 const OWN_HELPERS = {
-  lex: ['lex-scout', 'lex-web'], dev: ['dev-ui', 'dev-pixel', 'dev-debug', 'dev-run'], tess: ['tess-review'],
+  lex: ['lex-scout', 'lex-web'], dev: ['dev-ui', 'dev-pixel', 'dev-debug', 'dev-run'], tess: ['tess-review', 'tess-write'],
   'dev-pixel': ['pixel-qa', 'dev-run'], 'dev-ui': ['dev-run'], 'dev-debug': ['lex-scout'],
 };
 
