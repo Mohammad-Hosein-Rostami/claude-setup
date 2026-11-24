@@ -115,13 +115,13 @@ test('with --slots 2 the two runs overlap', async () => {
 });
 
 /**
- * True when acquireSlot takes slot 0 at its first check (it checks at once, then every 2 s). When it does not, the slots are
- * cleared so the waiter gets one at its next check and the case leaves no waiter behind.
+ * True when acquireSlot takes slot 0 at its first check (it checks at once, then every 2 s). When it does not, the slots and
+ * tickets are cleared (the waiter writes its own ticket again), so it gets a slot at its next check and no waiter is left behind.
  */
 async function takesSlotAtFirstCheck(stateDir) {
   const pending = acquireSlot({ stateDir, slots: 1, label: { repo: 'r', command: 'c' } });
   const slot = await Promise.race([pending, sleep(1500).then(() => null)]);
-  if (slot === null) rmSync(join(stateDir, 'slots'), { recursive: true, force: true });
+  if (slot === null) for (const folder of ['slots', 'tickets']) rmSync(join(stateDir, folder), { recursive: true, force: true });
   (await pending).release();
   return slot !== null;
 }
@@ -145,6 +145,13 @@ test('a live holder keeps its slot until it is older than 2 h 10 min', async () 
   assert.equal(await takesSlotAtFirstCheck(stateDir), false, 'a live, fresh holder keeps its slot');
   plantHolder(stateDir, { pid: process.pid, startedAt: new Date(Date.now() - (2 * 60 + 11) * 60 * 1000).toISOString() });
   assert.equal(await takesSlotAtFirstCheck(stateDir), true, 'a holder past 2 h 10 min is reclaimed');
+});
+
+test('a live waiter that came first gets the free slot first', async () => {
+  const { stateDir } = makeCase();
+  mkdirSync(join(stateDir, 'tickets'), { recursive: true });
+  writeFileSync(join(stateDir, 'tickets', `1-${process.pid}`), '{}');
+  assert.equal(await takesSlotAtFirstCheck(stateDir), false, 'the later waiter waits although slot 0 is free');
 });
 
 test('a ticket ahead whose pid is gone does not block the queue', async () => {
@@ -255,7 +262,7 @@ function relatedCase() {
     'settings/base.json': '{}\n',
     'docs/guide.md': '# guide\n',
     'tools/t.mjs': "import '../lib/c.mjs';\n",
-    'tests/tool.test.mjs': "const TOOL = new URL('../tools/t.mjs', import.meta.url);\n",
+    'tests/tool.test.mjs': "const TOOL = new URL('../tools/t.mjs', import.meta.url);\nconst SETTINGS = 'settings/base.json';\n",
   };
   for (const name of ['a', 'b', 'd', 'e', 'f']) {
     files[`lib/${name}.mjs`] = `export const ${name} = 1;\n`;
@@ -300,7 +307,7 @@ test('related: a changed settings file selects the full suite', async () => {
   writeFileSync(join(repo, 'settings/base.json'), '{"a":1}\n');
   const result = await related();
   assert.equal(result.stdout, 'full\n');
-  assert.match(result.stderr, /settings\/base\.json/);
+  assert.match(result.stderr, /settings\/base\.json changes how every test runs/, 'full although a test names the file');
 });
 
 test('related: an empty range is none, and so is a change of plain docs only', async () => {

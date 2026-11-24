@@ -3,9 +3,9 @@
 // Rules, per changed file (repo-relative, `/` separators):
 // - `package.json`, `settings/*` or `.githooks/*`: the full suite (they change how everything runs).
 // - a test file (`*.test.mjs`, `*.test.js`): itself (a deleted one: nothing).
-// - a `.mjs`/`.js` file: every test that reaches it through imports (static, literal dynamic, or `new URL('<path>', import.meta.url)`,
-//   which is how tests find a tool or hook they spawn), and every test that names the basename of such a file in its text (tests
-//   also spawn hooks by a joined path).
+// - a `.mjs`/`.js` file: every test that reaches it through imports (static or literal dynamic), and every test that names the
+//   basename of such a file in its text: tests spawn tools and hooks by path (`new URL('../home/tools/x/x.mjs', import.meta.url)`
+//   or a joined path), so the file they spawn is named, not imported.
 // - any other file: the tests that name its basename.
 // - a file with no test is the full suite, except a plain doc: a `.md` outside home/agents and home/skills that is not a CLAUDE.md.
 // - more than FULL_SHARE of all test files: the full suite.
@@ -20,12 +20,8 @@ const SOURCE_FILE = /\.(?:mjs|js)$/;
 const FULL_SHARE = 0.4; // past this share of all tests the full suite is about as fast and needs no selection to be right
 const ALWAYS_FULL = [/(?:^|\/)package\.json$/, /^settings\//, /^\.githooks\//];
 const STEERING_DOCS = [/^home\/agents\//, /^home\/skills\//, /(?:^|\/)CLAUDE\.md$/]; // tests pin their text, so they are not plain docs
-// The literal specifier of `from '<x>'`, `import '<x>'`, `import('<x>')` and `new URL('<x>', import.meta.url)`.
-const REFERENCE_PATTERNS = [
-  /\bfrom\s*['"]([^'"\n]+)['"]/g,
-  /\bimport\s*\(?\s*['"]([^'"\n]+)['"]/g,
-  /\bnew URL\(\s*['"]([^'"\n]+)['"]\s*,\s*import\.meta\.url/g,
-];
+// The literal specifier of `from '<x>'` (static import and export), `import '<x>'` and `import('<x>')`.
+const IMPORT_PATTERNS = [/\bfrom\s*['"]([^'"\n]+)['"]/g, /\bimport\s*\(?\s*['"]([^'"\n]+)['"]/g];
 
 const isPlainDoc = (file) => file.endsWith('.md') && !STEERING_DOCS.some((pattern) => pattern.test(file));
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -51,11 +47,11 @@ function readSources(repo, files) {
   return sources;
 }
 
-/** Map of file -> the files that reference it (by the REFERENCE_PATTERNS), over every `.mjs`/`.js` source text. */
-function referencedBy(sources) {
+/** Map of file -> the files that import it, over every `.mjs`/`.js` source text. */
+function importedBy(sources) {
   const importers = new Map();
   for (const [file, text] of sources) {
-    for (const pattern of REFERENCE_PATTERNS) {
+    for (const pattern of IMPORT_PATTERNS) {
       for (const [, specifier] of text.matchAll(pattern)) {
         if (!specifier.startsWith('./') && !specifier.startsWith('../')) continue; // packages and node: built-ins
         const target = posix.normalize(posix.join(posix.dirname(file), specifier));
@@ -67,7 +63,7 @@ function referencedBy(sources) {
   return importers;
 }
 
-/** `file` and every file that reaches it through references, transitively. */
+/** `file` and every file that reaches it through imports, transitively. */
 function reachingFiles(file, importers) {
   const reached = new Set([file]);
   const queue = [file];
@@ -102,7 +98,7 @@ export function relatedTests({ repo, changedFiles }) {
   if (forced !== undefined) return { kind: 'full', why: `${forced} changes how every test runs` };
   const sources = readSources(repo, repoFiles(repo));
   const tests = [...sources.keys()].filter((file) => TEST_FILE.test(file)).sort();
-  const context = { tests, testSet: new Set(tests), sources, importers: referencedBy(sources) };
+  const context = { tests, testSet: new Set(tests), sources, importers: importedBy(sources) };
   const selected = new Set();
   for (const file of changedFiles) {
     const hits = testsFor(file, context);
