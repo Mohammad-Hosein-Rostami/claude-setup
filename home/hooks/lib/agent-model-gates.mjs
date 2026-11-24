@@ -2,7 +2,7 @@
 // file inside a try, so a lib that fails to load denies the call instead of exiting 1 (fail open). Model routing: an Agent call with no `model` runs on the lead's own model and spends it silently, so a
 // call to a built-in type that pins no model (general-purpose, no subagent_type, Explore and the other built-ins) gets `sonnet` and a
 // Plan call gets `opus` (types matched in any case: `explore`, `plan`). Forks (subagent_type "fork"), plugin agents and an explicit
-// model are not routed. Input that is not a JSON object, and any crash of the guard, deny the call (the no-Fable gate fails closed).
+// model are not routed, and nothing is routed while CLAUDE_CODE_SUBAGENT_MODEL_FORCE is on (Claude Code then ignores `model`). Input that is not a JSON object, and any crash of the guard, deny the call (the no-Fable gate fails closed).
 // Pin floor (lib/agent-pins.mjs): the agent file Claude Code loads sets a floor for its own model and effort, so a lower per-call
 // value is left out (haiku < sonnet < opus; low < ... < max); this is how each agent keeps the pin of the plan (lex, dev, dev-ui,
 // dev-pixel, dev-debug, tess-review, tess-write on Opus; lex-web, pixel-qa, tess on Sonnet; lex-scout, dev-run on Haiku: the frontmatter of
@@ -15,8 +15,10 @@
 //      no deny-once gate.
 //   0. No Fable (owner rule: Fable is chosen by hand only, never for an agent), denied every time with a one-line reason (fableReason;
 //      the reason texts are lib/fable-model-reasons.mjs),
-//      and fail closed: a call whose `model` is Fable (the alias or any id) or `inherit`; with no `model`, an agent file that pins Fable,
-//      `inherit` or nothing (with no CLAUDE_CODE_SUBAGENT_MODEL, or a Fable one); a pin that cannot be read or is not certain; a type
+//      and fail closed: a call whose `model` is Fable (the alias or any id), `inherit` or an alias resolved at run time (`best`,
+//      `default`, `opusplan`); with no `model`, an agent file that pins Fable, such an alias, `inherit` or nothing (with no
+//      CLAUDE_CODE_SUBAGENT_MODEL, or a Fable or alias one); with CLAUDE_CODE_SUBAGENT_MODEL_FORCE on, a CLAUDE_CODE_SUBAGENT_MODEL
+//      that is unset, `inherit`, Fable or such an alias (it then decides every agent's model); a pin that cannot be read or is not certain; a type
 //      with no agent file the gate reads (a plugin agent, a fork, an unknown type: it runs only with a non-Fable `model` in the call).
 //   1. Copy-branch brief (lib/copy-branch-brief.mjs): a writer brief that creates `<lane>-2` instead of continuing `<lane>` (deny once).
 //   2. UI brief (lib/ui-brief-gate.mjs): a dev-pixel or pixel-qa brief that names no usable coverage matrix (`MATRIX: <path>`, or
@@ -39,7 +41,7 @@ import { mainRouteReason } from './agent-route.mjs';
 import { copyBranchBriefAdvice } from './copy-branch-brief.mjs';
 import { recordAgentLaunch } from './agent-launches.mjs';
 import { isSessionId } from './session-store.mjs';
-import { FABLE_RULE, NAME_A_MODEL, callModelReason, foundPinReason } from './fable-model-reasons.mjs';
+import { FABLE_RULE, NAME_A_MODEL, callModelReason, forcedModelReason, foundPinReason, isModelForced } from './fable-model-reasons.mjs';
 import { uiBriefDeny } from './ui-brief-gate.mjs';
 import { agentTypeOf, isReadOnlyBrief, laneWorktreeOf, worktreeLineAdvice } from './writer-agents.mjs';
 
@@ -150,18 +152,21 @@ export const UNREADABLE_INPUT = 'agent-model-guard could not read its input';
 
 /**
  * The no-Fable gate (see the header). It fails closed: whenever the model the agent would run on is not known, the call is denied.
- * The model is the call's `model` when set (it outranks the agent file), else the built-in route's (guardedAgentInput: sonnet or
+ * With CLAUDE_CODE_SUBAGENT_MODEL_FORCE on, the model is CLAUDE_CODE_SUBAGENT_MODEL alone (lib/fable-model-reasons.mjs header).
+ * Otherwise the model is the call's `model` when set (it outranks the agent file), else the built-in route's (guardedAgentInput: sonnet or
  * opus), else the pin of the agent file Claude Code loads (lib/agent-pins.mjs pinVerdict), else CLAUDE_CODE_SUBAGENT_MODEL.
- * Denied: a Fable model; `inherit` or no model at all (the lead's model, which may be Fable); a pin that cannot be read or is not
+ * Denied: a Fable model; an alias resolved only at run time (`best`, `default`, `opusplan`); `inherit` or no model at all (the lead's model, which may be Fable); a pin that cannot be read or is not
  * certain; a type with no agent file this gate reads (a plugin agent, a fork, an unknown type). Plugin agent files are not read: a
  * plugin agent runs only with a non-Fable `model` in the call.
  * @param {unknown} input the hook input: tool_input {subagent_type, model}, cwd
- * @param {Record<string, string | undefined>} env HOME / CLAUDE_CONFIG_DIR (where the agent files are), CLAUDE_CODE_SUBAGENT_MODEL
+ * @param {Record<string, string | undefined>} env HOME / CLAUDE_CONFIG_DIR (where the agent files are), CLAUDE_CODE_SUBAGENT_MODEL,
+ *   CLAUDE_CODE_SUBAGENT_MODEL_FORCE
  * @returns {Promise<string>} the one-line deny reason, or '' when the agent runs on a known model other than Fable
  */
 export async function fableReason(input, env = process.env) {
   const toolInput = input?.tool_input;
   if (toolInput === null || typeof toolInput !== 'object') return UNREADABLE_INPUT;
+  if (isModelForced(env)) return forcedModelReason(toolInput.model, env); // the call's model and the pin are ignored then
   const { subagent_type: type, model } = guardedAgentInput(toolInput) ?? toolInput;
   if (model !== undefined && model !== '') return callModelReason(model);
   const name = agentTypeOf(type);
@@ -230,7 +235,8 @@ export async function runGuard() {
     process.stdout.write(deny);
     return;
   }
-  const routed = guardedAgentInput(input.tool_input);
+  // with the force on, Claude Code drops `model` from the Agent tool and ignores it, so the routing adds none
+  const routed = isModelForced(process.env) ? null : guardedAgentInput(input.tool_input);
   let floored = routed; // the pin floor fails open: a load or read error in lib/agent-pins.mjs leaves the input as it is
   try {
     const { flooredAgentInput } = await import('./agent-pins.mjs');
