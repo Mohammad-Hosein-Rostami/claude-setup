@@ -16,7 +16,7 @@
 // Dangerous words (looked up as words of the quote-stripped, ANSI-C-decoded text): git push (by position) / git alias, rm with a recursive or forced flag and (also find -delete / -exec rm with)
 // an absolute, `~`, `$` or `..` path (once the line has a `cd`, `pushd` or `popd`, any path of a recursive rm or a deleting find: the
 // hidden text may run in another folder, X3), npm-style publish, gh mutations (judged by position: `gh <group> <verb>`), disk tools and raw device paths,
-// psql/mysql/ssh near a production name, a deploy or cloud verb read as lib/deploy.mjs reads it (`kubectl apply`, `vercel --prod`). An unquoted `rm` right after docker|podman|nerdctl (or their container|image|volume|network), kubectl, git,
+// psql/mysql/ssh near a production name, a deploy or cloud verb read as lib/deploy.mjs reads it (`kubectl apply`, `vercel --prod`; both outward readings: lib/raw-outward-words.mjs). An unquoted `rm` right after docker|podman|nerdctl (or their container|image|volume|network), kubectl, git,
 // npm, pnpm, yarn, brew, cargo, go, pip or gh as the statement's command word is its sub-command, and an unquoted redirect's target is no rm path. Message text of `git commit` and `gh pr|issue create|edit|comment` is data (message-text.mjs), so
 // `git commit -m "$(cat <<'EOF' ... git push ... EOF)"` is silent; a message with another `$(` or a backtick is still scanned.
 // A single-quoted argument of a program that never runs its arguments (echo, printf, grep, rg, jq, sed, git log) is data too (lib/inert-arguments.mjs).
@@ -25,10 +25,10 @@
 import { ANSI_C_WORD, decodeAnsiC } from './ansi-c.mjs';
 import { quotedChars } from './braces.mjs';
 import { asGitSubcommand, commandName } from './command-of.mjs';
-import { DEPLOY_TOOLS, deployAsk } from './deploy.mjs';
 import { withoutInertArguments } from './inert-arguments.mjs';
 import { withoutMessageText } from './message-text.mjs';
 import { WINDOW, deletesInMovedText, findDeletes } from './moved-text.mjs';
+import { ghMutation, isDeployWord } from './raw-outward-words.mjs';
 import { GIT_TOPLEVEL, GIT_TOPLEVEL_WORD, MKTEMP_WORD } from './shell-words.mjs';
 import { COMMAND_ENV, configKind, GIT_UNREADABLE_REASON } from './git-runs.mjs';
 import { DESTRUCTIVE_PREFIX } from './verdict.mjs';
@@ -50,10 +50,6 @@ const STATEMENT_BREAK = /[;&|\n\r]+/;
 const WORD_BREAK = /[\s<>`]+|\$\(|\(/;
 const WORD_EDGE = /^[$({`]+|[)}`]+$/g; // `$(rm` -> `rm`, `/)` -> `/`; a `$(cmd)/dir` word stays unrecognisable on purpose
 const PUBLISHERS = new Set(['npm', 'pnpm', 'yarn', 'bun', 'lerna', 'changeset', 'npx']);
-const GH_VERBS = new Set(['merge', 'delete', 'archive', 'rename', 'transfer']);
-const GH_READ_VERBS = new Set(['list', 'view', 'download']);
-const GH_API_WORDS = new Set(['mutation', 'PUT', 'POST', 'PATCH', 'DELETE']);
-const GH_VALUE_FLAGS = new Set(['-R', '--repo', '--hostname']);
 const DISK_TOOLS = /^(?:mkfs(?:\.\w+)?|newfs(?:_\w+)?|wipefs|blkdiscard|shred|diskutil)$/;
 const RAW_DEVICE = /^\/dev\/(?:r?disk|sd[a-z]|hd[a-z]|nvme|vd[a-z]|xvd|mmcblk)/;
 const REMOTE_TOOLS = new Set(['psql', 'mysql', 'mariadb', 'mysqldump', 'pg_dump', 'pg_restore', 'ssh', 'scp', 'rsync']);
@@ -177,7 +173,7 @@ function dangerIn(marked, prodText, prodNames) {
     if (word === 'find' && findDeletes(after) && riskyPath) return 'destructive';
     if (word === 'publish' && words.slice(Math.max(0, i - 3), i).some((w) => PUBLISHERS.has(w))) return 'publish';
     if (word === 'gh' && ghMutation(after)) return 'gh';
-    if (DEPLOY_TOOLS.includes(word) && deployAsk(word, after) !== undefined) return 'deploy';
+    if (isDeployWord(word, after)) return 'deploy';
     if (word === 'dd' && after.some((w) => w.startsWith('of='))) return 'destructive';
     if (DISK_TOOLS.test(word) && (word !== 'diskutil' || after.some((w) => /^(?:erase|partition|zero|secureerase|reformat|apfs|delete)/i.test(w)))) return 'destructive';
     if (RAW_DEVICE.test(word)) return 'destructive';
@@ -199,21 +195,6 @@ function pushesIn(after) {
   const pushes = after.filter((w) => w === 'push').length;
   if (pushes === 0) return false;
   return !(after[0] === 'stash' && after[1] === 'push' && pushes === 1);
-}
-
-/** `gh <group> <verb>` by position (flags skipped): `gh pr create --title "delete x"` is not a delete; `gh release create` and `gh pr merge` are. */
-function ghMutation(after) {
-  const positional = [];
-  for (let i = 0; i < after.length && positional.length < 2; i++) {
-    if (GH_VALUE_FLAGS.has(after[i])) i++;
-    else if (!after[i].startsWith('-')) positional.push(after[i]);
-  }
-  const [group, verb = ''] = positional;
-  if (group === 'api') return after.some((w) => GH_API_WORDS.has(w) || w.startsWith('-X') || /^--method/.test(w));
-  if (group === 'release') return !GH_READ_VERBS.has(verb);
-  if (group === 'repo' && verb === 'edit') return true;
-  if ((group === 'secret' || group === 'variable') && /^(?:set|delete|remove)$/.test(verb)) return true;
-  return (group === 'workflow' && verb === 'run') || GH_VERBS.has(verb);
 }
 
 const WRAPPERS = new Set(['sudo', 'nohup', 'time', 'env', 'exec', 'command']);

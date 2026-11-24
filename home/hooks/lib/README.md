@@ -17,7 +17,7 @@ Reading a shell command (used by `pre-bash-guard.mjs`; pure functions, they neve
 
 Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
 - `command-checks.mjs`, `rm-paths.mjs`, `bare-glob.mjs`, `find-delete.mjs`, `eval-check.mjs`, `shell-hazards.mjs`, `dangerous-scan.mjs`,
-  `raw-risk.mjs`, `outward.mjs`, `deploy.mjs`, `remote.mjs`, `git-runs.mjs`: one file per kind of risky command (`rm -r`,
+  `raw-risk.mjs` (its outward words: `raw-outward-words.mjs`), `outward.mjs`, `deploy.mjs`, `remote.mjs`, `git-runs.mjs`: one file per kind of risky command (`rm -r`,
   `find -delete`, `eval`, hidden execution, push or publish, deploy and cloud verbs, production hosts, commands git runs).
 - `rm-kind.mjs`: is an `rm` recursive as far as its option words can be read (an unquoted `$F` where the options stand counts); `moved-text.mjs`: after a `cd`, a recursive `rm` or deleting `find` in quoted text or in the body of a heredoc a program runs asks.
 - `other-deleters.mjs`: deleters other than `rm` (rimraf, `rsync --delete`, PowerShell and `cmd` delete text), judged on the same targets as `rm -r`.
