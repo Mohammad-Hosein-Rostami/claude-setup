@@ -103,7 +103,11 @@ Other hooks:
   file only loads it inside a try, so a lib that fails to load denies the Agent call instead of exiting 1 (Claude Code would let it run).
 - `agent-route.mjs`: the main-agent route, the guard's first gate (`mainRouteReason`, `MAIN_AGENT_TYPES`): the boss starts only lex, dev and
   tess, and a subagent never starts them. `fable-model-reasons.mjs`: the no-Fable gate's deny reasons for the call's `model`, the agent
-  file's pin and `CLAUDE_CODE_SUBAGENT_MODEL`; `agent-model-gates.mjs` `fableReason` picks which one applies.
+  file's pin and `CLAUDE_CODE_SUBAGENT_MODEL` (run-time aliases and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` too); `agent-model-gates.mjs`
+  `fableReason` picks which one applies.
+- `main-agents-store.mjs`: the main-agent record of `agent-budget.mjs` (`withRecord` under the session lock, `peekRecord` without it,
+  `PENDING_MS`, `STALE_MS`). `agent-ends.mjs`: when the lead's transcript shows a background agent ended (its task notice), for an
+  agent that died with no SubagentStop.
 - `agent-launches.mjs`: the launch record of every agent of a session, read by the guard's writer isolation gate (it has no cap; the main-agent cap is `agent-budget.mjs`'s):
   `agent-model-guard.mjs` records each launch (writers with the `isolated` and `readOnly` flags), `agent-budget.mjs` marks it started and
   ended on SubagentStart and SubagentStop; a stopped agent that makes a tool call more than 30 s after its stop counts again (`LATE_CALL_MS`: a closer one is its own late PostToolUse); a launch dated ahead of the clock counts as dated now. The store is

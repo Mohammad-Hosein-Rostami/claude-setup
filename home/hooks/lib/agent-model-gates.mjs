@@ -31,10 +31,12 @@
 //      holds) or read-only (a line starting `read-only:` or `scratchpad-only:`), else it is denied once with advice; a brief naming
 //      more than one worktree is denied once too. Who writes: lib/agent-roles.mjs isWriterRole (dev, dev-ui, dev-pixel, dev-debug, tess-write;
 //      never lex or the read-only agents; other types by their agent file). A record that cannot be read denies (fail closed).
+// SendMessage (its own PreToolUse entry) runs none of the gates above: its only gate is the main-agent cap for a message that would resume a stopped lex,
+//      dev or tess (agent-budget.mjs resumeCapReason), denied every time while 3 of its type run, and when the record cannot be read.
 // Exports: guardedAgentInput (pure), fableReason, UNREADABLE_INPUT, writerIsolationDeny, copyBranchBriefDeny, runGuard.
 // Invariants: the routing never blocks; each deny-once gate denies an identical call at most once per session; the hook never lets an
 // Agent call through without the no-Fable gate's yes (bad input and a crash deny).
-import { claimMainSlot, mainCapReason, releaseMainSlot } from '../agent-budget.mjs';
+import { claimMainSlot, mainCapReason, releaseMainSlot, resumeCapReason } from '../agent-budget.mjs';
 import { quotedValue } from './agent-brief.mjs';
 import { isWriterRole } from './agent-roles.mjs';
 import { mainRouteReason } from './agent-route.mjs';
@@ -53,6 +55,7 @@ const PLAN_MODEL = 'opus';
 const UNPINNED_BUILTIN_TYPES = ['general-purpose', 'explore', 'claude', 'claude-code-guide', 'statusline-setup'];
 const PLAN_TYPE = 'plan';
 const SEND_AGAIN = 'Send the same call again unchanged and it runs.';
+const SEND_MESSAGE_TOOL = 'SendMessage'; // settings/base.json runs this guard on it too, for the resume cap
 
 /**
  * The Agent input with the model this call needs when it names none (the same in every mode).
@@ -228,6 +231,11 @@ export async function runGuard() {
   const input = await readHookInput();
   if (input === null) {
     process.stdout.write(denyOutput(UNREADABLE_INPUT));
+    return;
+  }
+  if (input.tool_name === SEND_MESSAGE_TOOL) { // a resume of a stopped main agent counts against the cap; no other gate applies
+    const capped = resumeCapReason(input);
+    if (capped !== '') process.stdout.write(denyOutput(capped));
     return;
   }
   const deny = await gatesDeny(input);

@@ -1,117 +1,87 @@
 // The main-agent cap, per type: at most MAX_AGENTS_PER_TYPE (3) of each main agent type (lex, dev, tess started by the main session)
-// run at once, so 9 in all; a full type never blocks the others. Helpers, started by another agent, and the boss's Claude Code built-ins (claude-code-guide, statusline-setup) are never capped. Nothing else: no call counts shown, no nudges, no
-// report caps.
+// run at once, so 9 in all; a full type never blocks the others. Helpers, started by another agent, and the boss's Claude Code
+// built-ins (claude-code-guide, statusline-setup) are never capped. Nothing else: no call counts shown, no nudges, no report caps.
 // Events: agent-model-guard.mjs (PreToolUse Agent|Task) calls claimMainSlot before a launch and releaseMainSlot when a later gate
-// denies it; this hook records the rest. A call with `agent_id` in its input comes from inside a subagent, so it is a helper's.
+// denies it, and (PreToolUse SendMessage) resumeCapReason before a message that would resume a stopped main agent; this hook
+// records the rest. A call with `agent_id` in its input comes from inside a subagent, so it is a helper's.
 //   PostToolUse in a subagent -> one byte appended to its call counter (lib/writer-agents.mjs callCounterPath): its mtime is the
-//                                agent's last sign of work, read here and by lib/agent-launches.mjs (the writer gate).
+//                                agent's last sign of work, read by lib/main-agents-store.mjs and lib/agent-launches.mjs. The entry
+//                                is async in settings/base.json, so it may land after the agent's SubagentStop: that changes
+//                                nothing, a stopped agent holds no launch.
 //   SubagentStart -> the oldest pending main launch of that type becomes this agent; a stopped main agent that starts again (a
-//                    resume by SendMessage) runs again; any other start is a helper's and is not recorded here. Also
-//                    lib/agent-launches.mjs recordAgentStart for the guard's writer gate.
-//   SubagentStop  -> its main launch ends; lib/agent-launches.mjs recordAgentStop; its call counter is removed.
-// Running: a pending launch (no SubagentStart yet) for PENDING_MS, so a denied or cut launch frees its slot; a started one until its
-// SubagentStop, or until STALE_MS passes with no tool call of its own (an agent that ended unseen). Clock (H16): the store's order
-// is the order of its launches (each is appended), never their times; a launch dated ahead of the clock (the clock stepped back, or
-// a planted record) is re-dated to now and stored so, so it keeps its slot and ages from now instead of being dropped. A call counter
-// that a late PostToolUse writes after the agent's SubagentStop changes nothing: a stopped agent holds no launch. Limit: SubagentStart names no parent, so a helper of the same type that starts while a main launch of that
-// type is pending takes its place; the count stays right until the first of the two stops.
-// Store: ~/.claude/state/main-agents/<session>.json through lib/session-store.mjs under lib/session-lock.mjs (0600, at most
-// MAX_STORE_BYTES for writer and reader): {"launches": [{"key", "type", "at", "agent"?}], "stopped": [agent ids]}. A corrupt file
-// (not JSON, not that shape, or an entry outside it), an unusable store or a lock that stays taken is `unusable`, and the guard
-// denies (the owner's cap fails closed) until the file is fixed or deleted.
+//                    resume by SendMessage) runs again; a running one that starts again (a resume after an end no hook saw) is
+//                    re-dated to now; any other start is a helper's and is not recorded here. Also lib/agent-launches.mjs
+//                    recordAgentStart for the guard's writer gate.
+//   SubagentStop  -> its main launch ends and its type is kept for a resume; lib/agent-launches.mjs recordAgentStop; its call
+//                    counter is removed.
+// Running and the store: lib/main-agents-store.mjs (pending PENDING_MS, started until its stop or STALE_MS with no tool call).
+// Ended unseen: an agent that dies on an API error (a usage limit) gets no SubagentStop. When a type is full, the launches of that
+// type whose agent the lead's transcript shows ended after its start (lib/agent-ends.mjs) are moved to the stopped agents first,
+// so the slot frees at once instead of after STALE_MS. The transcript is read only then, and before the lock is taken.
+// Resume (U3): SubagentStart fires on a SendMessage resume but cannot block, so resumeCapReason checks the cap before the send;
+// the resume then takes its slot at its SubagentStart. Two resumes or a resume and a launch in one message can pass together.
+// Limit: SubagentStart names no parent, so a helper of the same type that starts while a main launch of that type is pending takes
+// its place; the count stays right until the first of the two stops.
 // The main-agent route (which types the boss and the subagents may start) is lib/agent-route.mjs, the guard's first gate.
-// Exports: MAX_AGENTS_PER_TYPE, PENDING_MS, STALE_MS, MAIN_AGENT_TYPES (lib/agent-route.mjs's, kept here for its callers), claimMainSlot, releaseMainSlot, mainCapReason,
-// recordMainStart, recordMainStop.
-// Invariants: never throws; the hook's own events fail open (exit 0, no output); output is fixed text, types and the store path.
-import { appendFileSync, mkdirSync, realpathSync, rmSync, statSync } from 'node:fs';
+// Exports: MAX_AGENTS_PER_TYPE, PENDING_MS and STALE_MS (lib/main-agents-store.mjs's), MAIN_AGENT_TYPES (lib/agent-route.mjs's),
+// claimMainSlot, releaseMainSlot, mainCapReason, resumeCapReason, recordMainStart, recordMainStop.
+// Invariants: never throws; the hook's own events fail open (exit 0, no output); a gate that cannot read the store denies; output
+// is fixed text, types, agent ids and the store path.
+import { appendFileSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { quotedValue } from './lib/agent-brief.mjs';
+import { agentEndTimes } from './lib/agent-ends.mjs';
 import { recordAgentStart, recordAgentStop } from './lib/agent-launches.mjs';
 import { MAIN_AGENT_TYPES } from './lib/agent-route.mjs';
-import { withSessionLock } from './lib/session-lock.mjs';
-import { isSessionId, readSessionFile, writeSessionFile } from './lib/session-store.mjs';
+import { NO_STORE, PENDING_MS, SAFE_ID, STALE_MS, mainAgentsDir, peekRecord, withRecord } from './lib/main-agents-store.mjs';
+import { isSessionId } from './lib/session-store.mjs';
 import { agentTypeOf, callCounterPath } from './lib/writer-agents.mjs';
 
 export const MAX_AGENTS_PER_TYPE = 3; // the owner's limit of running lex, of dev and of tess, each counted alone (owner, 2026-11-24)
-export const PENDING_MS = 2 * 60 * 1000; // a launch the permission dialog, Esc or another hook stops gets no SubagentStart
-export const STALE_MS = 3 * 60 * 60 * 1000; // 3 h with no tool call: longer than a main agent waits on its helpers
-const MAX_STORE_BYTES = 64 * 1024;
-const STOPPED_KEPT = 200; // stopped main agent ids kept for a resume
 const KEY_BYTES = 8;
-const SAFE_ID = /^[\w-]{1,128}$/;
-const NO_STORE = { state: 'unusable', running: [] };
 const STARTING = 'starting'; // a launch with no SubagentStart yet has no agent id
+const MAIN_SESSION = 'main'; // SendMessage's name for the lead session, never a resume
 
-export { MAIN_AGENT_TYPES };
-
-const mainAgentsDir = (env) => join(env.HOME || env.USERPROFILE || homedir(), '.claude', 'state', 'main-agents');
-
-/** The time of an agent's last tool call (its call counter's mtime), or 0 when it has made none. */
-function lastToolCall(session, agentId) {
-  const path = callCounterPath(session, agentId);
-  try {
-    return path === null ? 0 : statSync(path).mtimeMs;
-  } catch {
-    return 0; // no tool call yet
-  }
-}
-
-/** Whether a stored launch (dated no later than now) still holds a slot (the rules in the header). */
-function isRunning(launch, now, session) {
-  if (typeof launch.agent !== 'string') return now - launch.at < PENDING_MS;
-  return now - Math.max(launch.at, lastToolCall(session, launch.agent)) < STALE_MS;
-}
-
-const isLaunch = (launch) => typeof launch?.key === 'string' && typeof launch.type === 'string' && Number.isFinite(launch.at)
-  && (launch.agent === undefined || SAFE_ID.test(launch.agent));
-
-const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
-const isListOrMissing = (value) => value === undefined || Array.isArray(value);
+// kept here for their callers: the route's types and the store's running times
+export { MAIN_AGENT_TYPES, PENDING_MS, STALE_MS };
 
 /**
- * The store's running launches and stopped ids (a missing file is an empty record).
- * @returns {{ record: {launches: object[], stopped: string[]}, redated: boolean } | null} `redated`: a launch dated ahead of `now`
- *   was re-dated to now; null for a corrupt file (not JSON, not the store's shape, or an entry outside it)
+ * When the record read without the lock shows `type` full, the time the lead's transcript shows each started agent of that type
+ * ended (lib/agent-ends.mjs). Read before the lock, as a big transcript takes longer than another hook waits for the lock; the
+ * transcript is read only for a full type, to keep every other call cheap.
+ * @returns {Map<string, number>} agent id -> epoch ms of its last end; empty when the type is not full or the store is unusable
  */
-function parseRecord(text, now, session) {
-  let stored;
-  try {
-    stored = text === null ? {} : JSON.parse(text);
-  } catch {
-    return null; // corrupt: the caller answers `unusable`
-  }
-  if (!isPlainObject(stored) || !isListOrMissing(stored.launches) || !isListOrMissing(stored.stopped)) return null;
-  const launches = stored.launches ?? [];
-  const stopped = stored.stopped ?? [];
-  if (!launches.every(isLaunch) || !stopped.every((id) => typeof id === 'string' && SAFE_ID.test(id))) return null;
-  const dated = launches.map((launch) => (launch.at > now ? { ...launch, at: now } : launch));
-  const redated = dated.some((launch, at) => launch !== launches[at]);
-  return { record: { launches: dated.filter((launch) => isRunning(launch, now, session)), stopped }, redated };
+function endTimesWhenFull(peeked, type, transcriptPath) {
+  const sameType = peeked === null ? [] : peeked.launches.filter((launch) => launch.type === type);
+  if (sameType.length < MAX_AGENTS_PER_TYPE) return new Map();
+  return agentEndTimes(transcriptPath, sameType.filter((launch) => typeof launch.agent === 'string').map((launch) => launch.agent));
 }
 
 /**
- * Runs change(record, now) on the session's record under its lock and stores what it returns as `record` (or the re-dated record
- * when it returns none).
- * @returns {object | undefined} change's answer; NO_STORE when the store cannot be read, parsed or written; undefined when the lock
- *   stays taken
+ * The record with every started launch of `type` whose agent ended after its start (`ends`, from endTimesWhenFull) moved to the
+ * stopped agents, as a SubagentStop would: an agent that died on an API error gets no SubagentStop.
+ * @returns {object} the same record when none ended
  */
-function withRecord(session, env, change) {
-  const dir = mainAgentsDir(env);
-  return withSessionLock(dir, session, () => {
-    const now = Date.now();
-    const text = readSessionFile(dir, session, MAX_STORE_BYTES);
-    if (text === undefined) return NO_STORE;
-    const parsed = parseRecord(text, now, session);
-    if (parsed === null) return NO_STORE;
-    const answer = change(parsed.record, now);
-    const record = answer.record ?? (parsed.redated ? parsed.record : undefined);
-    if (record === undefined) return answer;
-    const stored = JSON.stringify({ launches: record.launches, stopped: record.stopped.slice(-STOPPED_KEPT) });
-    return writeSessionFile(dir, session, stored) ? answer : NO_STORE;
-  });
+function withoutEndedAgents(record, type, ends) {
+  const started = record.launches.filter((launch) => launch.type === type && typeof launch.agent === 'string');
+  const ended = started.filter((launch) => (ends.get(launch.agent) ?? 0) >= launch.at);
+  if (ended.length === 0) return record;
+  return {
+    launches: record.launches.filter((launch) => !ended.includes(launch)),
+    stopped: [...record.stopped, ...ended.map((launch) => launch.agent)],
+    stoppedTypes: { ...record.stoppedTypes, ...Object.fromEntries(ended.map((launch) => [launch.agent, launch.type])) },
+  };
+}
+
+/**
+ * The running launches of `type` under the lock, after freeing the ones `ends` shows ended.
+ * @returns {{ record: object, sameType: object[], changed: boolean }} `changed`: launches were freed, so the record must be stored
+ */
+function runningOfType(stored, type, ends) {
+  const record = withoutEndedAgents(stored, type, ends);
+  return { record, sameType: record.launches.filter((launch) => launch.type === type), changed: record !== stored };
 }
 
 /**
@@ -128,9 +98,10 @@ export function claimMainSlot(input, env = process.env) {
     if (input?.agent_id || !MAIN_AGENT_TYPES.includes(type)) return { state: 'helper', running: [] };
     const session = input?.session_id;
     if (!isSessionId(session)) return { state: 'unrecorded', running: [] };
-    const done = withRecord(session, env, (record, now) => {
-      const sameType = record.launches.filter((launch) => launch.type === type);
-      if (sameType.length >= MAX_AGENTS_PER_TYPE) return { state: 'full', running: sameType };
+    const ends = endTimesWhenFull(peekRecord(session, env), type, input.transcript_path);
+    const done = withRecord(session, env, (stored, now) => {
+      const { record, sameType, changed } = runningOfType(stored, type, ends);
+      if (sameType.length >= MAX_AGENTS_PER_TYPE) return { state: 'full', running: sameType, ...(changed ? { record } : {}) };
       const key = randomBytes(KEY_BYTES).toString('hex');
       const launches = [...record.launches, { key, type, at: now }];
       return { state: 'recorded', key, running: launches, record: { ...record, launches } };
@@ -171,9 +142,57 @@ export function releaseMainSlot(session, key, env = process.env) {
 export function mainCapReason({ state, type, running, storePath }) {
   if (state === 'unusable') return `agent cap: the main-agent record ${storePath ?? mainAgentsDir(process.env)} cannot be read or stays locked; fix or delete it, then launch again`;
   if (state !== 'full') return '';
-  const ids = running.map(({ agent }) => (typeof agent === 'string' ? quotedValue(agent) : STARTING)).join(', ');
-  return `agent cap: ${MAX_AGENTS_PER_TYPE} ${quotedValue(String(type))} agents of this session run (${ids}); wait for one of them to return; `
+  return `agent cap: ${MAX_AGENTS_PER_TYPE} ${quotedValue(String(type))} agents of this session run (${runningIds(running)}); wait for one of them to return; `
     + `the other types have their own ${MAX_AGENTS_PER_TYPE} (store: ${storePath})`;
+}
+
+/** The running agent ids of a cap text, `starting` for a launch with no SubagentStart yet. */
+const runningIds = (running) => running.map(({ agent }) => (typeof agent === 'string' ? quotedValue(agent) : STARTING)).join(', ');
+
+/** The type of a stopped main agent, or undefined when `agentId` is no stopped main agent the record knows the type of. */
+const stoppedTypeOf = (record, agentId) => (record.stopped.includes(agentId) && Object.hasOwn(record.stoppedTypes, agentId)
+  ? record.stoppedTypes[agentId] : undefined);
+
+/** The agent id a SendMessage `to` names (`<name> [ref]` without its ref), or null for `main` or a value that is no agent id. */
+function messageTarget(to) {
+  if (typeof to !== 'string') return null;
+  const name = to.replace(/ \[[^\]]*\]$/, '').trim();
+  return name !== MAIN_SESSION && SAFE_ID.test(name) ? name : null;
+}
+
+/**
+ * The deny reason for a SendMessage that would resume a stopped main agent while MAX_AGENTS_PER_TYPE of its type run, else ''.
+ * Why here: SubagentStart fires on a resume (2.1.330, seen 2026-11-24: the resumed agent's start was recorded at the send's time)
+ * but cannot block, so the cap is checked before the send, like a launch. A message to a running agent (queued, no resume), to
+ * `main`, or to an id the record holds no type for (a helper, an agent stopped before types were kept) passes. The resume takes
+ * no slot here: its SubagentStart does (recordMainStart).
+ * @param {unknown} input the PreToolUse(SendMessage) hook input: session_id, transcript_path, tool_input.to
+ * @param {Record<string, string | undefined>} env HOME / USERPROFILE (the store)
+ * @returns {string} the cap text, the fail-closed text when the record cannot be read or stays locked, else ''
+ */
+export function resumeCapReason(input, env = process.env) {
+  try {
+    const session = input?.session_id;
+    const target = messageTarget(input?.tool_input?.to);
+    if (!isSessionId(session) || target === null) return '';
+    const peeked = peekRecord(session, env);
+    const ends = peeked === null ? new Map() : endTimesWhenFull(peeked, stoppedTypeOf(peeked, target), input.transcript_path);
+    const done = withRecord(session, env, (stored) => {
+      const type = stoppedTypeOf(stored, target);
+      if (type === undefined) return { state: 'free' };
+      const { record, sameType, changed } = runningOfType(stored, type, ends);
+      const answer = sameType.length >= MAX_AGENTS_PER_TYPE ? { state: 'full', type, running: sameType } : { state: 'free' };
+      return changed ? { ...answer, record } : answer;
+    });
+    const { state, type, running } = done ?? NO_STORE;
+    const storePath = join(mainAgentsDir(env), `${session}.json`);
+    if (state === 'unusable') return `agent cap: the main-agent record ${storePath} cannot be read or stays locked; fix or delete it, then send again`;
+    if (state !== 'full') return '';
+    return `agent cap: ${MAX_AGENTS_PER_TYPE} ${quotedValue(type)} agents of this session run (${runningIds(running)}); this message would resume `
+      + `${quotedValue(target)} as one more; wait for one of them to return, then send it again (store: ${storePath})`;
+  } catch {
+    return `agent cap: the main-agent record could not be checked, so the message is not sent; send it again`;
+  }
 }
 
 /**
@@ -185,10 +204,14 @@ export function recordMainStart(session, agentId, type, env = process.env) {
     if (!isSessionId(session) || typeof agentId !== 'string' || !SAFE_ID.test(agentId)) return false;
     const name = agentTypeOf(type);
     const done = withRecord(session, env, (record, now) => {
-      if (record.launches.some((launch) => launch.agent === agentId)) return { started: false };
+      if (record.launches.some((launch) => launch.agent === agentId)) { // a resume of an agent that ended unseen: it starts again now
+        const launches = record.launches.map((launch) => (launch.agent === agentId ? { ...launch, at: now } : launch));
+        return { started: false, record: { ...record, launches } };
+      }
       if (record.stopped.includes(agentId)) {
         const launch = { key: randomBytes(KEY_BYTES).toString('hex'), type: name, at: now, agent: agentId };
-        return { started: true, record: { launches: [...record.launches, launch], stopped: record.stopped.filter((id) => id !== agentId) } };
+        const { [agentId]: _resumedType, ...stoppedTypes } = record.stoppedTypes;
+        return { started: true, record: { launches: [...record.launches, launch], stopped: record.stopped.filter((id) => id !== agentId), stoppedTypes } };
       }
       const index = record.launches.findIndex((launch) => launch.type === name && typeof launch.agent !== 'string');
       if (index === -1) return { started: false }; // a helper
@@ -209,9 +232,11 @@ export function recordMainStop(session, agentId, env = process.env) {
   try {
     if (!isSessionId(session) || typeof agentId !== 'string' || !SAFE_ID.test(agentId)) return false;
     const done = withRecord(session, env, (record) => {
-      const launches = record.launches.filter((launch) => launch.agent !== agentId);
-      if (launches.length === record.launches.length) return { stopped: false };
-      return { stopped: true, record: { launches, stopped: [...record.stopped, agentId] } };
+      const ended = record.launches.find((launch) => launch.agent === agentId);
+      if (ended === undefined) return { stopped: false };
+      const launches = record.launches.filter((launch) => launch !== ended);
+      const stoppedTypes = { ...record.stoppedTypes, [agentId]: ended.type }; // the type a resume is capped by (resumeCapReason)
+      return { stopped: true, record: { launches, stopped: [...record.stopped, agentId], stoppedTypes } };
     });
     return done?.stopped === true;
   } catch {

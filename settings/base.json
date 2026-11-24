@@ -54,6 +54,17 @@
         ]
       },
       {
+        "matcher": "SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/agent-model-guard.mjs\"",
+            "timeout": 5,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
         "matcher": "Artifact",
         "hooks": [
           {

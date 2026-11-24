@@ -1,5 +1,5 @@
-// PreToolUse(Agent|Task) hook entry: loads the guard (lib/agent-model-gates.mjs: the no-Fable gate, the route, the cap, the brief
-// and writer gates, the model routing) and runs it. Exports: nothing.
+// PreToolUse(Agent|Task) and PreToolUse(SendMessage) hook entry: loads the guard (lib/agent-model-gates.mjs: the no-Fable gate, the route, the cap, the brief
+// and writer gates, the model routing; for SendMessage the resume cap) and runs it. Exports: nothing.
 // Why an entry of its own: a static import that fails (a lib with a syntax error, one that throws while it loads, a missing file,
 // as a half-synced home/ can have) ends node with exit 1 before any code here runs, and Claude Code lets the call run on exit 1.
 // Loaded inside a try, any such failure, and any crash of the guard, prints a deny instead.
