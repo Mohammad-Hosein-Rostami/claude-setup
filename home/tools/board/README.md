@@ -89,9 +89,10 @@ A refresh runs one at a time (a claim in the file), at most every 5 s while an a
   worktree (`meta.worktreePath`); the launch folder (launch record) and the cwd only say the repository. One refresh per session
   at a time (an O_EXCL lock file from `tools/disk-free/lib/lock-file.mjs`, broken after 20 s): one `for-each-ref` with
   `%(ahead-behind:main)` every 15 s, and `--no-optional-locks status --untracked-files=no` per worktree only when its index or
-  HEAD changed (15 s at most); 250 ms timeout per call and 250 ms of git per refresh, past which the old values stay with their age.
+  HEAD changed (15 s at most); 1.5 s timeout per call and 3 s of git per refresh (sized for a loaded machine: a call takes
+  up to ~0.3 s there), past which the old values stay with their age, or `unknown` with the reason where there are none.
 
-A refresh over its 300 ms budget keeps the old board and marks it `stale N s` (the cursors it read are kept, so the next one
+A refresh over its budget (git's 4.5 s at most plus 300 ms) keeps the old board and marks it `stale N s` (the cursors it read are kept, so the next one
 reads only new bytes). Journals, transcripts and meta files are Claude Code's internal formats: an unreadable part shows
 nothing, never a wrong line, and never throws.
 

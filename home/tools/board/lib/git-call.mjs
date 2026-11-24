@@ -1,13 +1,19 @@
 // One git call of the board's refresh: fixed safety flags, a clean environment, a time limit per call and one git budget per
 // refresh; a call that gives no output says why (timed out, exit code), so the facts it was for show `unknown`, never null (P3).
-// Exports: gitIn(common, args) -> { text, why }; gitBudgetSpent(startMs); GIT_SAFETY; BUDGET_USED.
-// Used by git-state.mjs and repo-stats.mjs (and GIT_SAFETY by disk-free's clean-scan.mjs, through git-state.mjs).
+// Exports: gitIn(common, args) -> { text, why }; gitBudgetSpent(startMs); GIT_SAFETY; GIT_REFRESH_MAX_MS; BUDGET_USED.
+// Used by git-state.mjs, repo-stats.mjs and refresh.mjs (and GIT_SAFETY by disk-free's clean-scan.mjs, through git-state.mjs).
 // Invariants: never throws; never inherits a GIT_* variable; GIT_COMMON_DIR is always the verified shared git folder.
 import { execFileSync } from 'node:child_process';
 import { devNull } from 'node:os';
 
-const GIT_TIMEOUT_MS = 250;
-const GIT_BUDGET_MS = 250;
+// Measured on the owner's Mac (2026-11-25): a git call takes 12-14 ms idle, up to 292 ms on a loaded machine (the test suite at
+// --test-concurrency=40), and a whole refresh of one repository with a lane up to 383 ms. The old 250 ms limits cut a loaded
+// refresh short, so a lane's conflicts went missing. These leave several times the worst measured value; the refresh is detached,
+// so a slow one never delays the status line.
+const GIT_TIMEOUT_MS = 1_500; // one git call
+const GIT_BUDGET_MS = 3_000; // all git of one refresh, every repository together; checked before each call
+/** The longest git can take in one refresh: the budget, plus one call that starts just before it ends. */
+export const GIT_REFRESH_MAX_MS = GIT_BUDGET_MS + GIT_TIMEOUT_MS;
 /** Why facts are missing when the refresh's git budget ran out before their call. */
 export const BUDGET_USED = `git budget of ${GIT_BUDGET_MS} ms for this refresh used up`;
 /**

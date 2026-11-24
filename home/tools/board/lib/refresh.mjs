@@ -32,6 +32,7 @@ import { readAsking } from '../../../hooks/lib/asking-marker.mjs';
 import { isSessionId, readSessionFile, writeSessionFile } from '../../../hooks/lib/session-store.mjs';
 import { sessionAgents } from './agents.mjs';
 import { readCacheFile, writeCacheFile } from './cache-file.mjs';
+import { GIT_REFRESH_MAX_MS } from './git-call.mjs';
 import { repoStats } from './repo-stats.mjs';
 import { placeAgents, sessionRepos } from './repos.mjs';
 import { REMOTE_PATH } from './trusted-repos.mjs';
@@ -40,7 +41,9 @@ export const MAX_BOARD_BYTES = 48 * 1024;
 const MAX_CACHE_BYTES = 512 * 1024;
 const LIVE_EVERY_MS = 5_000; // the settings' refreshInterval: agent rows and a question's countdown move every 5 s
 const IDLE_EVERY_MS = 60_000;
-const BUDGET_MS = 300;
+// A refresh over this keeps the old board, marked stale: the longest git may take, plus the 300 ms the rest (transcripts) had before
+// git got loaded-machine limits; a refresh that kept to git's limits is never thrown away for being slow.
+const BUDGET_MS = GIT_REFRESH_MAX_MS + 300;
 const IN_FLIGHT_MS = 30_000; // a claimed refresh that wrote nothing for this long is taken as dead
 const MAX_USED_DIRS = 16; // folders this session used, kept newest first (repos.mjs places at most 12 of them per refresh)
 const BOARD_SCRIPT = fileURLToPath(new URL('../board.mjs', import.meta.url));
@@ -129,7 +132,7 @@ export function collectBoard({ session, transcriptPath, cwd }, { env = process.e
   const used = usedDirsOf(cache?.used, usesNow({ agents: found.agents, launchDirs, lead, oldLead: cache?.lead ?? null, nowMs }));
   const liveDirs = [...launchDirs, ...found.agents.filter((agent) => agent.state !== 'done')
     .flatMap((agent) => [...(agent.places?.changed ?? []), agent.places?.worktree, agent.places?.cwd])].filter(isUsableDir);
-  const gitStartMs = Date.now(); // one git budget for the whole refresh (git-state.mjs GIT_BUDGET_MS), repo-stats included
+  const gitStartMs = Date.now(); // one git budget for the whole refresh (git-call.mjs GIT_BUDGET_MS), repo-stats included
   const git = sessionRepos({ sessionFolder: cwd, usedDirs: used.map(({ dir }) => dir), liveDirs, cache: cache?.git ?? null, nowMs, startMs: gitStartMs, env });
   const placed = placeAgents(found.agents, git.repos);
   const [primary = null, ...others] = placed.repos;

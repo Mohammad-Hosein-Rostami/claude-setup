@@ -18,7 +18,7 @@ import { basename, dirname, isAbsolute, sep } from 'node:path';
 import { repoState } from './git-state.mjs';
 import { REMOTE_PATH, repoOfDir, trustedRepos } from './trusted-repos.mjs';
 
-/** At most this many repositories are read per refresh (they share one 250 ms git budget in git-state.mjs). */
+/** At most this many repositories are read per refresh (they share one git budget per refresh, git-call.mjs). */
 export const MAX_REPOS = 3;
 const STALE_KEEP_MS = 60_000; // a repository git could not read in time shows its last good state this long, marked stale
 const MAX_DIRS_PLACED = 12; // used folders looked up per refresh (a file-system walk each), newest first
