@@ -1,4 +1,4 @@
-// Tests for home/agents/*.md: exactly the twelve agents of the lex/dev/tess setup, each with frontmatter whose name matches its
+// Tests for home/agents/*.md: exactly the fifteen agents of the lex/dev/tess setup, each with frontmatter whose name matches its
 // file, the model and effort pins the guard's floor reads (lib/agent-pins.mjs), the preloaded skills of the plan, the Agent tool
 // for the agents that start helpers, the browser servers only where the plan puts them, tess in the background, and no text
 // about the removed job machinery.
@@ -44,13 +44,17 @@ const PLAN = {
   tess: { model: SONNET, effort: 'high', skills: ['qa-plan'] },
   'tess-review': { model: OPUS, effort: 'high', skills: ['review-checklist'] },
   'tess-write': { model: OPUS, effort: 'high', skills: ['test-writing'] },
+  // team-split plan, 5.1 and 5.6: dev's part builder (dev may raise its model or effort per call) and two of tess's helpers
+  'dev-part': { model: SONNET, effort: 'high', skills: ['clean-code'] },
+  'tess-simple': { model: SONNET, effort: 'high', skills: ['clean-code'] },
+  'tess-edge': { model: SONNET, effort: 'high', skills: [] },
 };
 const NAMES = Object.keys(PLAN);
-const HELPER_STARTERS = ['lex', 'dev', 'dev-ui', 'dev-pixel', 'dev-debug', 'tess'];
+const HELPER_STARTERS = ['lex', 'dev', 'dev-part', 'dev-ui', 'dev-pixel', 'dev-debug', 'tess'];
 const BROWSER_AGENTS = ['dev-ui', 'dev-pixel', 'pixel-qa'];
 const REMOVED_MACHINERY = /done-check|road\.mjs|status\.mjs|estimate|recall|ask\.mjs|ASK_QUEUE|land-lane|watch\.mjs|lead-rules|lead\.md/;
 
-test('home/agents holds exactly the twelve agents, each named like its file, with a description', () => {
+test('home/agents holds exactly the fifteen agents, each named like its file, with a description', () => {
   assert.deepEqual(readdirSync(AGENTS_DIR).sort(), NAMES.map((name) => `${name}.md`).sort());
   for (const name of NAMES) {
     assert.ok(agent(name).startsWith('---\n'), `${name}: frontmatter opens the file`);
@@ -115,8 +119,8 @@ test('tess runs in the background; no other agent does', () => {
 
 // omitClaudeMd and autoCompactWindow are documented subagent frontmatter fields (code.claude.com/docs/en/sub-agents.md);
 // the window is a plain integer, since frontmatter reads `200k` as 200.
-test('only lex-scout, lex-web and dev-run skip CLAUDE.md, and each carries the global rules it needs', () => {
-  const skipping = ['lex-scout', 'lex-web', 'dev-run'];
+test('only lex-scout, lex-web, dev-run, dev-part, tess-simple and tess-edge skip CLAUDE.md, and each carries the global rules it needs', () => {
+  const skipping = ['lex-scout', 'lex-web', 'dev-run', 'dev-part', 'tess-simple', 'tess-edge'];
   for (const name of NAMES) assert.equal(field(name, 'omitClaudeMd') === 'true', skipping.includes(name), name);
   for (const name of skipping) {
     const text = agent(name);
@@ -135,7 +139,7 @@ test('dev-run, tess and lex-web compact at 200000 tokens; no other agent sets a 
 });
 
 test('read-only agents cannot write files', () => {
-  for (const name of ['lex-scout', 'lex-web', 'dev-run', 'tess', 'tess-review', 'pixel-qa']) {
+  for (const name of ['lex-scout', 'lex-web', 'dev-run', 'tess', 'tess-review', 'tess-simple', 'tess-edge', 'pixel-qa']) {
     const tools = listed(name, 'tools');
     const denied = listed(name, 'disallowedTools');
     const writes = ['Write', 'Edit'].some((tool) => (tools.length === 0 || tools.includes(tool)) && !denied.includes(tool));
@@ -144,7 +148,7 @@ test('read-only agents cannot write files', () => {
 });
 
 test('the writers work in their own worktree and commit without a merge commit', () => {
-  for (const name of ['dev', 'dev-ui', 'dev-pixel', 'dev-debug', 'tess-write']) {
+  for (const name of ['dev', 'dev-part', 'dev-ui', 'dev-pixel', 'dev-debug', 'tess-write']) {
     assert.match(agent(name), /own worktree/, name);
     assert.match(agent(name), /never `--no-verify`/i, name);
     assert.match(agent(name), /never return with uncommitted work/i, name);
