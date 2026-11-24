@@ -2,7 +2,8 @@
 // rewriting its command (a bounce class) from one that still needs the owner, and to name the latter in its deny text without repeating
 // any command text, path or host: a class name is fixed text. decide() uses them to keep advice (quality rules) apart from what asks.
 // Exports: BOUNCE_CLASS (the four bounce classes by key), BOUNCE_CLASSES, ADVICE_CLASS, ADVICE_CLASSES, ASK_CLASSES (every class that asks
-// the owner), reasonClass(reason) -> name | undefined, isAdviceReason(reason), splitAdvice(reasons) -> {asks, advice}.
+// the owner), reasonClass(reason) -> name | undefined, isAdviceReason(reason), splitAdvice(reasons) -> {asks, advice},
+// keepsDialog(reasons) -> boolean (an outward or hidden action: it asks even under CLAUDE_GUARD_ASK=allow, lib/timed-ask.mjs).
 // The bounce classes match exactly (the reason constants of lib/shell-hazards.mjs, lib/raw-risk.mjs and lib/runtime-values.mjs; a literal
 // secret is no reason at all since owner G1, 2026-11-23). The advice classes match exactly too, against the closed set of texts their rules can give (one of them holds a branch name,
 // so it matches as a whole text over a fixed charset): being advice is what lets
@@ -129,6 +130,30 @@ const ASK_CLASS_PATTERNS = [
   ['guard input unreadable', /^the guard could not read its input /], // written by the hook itself, before any rule ran
 ];
 export const ASK_CLASSES = ASK_CLASS_PATTERNS.map(([name]) => name);
+
+// The owner's standing rule "confirm every outward-facing action" (push, publish, PR merge, prod-host writes): these classes keep
+// their dialog under CLAUDE_GUARD_ASK=allow.
+const OUTWARD_CLASSES = new Set(['force push', '+refspec force push', 'git push --mirror', 'remote branch or tag delete', 'git push',
+  'gh api graphql mutation', 'gh api write to a repository', 'gh repo visibility change', 'gh secret change', 'gh workflow run',
+  'gh repo delete or rename', 'gh release change', 'gh pr merge', 'forge merge', 'forge release change', 'forge api write',
+  'package publish', 'gh ssh-key add of a private key', 'production host write', 'credential file next to a sender']);
+// What runs is hidden from the guard, so it may be one of those: these keep their dialog too (a class-less reason as well).
+const HIDDEN_CLASSES = new Set([...BOUNCE_CLASSES, 'git runs a command it cannot read', 'git -c alias', 'interpreter code that builds its command',
+  'PowerShell -EncodedCommand', 'interpreter reading code from stdin', '$IFS in the line', 'shell reading commands from stdin', 'env -S',
+  'su -c', 'eval of a variable', 'command name it cannot read', 'brace expansion it cannot list', 'alias that asks', 'nesting too deep',
+  'command too long', 'command too complex', 'guard error', 'guard input unreadable']);
+
+/**
+ * Whether an ask must still show its dialog when the person turned asks off (CLAUDE_GUARD_ASK=allow).
+ * @param {string[]} reasons the ask's reasons (decide's `reasons`, or the one reason of a guard error)
+ * @returns {boolean} true when any reason is an outward action, hides what runs, or has no class
+ */
+export function keepsDialog(reasons) {
+  return reasons.some((reason) => {
+    const name = reasonClass(reason);
+    return name === undefined || OUTWARD_CLASSES.has(name) || HIDDEN_CLASSES.has(name);
+  });
+}
 
 const withoutMark = (reason) => (reason.endsWith(BACKSTOP_MARK) ? reason.slice(0, -BACKSTOP_MARK.length) : reason);
 

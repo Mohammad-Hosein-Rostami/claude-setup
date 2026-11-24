@@ -18,7 +18,9 @@
 // lib/answered-commands.mjs) is allowed without a second dialog, unless the guard classes it as DESTRUCTIVE: that one always gets this
 // dialog, so a forged record cannot let it through unseen. A deny rule still wins over an allow (hooks docs); an ask rule is a
 // prompt like any other and gets the dialog. A JSON input (MCP and other tools) is shown and logged with its secret-named fields masked
-// (lib/secrets.mjs maskSecretFields). Invariants: never throws out of main; every answered prompt is logged to the guard log.
+// (lib/secrets.mjs maskSecretFields). CLAUDE_GUARD_ASK=allow (lib/timed-ask.mjs) allows a prompt at once, destructive ones too, except an
+// MCP tool, an Artifact publish or delete and a Bash command the guard calls outward or hidden (lib/reason-classes.mjs keepsDialog).
+// Invariants: never throws out of main; every answered prompt is logged to the guard log.
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { takeAnswered } from './lib/answered-commands.mjs';
@@ -29,12 +31,14 @@ import { questionReply } from './lib/question-reply.mjs';
 import { installDialogCleanup } from './lib/timed-ask-async.mjs';
 import { answerAsk, permissionTimeoutSeconds } from './lib/timed-ask.mjs';
 import { DESTRUCTIVE_PREFIX } from './lib/verdict.mjs';
+import { keepsDialog } from './lib/reason-classes.mjs';
 import { decideArtifact } from './artifact-ask.mjs';
 import { decide, decideSafely } from './pre-bash-guard.mjs';
 
 const QUESTION_TOOL = 'AskUserQuestion';
 const NEEDS_UPDATED_INPUT = ['ExitPlanMode']; // an allow without updatedInput is ignored for it
 const HOOK_NAME = 'permission-timed-allow';
+const MCP_PREFIX = 'mcp__';
 // [tool_input field, dialog label], first match wins; any other input is shown as JSON under "Input"
 const TARGET_FIELDS = [
   ['command', 'Command'], ['file_path', 'File'], ['notebook_path', 'File'], ['path', 'Path'], ['url', 'URL'], ['query', 'Query'],
@@ -72,12 +76,16 @@ function promptReason(tool, mode) {
   return `Claude Code asks permission to ${action} (${modeText} mode${note}; Claude Code gives hooks no reason)`;
 }
 
-/** @returns {string | undefined} the Bash guard's reason when its rules ask about this command (same rules, prod hosts included) */
-function guardReason(command, cwd, env) {
+/**
+ * @returns {{reason: string, outward: boolean} | undefined} the Bash guard's reason when its rules ask about this command (same rules,
+ *   prod hosts included), and whether it is outward or hidden (it keeps its dialog under CLAUDE_GUARD_ASK=allow, lib/reason-classes.mjs)
+ */
+function guardAsk(command, cwd, env) {
   const rules = (text, ctx) => decide(text, { ...ctx, prodHosts: readProdHosts() });
   const verdict = decideSafely(command, { cwd, project: env.CLAUDE_PROJECT_DIR || cwd }, rules);
   if (!verdict.ask) return undefined;
-  return verdict.errorClass ? `${verdict.reason}: ${verdict.errorClass}` : verdict.reason;
+  const reason = verdict.errorClass ? `${verdict.reason}: ${verdict.errorClass}` : verdict.reason;
+  return { reason, outward: keepsDialog(verdict.reasons ?? [verdict.reason]) };
 }
 
 /**
@@ -96,16 +104,18 @@ export function permissionReply(input, env = process.env, answer = answerAsk) {
   const record = { hook: HOOK_NAME, tool, command: text, cwd, session: input.session_id };
   const allow = NEEDS_UPDATED_INPUT.includes(tool) ? { behavior: 'allow', updatedInput: input.tool_input } : { behavior: 'allow' };
   const isBash = tool === 'Bash' && label === 'Command';
-  const guard = isBash ? guardReason(text, cwd, env) : undefined;
-  const handOver = isBash && !guard?.startsWith(DESTRUCTIVE_PREFIX); // a destructive command always gets the dialog
+  const guard = isBash ? guardAsk(text, cwd, env) : undefined;
+  const handOver = isBash && !guard?.reason.startsWith(DESTRUCTIVE_PREFIX); // a destructive command always gets the dialog
   if (handOver && takeAnswered({ session: input.session_id, agentId: input.agent_id, cwd, command: text }, env)) {
     logDecision({ ...record, decision: 'allow', outcome: 'guard-answered', reason: 'the guard dialog answered it' }, env);
     return replyLine(allow);
   }
   const artifact = tool === 'Artifact' ? decideArtifact(input.tool_input) : undefined;
-  const hookReason = guard ? `Bash guard: ${guard}` : artifact && `Artifact hook: ${artifact}`;
+  const hookReason = guard ? `Bash guard: ${guard.reason}` : artifact && `Artifact hook: ${artifact}`;
+  // kept as a dialog under CLAUDE_GUARD_ASK=allow: an outward or hidden Bash command, an Artifact publish or delete, any MCP tool (an outside system)
+  const outward = guard?.outward === true || artifact !== undefined || tool.startsWith(MCP_PREFIX);
   const reason = hookReason ? `${hookReason}. ${promptReason(tool, input.permission_mode)}` : promptReason(tool, input.permission_mode);
-  const request = { tool, reason, command: text, targetLabel: label, timeoutS: permissionTimeoutSeconds(env), cwd, sessionId: input.session_id, agentId: input.agent_id };
+  const request = { tool, reason, outward, command: text, targetLabel: label, timeoutS: permissionTimeoutSeconds(env), cwd, sessionId: input.session_id, agentId: input.agent_id };
   const result = answer(request, env);
   logDecision({ ...record, decision: result.decision, outcome: result.outcome, reason }, env);
   if (result.decision === 'allow') return replyLine(allow);

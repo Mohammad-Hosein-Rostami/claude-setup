@@ -11,6 +11,7 @@
 import { rememberAnswered } from './answered-commands.mjs';
 import { bounceOnce, withAdvice } from './bounce-once.mjs';
 import { logDecision } from './guard-log.mjs';
+import { keepsDialog } from './reason-classes.mjs';
 import { askOwner } from './timed-ask.mjs';
 
 export const SECRET_OUTCOME = 'secret'; // the log outcome of a secret's kind line (a note, not an ask: nobody is asked)
@@ -31,7 +32,8 @@ export function askOrBounce(ask, { command, cwd, input }, env = process.env) {
   const onAnswer = (answer) => {
     if (answer.decision === 'allow') rememberAnswered({ session: input.session_id, agentId: input.agent_id, cwd, command }, env);
   };
-  return askOwner({ hook: 'pre-bash-guard', tool: 'Bash', reason, command, cwd, sessionId: input.session_id, agentId: input.agent_id, omitCommandFromLog: ask.errorClass !== undefined, onAnswer }, env);
+  const outward = keepsDialog(ask.reasons ?? [ask.reason]); // stays a dialog under CLAUDE_GUARD_ASK=allow
+  return askOwner({ hook: 'pre-bash-guard', tool: 'Bash', reason, command, cwd, outward, sessionId: input.session_id, agentId: input.agent_id, omitCommandFromLog: ask.errorClass !== undefined, onAnswer }, env);
 }
 
 /**

@@ -2,7 +2,10 @@
 // permissionTimeoutSeconds(env), guiAvailable(env, platform), dialogInvocation(platform, text,
 // title, timeoutS, buttons), requestInvocation(request, timeoutS, platform), parseDialogResult(platform, result, buttons) ->
 // 'allow'|'deny'|'timeout'|'unavailable', answerFromOutcome(outcome, {reason, timeoutS, waitedMs}), answerAsk(request, env) ->
-// {decision, outcome, reason}, decisionOutput(answer) -> hook stdout, askOwner(request, env) -> hook stdout (asks, logs, formats).
+// {decision, outcome, reason}, decisionOutput(answer) -> hook stdout, askOwner(request, env) -> hook stdout (asks, logs, formats), ASK_SWITCH_ENV.
+// The per-person switch CLAUDE_GUARD_ASK=allow (the env of that person's settings/local.json) turns every ask into an allow at once,
+// with no dialog and no wait, except a request marked `outward: true` (the owner's rule: confirm every outward-facing action); it is
+// read here once, so every hook that asks through answerAsk or askOwner obeys it. It never touches a deny.
 // answerAsk blocks until the dialog ends; lib/timed-ask-async.mjs opens the same dialog as a child that can be closed from outside.
 // Why: the native "ask" waits forever. The owner's policy is "everything goes ahead after 2 min": show a native dialog with Allow
 // (default) and Deny, and go ahead when nobody answers within the request's timeoutS, else CLAUDE_ASK_TIMEOUT_S (default 120; a
@@ -41,6 +44,9 @@ export const MAX_ASK_TIMEOUT_S = 190; // seconds; one popup's longest wait: the 
 const TIMEOUT_SLACK_MS = 500; // a dialog tool may report its timeout marginally before the full time has elapsed
 const MS_PER_SECOND = 1000;
 const SPAWN_GRACE_S = 5; // the dialog tool gives up by itself at the timeout; this only stops one that hangs
+export const ASK_SWITCH_ENV = 'CLAUDE_GUARD_ASK';
+const ALLOW_AT_ONCE = 'allow'; // CLAUDE_GUARD_ASK=allow: no dialog, no wait, for every ask that is not outward
+const allowsAtOnce = (request, env) => env[ASK_SWITCH_ENV] === ALLOW_AT_ONCE && request.outward !== true;
 const DIALOG_TITLE = 'Claude Code: confirm action';
 const TEXT_ENV = 'CLAUDE_ASK_DIALOG_TEXT';
 const TITLE_ENV = 'CLAUDE_ASK_DIALOG_TITLE';
@@ -189,17 +195,19 @@ export function answerFromOutcome(outcome, { reason, timeoutS, waitedMs }) {
 /**
  * Asks the owner through a native dialog and turns the answer into a decision.
  * @param {{tool: string, reason: string, command?: string, targetLabel?: string, details?: Array<{label: string, value: string, keepStart?: boolean}>, title?: string,
- *   buttons?: {accept: string, decline: string}, timeoutS?: number, cwd?: string, sessionId?: string, agentId?: string}} request
+ *   buttons?: {accept: string, decline: string}, timeoutS?: number, cwd?: string, sessionId?: string, agentId?: string, outward?: boolean}} request
  *   what to show: `command` is the call's target (a command, or a file, URL or query when targetLabel says so; default label "Command");
+ *   outward: an outward-facing action, which keeps its dialog under CLAUDE_GUARD_ASK=allow;
  *   details are extra labelled lines (label and value masked and cut; keepStart shows a long value's start, else its head and tail); buttons default to Allow/Deny (accept -> "allow", decline -> "deny"); timeoutS overrides CLAUDE_ASK_TIMEOUT_S
  * @param {Record<string, string | undefined>} env process environment (timeout, ssh/CI detection, PATH)
  * @param {string} platform process.platform
  * @param {() => number} now clock in milliseconds (injectable so a test can simulate the full wait)
- * @returns {{decision: 'allow' | 'deny' | 'ask', outcome: 'allow' | 'deny' | 'timeout' | 'no-gui' | 'dialog-failed', reason: string}}
- *   decision "ask" means the caller falls back to the CLI's own prompt
+ * @returns {{decision: 'allow' | 'deny' | 'ask', outcome: 'allow' | 'deny' | 'timeout' | 'no-gui' | 'dialog-failed' | 'switch-allow', reason: string}}
+ *   decision "ask" means the caller falls back to the CLI's own prompt; outcome "switch-allow": CLAUDE_GUARD_ASK=allow, no dialog shown
  */
 export function answerAsk(request, env = process.env, platform = process.platform, now = () => performance.now()) {
   const reason = maskSecrets(String(request.reason));
+  if (allowsAtOnce(request, env)) return { decision: 'allow', outcome: 'switch-allow', reason: `allowed at once by ${ASK_SWITCH_ENV}=${ALLOW_AT_ONCE} (${reason})` };
   if (!guiAvailable(env, platform)) return { decision: 'ask', outcome: 'no-gui', reason };
   const timeoutS = request.timeoutS ?? askTimeoutSeconds(env);
   let outcome = 'unavailable';
@@ -235,14 +243,14 @@ export function decisionOutput({ decision, reason }) {
 
 /**
  * The whole timed ask for one hook call: dialog, decision log, hook JSON.
- * @param {{hook: string, tool: string, reason: string, command?: string, timeoutS?: number, cwd?: string, sessionId?: string, agentId?: string, omitCommandFromLog?: boolean, onAnswer?: (answer: ReturnType<typeof answerAsk>) => void}} request what to show and who asks
+ * @param {{hook: string, tool: string, reason: string, command?: string, timeoutS?: number, cwd?: string, sessionId?: string, agentId?: string, outward?: boolean, omitCommandFromLog?: boolean, onAnswer?: (answer: ReturnType<typeof answerAsk>) => void}} request what to show and who asks
  *   (omitCommandFromLog: the dialog shows the command, the decision log does not; onAnswer runs after the log line, e.g. to remember an allow)
  * @param {Record<string, string | undefined>} env process environment
  * @returns {string} the hook stdout line for the decision (allow, deny, or the native ask as a fallback)
  */
 export function askOwner(request, env = process.env) {
   // The asking marker (lib/asking-marker.mjs): the board shows "needs you" while the dialog is open; a dialog that ends clears it.
-  markAsking({ session: request.sessionId, kind: 'permission', tool: request.tool, count: 1, openedAt: Date.now(), waitS: request.timeoutS ?? askTimeoutSeconds(env) }, env);
+  if (!allowsAtOnce(request, env)) markAsking({ session: request.sessionId, kind: 'permission', tool: request.tool, count: 1, openedAt: Date.now(), waitS: request.timeoutS ?? askTimeoutSeconds(env) }, env);
   const answer = answerAsk(request, env);
   if (answer.decision !== 'ask') clearAsking(request.sessionId, env, 'permission'); // "ask": Claude Code's own prompt stays open
   logDecision({ hook: request.hook, tool: request.tool, decision: answer.decision, outcome: answer.outcome, reason: request.reason, command: request.omitCommandFromLog ? '' : request.command, cwd: request.cwd, session: request.sessionId }, env);
