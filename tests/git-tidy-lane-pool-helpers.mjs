@@ -4,11 +4,12 @@
 //   job-made record goes there) and a session id, so no test reads or writes the real ~/.claude. The fake installers are node scripts
 //   (no shell) that append one JSON line per run to $FAKE_INSTALL_LOG and fail when $FAKE_INSTALL_FAIL is set.
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, utimesSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { delimiter, dirname, join } from 'node:path';
 import { git, lines, tidy } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { sharedToolDir } from './shared-tools.mjs';
 
 const PROGRAMS = { npm: ['npm', 'bin', 'npm-cli.js'], pnpm: ['pnpm', 'bin', 'pnpm.cjs'], yarn: ['yarn', 'bin', 'yarn.js'] };
 const IDLE_MS = 30 * 60 * 60 * 1000; // older than RECLAIM_IDLE_MS (24 h)
@@ -30,9 +31,13 @@ export const claim = (repo, branch, base, env) => lane(['claim', '--repo', repo,
 
 export const laneLines = lines;
 
-/** A folder holding fake npm, pnpm and yarn (node scripts; on Windows a .cmd shim with its JavaScript entry beside it). */
+/**
+ * A folder holding fake npm, pnpm and yarn (node scripts; on Windows a .cmd shim with its JavaScript entry beside it). On POSIX it
+ * is one shared read-only folder (shared-tools.mjs: no first-run check per test); the log and the failure come from the env.
+ */
 export function fakeInstallers() {
-  const bin = realpathSync(makeTempDir('lane-pool-bin-'));
+  const posix = {};
+  const bin = process.platform === 'win32' ? realpathSync(makeTempDir('lane-pool-bin-')) : null;
   for (const [program, entry] of Object.entries(PROGRAMS)) {
     const body = [
       `const fs = require('fs');`,
@@ -44,12 +49,9 @@ export function fakeInstallers() {
       writeFileSync(join(bin, `${program}.cmd`), '@exit /b 9\r\n');
       mkdirSync(join(bin, 'node_modules', ...entry.slice(0, -1)), { recursive: true });
       writeFileSync(join(bin, 'node_modules', ...entry), body);
-    } else {
-      writeFileSync(join(bin, program), `#!${process.execPath}\n${body}\n`);
-      chmodSync(join(bin, program), 0o755);
-    }
+    } else posix[program] = `#!${process.execPath}\n${body}\n`;
   }
-  return bin;
+  return bin ?? realpathSync(sharedToolDir(posix));
 }
 
 /** The runs the fake installers logged: `[{ program, args, cwd }]` (cwd as a real path). */
