@@ -11,7 +11,7 @@
 // changes the exit code.
 // The matrix's `rule` and the project's recorded viewing conditions (`ui-coverage conditions`) are stored in every record and the ledger.
 // Under the strict rule (P3f) a compare failing only on its pixel finding is attributed (lib/attribution-records.mjs): it passes only when
-// every leftover pixel is accepted (matrix entry with owner decision and reason) or text anti-aliasing; results.json is rewritten first.
+// every leftover pixel is accepted (matrix entry with a reason) or text anti-aliasing; results.json is rewritten first.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';

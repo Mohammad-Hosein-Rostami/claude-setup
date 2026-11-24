@@ -45,8 +45,9 @@ long edge, never a full page at device pixel ratio 2; a crop explains a row, PAS
    baseline and smoothing"). Exit 0 pass, 1 fail, 2 setup error (fix the setup, do not retry blindly).
 8. **Responsive.** The matrix widths run inside `run`; `responsive --url URL --widths <defaults>,<frame widths>` for a single
    page; fix findings per `responsive-ui`. Tables: `columns --url URL --table SEL`.
-9. **Accepted differences**: one row each with a reason, a diagnostic proof (a diagnostic state) and an owner reference
-   (`ui-coverage` `lib/accepted.mjs` requires one), plus a "settled, do not report again" list for the owner.
+9. **Accepted differences**: one row each with a reason (`ui-coverage` `lib/accepted.mjs` requires one) and a diagnostic proof
+   (a diagnostic state), plus a "settled, do not report again" list for the owner. No owner approval during the work: the final
+   report lists every accepted difference with its reason, and the owner checks them when the work is done.
 
 The UI lane owns the batch loop (step 7); pixel-qa runs the independent final gate on the tree that lands (the lane rebased onto
 the current base; same matrix, URL, widths), writes the review page (`ui-proof review-page`) and only its PASS counts

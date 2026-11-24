@@ -1,5 +1,5 @@
 // Purpose: validate a matrix.json with hand-written schema rules (no dependency) and return problems, never throw.
-// Exports: problem(code, message, extra), normalizeNode(node), namesNode(text, node), isText(v), isReason(v), isPlaceholder(v), isValidWidth(v), noneReason(v),
+// Exports: problem(code, message, extra), normalizeNode(node), isText(v), isReason(v), isPlaceholder(v), isValidWidth(v), noneReason(v),
 //   validateStructure(matrix), validateRules(matrix), figmaWidthRules(matrix), SURFACE_KINDS, STATUSES, REST_STATE, MIN_REASON_CHARS, RULES, SCHEMES, controlsOf(surface).
 //   Run keys (optional): rule (default|strict), breakpoints (theme breakpoints), schemes (light|dark), settled (the owner's "do not report again" list).
 // Invariants: validateStructure checks only what the cell logic needs to run (locales, widths, stateWidths, surface and
@@ -7,7 +7,7 @@
 //   sound structure and reports the content rules (component, states, reference, default states, searched, deliverable,
 //   reasons, `todo` placeholders). The optional Figma keys are checked for shape only: `figma` is {file, framesFile} and
 //   `frames` is a list of {node, name, width, cells} or {node, name, width, notBuilt} with unique nodes, and `accepted` a list
-//   of {node, surface, state, locale, findings, owner} (the owner is judged by `check`, not here). A width is a positive integer or null. A reason has at least MIN_REASON_CHARS non-space
+//   of {node, surface, state, locale, findings, reason} (the reason is judged by `check`, not here). A width is a positive integer or null. A reason has at least MIN_REASON_CHARS non-space
 //   characters. A problem may carry `cell` (the cell label) and `cause` (the root-cause key `check` groups by).
 import { defaultStatesFor, isKnownClass, knownClassNames } from './states.mjs';
 
@@ -40,12 +40,6 @@ export const noneReason = (value) => (typeof value === 'string' && value.trim().
 
 /** A Figma node id in its API form: the URL form `12-40` becomes `12:40`; anything else (`I1:2;3:4`) is kept. */
 export const normalizeNode = (node) => String(node).trim().replace(/^(\d+)-(\d+)$/, '$1:$2');
-
-/** True when `text` names the node id as a whole token: not inside a longer id (`112:4`, `12:40` for `12:4`, `12:4;5:6`). A colon followed by a space or the end is punctuation, not an id part. */
-export function namesNode(text, node) {
-  const escaped = normalizeNode(node).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(^|[^0-9:;-])${escaped}($|[^0-9:;-]|:(?=\\s|$))`).test(String(text));
-}
 
 const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 

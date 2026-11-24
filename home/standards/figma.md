@@ -32,7 +32,7 @@ Read the states from the frame, not from the screen's name: fill and text colour
 | colour | 1 per channel, alpha 0.02 | element |
 | pixel diff | `--max-diff`, default 0.5 % of pixels (odiff threshold 0.1, anti-aliasing ignored) | pixel |
 | colour metric (any channel > 2 levels, anti-aliasing counted) | same limit as the pixel diff; default rule: pixels inside Figma TEXT boxes left out | pixel |
-| strict rule (`run --strict`, or `rule: strict` in the matrix) | `--max-diff 0`, 0 element rows outside accepted ones; a leftover pixel passes only when an accepted entry (owner reference) covers it or attribution classes it as text anti-aliasing; until `ui-check attribute` lands, any leftover pixel fails | pixel + element |
+| strict rule (`run --strict`, or `rule: strict` in the matrix) | `--max-diff 0`, 0 element rows outside accepted ones; a leftover pixel passes only when an accepted entry (with a written reason) covers it or attribution classes it as text anti-aliasing; until `ui-check attribute` lands, any leftover pixel fails | pixel + element |
 | stroke colour and width, font-family, image loaded | colour 1 per channel; width 1 px; family exact (case aside); every eager image loaded | element |
 
 The 0.5 % default stays; strict applies when the owner says exact or pixel perfect (پیکسل), and where two rules meet the stricter wins. No gate is loosened.

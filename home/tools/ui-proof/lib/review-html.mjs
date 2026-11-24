@@ -117,7 +117,7 @@ function table(id, caption, head, rows) {
   return `<table aria-labelledby="h-${id}"><caption>${caption}</caption><thead><tr>${headCells}</tr></thead><tbody>${rows.join('\n')}</tbody></table>`;
 }
 
-/** Owner reference of an accepted or settled entry as one line of text. */
+/** Owner reference of a settled entry as one line of text. */
 function ownerText(owner) {
   if (typeof owner === 'string') return owner;
   if (owner?.ask !== undefined) return `ask ${owner.ask}, answer "${owner.answer ?? ''}"`;
@@ -134,7 +134,7 @@ function coveredText(findings) {
 function acceptedRow(entry) {
   const where = `<code>${escapeHtml(entry.surface)}</code> <code>${escapeHtml(entry.state)}</code> <code>${escapeHtml(entry.locale ?? '-')}</code>`;
   return `<tr><th scope="row" data-label="Frame">${escapeHtml(entry.node)}<br>${where}</th><td data-label="Accepted">${coveredText(entry.findings)}</td>
-<td data-label="Reason">${entry.reason ? escapeHtml(entry.reason) : NONE}</td><td data-label="Owner reference">${escapeHtml(ownerText(entry.owner))}</td></tr>`;
+<td data-label="Reason">${entry.reason ? escapeHtml(entry.reason) : NONE}</td></tr>`;
 }
 
 function settledRow(entry) {
@@ -185,7 +185,7 @@ export function renderPage(model) {
 </header>
 <main id="main" class="wrap">
 ${statesSection(model.rows)}
-${listSection('accepted', 'Accepted differences', model.accepted, { caption: 'Each accepted difference with its reason and the owner decision it rests on', head: ['Frame', 'Accepted', 'Reason', 'Owner reference'], render: acceptedRow })}
+${listSection('accepted', 'Accepted differences', model.accepted, { caption: 'Each accepted difference with its reason', head: ['Frame', 'Accepted', 'Reason'], render: acceptedRow })}
 ${listSection('settled', 'Settled, do not report again', model.settled, { caption: 'Points the owner has settled', head: ['State', 'What', 'Owner'], render: settledRow })}
 </main>
 </body>

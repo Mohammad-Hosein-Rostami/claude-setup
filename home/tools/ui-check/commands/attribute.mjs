@@ -13,7 +13,7 @@ import { UsageError } from '../lib/errors.mjs';
 
 export const options = {
   results: { type: 'string' }, // a batch or run --out folder holding results.json
-  accepted: { type: 'string' }, // the coverage matrix whose accepted entries (owner decision + reason) may accept pixels
+  accepted: { type: 'string' }, // the coverage matrix whose accepted entries (each with a reason) may accept pixels
   strict: { type: 'boolean', default: false }, // judge every record under the strict rule (P3f)
 };
 

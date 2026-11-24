@@ -441,7 +441,7 @@ with images, recounts the colour metric (any RGBA channel off by more than 2 lev
 `rule: strict` record, outside the Figma TEXT boxes otherwise) on the image pair the gate compared (its masked or padded copies when the
 capture wrote them). A recount that differs from the record's `driftPixels` exits 2. Each pixel then goes to the topmost Figma node
 whose box holds it (spec.json paint order; TEXT boxes grown by 2 CSS px) and one class:
-- `accepted`: an `accepted` entry of the `--accepted` matrix for the same frame and cell, with an owner decision and a `reason`
+- `accepted`: an `accepted` entry of the `--accepted` matrix for the same frame and cell, with a `reason`
   (ui-coverage `lib/accepted.mjs`), whose pixel rule `{check:"pixel", maxPercent}` is not below the record's share. The rule may name
   `nodes: ["12:41"]` (Figma node ids): then only the pixels inside those nodes are accepted; without `nodes` every pixel is.
 - `text anti-aliasing`: a TEXT node with under 20 leftover px, or one that is neither displaced (the best shift of up to 2 px is 0, 0)

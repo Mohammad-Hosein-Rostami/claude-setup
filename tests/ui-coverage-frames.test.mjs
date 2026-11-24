@@ -97,10 +97,10 @@ test('T7 figma-section-missing: compare records in the results but no figma sect
 
 test('T6 the frames line is the third line: on a pass, on a fail, and off when the matrix has no figma section', () => {
   const pass = formatReport(check(withFigma([SIGN_IN, { node: '30:3', name: 'Old', width: 1, notBuilt: 'dropped from the product, owner confirmed' }]), [COMPARE_PASS], framesFile(SIGN_IN, { node: '30:3', name: 'Old', width: 1 })));
-  assert.deepEqual(pass.split('\n').slice(0, 3), ['result: PASS', 'cells: 1 | pass 1 | fail 0 | na 0 | deferred 0 | todo 0 | missing 0', 'frames: 1/2 compared and passing, 0 accepted by the owner, 1 not built']);
+  assert.deepEqual(pass.split('\n').slice(0, 3), ['result: PASS', 'cells: 1 | pass 1 | fail 0 | na 0 | deferred 0 | todo 0 | missing 0', 'frames: 1/2 compared and passing, 0 accepted, 1 not built']);
   const fail = formatReport(check(withFigma([SIGN_IN]), [record({ part: 'compare', status: 'fail', findings: [{ check: 'pixel', element: 'body', detail: 'd', percent: 3 }] })]));
   assert.match(fail.split('\n')[0], /^result: FAIL/);
-  assert.equal(fail.split('\n')[2], 'frames: 0/1 compared and passing, 0 accepted by the owner, 0 not built');
+  assert.equal(fail.split('\n')[2], 'frames: 0/1 compared and passing, 0 accepted, 0 not built');
   const off = formatReport(check({ ...BASE, cells: [{ surface: 'signin', state: 'rest', locale: 'en', width: 1440, status: 'pass', evidence: 'https://x' }] }, []));
   assert.equal(off.split('\n')[2], 'frames: inventory off (no figma section; add figma.file and figma.framesFile, then run expand)');
 });

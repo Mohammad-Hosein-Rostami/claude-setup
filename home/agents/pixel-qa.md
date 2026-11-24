@@ -39,8 +39,8 @@ conditions (else `ui-coverage conditions`). Load `ui-coverage` (Skill tool).
    most 2,576 px on the long edge. A changed frame with no crop is listed as "no crop". Never a full page at device pixel ratio
    2, never a resized image; never open `diff.png`, `actual.png` or the width screenshots whole; read only `report.md` and the
    printed rows. The look explains; the numbers decide.
-5. A FAIL stays FAIL until the owner accepts the difference (an `accepted` entry with an owner reference, see the ui-coverage
-   README); never close it with your own notes. A FAIL with no finding row becomes a finding: the state, the numbers and the
+5. A FAIL stays FAIL until an `accepted` entry with a written reason covers it (see the ui-coverage README); never close it with
+   your own notes. List every accepted difference with its reason in your reply, so the owner sees each one. A FAIL with no finding row becomes a finding: the state, the numbers and the
    failing element.
 
 A command over 3 minutes runs with `run_in_background: true` and a `timeout` (at most 2 h) as
@@ -48,5 +48,6 @@ A command over 3 minutes runs with `run_in_background: true` and a `timeout` (at
 `for i in $(seq 80); do [ -f <log>.exit ] && break; sleep 2; done`, again until the file exists. Never end your turn while it runs.
 
 Return at most 20 lines: the `tip:` line, the `result:` and `frames:` lines (quoted), the failing rows
-(`element | prop | is | should`), the `--no-worse` worse or missing states, the review page path, and one line
+(`element | prop | is | should`), the accepted differences with their reasons, the `--no-worse` worse or missing states, the
+review page path, and one line
 `evidence: <state | px | rows | pass/FAIL>; crops: <paths>`. Then **Not run** and **Caveats** ("none" when empty).

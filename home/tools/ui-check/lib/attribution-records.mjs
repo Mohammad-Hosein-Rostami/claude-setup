@@ -4,7 +4,7 @@
 // is the pixel finding passes when every leftover pixel is accepted or text anti-aliasing; results.json and ledger.json are rewritten.
 // Exports: ATTRIBUTION_FILE, acceptanceContext, attributeRecords, formatAttribution, writeAttribution, attributeStrict.
 // Invariants: a recount that differs from the record is a setup error (UsageError, exit 2), never a pass. A size mismatch is never
-// accepted. Accepted pixels need a matrix entry with an owner decision and a reason (ui-coverage/lib/accepted.mjs pixelAcceptances).
+// accepted. Accepted pixels need a matrix entry with a reason (ui-coverage/lib/accepted.mjs pixelAcceptances).
 // Crops are native scale and at most MAX_CROP_EDGE on each edge (lib/crops.mjs cropTiles); they explain a row, never decide it.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -30,22 +30,11 @@ const TOP_CROPS = 3; // clusters, and again flagged text boxes, per record
 const STRICT_FAILING = new Set(['text-flagged', 'graphic', 'other']);
 const DEFAULT_FAILING = new Set(['text-aa', 'text-flagged', 'graphic', 'other']);
 const RENDER_MATCH_PX = 1; // as commands/compare.mjs: the baseline is a render-bounds export when its size matches within this
-const NO_FILE = new Set(['ENOENT', 'ENOTDIR', 'EISDIR']);
-
-/** A file's text or real path, null when there is no such file (ui-coverage treats a missing file as a finding, not an error). */
-function orNull(read) {
-  try {
-    return read();
-  } catch (error) {
-    if (NO_FILE.has(error.code)) return null;
-    throw error;
-  }
-}
 
 /**
- * The matrix and the owner-file readers its accepted entries are judged with, or null without a matrix.
+ * The matrix whose accepted entries may class pixels as accepted, or null without a matrix.
  * @param {string|undefined} matrixFile path of the coverage matrix
- * @returns {{matrix: object, files: object}|null}
+ * @returns {{matrix: object}|null}
  * @throws {UsageError} when the matrix cannot be read or parsed
  */
 export function acceptanceContext(matrixFile) {
@@ -56,7 +45,7 @@ export function acceptanceContext(matrixFile) {
   } catch (error) {
     throw new UsageError(`--accepted ${matrixFile}: ${error.message}`);
   }
-  return { matrix, files: { baseDir: path.dirname(path.resolve(matrixFile)), readText: (file) => orNull(() => fs.readFileSync(file, 'utf8')) } };
+  return { matrix };
 }
 
 const fresh = (file, than) => fs.existsSync(file) && fs.statSync(file).mtimeMs >= fs.statSync(than).mtimeMs;
@@ -89,7 +78,7 @@ function renderOffset({ spec, meta }, original, scale) {
 
 /** The accepted pixels of a record: an entry without nodes covers all of them, else the boxes of the nodes it names. */
 function acceptedFor(record, acceptance, nodes, place) {
-  const entries = acceptance ? pixelAcceptances(acceptance.matrix, record, acceptance.files) : [];
+  const entries = acceptance ? pixelAcceptances(acceptance.matrix, record) : [];
   const whole = entries.find((entry) => entry.nodes === null);
   if (whole) return { all: whole.reason, boxes: [] };
   const byId = new Map(nodes.map((node) => [String(node.id), node]));

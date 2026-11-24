@@ -86,13 +86,14 @@ playwright and chrome-devtools browsers. Nothing lowers the bar: no cut in accur
 ## Report (at most 300 words)
 
 `branch:`, `worktree:`, `head:`, `base:`; files changed; the matrix path; the last `result:` and `frames:` lines and the
-`results.json` path; pixel-qa's verdict line and review page; the `ui-quality-pass` items; defaults taken; deviations. Then
+`results.json` path; every accepted difference with its reason (the matrix `accepted` entries; no owner approval is needed
+during the work, the owner checks them in this report); pixel-qa's verdict line and review page; the `ui-quality-pass` items; defaults taken; deviations. Then
 **Constraints**, **Not run** and **Caveats** ("none" when empty), then `questions:` if any.
 
 ## Questions for the owner
 
-You cannot ask the owner. An unclear design, a missing asset, a difference to accept (an `accepted` entry needs the owner's
-reference) or a layout choice is the owner's: stop that part, finish the other states, and end with:
+You cannot ask the owner. An unclear design, a missing asset or a layout choice is the owner's: stop that part, finish the other
+states, and end with:
 
 ```
 questions:

@@ -70,7 +70,7 @@ function sourceProblems(matrix, source) {
   return [...missing.values()].map((frame) => problem('frame-missing', `frame ${frame.node} ${frameName(frame)} is in ${framesFile} but not in matrix frames: run expand, then map it or mark it notBuilt`));
 }
 
-// Counts for the `frames:` line; `accepted` holds the keys of cells the owner accepted a difference on.
+// Counts for the `frames:` line; `accepted` holds the keys of cells with a difference accepted with a reason.
 function summarize(matrix, source, merged, compared, accepted) {
   const frames = matrix.frames ?? [];
   const status = new Map(merged.cells.map((cell) => [cellKey(cell), cell.status]));
@@ -91,7 +91,7 @@ function summarize(matrix, source, merged, compared, accepted) {
  * @param {object} matrix a structurally sound matrix
  * @param {{cells: object[]}} merged the result of mergeResults
  * @param {unknown[]} records ui-check result records
- * @param {{baseDir: string, readText: (path: string) => string|null, accepted?: Set<string>}} options `accepted`: cell keys the owner accepted
+ * @param {{baseDir: string, readText: (path: string) => string|null, accepted?: Set<string>}} options `accepted`: cell keys accepted with a reason (accepted.mjs)
  * @returns {{problems: object[], summary: {inventory: boolean, total?: number, passing?: number, accepted?: number, notBuilt?: number}}}
  */
 export function frameChecks(matrix, merged, records, { baseDir, readText, accepted = new Set() }) {
@@ -110,5 +110,5 @@ export function frameChecks(matrix, merged, records, { baseDir, readText, accept
 /** The `frames:` line of the report. */
 export function framesLine(summary) {
   if (!summary.inventory) return 'frames: inventory off (no figma section; add figma.file and figma.framesFile, then run expand)';
-  return `frames: ${summary.passing}/${summary.total} compared and passing, ${summary.accepted} accepted by the owner, ${summary.notBuilt} not built`;
+  return `frames: ${summary.passing}/${summary.total} compared and passing, ${summary.accepted} accepted, ${summary.notBuilt} not built`;
 }

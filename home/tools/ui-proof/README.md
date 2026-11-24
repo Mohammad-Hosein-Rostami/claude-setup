@@ -54,7 +54,7 @@ reviews before a UI fix is reported as done (pixel-qa's final gate runs it and g
   and the verdict (status, width, findings and evidence of every compare and responsive record). A state with only responsive
   records gets the live link and its verdict, no images.
 - `--matrix` (a `ui-coverage` matrix) adds two lists: `accepted` (each entry's frame node, cell, covered findings, `reason`
-  when present and owner reference) and the optional `settled` list, "settled, do not report again": an array of
+  when present) and the optional `settled` list, "settled, do not report again": an array of
   `{surface, state, locale?, what, owner}`.
 - Output: the images are copied into `<out>/images/` and linked relatively, so the folder opens from disk and can be zipped.
   Use a fresh `--out` for a clean zip: images of an earlier run with more rows stay in `images/`. Every text is HTML-escaped,
