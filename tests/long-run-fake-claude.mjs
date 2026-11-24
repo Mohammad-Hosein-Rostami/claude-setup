@@ -7,8 +7,9 @@
 // grandchild in a process group of its own, like a subagent's Bash, writes its pid to $FAKE_LR_DIR/grandchild-<step>.pid, then
 // hangs; the grandchild outlives this fake unless someone ends it), agent-done:<id> (the same agent, finished, then `done`, no
 // grandchild), agent-crash:<id> (agent <id> left running and agent <id>x finished, then a crash), worktree:<name> and
-// worktree-dirty:<name> (`git worktree add ../<name> -b <name>` beside its folder, the second with an uncommitted file in it, then
-// a crash). Every call appends one JSON line to $FAKE_LR_DIR/calls.jsonl: {step, mode, args, stdin, cwd,
+// worktree-dirty:<name> (`git worktree add .claude/worktrees/<name> -b <name>` in its folder, where Claude Code puts an agent's
+// worktree, the second with an uncommitted file in it, then a crash), worktree-other:<name> (the same at ../<name>, as another
+// session's lane would be, then a crash). Every call appends one JSON line to $FAKE_LR_DIR/calls.jsonl: {step, mode, args, stdin, cwd,
 // envNames, account, tokenHash, pid, start, end, ended} (`end` and `ended` on a second line kind `end`), never the token itself;
 // each session writes its transcript to $CLAUDE_CONFIG_DIR/projects/fake-project/<session id>.jsonl (the open-session check).
 // The stream is real `--output-format stream-json` shapes: a system init line, assistant lines, user tool_result lines, a result line.
@@ -98,8 +99,8 @@ if (name === 'agent-crash') {
   process.stderr.write('boom\\n');
   finish(1);
 }
-if (name === 'worktree' || name === 'worktree-dirty') {
-  const path = join(process.cwd(), '..', value);
+if (name === 'worktree' || name === 'worktree-dirty' || name === 'worktree-other') {
+  const path = name === 'worktree-other' ? join(process.cwd(), '..', value) : join(process.cwd(), '.claude', 'worktrees', value);
   const made = spawnSync('git', ['worktree', 'add', '-q', '-b', value, path], { encoding: 'utf8' });
   if (made.status !== 0) { process.stderr.write(made.stderr); finish(2); }
   if (name === 'worktree-dirty') writeFileSync(join(path, 'half-done.txt'), 'x');

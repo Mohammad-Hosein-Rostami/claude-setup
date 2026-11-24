@@ -185,13 +185,25 @@ async function invokeInput(ctx, app) {
   return { input: null, config, event: 'resumed', detail: state.finished ? 'nothing left' : 'continue' };
 }
 
-/** End of run (audit Job A5): each worktree a step made is removed when it holds no work of its own, else kept; the journal says which. */
+// Claude Code makes an agent's isolated worktree under `<repo>/.claude/worktrees/`.
+const AGENT_WORKTREE = /[\\/]\.claude[\\/]worktrees[\\/]/;
+
+/** Whether the step's own agents made this worktree; any other that appeared (another session's lane, say) is only listed. */
+const madeByAgent = (worktree, journal) => AGENT_WORKTREE.test(worktree.path) || (journal.agents ?? []).some((agent) => agent.worktree === worktree.path);
+
+/**
+ * End of run (audit Job A5): each agent worktree a step made is removed when it holds no work of its own, else kept; the
+ * journal says which.
+ */
 function cleanWorktrees(ctx) {
   for (const unit of units(ctx.job)) {
     const journal = readJournal(ctx.paths, unit.id);
     if (!journal?.worktrees?.length) continue;
-    const worktrees = journal.worktrees.map((one) => ({ ...one, cleanup: one.cleanup === 'removed' ? one.cleanup : removeIfEmpty(one, journal.folder) }));
-    writeJournal(ctx.paths, unit.id, { ...journal, worktrees });
+    const cleanupOf = (one) => {
+      if (one.cleanup === 'removed') return one.cleanup;
+      return madeByAgent(one, journal) ? removeIfEmpty(one, journal.folder) : 'kept: not an agent worktree of this run (listed only)';
+    };
+    writeJournal(ctx.paths, unit.id, { ...journal, worktrees: journal.worktrees.map((one) => ({ ...one, cleanup: cleanupOf(one) })) });
   }
 }
 

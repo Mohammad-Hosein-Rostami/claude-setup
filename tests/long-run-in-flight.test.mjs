@@ -75,11 +75,12 @@ test('resumeStateBlock is empty when nothing was in flight and lists at most 20 
   assert.match(block, /^- and 5 more$/m);
 });
 
-test('a worktree the boss made is listed in RESUME-STATE; at the end of the run a clean one is removed and a dirty one kept and named', async () => {
+test('a worktree made during a step is listed in RESUME-STATE; at the end a clean agent worktree is removed, a dirty one or one outside .claude/worktrees kept', async () => {
   const box = makeSandbox();
   const folder = gitRepo(box);
-  box.script({ one: ['worktree:wt-clean', 'done'], two: ['worktree-dirty:wt-dirty', 'done'] });
-  const paths = createRun(box, { name: 'wts', cwd: folder, steps: [{ id: 'one', prompt: 'One.' }, { id: 'two', prompt: 'Two.' }] });
+  box.script({ one: ['worktree:wt-clean', 'done'], two: ['worktree-dirty:wt-dirty', 'done'], three: ['worktree-other:wt-other', 'done'] });
+  const steps = ['one', 'two', 'three'].map((id) => ({ id, prompt: `${id}.` }));
+  const paths = createRun(box, { name: 'wts', cwd: folder, steps });
   assert.equal(await driveRun(box, paths), 'done');
   assert.match(stdinsOf(box, 'one')[1], /^- worktree "[^"]*wt-clean", branch "wt-clean": 0 uncommitted change\(s\), 0 commit\(s\) since the step began$/m);
   assert.match(stdinsOf(box, 'two')[1], /^- worktree "[^"]*wt-dirty", branch "wt-dirty": 1 uncommitted change\(s\)/m);
@@ -92,4 +93,7 @@ test('a worktree the boss made is listed in RESUME-STATE; at the end of the run 
   const summary = readFileSync(paths.summary, 'utf8');
   assert.match(summary, /^- two: `[^`]*wt-dirty` \(branch wt-dirty\): kept: uncommitted changes$/m);
   assert.match(summary, /^- one: `[^`]*wt-clean` \(branch wt-clean\): removed$/m);
+  const other = journalOf(paths, 'three').worktrees[0];
+  assert.equal(other.cleanup, 'kept: not an agent worktree of this run (listed only)');
+  assert.ok(existsSync(other.path), 'a clean worktree outside .claude/worktrees (another session\'s lane) is never removed');
 });

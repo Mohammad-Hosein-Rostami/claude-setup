@@ -148,9 +148,10 @@ When a run stops (a pause, a stop, a reboot, a crash or a killed driver) while a
   and the commits the step already made. The boss is told to resume each unfinished agent with SendMessage (the agent keeps its
   history but restarts its last tool call), to start a new one only when SendMessage fails, to check each worktree first and
   never start a duplicate. Values from the stream are cut and quoted, so they read as data.
-- **Worktrees and half-made work stay on disk.** At the end of a run, a worktree a boss made is removed when it has no
-  uncommitted change and no commit that is not on the step folder's HEAD or a remote; any other is kept and named in
-  `summary.md`. Branches are never deleted.
+- **Worktrees and half-made work stay on disk.** At the end of a run, an agent worktree a step made (under
+  `<repo>/.claude/worktrees/`, or one an agent's result named) is removed when it has no uncommitted change and no commit that
+  is not on the step folder's HEAD or a remote; any other is kept and named in `summary.md`. A worktree that appeared outside
+  that folder (another session's lane, say) is only listed, never removed. Branches are never deleted.
 - Each permission prompt inside a headless step shows the timed dialog on the desktop and waits up to 2 minutes before it goes
   ahead, so a step can stall that long while nobody watches.
 
