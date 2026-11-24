@@ -5,7 +5,9 @@
 // {decision, outcome, reason}, decisionOutput(answer) -> hook stdout, askOwner(request, env) -> hook stdout (asks, logs, formats), ASK_SWITCH_ENV.
 // The per-person switch CLAUDE_GUARD_ASK=allow (the env of that person's settings/local.json) turns every ask into an allow at once,
 // with no dialog and no wait, except a request marked `outward: true` (the owner's rule: confirm every outward-facing action); it is
-// read here once, so every hook that asks through answerAsk or askOwner obeys it. It never touches a deny.
+// read here once, so every hook that asks through answerAsk or askOwner obeys it. It never touches a deny. Lookup: the hook's env first;
+// when unset, `env.CLAUDE_GUARD_ASK` of the user settings file ($CLAUDE_CONFIG_DIR/settings.json, else ~/.claude/settings.json), read
+// at most once per hook run; a missing or broken file means off.
 // answerAsk blocks until the dialog ends; lib/timed-ask-async.mjs opens the same dialog as a child that can be closed from outside.
 // Why: the native "ask" waits forever. The owner's policy is "everything goes ahead after 2 min": show a native dialog with Allow
 // (default) and Deny, and go ahead when nobody answers within the request's timeoutS, else CLAUDE_ASK_TIMEOUT_S (default 120; a
@@ -27,6 +29,8 @@
 // while the owner types elsewhere); Windows keeps Yes/No and the body says which is which. On macOS the decline button is
 // the cancel button, so Esc declines, never takes the default.
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { clearAsking, markAsking } from './asking-marker.mjs';
 import { logDecision } from './guard-log.mjs';
 import { maskSecrets } from './secrets.mjs';
@@ -46,7 +50,36 @@ const MS_PER_SECOND = 1000;
 const SPAWN_GRACE_S = 5; // the dialog tool gives up by itself at the timeout; this only stops one that hangs
 export const ASK_SWITCH_ENV = 'CLAUDE_GUARD_ASK';
 const ALLOW_AT_ONCE = 'allow'; // CLAUDE_GUARD_ASK=allow: no dialog, no wait, for every ask that is not outward
-const allowsAtOnce = (request, env) => env[ASK_SWITCH_ENV] === ALLOW_AT_ONCE && request.outward !== true;
+const CONFIG_FOLDER = '.claude';
+const SETTINGS_FILE = 'settings.json';
+const switchByFile = new Map(); // settings path -> its switch value: the file is read at most once per hook run
+
+/**
+ * The switch from the user settings file. Why: Claude Code passes the settings `env` to tool commands, but a hook inherits only the
+ * environment the claude process started with, so a session started before the switch was set would never see it.
+ * @param {Record<string, string | undefined>} env CLAUDE_CONFIG_DIR, HOME / USERPROFILE (no home: off, never the real file of a test)
+ * @returns {string | undefined} `env.CLAUDE_GUARD_ASK` of the settings file; undefined when there is no file, it does not parse or lacks it
+ */
+function settingsSwitch(env) {
+  const home = env.HOME || env.USERPROFILE;
+  const configDir = env.CLAUDE_CONFIG_DIR || (home ? join(home, CONFIG_FOLDER) : undefined);
+  if (!configDir) return undefined;
+  const file = join(configDir, SETTINGS_FILE);
+  if (!switchByFile.has(file)) switchByFile.set(file, readSettingsSwitch(file));
+  return switchByFile.get(file);
+}
+
+function readSettingsSwitch(file) {
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'))?.env?.[ASK_SWITCH_ENV];
+  } catch {
+    return undefined; // unreadable or broken settings: the switch is off, the safe default (every ask keeps its dialog)
+  }
+}
+
+// The hook's own env wins when it sets the switch at all; only an unset one falls back to the settings file.
+const askSwitch = (env) => env[ASK_SWITCH_ENV] ?? settingsSwitch(env);
+const allowsAtOnce = (request, env) => request.outward !== true && askSwitch(env) === ALLOW_AT_ONCE;
 const DIALOG_TITLE = 'Claude Code: confirm action';
 const TEXT_ENV = 'CLAUDE_ASK_DIALOG_TEXT';
 const TITLE_ENV = 'CLAUDE_ASK_DIALOG_TITLE';

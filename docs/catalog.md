@@ -177,7 +177,8 @@ Marketplaces: `anthropic-plugin-directory`, `claude-plugins-official`, `gitkrake
 | `worktree.baseRef` | `"head"`; agent worktrees (Agent `isolation: worktree`, `EnterWorktree`, `--worktree`) start from the local HEAD of the folder the session is in at that moment, not `origin/<default>`, with no `git fetch` (a `--worktree` pull-request checkout still fetches its ref), in every project on the machine that does not set the key itself; the CLI default is `fresh`. Start `build` and `bugfix` from a checkout on the base branch: a session inside a lane worktree or on a feature branch passes that branch's commits to every new agent worktree. This repo's local main often runs far ahead of `origin/main` (it is pushed only when the owner says so) |
 
 OS files: `settings/macos.json` (Notification hook plays a sound), `settings/windows.json` (Notification hook beeps), `settings/linux.json` (empty).
-`settings/local.json` (gitignored, per machine): see `local.json.example` (`skipDangerousModePermissionPrompt`; the per-person hook switches `env.CLAUDE_GUARD_ASK` (`allow`: no confirm dialog for any ask but an outward or hidden one, `lib/timed-ask.mjs`; the example's `dialog` keeps them) and `env.CLAUDE_GUARD_TRIM` (`1`: the output trim), `home/hooks/README.md`); its `hooks`
+`settings/local.json` (gitignored, per machine): see `local.json.example` (`skipDangerousModePermissionPrompt`; the per-person hook switches `env.CLAUDE_GUARD_ASK` (`allow`: no confirm dialog for any ask but an outward or hidden one, `lib/timed-ask.mjs`; read from the hook's env, else from the
+`env` of `$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`, so sessions started before it was set obey it; a broken file means off; the example's `dialog` keeps them) and `env.CLAUDE_GUARD_TRIM` (`1`: the output trim), `home/hooks/README.md`); its `hooks`
 are appended to the shared ones (e.g. the PC's Android incubator hook).
 
 ## Scripts (`scripts/`)

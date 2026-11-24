@@ -16,7 +16,10 @@ Claude Code hooks installed to `~/.claude/hooks` (a symlink to this folder). All
 
 Per-person switches (the `env` of your own git-ignored `settings/local.json`; teammates who do not set them keep the default):
 - `CLAUDE_GUARD_ASK=allow` - no confirm dialog and no wait: every ask of our hooks (the Bash guard, the permission prompts of
-  `permission-timed-allow.mjs`) is allowed at once (outcome `switch-allow` in the guard log), read once in `lib/timed-ask.mjs`. Outward
+  `permission-timed-allow.mjs`) is allowed at once (outcome `switch-allow` in the guard log), read once in `lib/timed-ask.mjs`. Lookup order: the hook's own env;
+  when it is unset there, `env.CLAUDE_GUARD_ASK` of `$CLAUDE_CONFIG_DIR/settings.json` (else `~/.claude/settings.json`), read at most once
+  per hook run, so a session started before the switch was set obeys it too (a hook inherits only the env claude started with); a
+  missing or broken file means off. Outward
   actions still get the dialog (the rule "confirm every outward-facing action"): push, publish, PR merge, release, forge and `gh api`
   writes, prod-host writes, a credential next to a sender, an Artifact publish or delete, any MCP tool; so does a command whose real
   action the guard cannot see (a variable command word, built inline code, stdin into a shell, "command too complex" ...), since it may be
