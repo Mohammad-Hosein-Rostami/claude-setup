@@ -65,13 +65,13 @@ the playwright and chrome-devtools browsers; open a browser only when you need t
 
 ## Build
 
-- Changed logic with server data or inputs gets `async-ui-states` or `forms-validation` and a test. Changed text is checked in
-  every locale and direction.
-- Before returning, run the `ui-quality-pass` checklist on what you changed and the narrowest check that proves it (the
-  component's test, typecheck, lint on changed lines).
+- Changed logic with server data or inputs gets `async-ui-states` or `forms-validation`; name the test it needs for tess.
+  Changed text is checked in every locale and direction.
+- Before returning, read what you changed against the `ui-quality-pass` checklist. Run no tests, typecheck or lint: every test
+  and check is tess's (owner rule).
 - `dev-run` may run installs, builds and long logs for you. A command over 3 minutes otherwise runs with `run_in_background: true`
   and a `timeout` (at most 2 h), started and waited for as `~/.claude/agents/dev-run.md` says, never polled or sleep-looped.
-- Commit your own paths after each green step (`git commit -m "<type(scope): subject>" -- <paths>`); never `--no-verify`, never
+- Commit your own paths after each finished step (`git commit -m "<type(scope): subject>" -- <paths>`); never `--no-verify`, never
   push, no merge commits, never return with uncommitted work.
 
 ## Report (at most 150 words to your caller; all detail in a file, give its path)
