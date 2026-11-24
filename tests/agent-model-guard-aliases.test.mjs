@@ -1,8 +1,9 @@
 // Tests for the no-Fable gate of home/hooks/agent-model-guard.mjs on the models it cannot see (lib/fable-model-reasons.mjs): the
 // aliases Claude Code resolves only at run time (`best`, `default`, `opusplan`, with or without `[1m]`) in the call, in the agent
-// file's pin and in CLAUDE_CODE_SUBAGENT_MODEL, and CLAUDE_CODE_SUBAGENT_MODEL_FORCE, under which only CLAUDE_CODE_SUBAGENT_MODEL
-// counts and the routing adds no `model`. Each test has a private HOME (agent files, records) and its own session ids; the hook runs
-// as a process with the hook JSON on stdin.
+// file's pin and in CLAUDE_CODE_SUBAGENT_MODEL; CLAUDE_CODE_SUBAGENT_MODEL_FORCE, on only for the values Claude Code reads as on (1,
+// true, yes, on, any case, padded), under which CLAUDE_CODE_SUBAGENT_MODEL decides, a Fable or alias call model is still denied and
+// the routing adds no `model`; and ANTHROPIC_DEFAULT_*_MODEL naming Fable, which denies every Agent call. Each test has a private
+// HOME (agent files, records) and its own session ids; the hook runs as a process with the hook JSON on stdin.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -23,8 +24,13 @@ const FABLE_RULE = 'Not started: Fable is never used for an agent (the owner cho
 const ALIAS_NOTE = 'an alias Claude Code resolves only at run time';
 const FORCED_NOTE = `${FORCE} is on`;
 const RUN_TIME_ALIASES = ['best', 'Best', ' best ', 'default', 'opusplan', 'best[1m]', 'OPUSPLAN[1M]'];
-const FORCE_ON = ['1', 'true', 'yes', 'on', 'anything'];
-const FORCE_OFF = [undefined, '', '0', 'false', 'no', 'off', ' OFF '];
+const FORCE_ON = ['1', 'true', 'yes', 'on', 'TRUE', ' On '];
+const NOT_READ_AS_ON = ['anything', 'enabled', '2']; // Claude Code reads only 1, true, yes and on as on
+const FORCE_OFF = [undefined, '', '0', 'false', 'no', 'off', ' OFF ', ...NOT_READ_AS_ON];
+const ALIAS_TARGET_VARS = ['ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'ANTHROPIC_DEFAULT_MODEL'];
+const FABLE_ID = 'claude-fable-1';
+const NON_FABLE_ID = 'claude-opus-5-5';
+const PADDED_INHERIT = [' inherit', 'inherit ', ' INHERIT '];
 const UNSET = undefined;
 let counter = 0;
 
@@ -37,7 +43,7 @@ function guardHome({ agentModel, vars = {} } = {}) {
   const shipped = agentHomeEnv(home);
   if (agentModel !== undefined) writeDevFile(home, agentModel);
   const env = hookEnv({ HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: home, ...shipped });
-  delete env[FORCE]; // the runner's own value never leaks in
+  for (const name of [FORCE, ...ALIAS_TARGET_VARS]) delete env[name]; // the runner's own values never leak in
   for (const [name, value] of Object.entries(vars)) {
     if (value === undefined) delete env[name];
     else env[name] = value;
@@ -107,7 +113,7 @@ test('an agent file with no model line and CLAUDE_CODE_SUBAGENT_MODEL best, defa
   }
 });
 
-test('FORCE on with CLAUDE_CODE_SUBAGENT_MODEL unset, empty, inherit, fable or best denies a dev call with no model', () => {
+test('FORCE on (1, true, yes, on, any case, padded) with CLAUDE_CODE_SUBAGENT_MODEL unset, empty, inherit, fable or best denies a dev call with no model', () => {
   for (const force of FORCE_ON) {
     for (const model of [UNSET, '', 'inherit', 'fable', 'best']) {
       const reason = denyReason(guard(guardHome({ vars: { [FORCE]: force, [SUBAGENT_MODEL]: model } }), devCall()));
@@ -124,11 +130,30 @@ test('FORCE on with CLAUDE_CODE_SUBAGENT_MODEL claude-sonnet-5-5 allows, and the
   }
 });
 
-test('FORCE off (unset, empty, 0, false, no, off, padded OFF) routes general-purpose to sonnet as before', () => {
+test('FORCE off (unset, empty, 0, false, no, off, padded OFF, and anything, enabled or 2) routes general-purpose to sonnet as before', () => {
   for (const force of FORCE_OFF) {
     const home = guardHome({ vars: { [FORCE]: force, [SUBAGENT_MODEL]: SHIPPED_SUBAGENT_MODEL } });
     const out = guard(home, helperCall, FROM_AGENT);
     assert.deepEqual(out, { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: { ...helperCall, model: 'sonnet' } }, `force ${force}`);
+  }
+});
+
+test('FORCE anything, enabled or 2 is off: a dev pinned opus runs with CLAUDE_CODE_SUBAGENT_MODEL unset, empty, inherit, fable or best', () => {
+  for (const force of NOT_READ_AS_ON) {
+    for (const model of [UNSET, '', 'inherit', 'fable', 'best']) {
+      const out = guard(guardHome({ agentModel: 'opus', vars: { [FORCE]: force, [SUBAGENT_MODEL]: model } }), devCall());
+      assert.notEqual(out?.permissionDecision, 'deny', `force ${force}, model ${model}: the pin decides, ${JSON.stringify(out)}`);
+    }
+  }
+});
+
+test('a call model of fable or best is denied with FORCE off (enabled, 2) and with FORCE on (1), naming the value', () => {
+  for (const force of ['enabled', '2', '1']) {
+    const home = guardHome({ vars: { [FORCE]: force, [SUBAGENT_MODEL]: SHIPPED_SUBAGENT_MODEL } });
+    for (const model of ['fable', 'best']) {
+      const reason = denyReason(guard(home, devCall({ model })));
+      assert.ok(reason.includes(`\`${model}\``), `force ${force}, model ${model}: ${reason}`);
+    }
   }
 });
 
@@ -143,5 +168,35 @@ test('FORCE on ignores an agent file pin of opus or sonnet: CLAUDE_CODE_SUBAGENT
     const home = guardHome({ agentModel: pin, vars: { [FORCE]: '1', [SUBAGENT_MODEL]: 'best' } });
     const reason = denyReason(guard(home, devCall()));
     assert.ok(reason.includes(`${FORCED_NOTE}, so every agent runs on ${SUBAGENT_MODEL} \`best\``), `${pin}: ${reason}`);
+  }
+});
+
+test('a padded inherit call model ( inherit, inherit , INHERIT ) is denied as inherit', () => {
+  const home = guardHome();
+  for (const model of PADDED_INHERIT) {
+    const reason = denyReason(guard(home, devCall({ model })));
+    assert.ok(reason.includes('`model: inherit`'), `${JSON.stringify(model)}: ${reason}`);
+  }
+});
+
+test('an ANTHROPIC_DEFAULT_*_MODEL naming Fable denies every Agent call (opus, sonnet, haiku, no model, a helper), naming the variable', () => {
+  for (const name of ALIAS_TARGET_VARS) {
+    const home = guardHome({ vars: { [name]: FABLE_ID } });
+    const calls = { opus: devCall({ model: 'opus' }), sonnet: devCall({ model: 'sonnet' }), haiku: devCall({ model: 'haiku' }), none: devCall() };
+    for (const [label, call] of Object.entries(calls)) {
+      const reason = denyReason(guard(home, call));
+      assert.ok(reason.includes(`${name} points a model alias at \`${FABLE_ID}\``), `${name}, ${label}: ${reason}`);
+    }
+    assert.ok(denyReason(guard(home, helperCall, FROM_AGENT)).includes(name), `${name}: the general-purpose helper too`);
+  }
+});
+
+test('an ANTHROPIC_DEFAULT_*_MODEL naming a non-Fable model lets the same calls run', () => {
+  for (const name of ALIAS_TARGET_VARS) {
+    const home = guardHome({ vars: { [name]: NON_FABLE_ID } });
+    for (const model of ['opus', 'sonnet', 'haiku', UNSET]) {
+      assert.notEqual(guard(home, devCall(model === UNSET ? {} : { model }))?.permissionDecision, 'deny', `${name}, model ${model}`);
+    }
+    assert.notEqual(guard(home, helperCall, FROM_AGENT)?.permissionDecision, 'deny', `${name}: the helper`);
   }
 });
