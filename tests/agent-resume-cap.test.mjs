@@ -198,3 +198,24 @@ test('a SendMessage from inside a subagent (agent_id) to main passes', () => {
   seedRecord(s);
   assert.equal(send(s, 'main', { agent_id: RUNNING_DEV[0], agent_type: 'dev' }), null);
 });
+
+// max (the ship agent) has its own cap of 3 like dev: a message that would resume a stopped max while 3 max run is denied the same way
+const RUNNING_MAX = ['agent-max-1', 'agent-max-2', 'agent-max-3'];
+const STOPPED_MAX = 'agent-max-0';
+const maxResumeCapReason = (s, target) => `agent cap: 3 max agents of this session run (${RUNNING_MAX.join(', ')}); this message would resume `
+  + `${target} as one more; wait for one of them to return, then send it again (store: ${storeOf(s)})`;
+/** A record with `maxes` max agents started a minute ago (so they run) and a stopped max. */
+function seedMaxRecord(s, maxes = RUNNING_MAX) {
+  const at = Date.now() - MINUTE_MS;
+  const launches = maxes.map((agent, n) => ({ key: `m${n}`, type: 'max', at, agent }));
+  writeStore(s, JSON.stringify({ launches, stopped: [STOPPED_MAX], stoppedTypes: { [STOPPED_MAX]: 'max' } }));
+}
+
+test('a message to a stopped max while 3 max run is denied every time, like dev; with 2 running it passes', () => {
+  const s = newSession();
+  seedMaxRecord(s);
+  for (const attempt of [1, 2]) assert.deepEqual(send(s, STOPPED_MAX), deny(maxResumeCapReason(s, STOPPED_MAX)), `send ${attempt}`);
+  const two = newSession();
+  seedMaxRecord(two, RUNNING_MAX.slice(0, 2));
+  assert.equal(send(two, STOPPED_MAX), null);
+});

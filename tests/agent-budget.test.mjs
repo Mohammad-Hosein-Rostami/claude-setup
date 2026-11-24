@@ -374,3 +374,46 @@ test('the budget hook fails open on bad input', () => {
     assert.deepEqual([run.status, run.stdout, run.stderr], [0, '', ''], input);
   }
 });
+
+// max, the ship agent (ADR 0003), is the fourth main agent: the boss starts it, it has its own cap of 3, and the route texts name it
+// (lib/agent-route.mjs). dev-docs (dev's docs writer), dev-part, tess-simple and tess-edge are helpers of dev and tess.
+const SHIP_ROUTE_LEAD = 'agent route: the boss starts lex, dev, tess or max;';
+const shipHelperRoute = (type, owner) => `${SHIP_ROUTE_LEAD} ${type} is ${owner}'s helper: start ${owner} with the brief, and it starts ${type}`;
+const shipSubagentRoute = (type) => `agent route: only the boss starts lex, dev, tess and max; ask it with the line 'needs: ${type} to <task>, `
+  + 'blocks: <what>\' (SendMessage to main from a background run, else in your report) and go on with what does not depend on it';
+const MAIN_TYPES_WITH_MAX = ['dev', 'tess', 'lex', 'max'];
+
+test('the guard runs 3 max as well (12 in all) and denies the 4th max every time, naming the type and its ids', () => {
+  const s = newSession();
+  for (const type of MAIN_TYPES_WITH_MAX) {
+    for (let n = 0; n < MAX_AGENTS_PER_TYPE; n += 1) assert.ok(!denied(guard(s, mainCall(`${type}-${n}`, type))), `${type} ${n + 1}`);
+  }
+  assert.equal(readStore(s).launches.length, MAIN_TYPES_WITH_MAX.length * MAX_AGENTS_PER_TYPE);
+  ['agent-max-1', 'agent-max-2'].forEach((id) => assert.equal(budgetEvent(s, 'SubagentStart', id, 'max'), ''));
+  for (const send of [1, 2]) {
+    assert.equal(guard(s, mainCall('max-4', 'max')).permissionDecisionReason, capReason(s, 'max', ['agent-max-1', 'agent-max-2', 'starting']), `send ${send}`);
+  }
+  assert.equal(budgetEvent(s, 'SubagentStop', 'agent-max-1', 'max'), '');
+  assert.ok(!denied(guard(s, mainCall('max-5', 'max'))), 'one max returned: the next max runs');
+});
+
+test('the boss starts max; a subagent starting max is denied every time with the needs: route; nothing is recorded', () => {
+  const boss = newSession();
+  assert.ok(!denied(guard(boss, mainCall('ship', 'max'))), 'the boss starts max');
+  assert.equal(readStore(boss).launches.length, 1, 'the boss\'s max takes a main-agent slot');
+  const s = newSession();
+  for (const from of [...Object.keys(OWN_HELPERS), 'max']) {
+    for (let send = 0; send < 2; send += 1) {
+      const out = guard(s, mainCall(`${from}-${send}`, 'max'), { agent_id: `agent-${from}-1`, agent_type: from });
+      assert.equal(out?.permissionDecisionReason, shipSubagentRoute('max'), `${from} -> max, send ${send}`);
+    }
+  }
+  assert.equal(existsSync(storeOf(s)), false, 'a route deny takes no main-agent slot');
+});
+
+test('dev-part, dev-docs, tess-simple and tess-edge from the boss are denied with their own main agent named', () => {
+  const owners = { 'dev-part': 'dev', 'dev-docs': 'dev', 'tess-simple': 'tess', 'tess-edge': 'tess' };
+  const s = newSession();
+  for (const [type, owner] of Object.entries(owners)) assert.equal(guard(s, mainCall(type, type)).permissionDecisionReason, shipHelperRoute(type, owner), type);
+  assert.equal(existsSync(storeOf(s)), false, 'no route deny takes a slot');
+});
