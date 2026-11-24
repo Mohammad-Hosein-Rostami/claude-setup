@@ -16,12 +16,12 @@
   ],
   "enabled": [
     "frontend-design@anthropic-plugin-directory",
-    "playwright@anthropic-plugin-directory",
     "typescript-lsp@claude-plugins-official",
-    "figma@claude-plugins-official",
-    "chrome-devtools-mcp@claude-plugins-official"
+    "figma@claude-plugins-official"
   ],
   "disabled": [
+    "playwright@anthropic-plugin-directory",
+    "chrome-devtools-mcp@claude-plugins-official",
     "gitkraken-hooks@gitkraken",
     "superpowers@anthropic-plugin-directory",
     "github@anthropic-plugin-directory",

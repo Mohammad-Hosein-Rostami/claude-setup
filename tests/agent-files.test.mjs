@@ -97,6 +97,17 @@ test('playwright and chrome-devtools are defined only on dev-ui, dev-pixel and p
   }
 });
 
+// The plan keeps the browser tool lists out of every other session and agent: the plugins that would load them globally stay off.
+test('the playwright and chrome-devtools plugins are off in settings/base.json and plugins/plugins.json', () => {
+  const browserPlugins = ['playwright@anthropic-plugin-directory', 'chrome-devtools-mcp@claude-plugins-official'];
+  const settings = JSON.parse(readFileSync(new URL('../settings/base.json', import.meta.url), 'utf8'));
+  const manifest = JSON.parse(readFileSync(new URL('../plugins/plugins.json', import.meta.url), 'utf8'));
+  for (const id of browserPlugins) {
+    assert.equal(settings.enabledPlugins[id], false, id);
+    assert.ok(manifest.disabled.includes(id) && !manifest.enabled.includes(id), id);
+  }
+});
+
 test('tess runs in the background; no other agent does', () => {
   for (const name of NAMES) assert.equal(field(name, 'background') === 'true', name === 'tess', name);
 });
