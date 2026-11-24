@@ -1,10 +1,14 @@
-// Tests for .githooks/pre-commit, run through real `git commit` in a throw-away repo that holds a copy of the hook. The hook is the
-// safety floor only: gitleaks on the staged changes and `node --check` on each staged hook file under home/hooks/. It runs no test.
-// gitleaks is a stub on PATH (the real one is not what is tested here).
+// Tests for .githooks/pre-commit, run through real `git commit` in throw-away repos. The hook is the safety floor only: gitleaks on
+// the staged changes, the person's private words in the staged files (scripts/share-check.mjs --staged) and `node --check` on each
+// staged hook file under home/hooks/. It runs no test.
+// Two kinds of repo: one holding a copy of .githooks without scripts/ beside it (share-check says "not run"), and one whose
+// core.hooksPath is this repo's own .githooks, so the hook finds the real share-check script and the repo's own deny list
+// (personal/share-deny.txt, untracked). gitleaks is a stub on PATH, except in the one test of the repo's .gitleaks.toml, which
+// needs the real one; its made-up token is built at run time, so no file of this repo holds one.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, cpSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, cpSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CLEAN_ENV, git, makeRepo } from './git-tidy-helpers.mjs';
@@ -12,6 +16,8 @@ import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const skip = process.platform === 'win32' && 'bash hooks';
+const HAS_GITLEAKS = spawnSync('gitleaks', ['version'], { encoding: 'utf8' }).status === 0;
+const WORD = 'zebracorp'; // a made-up, neutral deny word
 const { NODE_TEST_CONTEXT: _outerRunner, ...OUTSIDE_A_TEST_RUN } = CLEAN_ENV; // else a node child reports to this run
 
 function write(repo, files) {
@@ -21,12 +27,18 @@ function write(repo, files) {
   }
 }
 
+/** A folder holding a gitleaks stub that exits with `exitCode`, to put first on PATH. */
+function stubGitleaks(exitCode) {
+  const bin = realpathSync(makeTempDir('githooks-bin-'));
+  writeFileSync(join(bin, 'gitleaks'), `#!/bin/sh\nexit ${exitCode}\n`);
+  chmodSync(join(bin, 'gitleaks'), 0o755);
+  return bin;
+}
+
 /** A repo on branch feat with the hook installed (core.hooksPath), two hook files and a test file that fails if it ever runs. */
 function makeHookRepo({ gitleaksExit = 0 } = {}) {
   const repo = makeRepo();
-  const bin = realpathSync(makeTempDir('githooks-bin-'));
-  writeFileSync(join(bin, 'gitleaks'), `#!/bin/sh\nexit ${gitleaksExit}\n`);
-  chmodSync(join(bin, 'gitleaks'), 0o755);
+  const bin = stubGitleaks(gitleaksExit);
   cpSync(join(ROOT, '.githooks'), join(repo, '.githooks'), { recursive: true });
   write(repo, {
     'home/hooks/a.mjs': 'export const a = 1;\n',
@@ -49,6 +61,8 @@ test('pre-commit lets a commit of a hook file that parses through, and runs no t
   const result = sh('commit', '-q', '-m', 'change a');
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(git(repo, 'log', '--format=%s', '-1'), 'change a');
+  // a copy of .githooks with no scripts/ beside it: share-check says so instead of failing, once in pre-commit, once in commit-msg
+  assert.equal(result.stderr.match(/^share-check: not run \(no .*scripts\/share-check\.mjs beside the hooks\)$/gm)?.length, 2, result.stderr);
 });
 
 test('pre-commit blocks a hook file that does not parse, in a folder below home/hooks too, and names the file', { skip }, () => {
@@ -86,4 +100,110 @@ test('pre-commit stops the commit when gitleaks finds something', { skip }, () =
   git(repo, 'add', 'home/hooks/a.mjs');
   assert.notEqual(sh('commit', '-q', '-m', 'leak').status, 0);
   assert.equal(git(repo, 'log', '--format=%s', '-1'), 'seed');
+});
+
+/**
+ * A repo whose core.hooksPath is this repo's .githooks (so the real share-check runs) with `seed` committed past the hooks.
+ * `list`: the text of personal/share-deny.txt, or 'no-personal' (no personal/ folder) or 'no-list' (personal/ without the list).
+ * `gitleaks`: 'stub' (exits 0) or 'real' (the installed one, with this repo's .gitleaks.toml committed in the seed).
+ */
+function makeLiveHookRepo({ list = `${WORD}\n`, gitleaks = 'stub', seed = {} } = {}) {
+  const repo = makeRepo();
+  if (list !== 'no-personal') mkdirSync(join(repo, 'personal'));
+  if (list !== 'no-personal' && list !== 'no-list') writeFileSync(join(repo, 'personal', 'share-deny.txt'), list);
+  const files = { 'docs/a.md': 'clean\n', ...seed };
+  write(repo, files);
+  if (gitleaks === 'real') copyFileSync(join(ROOT, '.gitleaks.toml'), join(repo, '.gitleaks.toml'));
+  git(repo, 'add', '--', ...Object.keys(files), ...(gitleaks === 'real' ? ['.gitleaks.toml'] : []));
+  git(repo, 'commit', '-q', '--no-verify', '-m', 'seed');
+  git(repo, 'config', 'core.hooksPath', join(ROOT, '.githooks'));
+  const path = gitleaks === 'real' ? process.env.PATH : `${stubGitleaks(0)}:${process.env.PATH}`;
+  const sh = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8', env: { ...OUTSIDE_A_TEST_RUN, PATH: path } });
+  return { repo, sh };
+}
+
+const lastSubject = (repo) => git(repo, 'log', '--format=%s', '-1');
+
+test('pre-commit refuses a staged file holding a deny word and names it; a clean file commits', { skip }, () => {
+  const { repo, sh } = makeLiveHookRepo();
+  write(repo, { 'docs/b.md': `first\nabout ${WORD.toUpperCase()} here\n` });
+  git(repo, 'add', 'docs/b.md');
+  const refused = sh('commit', '-q', '-m', 'add b');
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /^docs\/b\.md:2: zebracorp$/m); // git sends a hook's output to stderr
+  assert.equal(lastSubject(repo), 'seed');
+  write(repo, { 'docs/b.md': 'first\nnothing private here\n' });
+  git(repo, 'add', 'docs/b.md');
+  const clean = sh('commit', '-q', '-m', 'add b');
+  assert.equal(clean.status, 0, clean.stderr);
+  assert.match(clean.stderr, /^share-check: clean \(1 staged files checked/m);
+  assert.equal(lastSubject(repo), 'add b');
+});
+
+test('pre-commit checks what `git commit -- <path>` commits (its own index), not only what was added before', { skip }, () => {
+  const { repo, sh } = makeLiveHookRepo();
+  write(repo, { 'docs/a.md': `${WORD}\n` });
+  const refused = sh('commit', '-q', '-m', 'change a', '--', 'docs/a.md');
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /^docs\/a\.md:1: zebracorp$/m);
+  assert.equal(lastSubject(repo), 'seed');
+});
+
+test('pre-commit refuses a deny word in a staged binary file and in a renamed file; a deleted one commits', { skip }, () => {
+  const { repo, sh } = makeLiveHookRepo({ seed: { 'docs/old.md': `${WORD}\n`, 'docs/gone.md': `${WORD}\n` } });
+  writeFileSync(join(repo, 'docs/blob.bin'), Buffer.concat([Buffer.from([0, 1, 2, 255]), Buffer.from(` ${WORD} `), Buffer.from([0])]));
+  git(repo, 'add', 'docs/blob.bin');
+  const binary = sh('commit', '-q', '-m', 'add blob');
+  assert.notEqual(binary.status, 0, 'binary');
+  assert.match(binary.stderr, /^docs\/blob\.bin:1: zebracorp$/m);
+  git(repo, 'rm', '-q', '--cached', 'docs/blob.bin');
+  git(repo, 'mv', 'docs/old.md', 'docs/new.md');
+  const renamed = sh('commit', '-q', '-m', 'rename');
+  assert.notEqual(renamed.status, 0, 'rename');
+  assert.match(renamed.stderr, /^docs\/new\.md:1: zebracorp$/m);
+  git(repo, 'mv', 'docs/new.md', 'docs/old.md');
+  git(repo, 'rm', '-q', 'docs/gone.md');
+  const deleted = sh('commit', '-q', '-m', 'remove gone', '--', 'docs/gone.md');
+  assert.equal(deleted.status, 0, deleted.stderr);
+  assert.equal(lastSubject(repo), 'remove gone');
+});
+
+test('pre-commit refuses every commit while the deny list cannot be read', { skip }, () => {
+  const { repo, sh } = makeLiveHookRepo({ list: 'no-list' });
+  mkdirSync(join(repo, 'personal', 'share-deny.txt')); // a folder where the list should be: not a readable file
+  write(repo, { 'docs/a.md': 'still clean\n' });
+  git(repo, 'add', 'docs/a.md');
+  const refused = sh('commit', '-q', '-m', 'change a');
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /^share-check: error: deny list .*share-deny\.txt not readable/m);
+  assert.equal(lastSubject(repo), 'seed');
+});
+
+test('pre-commit: no list says "not run" in a clone without personal/, and fails with the fix where personal/ exists', { skip }, () => {
+  const clone = makeLiveHookRepo({ list: 'no-personal' });
+  write(clone.repo, { 'docs/a.md': `${WORD}\n` });
+  git(clone.repo, 'add', 'docs/a.md');
+  const notRun = clone.sh('commit', '-q', '-m', 'change a');
+  assert.equal(notRun.status, 0, notRun.stderr);
+  assert.match(notRun.stderr, /^share-check: not run \(no deny list at .*personal\/share-deny\.txt\)$/m);
+
+  const owner = makeLiveHookRepo({ list: 'no-list' });
+  write(owner.repo, { 'docs/a.md': 'clean\nmore\n' });
+  git(owner.repo, 'add', 'docs/a.md');
+  const refused = owner.sh('commit', '-q', '-m', 'change a');
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /^share-check: error: no deny list at .*share-deny\.txt, but .*personal exists; .*cp '.*personal\.example\/share-deny\.txt'/m);
+  assert.equal(lastSubject(owner.repo), 'seed');
+});
+
+test('pre-commit with the real gitleaks refuses a made-up login token at tests/recall-x.test.mjs (no allowlist)', { skip: skip || (!HAS_GITLEAKS && 'gitleaks is not installed') }, () => {
+  const { repo, sh } = makeLiveHookRepo({ gitleaks: 'real' });
+  const token = `${['sk', 'ant', 'oat01', ''].join('-')}${'MadeUpGitleaksQ7x'.repeat(6).slice(0, 95)}`;
+  write(repo, { 'tests/recall-x.test.mjs': `export const TOKEN = '${token}';\n` });
+  git(repo, 'add', 'tests/recall-x.test.mjs');
+  const refused = sh('commit', '-q', '-m', 'add recall fixture');
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /leaks found: 1/); // the real gitleaks: it names no file unless --verbose
+  assert.ok(!(refused.stdout + refused.stderr).includes(token), 'the hook output redacts the token');
+  assert.equal(lastSubject(repo), 'seed');
 });

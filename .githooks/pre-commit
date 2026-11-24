@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
-# Purpose: the safety floor of every commit and nothing more: gitleaks on the staged changes (a secret blocks the commit) and
+# Purpose: the safety floor of every commit and nothing more: gitleaks on the staged changes (a secret blocks the commit), the
+# person's private words in the staged files (scripts/share-check.mjs --staged, owner rule R22; a hit blocks the commit) and
 # `node --check` on each staged hook file under home/hooks/ (a hook that does not parse breaks every Claude Code session).
+# share-check reads personal/share-deny.txt of the main checkout: with no list it says "not run" in a clone without personal/ and
+# fails with the fix where personal/ exists. A copy of this folder without the script beside it (a test repo) says "not run" too.
 # No tests run here: run `node --test tests/*.test.mjs` by hand or through tess before landing (owner decision NC2, 2026-11-22).
 set -euo pipefail
 command -v gitleaks >/dev/null || { echo "gitleaks not installed; see tools/Brewfile" >&2; exit 1; }
-gitleaks protect --staged --redact
+# `git --staged` is the pre-commit form since gitleaks 8.19 (`protect` is deprecated); it reads the index git commits from.
+gitleaks git --staged --redact
+check="$(dirname "$0")/../scripts/share-check.mjs"
+if [ -f "$check" ]; then
+  node "$check" --staged
+else
+  echo "share-check: not run (no $check beside the hooks)"
+fi
 # Syntax check of the staged hook files (read from the index, so the checked text is the committed one).
 while IFS= read -r hook; do
   [ -n "$hook" ] || continue

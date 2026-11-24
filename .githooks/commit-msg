@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Purpose: refuse a commit whose message holds one of the person's private words (scripts/share-check.mjs --commit-msg, owner rule R22).
 # The words are personal/share-deny.txt of the main checkout (git-ignored); with no list the check prints "not run" and the commit goes
-# on. A copy of this folder without the script beside it (a test repo) says "not run" the same way. Secrets are gitleaks' job in
-# pre-commit; this hook reads only the message file git passes as $1.
+# on in a clone without personal/, and fails with the fix where personal/ exists (the same rule as pre-commit). A copy of this folder
+# without the script beside it (a test repo) says "not run". Secrets and the staged files are pre-commit's job; this hook reads only
+# the message file git passes as $1.
 set -euo pipefail
 check="$(dirname "$0")/../scripts/share-check.mjs"
 if [ ! -f "$check" ]; then

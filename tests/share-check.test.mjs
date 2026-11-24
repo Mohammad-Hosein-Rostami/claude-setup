@@ -56,6 +56,20 @@ test('no list: not run, exit 0; an empty or comment-only list: not run too', () 
   assert.match(empty.stdout, /^share-check: not run \(no words in .*deny\.txt\)$/m);
 });
 
+test('no list beside a personal/ folder: every check fails (exit 2) and names the template to copy', () => {
+  const dir = makeRepo();
+  mkdirSync(join(dir, 'personal'));
+  const message = join(makeTempDir('share-msg-'), 'COMMIT_EDITMSG');
+  writeFileSync(message, 'docs: a subject\n');
+  for (const args of [[], ['--staged'], ['--history'], ['--commit-msg', message]]) {
+    const result = check(dir, ...args);
+    assert.equal(result.status, 2, `${args[0] ?? 'tree'}: ${result.stdout}`);
+    const list = join(dir, 'personal', 'share-deny.txt');
+    const fix = `cp '${join(dir, 'personal.example', 'share-deny.txt')}' '${list}'`;
+    assert.equal(result.stderr, `share-check: error: no deny list at ${list}, but ${join(dir, 'personal')} exists; start it from the template: ${fix}\n`);
+  }
+});
+
 test('a lane worktree without personal/ finds the main checkout list through git', () => {
   const dir = repoWithList();
   commit(dir, 'notes.md', `${WORD}\n`);

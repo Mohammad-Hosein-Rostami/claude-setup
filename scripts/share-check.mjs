@@ -12,7 +12,8 @@
 // Output: one `<file>:<line>: <deny word>` per hit in content, `<file>:name: <deny word>` for a word in a path, `commit message:<line>:
 //   <deny word>` (a history hit: `share-check: history <word>: ...`); `share-check: skipped <file> (<why>)` for an entry with no content
 //   to read (a submodule, missing in the working tree, not a regular file); one summary line. Exit 1 on a hit, 0 when clean,
-//   0 with `share-check: not run (no deny list at <path>)` when there is no list, 2 with `share-check: error: <why>` on any failure.
+//   0 with `share-check: not run (no deny list at <path>)` when there is no list and no personal/ folder (a clone without the
+//   person's layer), 2 with `share-check: error: <why>` on any failure, a personal/ folder without its list included (with the fix).
 // Exports: DENY_LIST_PATH, readDenyList, main.
 // Invariants:
 // - Trust boundary: the output never holds a line's text or the list; only file names (quoted and escaped when they hold a control
@@ -24,9 +25,10 @@
 //   with zero-width characters removed; an entry's spaces match any white space, a line break included.
 // - No content is skipped for its size or its bytes: binary and UTF-16 files are searched too (match.mjs); a file too large to read
 //   is an error.
-// - Fail closed: an unreadable list, an unreadable tracked file or a git failure exits 2 with why; never a silent 0.
+// - Fail closed: an unreadable list, an unreadable tracked file or a git failure exits 2 with why; never a silent 0. So is a default
+//   list missing beside an existing personal/ folder: that checkout has the person's layer, so "not run" would hide a lost list.
 import { spawnSync } from 'node:child_process';
-import { lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
+import { lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { readPlainFile } from '../home/hooks/lib/plain-file.mjs';
@@ -35,6 +37,7 @@ import { checkHistory } from './share-check/history.mjs';
 import { findHits, findHitsInBytes, nameWords, parseDenyList, wordPattern } from './share-check/match.mjs';
 
 export const DENY_LIST_PATH = ['personal', 'share-deny.txt']; // below the main checkout
+const DENY_LIST_TEMPLATE = ['personal.example', 'share-deny.txt']; // the empty list the installer starts personal/ with
 const DENY_MAX_BYTES = 1024 * 1024; // a word list larger than this is refused (exit 2)
 const MESSAGE_MAX_BYTES = 1024 * 1024; // a commit message larger than this is refused (exit 2)
 const GIT_MAX_BUFFER_BYTES = 512 * 1024 * 1024; // the blobs of a long history, the index list of a big repo
@@ -190,7 +193,7 @@ export function main(argv, cwd = process.cwd()) {
     });
     checkOptions(values, positionals);
     const { path, words } = readDenyList(cwd, values.deny);
-    if (words === null) return notRun(`no deny list at ${path}`);
+    if (words === null) return missingList(path);
     if (words.length === 0) return notRun(`no words in ${path}`);
     const denied = words.map((word) => ({ word, pattern: wordPattern(word) }));
     if (values.history) return checkHistory(cwd, denied, { git, fail: (why) => new CheckError(why) }) === 0 ? EXIT.clean : EXIT.hit;
@@ -202,6 +205,20 @@ export function main(argv, cwd = process.cwd()) {
     console.error(`share-check: error: ${kind}${error.message}`);
     return EXIT.error;
   }
+}
+
+/**
+ * The answer when the default list does not exist: "not run" in a checkout without a personal/ folder (a clone of the shared repo),
+ * an error naming the fix when personal/ is there (the person's layer is installed, so the list was lost or never copied).
+ * @param {string} path the default list, <main checkout>/personal/share-deny.txt
+ * @returns {number} EXIT.clean after printing "not run"
+ * @throws {CheckError} when the personal folder exists
+ */
+function missingList(path) {
+  const personal = dirname(path);
+  if (!statSync(personal, { throwIfNoEntry: false })?.isDirectory()) return notRun(`no deny list at ${path}`);
+  const template = join(dirname(personal), ...DENY_LIST_TEMPLATE);
+  throw new CheckError(`no deny list at ${path}, but ${personal} exists; start it from the template: cp '${template}' '${path}'`);
 }
 
 function notRun(why) {
