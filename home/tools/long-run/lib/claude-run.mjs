@@ -14,7 +14,7 @@ import { callErrorClass } from '../../account/lib/claude-call.mjs';
 import { TOKEN_SHAPED, childEnv, claudeLaunch } from '../../account/lib/claude-child.mjs';
 import { PRIVATE_FILE_MODE } from '../../account/lib/private-fs.mjs';
 import { LIMIT_TEXT } from './limit-time.mjs';
-import { killTree, listDescendants, sweepDescendants } from './process-tree.mjs';
+import { listDescendants, signalProcessTree, sweepDescendants } from './process-tree.mjs';
 
 /** Graceful end: SIGINT at once, SIGTERM after `term`, SIGKILL (or `taskkill /F`) after `kill` milliseconds. */
 export const KILL_AFTER = { term: 10 * 1000, kill: 20 * 1000 };
@@ -89,7 +89,7 @@ function makeEnder(child, { platform, runner }) {
       } catch (error) {
         state.treeError = error.message;
       }
-      killTree(child, platform, signal, runner);
+      signalProcessTree(child, signal, { platform, runner });
     },
     /** Ends what outlived the boss; @returns {Promise<{outlived: number[], treeError: string | null}>} never rejects. */
     async sweep() {

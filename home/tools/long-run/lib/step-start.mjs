@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { logUsage } from '../../account/lib/usage.mjs';
 import { claudeArgs, classify, scrub, startClaude } from './claude-run.mjs';
+import { endProcessTree } from './process-tree.mjs';
 import { readJournal, writeJournal } from './run-store.mjs';
 import { accountToken } from './run-account.mjs';
 import { hasTranscript } from './control.mjs';
@@ -94,16 +95,14 @@ function runCheck(ctx, unit, folder, token) {
   const timeoutMs = unit.check.timeoutMinutes * MS_PER_MINUTE;
   return new Promise((resolve) => {
     // The owner's own command (trusted like a Makefile, spec 14), in its own process group so a hang guard ends all of it.
-    const groupKill = ctx.platform !== 'win32';
-    const child = spawn(unit.check.command, { cwd: folder, env: ctx.env, shell: true, detached: groupKill, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(unit.check.command, { cwd: folder, env: ctx.env, shell: true, detached: ctx.platform !== 'win32', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     const keep = (chunk) => { output = `${output}${chunk}`.slice(-CHECK_KEEP_CHARS); };
     child.stdout.on('data', keep);
     child.stderr.on('data', keep);
     const timer = setTimeout(() => {
       output += `\n(check stopped after ${unit.check.timeoutMinutes} min)`;
-      if (groupKill) process.kill(-child.pid, 'SIGKILL');
-      else child.kill('SIGKILL');
+      endProcessTree(child, { platform: ctx.platform }).catch((error) => { output += `\n(its processes could not be ended: ${error.message})`; });
     }, timeoutMs);
     child.once('error', (error) => { output += `\n${error.message}`; });
     child.once('close', (code) => {

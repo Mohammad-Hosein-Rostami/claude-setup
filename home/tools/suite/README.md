@@ -29,8 +29,9 @@ log: ~/.claude/state/suite/logs/2026-11-24T21-03-05-118Z-4242.log
   usage error or a bad `config.json`.
 - The command is passed as argv, never through a shell (so `;`, `$()` or quotes in an argument stay text). On Windows that means
   a `.cmd` such as `npm` needs `cmd /c npm ...`.
-- It runs in its own process group. SIGINT, SIGTERM and SIGHUP to `suite run` end it with 128 + the signal number, kill that
-  group (every test process the command started; on Windows `taskkill /T`) and free the slot.
+- It runs in its own process group. SIGINT, SIGTERM and SIGHUP to `suite run` end that group (every test process the command
+  started): SIGTERM, then SIGKILL to what is left after 3 s (on Windows `taskkill /T /F`); then `suite run` exits with 128 + the
+  signal number and frees the slot. Such a run prints no verdict and caches nothing.
 - `--log <file>`: write the log there instead of `state/suite/logs/` (logs there are removed after 14 days).
 
 ### Pass cache (`--cache`)
@@ -129,4 +130,4 @@ second one at the same time as before. Measure again (and change `config.json`) 
 - `lib/related.mjs`: `relatedTests({ repo, changedFiles })`.
 
 Git runs through `../git-tidy/lib/git.mjs` (no shell, no repository chosen by the environment); the changed files come from
-`../risk/lib/range.mjs`. Tests: `tests/suite.test.mjs`. Not verified on Windows (signals, `taskkill`).
+`../risk/lib/range.mjs`; the command's process group is ended by `../long-run/lib/process-tree.mjs`. Tests: `tests/suite.test.mjs`. Not verified on Windows (signals, `taskkill`).

@@ -8,18 +8,20 @@
 // Exports: none (a CLI). Exit codes: run: the command's exit (128 + signal number when a signal ended it; 0 on a cache hit);
 //   related and status: 0; 2 for a usage error, a bad config file, a bad ref or a folder that is not a repository.
 // Invariants:
-// - The command runs as argv, never through a shell, in the repo folder, in its own process group; SIGINT, SIGTERM and exit kill
-//   that group and free the slot.
+// - The command runs as argv, never through a shell, in the repo folder, in its own process group; SIGINT, SIGTERM and SIGHUP end
+//   that group (SIGTERM, then SIGKILL after a grace, `../long-run/lib/process-tree.mjs`) before the exit, any other exit sends
+//   it SIGTERM, and the slot is freed.
 // - The pass cache is opt-in (`--cache`, for test runs only: an install or a build has effects a cached pass would skip). A pass is
 //   cached only when the tree was clean before and after the run and did not change; a failure is never cached.
 // - State lives in `$CLAUDE_CONFIG_DIR/state/suite/` (else `~/.claude/state/suite/`): one queue for every session on the machine.
 //   It holds only locks, the cache and logs, so it can be deleted at any time.
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
 import { constants, homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { runGit } from '../git-tidy/lib/git.mjs';
+import { endProcessTree, signalProcessTree } from '../long-run/lib/process-tree.mjs';
 import { rangeScope } from '../risk/lib/range.mjs';
 import { CACHE_KEEP_MS, cacheKey, lookup, recordPass, removeOlderThan } from './lib/cache.mjs';
 import { acquireSlot, queueState } from './lib/queue.mjs';
@@ -36,6 +38,9 @@ const DEFAULT_CONFIG = { slots: 1, cache: true }; // slots: measured, see README
 const MAX_SLOTS = 64;
 const EXIT_CANNOT_START = 127; // as a shell reports a command it cannot find
 const STOP_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+// An `exit` handler cannot wait out a grace, so it sends one signal: SIGTERM on POSIX; on Windows a forced `taskkill /F`
+// (signalProcessTree's SIGKILL), the only kind that ends a console program there.
+const EXIT_SIGNAL = process.platform === 'win32' ? 'SIGKILL' : 'SIGTERM';
 const FAILURE_TAIL_LINES = 40;
 const TAIL_BYTES = 256 * 1024; // the summary and the last 40 lines are at the end; a huge log is never read whole
 const TREE_PREFIX = 12; // the tree sha's length in the `cached PASS` line
@@ -110,20 +115,8 @@ function logTail(logPath) {
   }
 }
 
-/** Kills the child's whole process group (on Windows its process tree); a group that is already gone is fine. */
-function killGroup(child) {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  if (process.platform === 'win32') {
-    spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-    return;
-  }
-  try {
-    process.kill(-child.pid, 'SIGTERM');
-  } catch (error) {
-    // ESRCH: the group is gone; EPERM: macOS says so for a group left with only exited (zombie) members
-    if (error.code !== 'ESRCH' && error.code !== 'EPERM') throw error;
-  }
-}
+// Once the command has exited its pid may belong to another process, so it is never signalled then.
+const isRunning = (child) => child !== null && child.exitCode === null && child.signalCode === null;
 
 /**
  * Starts the command with stdout and stderr into the log, in its own process group (detached) so one kill reaches every test
@@ -146,10 +139,27 @@ function startLogged(command, repo, logPath) {
   return { child, exited };
 }
 
-/** SIGINT, SIGTERM and SIGHUP exit; at exit the running child's group is killed, and queue.mjs frees the slot and the ticket. */
+/**
+ * SIGINT, SIGTERM and SIGHUP end the running command's group (SIGTERM, then SIGKILL after a grace), then exit with 128 + the
+ * signal number. Any other exit sends the group EXIT_SIGNAL. queue.mjs frees the slot and the ticket at exit.
+ * @param {{child: import('node:child_process').ChildProcess | null, stopping: boolean}} current the running command, if any;
+ *   `stopping` is set once a stop signal came, so runCommand neither reports nor caches the run it ends.
+ */
 function stopChildOnExit(current) {
-  for (const signal of STOP_SIGNALS) process.once(signal, () => process.exit(128 + constants.signals[signal]));
-  process.once('exit', () => current.child !== null && killGroup(current.child));
+  for (const signal of STOP_SIGNALS) process.once(signal, () => { void stopAndExit(current, signal); });
+  process.once('exit', () => isRunning(current.child) && signalProcessTree(current.child, EXIT_SIGNAL));
+}
+
+/** Ends the running command's group, if any, then exits with 128 + the number of `signal`. Never rejects. */
+async function stopAndExit(current, signal) {
+  current.stopping = true;
+  try {
+    if (isRunning(current.child)) await endProcessTree(current.child);
+  } catch (error) {
+    console.error(`suite: could not end the command's processes: ${error.message}`);
+  }
+  current.child = null; // ended: the exit handler must not signal its pid again
+  process.exit(128 + constants.signals[signal]);
 }
 
 /** Prints the verdict, the runner's summary lines, on failure the last lines, and the log path. */
@@ -179,7 +189,7 @@ async function runCommand(args) {
     console.log(`log: ${hit.log}`);
     return EXIT_OK;
   }
-  const current = { child: null };
+  const current = { child: null, stopping: false };
   stopChildOnExit(current); // from here, also while waiting for a slot
   const slot = await acquireSlot({ stateDir, slots: options.slots ?? config.slots, label: { repo: options.repo, command: commandText } });
   const logsDir = join(stateDir, 'logs');
@@ -189,6 +199,8 @@ async function runCommand(args) {
   current.child = run.child;
   const exitCode = await run.exited;
   slot.release();
+  // A stop signal ended the command: stopAndExit exits with 128 + its number once the group is gone; nothing is reported or cached.
+  if (current.stopping) return exitCode;
   report(exitCode, commandText, logPath);
   // the run itself may have changed or added files, or a commit may have landed meanwhile: then the pass belongs to no tree
   if (exitCode === 0 && key && cleanTree(options.repo) === treeBefore) {

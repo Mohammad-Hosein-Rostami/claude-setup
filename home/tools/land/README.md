@@ -34,8 +34,9 @@ Steps, in order; nothing changes until every check has passed:
    A rebase that stops (a conflict) is aborted, so the lane is left as it was: rebase it by hand, then land again.
 4. Test, when `--test` is given or files overlap (`test-gate.mjs`, `run-test.mjs`): `--test`, else the rebased `package.json`
    test script, else refused. The command runs in the lane's worktree at the rebased tip. It fails on a non-zero exit, a
-   signal or the deadline. Its whole process group is killed when it ends, at the deadline and on a Ctrl-C of `land`
-   (Windows: `taskkill /T`); a process that put itself in a group of its own is out of reach. A failure prints its last 40
+   signal or the deadline. Its whole process group is ended when it ends, at the deadline and on a Ctrl-C of `land`: SIGTERM,
+   then SIGKILL to what is left after 3 s (Windows: `taskkill /T /F`); a process that put itself in a group of its own is out
+   of reach. A failure prints its last 40
    output lines. Refused too: a worktree or branch that moved during the test, tracked files the test changed in the worktree
    (untracked ones are allowed), and a base checkout edited or switched to another branch meanwhile. Every refusal in this
    step puts the worktree back on the unchanged branch; a pass moves the branch to the tested sha.
@@ -70,6 +71,7 @@ test passed on <full sha>
 | 2 | usage error |
 
 Git runs without a shell and without the variables that point it at another repository (`../git-tidy/lib/git.mjs`); the
-worktree list and the clean checks are git-tidy's (`../git-tidy/lib/repo.mjs`). Files: `land.mjs` (the CLI and its steps),
+worktree list and the clean checks are git-tidy's (`../git-tidy/lib/repo.mjs`); the test's process tree is ended by
+`../long-run/lib/process-tree.mjs`. Files: `land.mjs` (the CLI and its steps),
 `test-gate.mjs` (overlap, which test, the test step), `run-test.mjs` (runs the command), `refusal.mjs` (the refusal and the
 clean check). Tests: `tests/land.test.mjs`, `tests/land-test-gate.test.mjs`.

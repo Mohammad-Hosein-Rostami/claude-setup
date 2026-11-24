@@ -2,10 +2,12 @@
 // Exports: runTestCommand, MAX_TIMEOUT_SECONDS.
 // Invariants:
 // - The command is one string the caller typed, so it runs through the platform shell; stdin is closed.
-// - Nothing it starts outlives it: on POSIX it leads its own process group, and the whole group is killed when the command
-//   ends (pass or fail), at the deadline and on a Ctrl-C of `land`; on Windows `taskkill /T` kills the process tree.
+// - Nothing it starts outlives it: on POSIX it leads its own process group, and the whole group is ended (SIGTERM, then
+//   SIGKILL after a grace, `../long-run/lib/process-tree.mjs`) when the command ends (pass or fail), at the deadline and on a
+//   Ctrl-C of `land`; on Windows `taskkill /T /F` kills the process tree. The result comes once the group is gone.
 // - It resolves, never rejects, and keeps only the end of the output, so a test that prints gigabytes cannot exhaust memory.
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { endProcessTree } from '../long-run/lib/process-tree.mjs';
 
 // The output kept while the test runs; far more than the lines `land` prints, so the last lines are always whole.
 const OUTPUT_KEPT_BYTES = 1 << 20;
@@ -19,18 +21,17 @@ const OUTPUT_DRAIN_MS = 2000;
 /** The longest deadline a timer can hold (2^31 - 1 ms, about 24.8 days); a longer one would fire at once. */
 export const MAX_TIMEOUT_SECONDS = Math.floor((2 ** 31 - 1) / MS_PER_SECOND);
 
-/** Kills `child` and everything it started; a group that is already gone is not an error. */
-function killTree(child) {
-  if (process.platform === 'win32') {
-    spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
-    return;
-  }
-  try {
-    process.kill(-child.pid, 'SIGKILL');
-  } catch (error) {
-    if (error.code !== 'ESRCH') throw error; // ESRCH: every process of the group has already exited
-  }
+/**
+ * Ends `child` and everything it started. A kill error is returned as a reason rather than thrown, since runTestCommand never
+ * rejects, and a tree that cannot be ended must not count as a pass.
+ * @returns {Promise<string | null>} why the tree could not be ended, or null when it was.
+ */
+function endTree(child) {
+  return endProcessTree(child).then(() => null, (error) => `its processes could not be killed: ${error.message}`);
 }
+
+/** The reasons that are not null, joined; null when there are none (the test passed). */
+const joinReasons = (...reasons) => reasons.filter((reason) => reason !== null).join('; ') || null;
 
 /** The last TAIL_LINES lines of `output`, without the empty line after a final newline. */
 function lastLines(output) {
@@ -69,6 +70,11 @@ export function runTestCommand(command, cwd, timeoutSeconds) {
     child.stderr.setEncoding('utf8').on('data', keep);
 
     let settled = false;
+    // The tree is ended once, by whichever comes first: a stop, or the command's own exit.
+    let ending = false;
+    // Why a stop (the deadline, or a signal to `land`) ended the test; it wins over the command's own exit, so a Ctrl-C
+    // while the tree of a passed test is being ended still keeps the lane from landing.
+    let stopReason = null;
     let deadline = null;
     let drain = null;
     const finish = (reason) => {
@@ -81,11 +87,14 @@ export function runTestCommand(command, cwd, timeoutSeconds) {
       child.stderr.destroy();
       resolve({ passed: reason === null, reason, tail: lastLines(output) });
     };
-    // Once the test has finished its pid may belong to another process, so it is never signalled then.
+    // Once the test has settled its pid may belong to another process, so it is never signalled then.
     const stop = (reason) => {
-      if (settled) return;
-      killTree(child);
-      finish(reason);
+      if (settled || stopReason !== null) return;
+      stopReason = reason;
+      clearTimeout(deadline);
+      if (ending) return; // the command has exited and its tree is already being ended; that path settles the test
+      ending = true;
+      endTree(child).then((killError) => finish(joinReasons(stopReason, killError)));
     };
     function stopOnSignal(signal) {
       stop(`stopped by ${signal} sent to land`);
@@ -95,13 +104,18 @@ export function runTestCommand(command, cwd, timeoutSeconds) {
     for (const signal of STOP_SIGNALS) process.once(signal, stopOnSignal);
     child.on('error', (error) => finish(`could not start: ${error.message}`));
     child.on('exit', (status, signal) => {
+      if (ending) return; // a stop is already ending the tree and settles the test
+      ending = true;
       const reason = failureReason(status, signal);
       clearTimeout(deadline);
       // Whatever the test left running in the background dies with it, and so stops holding the output pipes open.
-      killTree(child);
+      const treeEnded = endTree(child);
       // 'close' follows once the last output is read; a process that left the group could delay it for ever.
-      child.on('close', () => finish(reason));
-      drain = setTimeout(() => finish(reason), OUTPUT_DRAIN_MS);
+      const outputRead = new Promise((resolveRead) => {
+        child.on('close', resolveRead);
+        drain = setTimeout(resolveRead, OUTPUT_DRAIN_MS);
+      });
+      Promise.all([treeEnded, outputRead]).then(([killError]) => finish(joinReasons(stopReason ?? reason, killError)));
     });
   });
 }
