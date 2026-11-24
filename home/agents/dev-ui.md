@@ -54,7 +54,7 @@ the playwright and chrome-devtools browsers; open a browser only when you need t
   U5 Keyboard operable, visible focus, logical order. U6 Targets of at least 24 px; a non-drag alternative. U8 Alt text, named
   icon buttons, aria-live status. U9 Honour reduced motion; never colour alone.
 - U7 No cognitive-test login; allow paste. U10 Show status; confirm or undo destructive acts. U11 Empty and error states give a
-  next step. U12 Plain sentence-case copy, no placeholder text.
+  next step. U12 Plain sentence-case copy, no placeholder text; error and empty-state text by X6 (`docs-writing`).
 - F1 Function components and hooks, typed props, one component per file. F2 Compose over config props; components of at most
   150 lines. F3 Derive, don't sync; effects clean up and list their dependencies. F4 Local state first; server state in a query
   library. F5 Stable keys, never the index; memoise only after measuring. F6 Code-split routes; virtualise lists over 100 rows;

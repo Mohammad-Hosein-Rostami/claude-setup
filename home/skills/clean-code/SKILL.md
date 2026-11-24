@@ -23,7 +23,7 @@ where it has one; tess runs it, and whoever writes reads the diff against them.
    with a schema and trust internal types after it; throw typed errors that keep the cause; no floating promises.
 7. Comments say why, never what; delete dead and commented-out code (C8). A file you create or substantially edit opens with a
    header comment: purpose, exports, invariants (C26). Public functions and types you create or change get a doc comment: what,
-   why, args, returns, errors; `TODO(ref): reason` (C27).
+   why, args, returns, errors; `TODO(ref): reason` (C27). Text a person reads follows `docs-writing` (X6-X8).
 8. Duplication: look for an existing helper first; extract on the third copy (C2). Prefer duplication over the wrong
    abstraction: no interface with one implementation, pass-through wrapper, factory, generic layer or option "for later" (C33).
 9. Composition over inheritance; an interface only at a real boundary (an external system, a second implementation or a test
