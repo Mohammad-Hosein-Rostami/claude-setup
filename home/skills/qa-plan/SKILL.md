@@ -17,7 +17,7 @@ Write the plan into the detail file before the first check runs.
 
    | Kind / risk | Checks |
    |---|---|
-   | any code | typecheck; lint on changed files; related tests (the runner's own: `vitest related <files>`, `jest --findRelatedTests <files>`; node:test repos: `node ~/.claude/tools/suite/suite.mjs related --base <base> --tip <tip>`; else test files that import or are named for the changed files); build when the project has one |
+   | any code | typecheck; lint on changed files; related tests (the runner's own: `vitest related <files>`, `jest --findRelatedTests <files>`; node:test repos: `node ~/.claude/tools/suite/suite.mjs related --base <base> --tip <tip>`; else test files that import or are named for the changed files); build when the project has one; the `examples:` dev-docs listed, run in the scratch worktree when they are local and safe |
    | risky or large, or no related-test mapping | the full suite instead of related tests; build; review; edge cases; base comparison for every failure |
    | dependencies | `<pm> audit --prod` at high severity (network: `not run (network)` when offline); lockfile diff: new packages, `hasInstallScript`, widened ranges, a new registry or a git or URL source; osv-scanner when installed |
    | security class | `standards/security.md` S1-S11 against the diff; gitleaks on the range when installed (`gitleaks git --log-opts="<base>..<tip>" --redact`) |
