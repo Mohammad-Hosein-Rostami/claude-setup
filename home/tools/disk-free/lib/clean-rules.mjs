@@ -20,7 +20,7 @@
 //                    changes, untracked files, stashes or commits no remote holds; git that fails or a cut walk keeps it), and disk-clean
 //                    first saw it over 2 days ago (first-seen.mjs: a `cp -a` copy made today has old mtimes; a folder met for the first
 //                    time is recorded at the clock and counted in context.firstSeenKept, dry runs record too). The session's
-//                    liveness does not matter here: the whole-tree age is the test, so a folder a running lane still writes stays. Any
+//                    liveness does not matter here (owner, 2026-11-24: FR5 stands over the plan's keep-while-live line): the whole-tree age is the test, so a folder a running lane still writes stays. Any
 //                    other name, a link and a session folder the rule above took in this run (listed or removed) are never looked at.
 //                    Crash case: a `.removing-<pid>-<name>` entry a killed run left is judged by its original name, like in the rules below.
 //   test-temp        os.tmpdir() folders named by this repo's test prefixes, idle for 1 day
