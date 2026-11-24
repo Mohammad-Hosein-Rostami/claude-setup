@@ -86,7 +86,7 @@ const READER_DATA_SILENT = [
   "NAME=x cat > notes.md <<'EOF'\ngit push --force\nEOF",
   "git commit -F - <<'EOF'\nfix: rm -rf / and git push --force origin main\nEOF",
   "gh pr create --title x --body-file - <<'EOF'\nSee gh release and git push --force origin main\nEOF",
-  "cat <<'EOF' | kubectl apply -f -\ngit push --force origin main\nEOF",
+  "cat <<'EOF' | kubectl apply --dry-run=client -f -\ngit push --force origin main\nEOF", // a dry run: a real apply asks as a deploy
 ];
 
 const READER_RUNS_ASKS = [

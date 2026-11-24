@@ -80,7 +80,7 @@ export const AUDIT_HARMLESS = [
   "echo \"deploy with: git push origin main\" > NOTES.md",
   "git log -1 --pretty=%B | grep -q \"release\" && echo yes",
   "psql -h localhost -U postgres -c \"select 1\"",
-  "cat <<EOF | kubectl apply -f -\napiVersion: v1\nEOF",
+  "cat <<EOF | kubectl apply --dry-run=client -f -\napiVersion: v1\nEOF", // a dry run: kubectl apply for real is a deploy and asks
   "rm -rf $TMPDIR/cs-test-vite-*",
   "gh pr create --title \"fix: delete stale sessions\" --body \"$(cat <<'EOF'\nok\nEOF\n)\"",
   "gh pr create --title \"feat: edit profile page\" --body \"$(cat <<'EOF'\nok\nEOF\n)\"",

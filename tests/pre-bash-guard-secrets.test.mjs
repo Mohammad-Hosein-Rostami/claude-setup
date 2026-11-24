@@ -269,9 +269,10 @@ test('a cloud upload with a credential path asks: aws s3, gsutil, gcloud storage
   ]) {
     assert.match(decide(command, ctx).reason ?? '', /private credential file/, command);
   }
+  // `aws s3 cp` to s3:// asks as a deploy whatever it copies (lib/deploy.mjs), so the silent side holds aws s3 downloads.
   for (const command of [
-    'aws s3 cp dist/ s3://b/ --recursive', 'aws s3 ls s3://b/', 'gsutil cp gs://b/x ./', 'rclone copy ./dist remote:site', 'aws s3 cp s3://b/aws.tgz ~/.aws/',
-    'AWS_SHARED_CREDENTIALS_FILE=~/.aws/credentials aws s3 cp f s3://b/', 'az storage blob list -c c', 'aws configure list && cat ~/.aws/credentials',
+    'aws s3 cp s3://b/dist/ dist/ --recursive', 'aws s3 ls s3://b/', 'gsutil cp gs://b/x ./', 'rclone copy ./dist remote:site', 'aws s3 cp s3://b/aws.tgz ~/.aws/',
+    'AWS_SHARED_CREDENTIALS_FILE=~/.aws/credentials aws s3 cp s3://b/f ./', 'az storage blob list -c c', 'aws configure list && cat ~/.aws/credentials',
   ]) {
     assert.deepEqual(decide(command, ctx), { allow: true }, command);
   }
