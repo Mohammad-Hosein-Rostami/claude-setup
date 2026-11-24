@@ -70,7 +70,7 @@ export function childTimeoutMs(wantedMs, budgetLeftMs) {
  * @param {string} sessionDir - the session's folder (the hook input's `cwd`).
  * @param {string} personalDir - the personal agents folder (`~/.claude/agents`).
  * @param {{ script?: string, timeoutMs?: number, budgetLeftMs?: number }} [options] - `budgetLeftMs`: milliseconds left of the
- *   hook's budget (session-notes.mjs); for tests: another child script, another limit for the child.
+ *   hook's budget (project-merge.mjs); for tests: another child script, another limit for the child.
  * @returns {string} the child's note ('' when there is nothing to say or no session folder), or NOT_CHECKED_NOTE when the child
  *   failed in any way or the budget left no time to start it.
  */

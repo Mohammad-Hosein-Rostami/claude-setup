@@ -13,13 +13,13 @@ const OPEN_KEPT = 50;
 const MAX_TEXT_CHARS = 200;
 const MAX_PATH_CHARS = 1000;
 const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029<>]/g;
-// A STATUS row named in the brief: `row <id>` or `row: <id>`, the id in the STATUS row id form.
+// A work item the brief names: `row <id>` or `row: <id>` (the board shows it; the field keeps its old name `row`).
 const ROW_IN_BRIEF = /\brow:?\s+`?([A-Za-z0-9][\w.:-]{0,39})`?/i;
 
 const cleanText = (value, max) => (typeof value === 'string' && value !== '' ? value.replace(CONTROL, ' ').slice(0, max) : undefined);
 
 /**
- * The fields of a launch worth keeping for the notice: the lead's folder, the call's description and the STATUS row its brief names.
+ * The fields of a launch worth keeping for the notice: the lead's folder, the call's description and the work item its brief names.
  * @param {{ cwd?: unknown, description?: unknown, prompt?: unknown } | undefined} about
  * @returns {{ cwd?: string, description?: string, row?: string }}
  */

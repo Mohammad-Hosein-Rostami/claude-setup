@@ -16,7 +16,7 @@ import { MAX_MATRIX_BYTES, matrixLines, matrixPathToken, uiBriefDeny } from '../
 import { adviceOnce } from '../home/hooks/lib/bounce-once.mjs';
 import { originOf } from './agent-call-origin.mjs';
 import { hookEnv } from './hook-env.mjs';
-import { fastestMs } from './timing.mjs';
+import { fastestCpuMs } from './timing.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/agent-model-guard.mjs', import.meta.url));
@@ -223,8 +223,8 @@ test('matrixPathToken: a quoted path up to its closing mark, else the text up to
   assert.equal(matrixPathToken('../up/m.json;'), '../up/m.json');
   assert.equal(matrixPathToken('"unclosed m.json'), '"unclosed');
   const hostile = `${','.repeat(1_000_000)}x ${'"'.repeat(1_000_000)}`;
-  assert.ok(fastestMs(() => matrixPathToken(hostile)) < 200, 'linear in the value');
-  assert.ok(fastestMs(() => matrixPathToken(`"${'a'.repeat(2_000_000)}`)) < 200, 'an unclosed quote');
+  assert.ok(fastestCpuMs(() => matrixPathToken(hostile)) < 200, 'linear in the value');
+  assert.ok(fastestCpuMs(() => matrixPathToken(`"${'a'.repeat(2_000_000)}`)) < 200, 'an unclosed quote');
 });
 
 test('only a line that starts with MATRIX: counts: mid-line text, inline code, a bullet, other letter case do not', () => {
@@ -417,7 +417,7 @@ test('matrixLines: only lines that start with MATRIX: count; blanks and a CRLF a
 test('matrixLines: a huge hostile prompt is scanned in linear time', () => {
   const hostile = [`${' '.repeat(2_000_000)}x`, '\n'.repeat(2_000_000), `MATRIX:${' \t'.repeat(1_000_000)}`,
     Array(200_000).fill(' \tMATRIX docs/x.json').join('\n'), ' '.repeat(2_000_000)].join('\n');
-  assert.ok(fastestMs(() => matrixLines(hostile)) < 500, 'far inside the 5 s hook timeout');
+  assert.ok(fastestCpuMs(() => matrixLines(hostile)) < 500, 'far inside the 5 s hook timeout');
 });
 
 test('uiBriefDeny fails open: input or an environment that throws when read, and odd input, give no output', async () => {

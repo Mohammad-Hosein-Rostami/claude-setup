@@ -3,7 +3,7 @@
 // or run past the hook's timeout, and Claude Code then drops the whole SessionStart output. These tests pin the other side: whatever
 // the child does, the hook gets either a note in the note's own form or the fixed "not checked" text, and prints everything else.
 // No test measures time: a child that never ends is cut by an injected timeout of a few milliseconds, and the hook's budget is
-// tested on a fake clock. The hook is home/hooks/project-merge.mjs (lane agents-note; it was session-notes.mjs). Round 9 (lane r9-mode-fix): the pins of the child call that review 4 found
+// tested on a fake clock. The hook is home/hooks/project-merge.mjs. Round 9 (lane r9-mode-fix): the pins of the child call that review 4 found
 // missing (its mutants C19-C21, C24-C26, C35), the child's working folder, and the one deadline of the hook (spec check K1, K2, K9).
 import test from 'node:test';
 import assert from 'node:assert/strict';

@@ -13,7 +13,7 @@ import { originOf } from './agent-call-origin.mjs';
 import { hookEnv } from './hook-env.mjs';
 import { IDLE_MS, PENDING_MS } from '../home/hooks/lib/agent-launches.mjs';
 import { callCounterPath, worktreeValues } from '../home/hooks/lib/writer-agents.mjs';
-import { fastestMs } from './timing.mjs';
+import { fastestCpuMs } from './timing.mjs';
 import { git, makeRepo } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -410,7 +410,7 @@ test('worktreeValues: the value of each field, Windows paths whole; prose, other
   assert.deepEqual(worktreeValues('worktree: /a/b;c,d\n- worktree: "/e f"\n+ worktree: /g, then go'), ['/a/b;c,d', '/e f', '/g']);
   assert.deepEqual(worktreeValues('the worktree: /x\nWorktree: /y\nmy-worktree: /z\n-worktree: /w\nBRANCH: worktree:/v'), []);
   const hostile = `${',worktree:'.repeat(4000)}\n${' '.repeat(30_000)}·worktree: /p`;
-  assert.ok(fastestMs(() => worktreeValues(hostile)) < 200, 'linear in the text');
+  assert.ok(fastestCpuMs(() => worktreeValues(hostile)) < 200, 'linear in the text');
 });
 
 // Fix round (review R1-R3): a sibling lane named after a prose comma was read as the writer's own field and the first value won; a quoted
@@ -473,5 +473,5 @@ test('a quoted worktree value is read whole: a real lane folder holding | or ; r
   });
   assert.deepEqual(worktreeValues('worktree: "/x/lane|y" · BRANCH: b\n- worktree: \'/a, b\', BRANCH: c'), ['/x/lane|y', '/a, b']);
   const hostile = `${'BASE: a, '.repeat(4000)}worktree: "${'p'.repeat(20_000)}\n${'worktree: "|'.repeat(3000)}`;
-  assert.ok(fastestMs(() => worktreeValues(hostile)) < 200, 'linear: a long header and unclosed quotes');
+  assert.ok(fastestCpuMs(() => worktreeValues(hostile)) < 200, 'linear: a long header and unclosed quotes');
 });
