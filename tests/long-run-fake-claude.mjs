@@ -3,7 +3,10 @@
 // Script: $FAKE_LR_DIR/script.json maps a step id (LONG_RUN_STEP) to a list of modes, one per call (the last repeats; no entry:
 // `done`). Modes: done, say:<text>, echo (replies with the last line of its stdin), blocked, needs-owner, no-verdict, crash, limit,
 // weekly-limit, auth, max-turns, no-conversation, leak, sleep:<ms>, hang, deaf (ignores SIGINT and SIGTERM), tool:<ms> (a tool call
-// and its result, then `done` after <ms>). Every call appends one JSON line to $FAKE_LR_DIR/calls.jsonl: {step, mode, args, stdin, cwd,
+// and its result, then `done` after <ms>), agent:<id> (starts a background agent <id> as Claude Code 2.1.330 streams it, starts a
+// grandchild in a process group of its own, like a subagent's Bash, writes its pid to $FAKE_LR_DIR/grandchild-<step>.pid, then
+// hangs; the grandchild outlives this fake unless someone ends it), agent-done:<id> (the same agent, finished, then `done`, no
+// grandchild). Every call appends one JSON line to $FAKE_LR_DIR/calls.jsonl: {step, mode, args, stdin, cwd,
 // envNames, account, tokenHash, pid, start, end, ended} (`end` and `ended` on a second line kind `end`), never the token itself;
 // each session writes its transcript to $CLAUDE_CONFIG_DIR/projects/fake-project/<session id>.jsonl (the open-session check).
 // The stream is real `--output-format stream-json` shapes: a system init line, assistant lines, user tool_result lines, a result line.
@@ -12,6 +15,7 @@ import { join } from 'node:path';
 
 export const FAKE_CLAUDE_SOURCE = `#!/usr/bin/env node
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 const dir = process.env.FAKE_LR_DIR;
@@ -69,6 +73,26 @@ if (name === 'tool') {
   out({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } });
   await sleep(Number(value));
   result('Tooled.\\nSTEP-RESULT: done');
+  finish(0);
+}
+const startAgent = (agentId) => {
+  const toolUseId = 'toolu_' + agentId;
+  out({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', id: toolUseId, name: 'Agent', input: { description: 'Probe "timer"\\nrun', subagent_type: 'tess', run_in_background: true, prompt: 'x' } }] } });
+  out({ type: 'system', subtype: 'task_started', task_id: agentId, tool_use_id: toolUseId, description: 'Probe "timer"\\nrun', subagent_type: 'tess', is_backgrounded: true, spawn_depth: 1, task_type: 'local_agent' });
+  out({ type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, content: [{ type: 'text', text: 'Async agent launched successfully.\\nagentId: ' + agentId }] }] },
+    tool_use_result: { isAsync: true, status: 'async_launched', agentId, description: 'Probe "timer"\\nrun' } });
+};
+if (name === 'agent') {
+  startAgent(value);
+  const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
+  grandchild.unref();
+  writeFileSync(join(dir, 'grandchild-' + step + '.pid'), String(grandchild.pid));
+  for (;;) await sleep(1000);
+}
+if (name === 'agent-done') {
+  startAgent(value);
+  out({ type: 'system', subtype: 'task_notification', task_id: value, status: 'completed', summary: 'Agent finished' });
+  result('Did ' + step + ' with an agent.\\nSTEP-RESULT: done');
   finish(0);
 }
 if (name === 'hang' || name === 'deaf') { for (;;) await sleep(1000); }

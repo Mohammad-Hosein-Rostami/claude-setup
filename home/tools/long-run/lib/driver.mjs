@@ -1,15 +1,17 @@
 // Purpose: the driver of one run (`long-run drive <run>`, usually detached): takes the run lock, beats, keeps the machine awake,
 //   reads the control files every 2 s, runs the graph from where it stopped (new, resumed, answered or re-run), and records how it
 //   ended (held, done, abandoned, paused, stopped) with events, the summary and a note to the owner.
-// Exports: CONTROL_POLL_MS, BEAT_MS, assertNativeModule, makeSemaphore, drive.
+// Exports: CONTROL_POLL_MS, BEAT_MS, STOP_SIGNALS, assertNativeModule, makeSemaphore, drive.
 // Invariants: one driver per run (run-store lock); driver.json is written only here; a run-level pause or stop ends every child
-//   gracefully, waits until none runs, then exits the process (the journals are already written: the P3 crash path); every timer
-//   is cleared before drive() returns; a note that fails is one events.jsonl line, never a run failure.
+//   gracefully, waits until none runs, then exits the process (the journals are already written: the P3 crash path); SIGTERM,
+//   SIGINT and SIGHUP of the driver are a run-level pause (no boss is left running with nobody reading it; status says paused);
+//   every timer and signal handler is removed before drive() returns; a note that fails is one events.jsonl line, never a run
+//   failure.
 import { randomUUID } from 'node:crypto';
 import { rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { hostname } from 'node:os';
-import { Command } from '@langchain/langgraph';
+import { Command, RunControl, isGraphDrained } from '@langchain/langgraph';
 import { appendJsonLine, acquireLock, readJson, readRunJob, releaseFolder, releaseLock, writeJson } from './run-store.mjs';
 import { units } from './job.mjs';
 import { makeControl } from './control.mjs';
@@ -23,6 +25,8 @@ import { formatWhen, writeSummary } from './view.mjs';
 export const CONTROL_POLL_MS = 2 * 1000;
 /** The heartbeat in driver.json (a beat older than 120 s means the driver is gone). */
 export const BEAT_MS = 30 * 1000;
+/** The signals that pause the run: every boss is ended cleanly, then the driver exits (a SIGKILL no handler sees: `status` warns). */
+export const STOP_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'];
 const FINAL_EVENTS = { done: 'step-done', failed: 'step-failed', 'needs-owner': 'needs-owner', blocked: 'blocked', paused: 'paused', 'taken-over': 'taken-over' };
 
 /**
@@ -78,10 +82,14 @@ async function tellOwner(ctx, kind, detail) {
 
 function buildContext(paths, deps, run, job) {
   const base = { pid: process.pid, host: hostname(), startedAt: deps.now().toISOString(), status: 'running', hold: null };
+  const files = makeControl(paths);
   const ctx = {
     ...deps, paths, job, runId: paths.runId, account: run.account, unitIds: units(job).map((unit) => unit.id),
-    control: makeControl(paths), semaphore: makeSemaphore(job.maxParallel), live: makeLive(paths, base, deps.now), parked: new Set(),
+    semaphore: makeSemaphore(job.maxParallel), live: makeLive(paths, base, deps.now), parked: new Set(),
+    signalled: null, runControl: new RunControl(),
   };
+  // A signal of the driver counts as the owner's run-level pause, read where the PAUSE file is read.
+  ctx.control = { ...files, runSignal: () => (ctx.signalled ? 'pause' : files.runSignal()) };
   ctx.event = (unitId, event, detail, data = {}) => {
     recordEvent(paths, { event, step: unitId, detail, at: deps.now(), data });
     if (event === 'waiting-limit') tellOwner(ctx, `${unitId} waits for the usage limit`, `${unitId} waits for the usage limit, ${detail}`);
@@ -94,7 +102,8 @@ function buildContext(paths, deps, run, job) {
 async function endParked(ctx, signal) {
   const status = signal === 'stop' ? 'stopped' : 'paused';
   ctx.live.write({ status });
-  recordEvent(ctx.paths, { event: signal === 'stop' ? 'run-stopped' : 'paused', detail: 'every boss ended; long-run resume continues', at: ctx.now() });
+  const why = ctx.signalled ? `the driver got ${ctx.signalled}; ` : '';
+  recordEvent(ctx.paths, { event: signal === 'stop' ? 'run-stopped' : 'paused', detail: `${why}every boss ended; long-run resume continues`, at: ctx.now() });
   writeSummary(ctx.paths, { nextCommand: `long-run resume ${ctx.runId}`, now: ctx.now() });
   releaseLock(ctx.paths);
   ctx.exit(0);
@@ -112,6 +121,18 @@ function pollControl(ctx) {
     ctx.ending = true;
     endParked(ctx, signal);
   }
+}
+
+/** Handlers that turn a stop signal of the driver into a run-level pause; @returns {() => void} removes them. */
+function onStopSignals(ctx) {
+  const handler = (name) => {
+    if (ctx.signalled) return; // the first signal already started the clean end
+    ctx.signalled = name;
+    ctx.runControl.requestDrain(name);
+    pollControl(ctx);
+  };
+  for (const name of STOP_SIGNALS) process.on(name, handler);
+  return () => { for (const name of STOP_SIGNALS) process.off(name, handler); };
 }
 
 function takeFile(path) {
@@ -162,7 +183,7 @@ async function finishRun(ctx, app) {
  * @param {{env: object, platform: string, now: () => Date, sleep: (ms: number) => Promise<void>, random: () => number,
  *   exit: (code: number) => void, store?: object | null, killAfter?: object, limitsDir?: string, notifier?: Function,
  *   keepAwake?: boolean}} deps stand-ins for tests; `exit` ends the process after a run-level pause or stop.
- * @returns {Promise<string>} `held`, `done` or `abandoned`.
+ * @returns {Promise<string>} `held`, `done` or `abandoned` (`paused` only when `exit` returns, as a stand-in may).
  * @throws {RunBusy} when a live driver holds the run; {JobError} for a run of another runner version.
  */
 export async function drive(paths, deps) {
@@ -172,14 +193,26 @@ export async function drive(paths, deps) {
   const ctx = buildContext(paths, { notifier: notify, store: null, ...deps }, run, job);
   ctx.live.write();
   const timers = [setInterval(() => ctx.live.write(), BEAT_MS), setInterval(() => pollControl(ctx), CONTROL_POLL_MS)];
+  const removeHandlers = onStopSignals(ctx);
   try {
     if (deps.keepAwake) startAwake({ platform: deps.platform });
     const app = buildGraph(ctx);
     const { input, config, event, detail } = await invokeInput(ctx, app);
     recordEvent(paths, { event, detail, at: deps.now() });
-    await app.invoke(input, config);
+    try {
+      await app.invoke(input, { ...config, control: ctx.runControl });
+    } catch (error) {
+      if (!isGraphDrained(error)) throw error;
+      // Drained between two nodes after a signal: the checkpoint is saved and no boss runs, so the pause ends here.
+      if (!ctx.ending) {
+        ctx.ending = true;
+        await endParked(ctx, 'pause');
+      }
+      return 'paused';
+    }
     return await finishRun(ctx, app);
   } finally {
+    removeHandlers();
     for (const timer of timers) clearInterval(timer);
     if (!ctx.ending) releaseLock(paths);
   }

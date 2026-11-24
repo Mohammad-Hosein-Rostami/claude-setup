@@ -1,10 +1,12 @@
 // Purpose: one `claude -p` start of a step (spec 7.4): its arguments, the scrubbed log stream, the result line, a graceful end
 //   (now or at the next safe point, spec 19.2), and the exhaustive classification of how it ended (spec 7.2, 5).
-// Exports: KILL_AFTER, LOG_MAX_BYTES, SAFE_POINT_MAX_MS, claudeArgs, startClaude, endOrphan, classify, parseVerdict, scrub.
+// Exports: KILL_AFTER, LOG_MAX_BYTES, SAFE_POINT_MAX_MS, claudeArgs, startClaude, orphanAlive, endOrphan, classify, parseVerdict,
+//   scrub.
 // Invariants: the prompt goes on stdin, never argv; the token is only in the child env (claude-child.mjs childEnv drops every
 //   billing variable, CLAUDE_CODE_RETRY_WATCHDOG* and CLAUDECODE); every stdout and stderr line is scrubbed of the token and any
 //   token-shaped text before it is written; no `--bare`, no permission flag, no `--max-turns` (owner decisions O2, O4); the exit
-//   code alone never makes a step done; an unknown result subtype is `crash`.
+//   code alone never makes a step done; an unknown result subtype is `crash`; an ended boss's descendants that outlive it are
+//   ended too (process-tree.mjs) before `done` resolves, so a driver that exits right after leaves none of them running.
 import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, openSync, writeSync } from 'node:fs';
 import { createInterface } from 'node:readline';
@@ -12,6 +14,7 @@ import { callErrorClass } from '../../account/lib/claude-call.mjs';
 import { TOKEN_SHAPED, childEnv, claudeLaunch } from '../../account/lib/claude-child.mjs';
 import { PRIVATE_FILE_MODE } from '../../account/lib/private-fs.mjs';
 import { LIMIT_TEXT } from './limit-time.mjs';
+import { killTree, listDescendants, sweepDescendants } from './process-tree.mjs';
 
 /** Graceful end: SIGINT at once, SIGTERM after `term`, SIGKILL (or `taskkill /F`) after `kill` milliseconds. */
 export const KILL_AFTER = { term: 10 * 1000, kill: 20 * 1000 };
@@ -72,16 +75,31 @@ function parseLine(line) {
   }
 }
 
-function killTree(child, platform, signal, runner) {
-  if (platform === 'win32') {
-    runner('taskkill', ['/PID', String(child.pid), '/T', ...(signal === 'SIGKILL' ? ['/F'] : [])], { windowsHide: true });
-    return;
-  }
-  try {
-    process.kill(-child.pid, signal);
-  } catch (error) {
-    if (error.code !== 'ESRCH') throw error; // ESRCH: the group is already gone
-  }
+/**
+ * The kill ladder of an ending boss: each step first records the boss's tree, so what outlives the boss can be ended after it.
+ * A tree that cannot be read is kept as `treeError` (reported with the outcome) and the boss is signalled all the same.
+ */
+function makeEnder(child, { platform, runner }) {
+  const state = { seen: new Map(), treeError: null };
+  return {
+    state,
+    signal(signal) {
+      try {
+        for (const [pid, pgid] of listDescendants(child.pid, { platform, runner })) state.seen.set(pid, pgid);
+      } catch (error) {
+        state.treeError = error.message;
+      }
+      killTree(child, platform, signal, runner);
+    },
+    /** Ends what outlived the boss; @returns {Promise<{outlived: number[], treeError: string | null}>} never rejects. */
+    async sweep() {
+      try {
+        return { outlived: await sweepDescendants(state.seen, { platform, runner }), treeError: state.treeError };
+      } catch (error) {
+        return { outlived: [], treeError: error.message };
+      }
+    },
+  };
 }
 
 /**
@@ -90,7 +108,8 @@ function killTree(child, platform, signal, runner) {
  *   platform?: string, killAfter?: {term: number, kill: number}, runner?: Function}} start `added`: the labels for the child env;
  *   `logBase`: `<run>/logs/<id>.<start>` (the stream goes to `.jsonl`, stderr to `.stderr.log`); `runner` stands in for spawnSync.
  * @returns {{pid: number, done: Promise<object>, end: (reason: string) => void, endAtSafePoint: (reason: string, maxMs?: number) => void}}
- *   `done` resolves with `{exitCode, signal, result, stderrTail, endedBy, endedHow, error}`; it never rejects.
+ *   `done` resolves with `{exitCode, signal, result, stderrTail, endedBy, endedHow, error, outlived, treeError}` (`outlived`: the
+ *   pids of the boss's tree still running after it ended, now ended too); it never rejects.
  */
 export function startClaude({ args, prompt, cwd, env, token, added, logBase, platform = process.platform, killAfter = KILL_AFTER, runner = spawnSync }) {
   const launch = claudeLaunch(platform, args);
@@ -101,13 +120,14 @@ export function startClaude({ args, prompt, cwd, env, token, added, logBase, pla
   const out = openLog(`${logBase}.jsonl`);
   const err = openLog(`${logBase}.stderr.log`);
   const state = { result: null, stderrTail: '', endedBy: null, endedHow: 'exit', timers: [], safePoint: null };
+  const ender = makeEnder(child, { platform, runner });
   const end = (reason) => {
     if (state.endedBy !== null || child.exitCode !== null) return;
     state.endedBy = reason;
     state.endedHow = platform === 'win32' ? 'taskkill' : 'SIGINT';
-    killTree(child, platform, 'SIGINT', runner);
-    state.timers.push(setTimeout(() => { state.endedHow = 'SIGTERM'; killTree(child, platform, 'SIGTERM', runner); }, killAfter.term));
-    state.timers.push(setTimeout(() => { state.endedHow = platform === 'win32' ? 'taskkill /F' : 'SIGKILL'; killTree(child, platform, 'SIGKILL', runner); }, killAfter.kill));
+    ender.signal('SIGINT');
+    state.timers.push(setTimeout(() => { state.endedHow = 'SIGTERM'; ender.signal('SIGTERM'); }, killAfter.term));
+    state.timers.push(setTimeout(() => { state.endedHow = platform === 'win32' ? 'taskkill /F' : 'SIGKILL'; ender.signal('SIGKILL'); }, killAfter.kill));
   };
   const endAtSafePoint = (reason, maxMs = SAFE_POINT_MAX_MS) => {
     if (state.safePoint !== null) return;
@@ -131,11 +151,12 @@ export function startClaude({ args, prompt, cwd, env, token, added, logBase, pla
   const done = new Promise((resolve) => {
     let spawnError = null;
     child.once('error', (error) => { spawnError = error.code === 'ENOENT' ? 'claude is not on PATH' : scrub(error.message, token); });
-    child.once('close', (exitCode, signal) => {
+    child.once('close', async (exitCode, signal) => {
       for (const timer of state.timers) clearTimeout(timer);
       out.close();
       err.close();
-      resolve({ exitCode, signal, result: state.result, stderrTail: state.stderrTail, endedBy: state.endedBy, endedHow: state.endedHow, error: spawnError });
+      const { outlived, treeError } = await ender.sweep();
+      resolve({ exitCode, signal, result: state.result, stderrTail: state.stderrTail, endedBy: state.endedBy, endedHow: state.endedHow, error: spawnError, outlived, treeError });
     });
   });
   return { pid: child.pid, done, end, endAtSafePoint };
@@ -149,30 +170,42 @@ function commandLineOf(pid, platform, runner) {
 }
 
 /**
- * Ends a child a dead driver left running (its pid is in the journal), so a resume never makes a second writer of one session.
- * The pid counts only while its command line still names the session id (a reused pid is left alone).
+ * Whether the boss a dead driver started still runs: the pid lives and its command line still names the session id (a reused
+ * pid is not the boss).
+ * @param {{pid: number | null, sessionId: string, platform?: string, runner?: Function, isAlive: (pid: number) => boolean}} boss
+ * @returns {boolean}
+ */
+export function orphanAlive({ pid, sessionId, platform = process.platform, runner = spawnSync, isAlive }) {
+  return Number.isInteger(pid) && isAlive(pid) && commandLineOf(pid, platform, runner).includes(sessionId);
+}
+
+/**
+ * Ends a child a dead driver left running (its pid is in the journal), so a resume never makes a second writer of one session,
+ * and then what is left of its tree (a subagent's Bash in a group of its own).
  * @param {{pid: number | null, sessionId: string, platform?: string, runner?: Function, isAlive: (pid: number) => boolean,
  *   killAfter?: {term: number, kill: number}}} orphan
- * @returns {Promise<'none' | 'ended'>}
+ * @returns {Promise<string>} `none`, or `ended` with what was found of its tree (the journal note of the resume).
  */
 export async function endOrphan({ pid, sessionId, platform = process.platform, runner = spawnSync, isAlive, killAfter = KILL_AFTER }) {
-  if (!Number.isInteger(pid) || !isAlive(pid) || !commandLineOf(pid, platform, runner).includes(sessionId)) return 'none';
-  const child = { pid };
+  if (!orphanAlive({ pid, sessionId, platform, runner, isAlive })) return 'none';
+  const ender = makeEnder({ pid }, { platform, runner });
   const started = Date.now();
-  killTree(child, platform, 'SIGINT', runner);
+  ender.signal('SIGINT');
   let sent = 'SIGINT';
   while (isAlive(pid)) {
     const waited = Date.now() - started;
     if (waited >= killAfter.kill && sent !== 'SIGKILL') {
-      killTree(child, platform, 'SIGKILL', runner);
+      ender.signal('SIGKILL');
       sent = 'SIGKILL';
     } else if (waited >= killAfter.term && sent === 'SIGINT') {
-      killTree(child, platform, 'SIGTERM', runner);
+      ender.signal('SIGTERM');
       sent = 'SIGTERM';
     }
     await new Promise((resolve) => { setTimeout(resolve, ORPHAN_POLL_MS); });
   }
-  return 'ended';
+  const { outlived, treeError } = await ender.sweep();
+  if (treeError) return `ended; its process tree could not be read (${treeError})`;
+  return outlived.length > 0 ? `ended, and ${outlived.length} process(es) of its tree after it` : 'ended';
 }
 
 /**

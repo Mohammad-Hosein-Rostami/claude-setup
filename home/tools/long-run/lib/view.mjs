@@ -7,7 +7,8 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PRIVATE_FILE_MODE } from '../../account/lib/private-fs.mjs';
 import { units } from './job.mjs';
-import { driverAlive, readJournal, readJson, readRunJob } from './run-store.mjs';
+import { driverAlive, isPidAlive, readJournal, readJson, readRunJob } from './run-store.mjs';
+import { orphanAlive } from './claude-run.mjs';
 
 /** Every status word of a run (spec 7.9). */
 export const RUN_STATES = ['running', 'waiting-limit', 'waiting-retry', 'held', 'paused', 'taken-over', 'done', 'stopped', 'stale', 'abandoned'];
@@ -58,7 +59,8 @@ function sessionOf(paths, unit, journal, driver) {
  * Everything `status <run>` shows, as data.
  * @param {Record<string, string>} paths runPaths().
  * @param {Date} now the current time.
- * @returns {object} `{ runId, name, state, account, steps: [...], sessions: [...], hold }`.
+ * @returns {object} `{ runId, name, state, account, steps: [...], sessions: [...], hold, warnings: string[] }` (`warnings`: a
+ *   stale run's bosses that still run).
  */
 export function runView(paths, now = new Date()) {
   const job = readRunJob(paths);
@@ -67,8 +69,14 @@ export function runView(paths, now = new Date()) {
   const alive = driverAlive(paths, now);
   const steps = [];
   const sessions = [];
+  const warnings = [];
+  const state = runState(paths, now);
   for (const unit of units(job)) {
     const journal = readJournal(paths, unit.id);
+    // A SIGKILL of the driver (no handler sees it) leaves its boss working and spending with nobody reading it.
+    if (state === 'stale' && journal?.running && orphanAlive({ pid: journal.pid, sessionId: journal.sessionId, isAlive: isPidAlive })) {
+      warnings.push(`boss pid ${journal.pid} of a lost driver is still running (step ${unit.id}); long-run resume ${paths.runId} ends it and continues`);
+    }
     steps.push({
       id: unit.id, kind: unit.kind, status: journal?.final?.status ?? (journal ? (journal.running && alive ? 'running' : 'started') : 'not started'),
       starts: journal?.totalStarts ?? 0, attempts: journal?.attempts ?? 0, waitUntil: journal?.waitUntil ?? journal?.nextAttemptAt ?? null,
@@ -77,7 +85,7 @@ export function runView(paths, now = new Date()) {
     const session = sessionOf(paths, unit, journal, alive ? driver : null);
     if (session) sessions.push(session);
   }
-  return { runId: paths.runId, name: job.name, state: runState(paths, now), account: run.account ?? null, startedBy: run.startedBy ?? null, steps, sessions, hold: driver?.hold ?? null };
+  return { runId: paths.runId, name: job.name, state, account: run.account ?? null, startedBy: run.startedBy ?? null, steps, sessions, hold: driver?.hold ?? null, warnings };
 }
 
 const stepLine = (step) => [
@@ -103,12 +111,12 @@ export function statusLines(views, detailed) {
     return views.map((view) => {
       const done = view.steps.filter((step) => step.status === 'done').length;
       const live = view.sessions.length > 0 ? ` sessions=${view.sessions.length}` : '';
-      return `${view.runId} ${view.state} account=${view.account} done=${done}/${view.steps.length}${live}`;
-    });
+      return [`${view.runId} ${view.state} account=${view.account} done=${done}/${view.steps.length}${live}`, ...view.warnings.map((line) => `  warning: ${line}`)];
+    }).flat();
   }
   const [view] = views;
   const hold = view.hold ? [`  held at ${view.hold.stepId}: ${view.hold.status}${view.hold.question ? ` - ${view.hold.question}` : ''}`] : [];
-  return [`${view.runId} ${view.state} account=${view.account}`, ...view.steps.map(stepLine), ...view.sessions.map(sessionLine), ...hold];
+  return [`${view.runId} ${view.state} account=${view.account}`, ...view.steps.map(stepLine), ...view.sessions.map(sessionLine), ...hold, ...view.warnings.map((line) => `  warning: ${line}`)];
 }
 
 function minutes(ms) {
