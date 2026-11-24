@@ -3,7 +3,7 @@
 //   the same pinned Claude Code, install the setup and run doctor on each. It replaces the sync-machines workflow.
 // Usage: node scripts/sync-machines.mjs --repo <abs or ~/path> [--base <branch, default main>] [--tag <tag>] [--targets <name,...>]
 //          [--row <STATUS row id>] [--json]
-//   Run it from the repo folder on the MacBook, once per job, after the last land: `node scripts/sync-machines.mjs --repo "$PWD"`
+//   Run it from the repo folder on the main machine, once per job, after the last land: `node scripts/sync-machines.mjs --repo "$PWD"`
 //   syncs the PC (the default target `pc` over `ssh pc`). Targets come from settings/local.json `claudeSetup.syncTargets`.
 // Steps: verify (tag, base branch, no tracked changes, git-tidy), versions (one claude version and channel on every machine, at or above the floor of scripts/doctor.sh, on the local.json
 //   pin), then per machine side by side: install on this machine; on a target a git bundle, a fast-forward pull (or a fetched tag),

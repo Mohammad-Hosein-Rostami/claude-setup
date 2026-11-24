@@ -4,7 +4,7 @@
     "DISABLE_UPDATES": "1"
   },
   "claudeSetup": {
-    "machine": "macbook",
+    "machine": "mac",
     "cliVersion": "2.1.326",
     "syncTargets": [
       {

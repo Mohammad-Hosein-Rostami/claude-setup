@@ -2,7 +2,7 @@
 # Purpose: read-only report on links, settings drift, plugins and tools for this Claude Code setup.
 # Usage: scripts/doctor.sh [--all] [--live]   (exit 1 if any problem found; --live then runs scripts/doctor-live.sh on the
 #   real tool: a permission dialog and a guard case; it never runs the repo's tests; an old --quick or --full is ignored)
-# Output: a summary line first (`doctor (MacBook, Claude Code 2.1.328): 1 FAIL, 1 WARN, 38 ok`), then only the lines that are not
+# Output: a summary line first (`doctor (Mac, Claude Code 2.1.328): 1 FAIL, 1 WARN, 38 ok`), then only the lines that are not
 # ok, each with its fix; `--all` (or DOCTOR_ALL=1) prints every line as before. DOCTOR_ONLY runs keep every line (tests read them).
 # The checks are functions: the ones about the setup's own files are in scripts/doctor/checks-setup.sh, the ones about this machine in
 # scripts/doctor/checks-machine.sh (sourced below); the helpers, the links, the Claude Code floor, the re-read version (VERIFIED_ON_CLI)
@@ -188,10 +188,10 @@ run_checks() {
   if [ -n "$MISSING_GROUPS" ]; then bad "check files missing from scripts/doctor/:$MISSING_GROUPS (restore them: git checkout -- scripts/doctor)"; return; fi
   check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_doctor_accepted; check_plugin_session_start; check_agent_cap; check_disk_free; check_disk_clean; check_native_cleanup; check_tools; check_accounts; check_notify; check_lsp; check_ui_check; check_project_agents; check_projects; check_workflows_gone; check_env_names
 }
-# The machine's name in the summary: the owner's two machines by OS, else the host name; DOCTOR_MACHINE overrides it.
+# The machine's name in the summary: Mac or PC by OS, else the host name; DOCTOR_MACHINE overrides it.
 machine_name() {
   if [ -n "${DOCTOR_MACHINE:-}" ]; then echo "$DOCTOR_MACHINE"; return; fi
-  case "$(uname -s)" in Darwin) echo MacBook ;; MINGW*|MSYS*|CYGWIN*) echo PC ;; *) uname -n ;; esac
+  case "$(uname -s)" in Darwin) echo Mac ;; MINGW*|MSYS*|CYGWIN*) echo PC ;; *) uname -n ;; esac
 }
 
 # The full run: every check's lines go to a file (in this shell, so BAD still counts), then the summary and the lines not ok.

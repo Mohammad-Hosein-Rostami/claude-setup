@@ -74,7 +74,7 @@ test('every machine synced: exit 0, one row each, alarmed ssh lines with the exp
   const fixture = setup({ targets: [{ name: 'pc', ssh: 'me@pc.local' }] });
   const result = run(fixture, []);
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.deepEqual(result.rows.map((row) => [row.machine, row.synced, row.doctorExit]), [['macbook', true, 0], ['pc', true, 0]]);
+  assert.deepEqual(result.rows.map((row) => [row.machine, row.synced, row.doctorExit]), [['mac', true, 0], ['pc', true, 0]]);
   assert.equal(result.rows[1].sha, HEAD_SHA);
   assert.ok(result.stdout.includes(`${ALARM(120)} ssh ${SSH_OPTIONS} me@pc.local '${PATH_EXPORT} echo "== version"`), 'version read');
   assert.ok(result.stdout.includes(`${ALARM(540)} ssh ${SSH_OPTIONS} me@pc.local '${PATH_EXPORT} cd "`), 'pull and install');

@@ -42,7 +42,7 @@ function checkTarget(target, index) {
  */
 export function syncConfig(local) {
   const setup = local.claudeSetup ?? {};
-  const machine = setup.machine ?? 'macbook';
+  const machine = setup.machine ?? 'mac';
   if (!NAME.test(machine)) throw new Error('claudeSetup.machine must be a short lower-case word');
   if (setup.cliVersion !== undefined && !VERSION.test(setup.cliVersion)) throw new Error('claudeSetup.cliVersion must be x.y.z');
   const given = Array.isArray(setup.syncTargets) && setup.syncTargets.length > 0;
