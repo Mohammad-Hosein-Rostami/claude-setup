@@ -2,7 +2,7 @@
 // stop of one step, takeover (lines, open-session refusal, --force), status of the boss sessions, watch, and a crash mid-group.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 import { join } from 'node:path';
 import { endOrphan, KILL_AFTER, startClaude } from '../home/tools/long-run/lib/claude-run.mjs';
 import { takeoverLines } from '../home/tools/long-run/lib/control.mjs';
@@ -63,7 +63,7 @@ test('a child that ignores SIGINT and SIGTERM is gone after the SIGKILL step (KI
   assert.deepEqual(KILL_AFTER, { term: 10000, kill: 20000 });
   const box = makeSandbox();
   box.script({ deaf: ['deaf'] });
-  const logs = mkdtempSync(join(box.dir, 'logs-'));
+  const logs = makeTempDir('logs-', box.dir);
   const handle = startClaude({ args: ['-p', '--session-id', 'deaf-session'], prompt: 'x', cwd: box.work('d'), env: box.env, token: TOKEN_A,
     added: { LONG_RUN_STEP: 'deaf' }, logBase: join(logs, 'deaf.1'), killAfter: { term: 300, kill: 600 } });
   await waitFor(() => readCalls(box).length === 1, 10000, 'fake started');

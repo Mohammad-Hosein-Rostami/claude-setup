@@ -3,7 +3,8 @@
 // with it; a done step refuses.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 import { join } from 'node:path';
 import { startClaude } from '../home/tools/long-run/lib/claude-run.mjs';
 import { queueTell } from '../home/tools/long-run/lib/control.mjs';
@@ -41,7 +42,7 @@ test('safe point: a child that never reaches one is ended after the wait cap (12
   const box = makeSandbox();
   box.script({ hang: ['hang'] });
   const handle = startClaude({ args: ['-p', '--session-id', 'cap-session'], prompt: 'x', cwd: box.work('h'), env: box.env, token: TOKEN_A,
-    added: { LONG_RUN_STEP: 'hang' }, logBase: join(mkdtempSync(join(box.dir, 'logs-')), 'hang.1') });
+    added: { LONG_RUN_STEP: 'hang' }, logBase: join(makeTempDir('logs-', box.dir), 'hang.1') });
   await waitFor(() => readCalls(box).length === 1, 10000, 'fake started');
   handle.endAtSafePoint('tell', 300);
   const run = await handle.done;
