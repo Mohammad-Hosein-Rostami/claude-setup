@@ -21,6 +21,10 @@ Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
   `find -delete`, `eval`, hidden execution, push or publish, production hosts, commands git runs).
 - `rm-kind.mjs`: is an `rm` recursive as far as its option words can be read (an unquoted `$F` where the options stand counts); `moved-text.mjs`: after a `cd`, a recursive `rm` or deleting `find` in quoted text or in the body of a heredoc a program runs asks.
 - `other-deleters.mjs`: deleters other than `rm` (rimraf, `rsync --delete`, PowerShell and `cmd` delete text), judged on the same targets as `rm -r`.
+- `inline-code.mjs`: the code an interpreter gets on its command line; code that runs a command it builds from pieces, and PowerShell
+  `-EncodedCommand`, ask.
+- `output-trim.mjs`: the rewrite that keeps only the last 150 lines of a plain test or build run (the full log stays in a temp file).
+- `guard-fallback.mjs`: reads the hook input, and gives the plain ask when the input is not hook JSON or the guard itself failed.
 - `same-line-values.mjs`: what a line's own variables hold for the `rm -r` rule beyond the literal values `rm-paths.mjs` tracks: the folder
   a `D=$(mktemp -d <template>)` makes in a scratch area, and the names a line with a loop or a function writes more than once (unknown).
 - `runtime-values.mjs`: values a line gets only when it runs: arithmetic on them is bounced once with the fix, then asks (bash runs
