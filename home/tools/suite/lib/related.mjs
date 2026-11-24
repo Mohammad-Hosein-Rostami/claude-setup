@@ -1,15 +1,16 @@
 // Picks the node:test files a change can affect, so a step runs those instead of the full suite.
 // Exports: relatedTests.
 // Rules, per changed file (repo-relative, `/` separators):
-// - `package.json`, `settings/*` or `.githooks/*`: the full suite (they change how everything runs).
+// - `package.json`, `settings/*` or `.githooks/*`: the full suite (they change how everything runs); so does anything under
+//   home/agents or home/skills and any CLAUDE.md (tests scan those folders whole, without naming the file).
 // - a test file (`*.test.mjs`, `*.test.js`): itself (a deleted one: nothing).
 // - a `.mjs`/`.js` file: every test that reaches it through imports (static or literal dynamic), and every test that names the
 //   basename of such a file in its text: tests spawn tools and hooks by path (`new URL('../home/tools/x/x.mjs', import.meta.url)`
 //   or a joined path), so the file they spawn is named, not imported.
 // - any other file: the tests that name its basename.
-// - a file with no test is the full suite, except a plain doc: a `.md` outside home/agents and home/skills that is not a CLAUDE.md.
+// - a file with no test is the full suite, except a `.md` doc.
 // - more than FULL_SHARE of all test files: the full suite.
-// Invariants: only reads; an empty change, or a change of plain docs only, is `none` (no test is related: nothing ran, nothing
+// Invariants: only reads; an empty change, or a change of `.md` docs only (outside the folders above), is `none` (no test is related: nothing ran, nothing
 //   passed); a wrong pick can only cost time, since the full suite still runs before landing.
 import { readFileSync } from 'node:fs';
 import { basename, join, posix } from 'node:path';
@@ -18,12 +19,10 @@ import { gitText } from '../../git-tidy/lib/git.mjs';
 const TEST_FILE = /\.test\.(?:mjs|js)$/;
 const SOURCE_FILE = /\.(?:mjs|js)$/;
 const FULL_SHARE = 0.4; // past this share of all tests the full suite is about as fast and needs no selection to be right
-const ALWAYS_FULL = [/(?:^|\/)package\.json$/, /^settings\//, /^\.githooks\//];
-const STEERING_DOCS = [/^home\/agents\//, /^home\/skills\//, /(?:^|\/)CLAUDE\.md$/]; // tests pin their text, so they are not plain docs
+const ALWAYS_FULL = [/(?:^|\/)package\.json$/, /^settings\//, /^\.githooks\//, /^home\/agents\//, /^home\/skills\//, /(?:^|\/)CLAUDE\.md$/];
 // The literal specifier of `from '<x>'` (static import and export), `import '<x>'` and `import('<x>')`.
 const IMPORT_PATTERNS = [/\bfrom\s*['"]([^'"\n]+)['"]/g, /\bimport\s*\(?\s*['"]([^'"\n]+)['"]/g];
 
-const isPlainDoc = (file) => file.endsWith('.md') && !STEERING_DOCS.some((pattern) => pattern.test(file));
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** True when `text` names `name` as a whole file name (`lib/git.mjs` names `git.mjs`; `tidy-git.mjs` does not). */
@@ -95,14 +94,14 @@ function testsFor(file, { tests, testSet, sources, importers }) {
 export function relatedTests({ repo, changedFiles }) {
   if (changedFiles.length === 0) return { kind: 'none' };
   const forced = changedFiles.find((file) => ALWAYS_FULL.some((pattern) => pattern.test(file)));
-  if (forced !== undefined) return { kind: 'full', why: `${forced} changes how every test runs` };
+  if (forced !== undefined) return { kind: 'full', why: `${forced} can change any test` };
   const sources = readSources(repo, repoFiles(repo));
   const tests = [...sources.keys()].filter((file) => TEST_FILE.test(file)).sort();
   const context = { tests, testSet: new Set(tests), sources, importers: importedBy(sources) };
   const selected = new Set();
   for (const file of changedFiles) {
     const hits = testsFor(file, context);
-    if (hits.length === 0 && !isPlainDoc(file) && !TEST_FILE.test(file)) return { kind: 'full', why: `no test reaches ${file}` };
+    if (hits.length === 0 && !file.endsWith('.md') && !TEST_FILE.test(file)) return { kind: 'full', why: `no test reaches ${file}` };
     for (const test of hits) selected.add(test);
   }
   if (selected.size === 0) return { kind: 'none' };

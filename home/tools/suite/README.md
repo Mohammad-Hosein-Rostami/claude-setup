@@ -5,7 +5,7 @@ lanes then neither overload the machine (a suite already uses every core) nor ru
 Node 22, git, no dependencies.
 
 ```sh
-node ~/.claude/tools/suite/suite.mjs run [--repo <dir>] [--slots <n>] [--fresh] [--log <file>] -- <command> [args...]
+node ~/.claude/tools/suite/suite.mjs run [--repo <dir>] [--slots <n>] [--cache [--fresh]] [--log <file>] -- <command> [args...]
 node ~/.claude/tools/suite/suite.mjs related [--repo <dir>] --base <ref> [--tip <ref>]
 node ~/.claude/tools/suite/suite.mjs status
 ```
@@ -33,14 +33,17 @@ log: ~/.claude/state/suite/logs/2026-11-24T21-03-05-118Z-4242.log
   group (every test process the command started; on Windows `taskkill /T`) and free the slot.
 - `--log <file>`: write the log there instead of `state/suite/logs/` (logs there are removed after 14 days).
 
-### Pass cache
+### Pass cache (`--cache`)
 
+- Only with `--cache`, and only for test runs: an install (`npm ci`), a build or anything with effects must run every time, so
+  it never passes `--cache`. Without it the cache is neither read nor written.
 - A cache hit prints `cached PASS <first 12 of the tree sha> <ISO time of the pass> <command>` and the log of that pass, runs
   nothing and exits 0. It is never shown as a bare `PASS`.
 - A pass is stored only when the worktree is clean (`git status --porcelain --untracked-files=all` prints nothing) before the
   run, and still clean on the same tree after it. A failure is never stored, so it always runs again.
-- The key is the sha256 of the tree sha (`git rev-parse HEAD^{tree}`, so a worktree uses its own), the command as given, the Node
-  version and the platform. Two worktrees on the same tree share a pass; anything else is a miss. Entries are kept 14 days.
+- The key is the sha256 of the tree sha (`git rev-parse HEAD^{tree}`, so a worktree uses its own), the folder `--repo` names
+  relative to the repo's top (a pass in `pkgA/` is not one in `pkgB/`), the command as given, the Node version and the
+  platform. Two worktrees on the same tree share a pass; anything else is a miss. Entries are kept 14 days.
 - `--fresh` skips the lookup and always runs (a flaky-test hunt, a suspected environment problem); a pass still updates the cache.
 - What the key cannot see: files git ignores (such as `node_modules`) and anything outside the repo. If a cached pass is ever
   contradicted by a fresh run, set `"cache": false` in `config.json` and find out why.
@@ -51,8 +54,8 @@ log: ~/.claude/state/suite/logs/2026-11-24T21-03-05-118Z-4242.log
   (the caller does not poll).
 - Slots: `--slots <n>`, else `slots` in `state/suite/config.json`, else 1 (measured, see below). A run with `--slots n` uses the
   slot folders 0 to n-1, so give every caller the same number (leave it to the config).
-- A slot whose holder's process is gone, or that is older than 2 h 10 min (past the 2 h command timeout agents use), is removed
-  by the next waiter, so a crash never blocks the queue. A waiter's ticket that was not refreshed for 30 s is removed too.
+- A slot whose holder's process is gone, that is older than 2 h 10 min (past the 2 h command timeout agents use), or whose
+  `holder.json` has no valid pid or start time, is removed by the next waiter, so a crash never blocks the queue. A waiter's ticket that was not refreshed for 30 s is removed too.
 - A `suite run` killed with SIGKILL cannot stop its command: the slot is freed (its pid is gone) while the command may still run.
 
 ## related
@@ -66,14 +69,15 @@ files too); with `--tip`, the worktree's own uncommitted and untracked files are
 
 | Changed file | Selects |
 | ------------ | ------- |
-| `package.json`, `settings/*`, `.githooks/*` | `full` |
+| `package.json`, `settings/*`, `.githooks/*`, anything under `home/agents/` or `home/skills/`, any `CLAUDE.md` | `full` (tests scan those folders whole, without naming the file) |
 | a test file (`*.test.mjs`, `*.test.js`) | itself (a deleted one: nothing) |
 | a `.mjs` / `.js` file | every test that imports it, directly or through other files, and every test that names the basename of the file or of a file that imports it (tests spawn tools and hooks by path) |
 | any other file | the tests that name its basename |
-| a file no test reaches | `full`, unless it is a plain doc: a `.md` outside `home/agents` and `home/skills` that is not a `CLAUDE.md` |
+| a file no test reaches | `full`, unless it is a `.md` doc |
 
-More than 40% of all test files selected is `full` too. A test that reads a whole folder (such as `home/agents/`) without naming
-the file is not found: the full suite before landing still runs it.
+More than 40% of all test files selected is `full` too. `related` is advice for the steps of a lane: a test that scans a whole
+folder of code (such as `tests/main-module-guard.test.mjs`) without naming the file is not found, and the full suite before
+landing still runs it.
 
 ## status
 
@@ -101,7 +105,7 @@ It holds only locks, the cache and logs: delete it at any time (no suite running
 
 ## How many suites at once
 
-Measured on the MacBook (14 cores, Node 26.5.0), `node --test tests/*.test.mjs` (204 files, before this lane) started 1, 2 and 3 times together,
+Measured on a 14-core Mac (Node 26.5.0), `node --test tests/*.test.mjs` (204 files, before this lane) started 1, 2 and 3 times together,
 3 batches each, through `with-run-tmp.mjs`. Wall time is the time until the last suite of the batch ended.
 
 | Suites together | Wall time per batch | Per suite (wall / suites) | Result |
