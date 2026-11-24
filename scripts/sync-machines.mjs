@@ -2,7 +2,7 @@
 // Purpose: bring this machine and each sync target to the base tip (or the targets to a phase tag), check that every machine runs
 //   the same pinned Claude Code, install the setup and run doctor on each. It replaces the sync-machines workflow.
 // Usage: node scripts/sync-machines.mjs --repo <abs or ~/path> [--base <branch, default main>] [--tag <tag>] [--targets <name,...>]
-//          [--row <STATUS row id>] [--json]
+//          [--json]
 //   Run it from the repo folder on the main machine, once per job, after the last land: `node scripts/sync-machines.mjs --repo "$PWD"`
 //   syncs the PC (the default target `pc` over `ssh pc`). Targets come from settings/local.json `claudeSetup.syncTargets`.
 // Steps: verify (tag, base branch, no tracked changes, git-tidy), versions (one claude version and channel on every machine, at or above the floor of scripts/doctor.sh, on the local.json
@@ -10,7 +10,7 @@
 //   the shared local values, install, then the version and DISABLE_UPDATES read again; then doctor.sh. Never pushes; never touches a project repo.
 // Output: one line per machine (or a JSON array with --json): { machine, synced, sha, doctorExit, problem }.
 // Exit: 0 every machine synced and doctor exited 0, 1 a machine failed (its row says why), 2 usage, 3 a verify check failed.
-// Invariants: everything that reaches an ssh line (row, base, tag, repo, host) is validated first; every remote command is ONE line,
+// Invariants: everything that reaches an ssh line (base, tag, repo, host) is validated first; every remote command is ONE line,
 //   printed before it runs: perl's alarm (this Mac has no `timeout`), ssh, and the PATH export inside the quotes with the command.
 //   Every ssh and scp call carries SSH_OPTIONS: it never waits for a password or a host-key question, and gives up on a connect after 30 s.
 import { spawn } from 'node:child_process';
@@ -31,7 +31,9 @@ const SYNC_SECONDS = 540; // the remote pull and install
 const TRANSFER_SECONDS = 300; // the scp of the bundle over a slow link (the PC sits behind a phone relay)
 const DOCTOR_SECONDS = 300; // doctor runs no tests: its slowest part is the account login call; 5 minutes is a wide margin
 const TAIL_LINES = 10;
-const ROW_ID = /^[A-Za-z0-9][\w.:-]*$/; // the STATUS row id shape (`7`, `close:5`); no `/`, so /tmp/<row>-... stays one file name
+// The temp files of a run: /tmp/sync-local-shared.json and /tmp/sync-sync-<target>.bundle, here and on each target (the names the
+// removed --row option gave by default, so a killed older run's leftover is still found).
+const TEMP_PREFIX = 'sync';
 const PLAIN_BASE = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 const PLAIN_TAG = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const PLAIN_PATH = /^(\/|~\/)[A-Za-z0-9._/+@:~-]*$/; // absolute or ~/..., no space, quote, $, backtick or backslash
@@ -69,17 +71,17 @@ function runLine(machine, line, seconds) {
 }
 
 function parseArgs(argv) {
-  const flags = { '--repo': 'repo', '--base': 'base', '--tag': 'tag', '--targets': 'targets', '--row': 'row' };
-  const opts = { base: 'main', row: 'sync', json: false };
+  const flags = { '--repo': 'repo', '--base': 'base', '--tag': 'tag', '--targets': 'targets' };
+  const opts = { base: 'main', json: false };
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] === '--json') opts.json = true;
     else if (argv[index] === '--checks') throw new UsageError('--checks is gone: sync runs no suite or audit gate');
+    else if (argv[index] === '--row') throw new UsageError('--row is gone: it named the STATUS row of the removed status tool');
     else if (flags[argv[index]] && argv[index + 1] !== undefined) opts[flags[argv[index]]] = argv[++index];
     else throw new UsageError(`unknown or incomplete argument ${argv[index]}`);
   }
   if (typeof opts.repo !== 'string' || !PLAIN_PATH.test(opts.repo)) throw new UsageError('--repo must be an absolute path (or ~/...) of letters, digits and . _ / + @ : ~ -');
   if (!PLAIN_BASE.test(opts.base)) throw new UsageError('--base must be a plain branch name');
-  if (!ROW_ID.test(opts.row)) throw new UsageError('--row must be a STATUS row id (letters, digits, _ . : -)');
   if (opts.tag !== undefined && !PLAIN_TAG.test(opts.tag)) throw new UsageError('--tag must be a tag name');
   return { ...opts, targets: opts.targets?.split(','), localRepo: opts.repo.startsWith('~/') ? join(homedir(), opts.repo.slice(2)) : opts.repo };
 }
@@ -159,8 +161,8 @@ function claim(path) {
  */
 async function syncTarget(ctx, target) {
   const bundle = ctx.bundles[target.name];
-  const remoteBundle = `/tmp/${ctx.row}-sync-${target.name}.bundle`;
-  const remoteShared = `/tmp/${ctx.row}-local-shared.json`;
+  const remoteBundle = `/tmp/${TEMP_PREFIX}-sync-${target.name}.bundle`;
+  const remoteShared = `/tmp/${TEMP_PREFIX}-local-shared.json`;
   const made = await exec('git', ['-C', ctx.localRepo, 'bundle', 'create', bundle, ctx.tag ? `refs/tags/${ctx.tag}` : ctx.base]);
   if (made.status !== 0) return { problem: `git bundle create exit ${made.status}: ${tail(made.out)}` };
   const copied = await runLine(target.name, `${alarmed(TRANSFER_SECONDS)} scp ${SSH_OPTIONS} ${bundle} ${ctx.sharedFile} ${target.ssh}:/tmp/`, TRANSFER_SECONDS);
@@ -221,9 +223,9 @@ async function syncAll(options, names, problems, reports) {
   if (!PLAIN_PATH.test(tmpdir())) throw new UsageError(`the temp folder ${tmpdir()} is not a plain path`);
   const claimed = [];
   try {
-    const sharedFile = claim(join(tmpdir(), `${options.row}-local-shared.json`));
+    const sharedFile = claim(join(tmpdir(), `${TEMP_PREFIX}-local-shared.json`));
     claimed.push(sharedFile);
-    const bundles = Object.fromEntries(options.targets.map((target) => [target.name, claim(join(tmpdir(), `${options.row}-sync-${target.name}.bundle`))]));
+    const bundles = Object.fromEntries(options.targets.map((target) => [target.name, claim(join(tmpdir(), `${TEMP_PREFIX}-sync-${target.name}.bundle`))]));
     claimed.push(...Object.values(bundles));
     writeFileSync(sharedFile, `${JSON.stringify(sharedPart(readLocal(join(options.localRepo, 'settings', 'local.json'))), null, 2)}\n`);
     const ctx = { ...options, sharedFile, bundles };

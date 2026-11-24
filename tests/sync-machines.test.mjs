@@ -1,8 +1,8 @@
 // Tests for scripts/sync-machines.mjs with a fake `ssh`, `scp` and `claude` on PATH: no test touches a machine.
 // Exports: none (node:test file).
 // Invariants: expected values come from the spec (lane sync-script) and the fixes of branch sync-target-version-probe: one alarmed
-//   ssh line per remote command with the PATH export inside the quotes, a stale target checked after its install, row ids with ':',
-//   a hostile name refused with exit 2, a verify failure with exit 3 and nothing sent, never a push.
+//   ssh line per remote command with the PATH export inside the quotes, a stale target checked after its install, the removed
+//   --row refused with exit 2 (audit R7), a hostile name refused with exit 2, a verify failure with exit 3 and nothing sent, never a push.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -60,14 +60,13 @@ function setup({ targets = undefined, cliVersion = '', dirty = false } = {}) {
 }
 
 function run(fixture, args, env = {}) {
-  const row = `t${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
-  const result = spawnSync('node', [SCRIPT, '--repo', fixture.repo, '--row', row, '--json', ...args], {
+  const result = spawnSync('node', [SCRIPT, '--repo', fixture.repo, '--json', ...args], {
     encoding: 'utf8',
     env: { ...process.env, PATH: `${fixture.bin}:${process.env.PATH}`, HOME: fixture.home, TMPDIR: fixture.root, FAKE_LOG: fixture.log, FAKE_VERSION: FLOOR, ...env },
   });
   const calls = existsSync(fixture.log) ? readFileSync(fixture.log, 'utf8') : '';
   const rows = result.stdout.split('\n').filter((line) => line.startsWith('[')).at(-1);
-  return { ...result, calls, rows: rows ? JSON.parse(rows) : [], row };
+  return { ...result, calls, rows: rows ? JSON.parse(rows) : [] };
 }
 
 test('every machine synced: exit 0, one row each, alarmed ssh lines with the export inside the quotes, scp under its alarm', () => {
@@ -120,12 +119,19 @@ test('a hostile target name or host is refused with exit 2 before any ssh', () =
   }
 });
 
-test('unsafe row, base and repo are refused with exit 2; a row id with a colon and a ~/ repo are accepted', () => {
+test('unsafe base, tag and repo are refused with exit 2', () => {
   const fixture = setup();
-  for (const args of [['--row', 'a b'], ['--base', "main'x"], ['--tag', 'v1;x']]) assert.equal(run(fixture, args).status, 2, args.join(' '));
+  for (const args of [['--base', "main'x"], ['--tag', 'v1;x']]) assert.equal(run(fixture, args).status, 2, args.join(' '));
   const odd = spawnSync('node', [SCRIPT, '--repo', '~user/repo'], { encoding: 'utf8' });
   assert.equal(odd.status, 2);
-  assert.equal(run(fixture, ['--row', 'close:5']).status, 0);
+});
+
+test('the removed --row is refused with exit 2, naming why, before any ssh', () => {
+  const fixture = setup({ targets: [{ name: 'pc', ssh: 'pc' }] });
+  const result = run(fixture, ['--row', '7']);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /--row is gone/);
+  assert.equal(result.calls, '');
 });
 
 test('tracked changes: exit 3, a verify line, nothing sent', () => {
@@ -154,8 +160,8 @@ test('a claude version that changed during the install fails that machine', () =
 
 test('a bundle file already in use stops the run with exit 2', () => {
   const fixture = setup({ targets: [{ name: 'pc', ssh: 'pc' }] });
-  writeFileSync(join(fixture.root, 'busy-sync-pc.bundle'), '');
-  const result = spawnSync('node', [SCRIPT, '--repo', fixture.repo, '--row', 'busy'], { encoding: 'utf8', env: { ...process.env, PATH: `${fixture.bin}:${process.env.PATH}`, HOME: fixture.home, TMPDIR: fixture.root, FAKE_LOG: fixture.log, FAKE_VERSION: FLOOR } });
+  writeFileSync(join(fixture.root, 'sync-sync-pc.bundle'), '');
+  const result = spawnSync('node', [SCRIPT, '--repo', fixture.repo], { encoding: 'utf8', env: { ...process.env, PATH: `${fixture.bin}:${process.env.PATH}`, HOME: fixture.home, TMPDIR: fixture.root, FAKE_LOG: fixture.log, FAKE_VERSION: FLOOR } });
   assert.equal(result.status, 2);
   assert.match(result.stderr, /exists/);
 });
