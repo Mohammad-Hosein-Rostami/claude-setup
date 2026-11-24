@@ -61,11 +61,14 @@ cp.execSync([script, ...args.slice(3)].join(' '), { stdio: 'inherit' });`);
   return { dir, marks, pathBin };
 }
 
-/** Runs the hook once on the edited file of `repo` with session `session`; `env`: more hook environment; `cwd`: the session's cwd. */
-function edit(repo, session, env = {}, cwd = repo.dir) {
+/**
+ * Runs the hook once on the edited file of `repo` with session `session`; `env`: more hook environment; `cwd`: the session's cwd;
+ * `file`: the edited file, relative to the repo.
+ */
+function edit(repo, session, env = {}, cwd = repo.dir, file = EDITED) {
   const tmp = makeTempDir('post-edit-trust-tmp-');
   const hookEnv = { ...BASE_ENV, HOME: tmp, USERPROFILE: tmp, TMPDIR: tmp, TEMP: tmp, TMP: tmp, CLAUDE_GUARD_LOG: join(tmp, 'guard.jsonl'), PATH: `${repo.pathBin}${delimiter}${process.env.PATH}`, ...env };
-  const input = JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: join(repo.dir, EDITED) }, cwd, session_id: session });
+  const input = JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: join(repo.dir, file) }, cwd, session_id: session });
   return spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env: hookEnv, cwd });
 }
 
@@ -132,6 +135,28 @@ test('a committed team .claude/settings.json that sets the trust switch is ignor
   const warning = JSON.parse(run.stdout).systemMessage;
   assert.match(warning, new RegExp(`team switch ${TRUST_ENV} ignored: the team file .*\\.claude/settings\\.json sets it`));
   assert.ok(warning.includes(`${repo.dir}/package.json was not run`), warning);
+});
+
+// A repo file at the package root whose name is an option of the formatter: passed bare, prettier would load it as a plugin.
+const OPTION_NAMED_FILE = '--plugin=x.ts';
+const OPTION_NAMED_AS_PATH = `./${OPTION_NAMED_FILE}`;
+
+test('a file named like an option reaches the stub prettier as `./<name>`, broad or untrusted, never as the bare option', posix, () => {
+  for (const script of ['prettier --write .', 'prettier --write']) {
+    const repo = formatRepo(script, { [OPTION_NAMED_FILE]: 'export const x = 1;\n' });
+    const run = edit(repo, 'trust-option-file', {}, repo.dir, OPTION_NAMED_FILE);
+    assert.deepEqual([run.status, run.stdout, run.stderr], [0, '', ''], script);
+    assert.deepEqual(ranWith(repo.marks.prettier), [['--write', OPTION_NAMED_AS_PATH]], script);
+    assert.deepEqual(ranWith(repo.marks.pm), [], `${script}: the package manager ran`);
+  }
+});
+
+test('trusted, a file named like an option is passed after the package manager\'s `--` as `./<name>`', posix, () => {
+  const repo = formatRepo(EVIL_SCRIPT, { [OPTION_NAMED_FILE]: 'export const x = 1;\n' }, 'init');
+  const run = edit(repo, 'trust-option-file-trusted', { [TRUST_ENV]: '1' }, repo.dir, OPTION_NAMED_FILE);
+  assert.deepEqual([run.status, run.stdout], [0, ''], run.stderr);
+  assert.deepEqual(ranWith(repo.marks.pm).map(({ args }) => args), [['run', 'format', '--', OPTION_NAMED_AS_PATH]]);
+  assert.equal(readFileSync(repo.marks.evil, 'utf8'), 'ran', 'the trusted script itself ran');
 });
 
 /** Asserts that the run of `repo`'s hook ran neither its format script nor a package manager, and warned that it was not run. */

@@ -113,6 +113,29 @@ test('plannedChecks swaps a broad format script for the tool binary, or skips it
   assert.deepEqual(plannedChecks(undefined, 'src/a.ts'), []);
 });
 
+// A file name as the three plan paths pass it: a broad script (the tool binary), a trusted script (the package manager, after `--`)
+// and an untrusted known formatter (its binary). The last argument is the file either way.
+const DASH_PLAN_SCRIPTS = { broad: 'prettier --write .', trusted: 'node format.js', untrusted: 'prettier --write' };
+const binOf = (tool) => `/bin/${tool}`;
+const plannedOnEveryPath = (file) => ({
+  broad: plannedChecks({ format: DASH_PLAN_SCRIPTS.broad }, file, binOf),
+  trusted: plannedChecks({ format: DASH_PLAN_SCRIPTS.trusted }, file, () => null, true),
+  untrusted: plannedChecks({ format: DASH_PLAN_SCRIPTS.untrusted }, file, binOf),
+});
+const expectedOnEveryPath = (argument) => ({
+  broad: [{ name: 'format', cmd: '/bin/prettier', args: ['--write', argument] }],
+  trusted: [{ name: 'format', args: ['run', 'format', '--', argument] }],
+  untrusted: [{ name: 'format', cmd: '/bin/prettier', args: ['--write', argument] }],
+});
+
+test('plannedChecks passes a file name that starts with `-` as `./<name>` on every path, so no tool reads it as an option', () => {
+  for (const file of ['--plugin=x.ts', '-x.ts', '-', '--']) assert.deepEqual(plannedOnEveryPath(file), expectedOnEveryPath(`./${file}`), file);
+});
+
+test('plannedChecks passes a name that does not start with `-` as it is: a dash inside it or after a folder, spaces', () => {
+  for (const file of ['src/-x.ts', 'a-b.ts', 'src/my file.ts']) assert.deepEqual(plannedOnEveryPath(file), expectedOnEveryPath(file), file);
+});
+
 test('hook contract: bad JSON, empty stdin and non-code files exit 0 silently', () => {
   for (const input of ['not json', '', JSON.stringify({ tool_input: { file_path: 'README.md' } }), JSON.stringify({})]) {
     const r = spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env: cleanEnv({ CLAUDE_GUARD_LOG: process.env.CLAUDE_GUARD_LOG }) });

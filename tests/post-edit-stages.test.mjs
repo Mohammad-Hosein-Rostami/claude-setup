@@ -87,6 +87,23 @@ test('runStages reports a missing package manager as a HOOK failure', async () =
   assert.match(out[0], /^src\/a\.ts:1 HOOK could not run \/nonexistent\/pm lint/);
 });
 
+// A missing binary is an ENOENT spawn error only where no shell runs it: on Windows cmd.exe starts and exits with a status instead.
+const MISSING_BINARY = '/nonexistent/prettier-nope';
+const spawnErrors = { skip: process.platform === 'win32' && 'cmd.exe reports a missing command as an exit status, not ENOENT' };
+
+test('runStages names the binary a check runs when it cannot start: never the package manager, which did not run', spawnErrors, async () => {
+  const check = { name: 'format', cmd: MISSING_BINARY, args: ['--write', 'src/a.ts'] };
+  const out = await runStages([check], { pm: 'npm', cwd: tmpdir(), rel: 'src/a.ts', deadline: Date.now() + 5000 });
+  assert.equal(out.length, 1);
+  assert.match(out[0], /^src\/a\.ts:1 HOOK could not run \/nonexistent\/prettier-nope \(format\): spawn \/nonexistent\/prettier-nope ENOENT$/);
+});
+
+test('runStages names the package manager and the check when a check without its own binary cannot start', spawnErrors, async () => {
+  const out = await runStages([{ name: 'format', args: ['run', 'format', '--', 'src/a.ts'] }], { pm: '/nonexistent/pm', cwd: tmpdir(), rel: 'src/a.ts', deadline: Date.now() + 5000 });
+  assert.equal(out.length, 1);
+  assert.match(out[0], /^src\/a\.ts:1 HOOK could not run \/nonexistent\/pm format: spawn \/nonexistent\/pm ENOENT$/);
+});
+
 // A fake package manager that leaves a long-lived grandchild holding the stdout pipe: only a tree kill and a
 // timer-driven resolve return in time.
 test('runStages returns within the deadline even when a grandchild outlives the check', posix, async () => {
