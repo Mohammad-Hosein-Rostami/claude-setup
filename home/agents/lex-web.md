@@ -2,7 +2,7 @@
 name: lex-web
 description: Use for web and documentation research - service limits, versions, pricing, standards, known failure modes, how a library or tool behaves. Returns a short answer with a source for every fact.
 model: claude-sonnet-5-5
-effort: medium
+effort: high
 tools: WebSearch, WebFetch, ToolSearch, Read, Grep, Glob
 color: blue
 skills:

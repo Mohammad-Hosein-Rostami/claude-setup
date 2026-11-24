@@ -2,7 +2,7 @@
 name: lex-scout
 description: Use for read-only lookups - find where something is defined or used, list files, read several files and summarise, check how a pattern is done. Cheap and fast; returns a short answer with file:line references, never raw dumps.
 model: claude-haiku-5-5
-effort: medium
+effort: high
 tools: Read, Grep, Glob
 color: cyan
 ---

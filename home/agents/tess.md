@@ -2,7 +2,7 @@
 name: tess
 description: Use when the owner asks for tests or checks (the usual case), or when another agent needs a check as evidence at a point that warrants it - runs tests, typecheck, lint and build, and probes edge cases, always in the background so nobody waits; reports to whoever asked. Starts tess-review when the request says "review". Never edits the repo.
 model: claude-sonnet-5-5
-effort: medium
+effort: high
 background: true
 tools: Bash, Read, Grep, Glob, Skill, ToolSearch, Monitor, Agent
 color: yellow
