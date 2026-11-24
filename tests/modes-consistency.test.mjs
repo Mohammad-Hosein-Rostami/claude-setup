@@ -15,9 +15,10 @@ test('home/CLAUDE.md names user-language replies, the compaction language and th
   assert.match(text, /When compacting, keep the goal, the owner's constraints and language/);
   assert.doesNotMatch(text, /Persian/i, 'one person\'s language is personal');
   assert.match(text, /Confirm every outward-facing action \(push, publish, deploy, PR merge, prod-host writes\)\./);
-  // max ships: it prepares the outward step and runs it only on the owner's own words; the enforcement is a later lane, the text is pinned now
+  // max ships: it prepares the outward step and runs it only on the owner's own words; while any max runs, an outward ask needs a
+  // click (the guard's timed ask enforces it)
   assert.match(text, /`max` prepares them \(release notes, deploy and rollback plans, exact commands\) and stops; it runs one only on an\s+`owner-command:` line \(the owner's chat words\)\./);
-  assert.match(text, /Permission prompts \(any tool, risky ones too\) go ahead as Allow after 2 minutes unless denied; `max`'s outward ones never do\./);
+  assert.match(text, /Permission prompts \(any tool, risky ones too\) go ahead as Allow after 2 minutes unless denied;\s+while any `max` runs, an outward one needs a click\./);
   assert.match(text, /No secrets in code, logs, commits or command lines/);
 });
 
@@ -25,15 +26,14 @@ test('home/CLAUDE.md names user-language replies, the compaction language and th
 // three main agents.
 test('home/CLAUDE.md routes shipping to max, never from a long-run step, and only the boss starts lex, dev, tess and max', () => {
   const text = read('home/CLAUDE.md').replace(/\s+/g, ' ');
-  assert.ok(text.includes('Shipping to real users (release, deploy, showcase, incident) -> `max` on the owner\'s call, or after a job\'s last land only if lex\'s plan has `ship:` or the owner asked for one; never from a long-run step.'), 'the max routing sentence');
+  assert.ok(text.includes('Shipping to real users (release, deploy, showcase, incident) -> `max` on the owner\'s call, or after a job\'s last land only if lex\'s plan names a `ship:` target or the owner asked for one; never from a long-run step.'), 'the max routing sentence');
   assert.ok(text.includes('- Only the boss starts `lex`, `dev`, `tess` and `max`, and it starts no helper (the guard denies both); research goes through `lex`.'), 'the boss-starts line');
 });
 
-// The plan capped home/CLAUDE.md at 7462 bytes; the max lanes left it 10 over, at 7472. This pins the present size only, as a guard
-// against further growth, not the plan's cap.
-const CLAUDE_MD_MAX_BYTES = 7472;
+// The plan capped home/CLAUDE.md at 7464 bytes (the landed 7014 plus 450 for the max lanes).
+const CLAUDE_MD_MAX_BYTES = 7464;
 
-test('home/CLAUDE.md stays at or under its present 7472 bytes', () => {
+test('home/CLAUDE.md stays at or under the plan\'s cap of 7464 bytes', () => {
   const bytes = Buffer.byteLength(read('home/CLAUDE.md'));
   assert.ok(bytes <= CLAUDE_MD_MAX_BYTES, `${bytes} bytes`);
 });

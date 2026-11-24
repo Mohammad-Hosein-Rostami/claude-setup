@@ -9,16 +9,16 @@ the brief come first; these lines hold for everyone.
   below and report back in at most 150 words, with the detail in a file.
 - Routing: needs thinking, research or a design first -> `lex`, then `dev` on its plan; clear build, fix or command -> `dev`;
   tests, checks, reviews or test writing -> `tess` (by the table under "Quality checks"). Shipping to real users (release,
-  deploy, showcase, incident) -> `max` on the owner's call, or after a job's last land only if lex's plan has `ship:` or
-  the owner asked for one; never from a long-run step. Each job ends in one state: landed, waiting on the owner, or stopped
-  with a reason. Start lex with `effort: "xhigh"` for a hard design or an unclear need, `effort: "max"` only when
-  a wrong choice is costly to undo.
+  deploy, showcase, incident) -> `max` on the owner's call, or after a job's last land only if lex's plan names a `ship:`
+  target or the owner asked for one; never from a long-run step. Each job ends in one state: landed, waiting on the owner,
+  or stopped with a reason. lex and max run at high; raise lex to `effort: "xhigh"` for a hard design or an unclear need,
+  `effort: "max"` only when a wrong choice is costly to undo.
 - Only the boss starts `lex`, `dev`, `tess` and `max`, and it starts no helper (the guard denies both); research goes through `lex`.
   An agent asks for one with `needs: <agent> to <task>, blocks: <what>`, sent to `main` by SendMessage from a background run,
   else in its report; the boss starts it, tracks who is on what and sends the result to the asker by its id (SendMessage).
 - At most 3 lex, 3 dev, 3 tess and 3 max run at once; their helpers are not counted. Two lanes or helpers never change
-  the same file at once: each names its files; overlapping work runs one after another.
-- Long unattended jobs use `long-run` (skill `long-run`); the main session starts a run only when the owner asks in chat.
+  the same file at once: each names its files; overlapping work runs in turn.
+- Long unattended jobs use the `long-run` skill; the main session starts one only when the owner asks in chat.
 - The final answer says what changed and what was not run.
   A command the owner must run is given with the machine and the folder it runs in.
 
@@ -39,16 +39,17 @@ the brief come first; these lines hold for everyone.
 - Brief: `qa:`, `repo:`, `base:`, `tip:`, `spec:`, `acceptance:`, `risk:`, `landing-waits:`; with a held worktree also `worktree:`
   and `hold: yes` (the boss neither lands nor reuses it until tess returns). The compare loop of `dev-pixel` is part of its job.
 - Findings after landing: a must-fix with a repro -> the boss starts dev at once with `Fix:` on tess-write's test branch and
-  tells the owner in one line; a follow-up -> listed in the final answer.
+  tells the owner in one line; a follow-up -> in the final answer.
 
 ## Questions for the owner
 - `lex` asks at the start of a job. Any agent that needs the owner stops and returns a `questions:` block: each question in plain
   words, what it blocks, 2-4 options with the recommended one first, and a preview when the choice is a layout.
 - The boss asks them in one batch; each question gets its own popup and its own 2-minute wait. Answers go back by SendMessage
   to the same agent by its id, so it keeps its work; write the open agent ids into a handoff note before a restart.
-- No answer in time to a `questions:` block: a small, reversible choice takes the recommended option; a big
+- An unanswered `questions:` block: a small, reversible choice takes the recommended option; a big
   or deleting one waits for the owner.
-- Permission prompts (any tool, risky ones too) go ahead as Allow after 2 minutes unless denied; `max`'s outward ones never do.
+- Permission prompts (any tool, risky ones too) go ahead as Allow after 2 minutes unless denied;
+  while any `max` runs, an outward one needs a click.
 - Owner decisions: scope, money, irreversible actions, credentials, product facts the repo lacks, real trade-offs. A technical
   choice with a sensible default is taken and named in one line.
 
@@ -56,7 +57,7 @@ the brief come first; these lines hold for everyone.
 - Writers work in their own git worktree and commit only their own paths on their own branch; never `--no-verify`.
 - History is one straight line: rebase onto the base, land with `git merge --ff-only` through the `land` script
   (`~/.claude/tools/land`), no merge commits, no `update-ref`; then delete the landed branch and its worktree. `land --test
-  "<cmd>"` tests the rebased tip first; it is required when both sides changed the same files.
+  "<cmd>"` tests the rebased tip first, required when both sides changed the same files.
 - Never push unless the owner asks. AI work notes (HANDOFF.md) are never committed.
 
 ## Owner standards
@@ -83,6 +84,5 @@ the brief come first; these lines hold for everyone.
   `owner-command:` line (the owner's chat words).
 - No secrets in code, logs, commits or command lines (use env vars or files). Reading `.env` is fine; printing it is not.
 - A command that may run over 3 min runs with `run_in_background: true` and its `timeout` set (at most 2 h); keep working,
-  wait on its notice, never poll or sleep-loop, never end your turn or report while your own background shell runs (how:
-  `~/.claude/agents/dev-run.md`).
+  wait on its notice, never poll or sleep-loop, never end your turn or report while it runs (how: `~/.claude/agents/dev-run.md`).
 - When compacting, keep the goal, the owner's constraints and language, decisions, files, the last failure and the next step.

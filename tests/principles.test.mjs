@@ -134,7 +134,7 @@ test('the long-command line: over 3 minutes runs in the background with a timeou
 // The 3-min mark is a background subagent's limit: its foreground command is moved to the background after 3 min.
 test('home/CLAUDE.md: long-command line says over 3 min, with a timeout, keep working and wait on the notice, no polling, no turn end or report while a shell runs, and points to dev-run.md', () => {
   const claude = read('home/CLAUDE.md');
-  assert.match(claude, /A command that may run over 3 min runs with `run_in_background: true` and its `timeout` set \(at most 2 h\); keep working,\s+wait on its notice, never poll or sleep-loop, never end your turn or report while your own background shell runs \(how:\s+`~\/\.claude\/agents\/dev-run\.md`\)\./);
+  assert.match(claude, /A command that may run over 3 min runs with `run_in_background: true` and its `timeout` set \(at most 2 h\); keep working,\s+wait on its notice, never poll or sleep-loop, never end your turn or report while it runs \(how:\s+`~\/\.claude\/agents\/dev-run\.md`\)\./);
   assert.doesNotMatch(claude, /watch\.mjs/, 'watch.mjs is removed and never a way to run or bound a command');
   assert.doesNotMatch(claude, /A command over ~2 min/);
 });
