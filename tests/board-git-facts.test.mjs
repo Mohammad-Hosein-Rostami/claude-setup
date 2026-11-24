@@ -14,6 +14,8 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, realpat
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { lookOf } from '../home/tools/board/lib/cells.mjs';
+import { gitLineRows } from '../home/tools/board/lib/git-rows.mjs';
 import { cleanName, repoState } from '../home/tools/board/lib/git-state.mjs';
 import { collectBoard, readBoard, refreshBoard } from '../home/tools/board/lib/refresh.mjs';
 import { repoStats } from '../home/tools/board/lib/repo-stats.mjs';
@@ -383,6 +385,34 @@ test('P3: refs that git could not give and no cache holds are named in repo.refs
   assert.deepEqual([fresh.repo.refsUnknown, fresh.repo.branches], ['git for-each-ref failed with exit 3', 0]);
   assert.equal(loggedCalls().filter((call) => call === 'for-each-ref').length, 2, 'the cached refs were not asked again');
   assert.deepEqual([cached.repo.refsUnknown, cached.repo.branches, cached.repo.unlanded], [null, 2, 1], 'the cached refs stay');
+});
+
+const ROWS_COLUMNS = 140; // wide enough that no part of the git rows is dropped
+const CLEAN_MARK = /(ok|✓) clean/; // git-rows.mjs: the head branch with known refs and nothing to do (ascii or unicode)
+
+test('P3: with no refs from git and none cached, the git rows say the refs are `unknown`, never that main is clean', POSIX_ONLY, () => {
+  const dir = newRepo('refs-unknown-rows');
+  const common = join(dir, '.git');
+  const lane = join(ROOT, 'wt-refs-unknown-lane');
+  git(dir, 'worktree', 'add', '-q', '-b', 'ready-lane', lane, 'main');
+  put(join(lane, 'l.txt'), 'l\n');
+  git(lane, 'add', 'l.txt');
+  git(lane, 'commit', '-qm', 'lane'); // clean and one commit ahead of main: ready to land, which only the refs can tell
+  const look = lookOf({ NO_COLOR: '1' }, 'darwin', ROWS_COLUMNS);
+  // hang: the one real 1500 ms limit of a git call; fail: exit STANDIN_EXIT
+  for (const [act, why] of [['hang', 'git for-each-ref timed out after 1500 ms'], ['fail', 'git for-each-ref failed with exit 3']]) {
+    const restore = useStandIn({ 'for-each-ref': act });
+    let repo;
+    try {
+      repo = repoState({ cwd: dir, sessionFolder: dir, common, cache: null, nowMs: Date.now() }).repo;
+    } finally {
+      restore();
+    }
+    assert.equal(repo.refsUnknown, why, act);
+    const rows = gitLineRows({ at: Date.now(), repo: { ...repo, name: 'repo' }, repos: [] }, 2, look);
+    assert.ok(rows.some((row) => row.includes('unknown')), `${act}: the rows never say the refs are unknown: ${JSON.stringify(rows)}`);
+    assert.ok(!rows.some((row) => CLEAN_MARK.test(row)), `${act}: the rows show main clean without its refs: ${JSON.stringify(rows)}`);
+  }
 });
 
 test('P3: with the git budget used up and no cache the counts are `unknown` for the budget; the next refresh gets the real counts', () => {
