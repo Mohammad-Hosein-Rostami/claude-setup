@@ -7,7 +7,7 @@
 // the trusted repositories, they never make one trusted.
 // Sources (Claude Code internal, observed 2.1.329; every parser fails soft): <session>/subagents/agent-<id>.jsonl and .meta.json
 // (a `subagents/workflows/` folder left by an old session is not read), the writer launch records (hooks/lib/writer-agents.mjs
-// `open[]`: the STATUS row of a writer).
+// `open[]`: a writer's folder and the work item its brief names, kept in the record's field `row`).
 // Rules: an agent is done when its transcript's last answer ended the turn with no call after it. Done agents stay DONE_KEEP_MS (counted
 // as "done last 10 min"), running ones until their transcript has been silent LIVE_MS. `quiet N min` from QUIET_MS of silence with no
 // call waiting for its result.
