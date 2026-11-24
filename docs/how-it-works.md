@@ -12,7 +12,7 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 | `home/rules/` | One-line rules, each with an id, that apply to matching file paths (`paths:` in the frontmatter). |
 | `home/standards/` | The longer reference behind the rules, with examples (for human readability: `readability.md`). |
 | `home/skills/` | Step-by-step workflows (`<name>/SKILL.md`) that Claude loads when the task matches. |
-| `home/agents/` | The agents (lex, dev, tess and their helpers), one file each, with their model, effort and preloaded skills. |
+| `home/agents/` | The agents (lex, dev, tess, max and their helpers), one file each, with their model, effort and preloaded skills. |
 | `home/project-notes/` | Shared notes, one file per project; personal notes live in `personal/project-notes/`, which `~/.claude/project-notes` links to. |
 | `personal/` | Your own layer, git-ignored and its own git repo, made by the installer from `personal.example/`: `CLAUDE.md` (your rules), `project-notes/`, `share-deny.txt`. |
 | `home/hooks/` | Node scripts Claude Code runs on events (before a Bash command, after an edit, at session start, ...). |
@@ -29,9 +29,10 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 
 1. You start Claude with `claude --model <m> --effort <e>`. The main session is the boss.
 2. Claude reads `home/CLAUDE.md`, your `personal/CLAUDE.md` and the rules whose paths match the files it works on.
-3. The boss hands the work to `lex` (plan), `dev` (build) or `tess` (tests, reviews and test writing), at most 3 of each at
-   once. Each agent file lists its model, tools, preloaded skills and the helpers it may start. Only the boss starts lex, dev and
-   tess (the guard denies it from any other agent): an agent that needs one asks the boss with a `needs:` line.
+3. The boss hands the work to `lex` (plan), `dev` (build), `tess` (tests, reviews and test writing) or, rarely, `max` (the ship
+   agent: it prepares a release or deploy and stops), at most 3 of each at once. Each agent file lists its model, tools,
+   preloaded skills and the helpers it may start. Only the boss starts lex, dev, tess and max (the guard denies it from any other
+   agent): an agent that needs one asks the boss with a `needs:` line.
 4. Before each Bash command, `pre-bash-guard.mjs` checks it. Risky commands (push, `rm -rf`, prod-host writes) open a dialog. When a
    rewrite would remove the question (a `$VAR` command word, `rm`/`push` inside `$(...)` or a heredoc, a word or arithmetic known
    only at run time), the first send is sent back to Claude with the fix instead; the same command sent again opens the dialog.

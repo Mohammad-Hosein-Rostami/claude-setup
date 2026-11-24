@@ -1,8 +1,9 @@
 # long-run
 
 Runs a long job of steps without anyone watching. Each step (or parallel item) is one `claude -p` main session, the **boss**,
-which runs the usual team (lex, dev, tess) itself. A small LangGraph.js graph with a SQLite checkpoint per run sits around the
-bosses, so a crash, a reboot, a usage limit, a pause or a takeover continues the **same** session with `--resume <session-id>`.
+which runs the usual team (lex, dev, tess) itself; a step never starts max. A small LangGraph.js graph with a SQLite checkpoint
+per run sits around the bosses, so a crash, a reboot, a usage limit, a pause or a takeover continues the **same** session with
+`--resume <session-id>`.
 
 ```
 node ~/.claude/tools/long-run/long-run.mjs check job.json     # validate, print the plan, spend nothing

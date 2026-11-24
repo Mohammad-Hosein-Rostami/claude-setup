@@ -7,9 +7,9 @@ repo. `settings.json` is generated from `settings/` (it holds machine paths).
 ## Contents
 | Path | What |
 | ---- | ---- |
-| `home/CLAUDE.md` | Short global rules: language, who does what (boss, lex, dev, tess), questions, git, safety |
+| `home/CLAUDE.md` | Short global rules: language, who does what (boss, lex, dev, tess, max), questions, git, safety |
 | `home/rules`, `home/standards` | One-line rules (path-scoped) and the longer reference behind them |
-| `home/skills`, `home/agents` | Skills and agents (the Opus session is the boss and delegates; `lex` plans, `dev` builds, `tess` checks, reviews and writes tests by risk; Haiku helpers look up and run commands) |
+| `home/skills`, `home/agents` | Skills and agents (the Opus session is the boss and delegates; `lex` plans, `dev` builds, `tess` checks, reviews and writes tests by risk, `max` rarely prepares a ship; Haiku helpers look up and run commands) |
 | `home/hooks`, `home/statusline.mjs` | Bash guard, post-edit formatter, status line |
 | `home/tools/ui-check` | Figma baseline pull, visual compare, responsive and column checks |
 | `settings/`, `plugins/` | Settings layers (base, OS, local) and the plugin list |
