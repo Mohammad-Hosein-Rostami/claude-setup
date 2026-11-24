@@ -11,6 +11,7 @@ import { devNull } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { agentHomeEnv } from './agent-home-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 import { hookEnv } from './hook-env.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -72,7 +73,7 @@ export function linkedWorktree() {
   const root = makeTempDir('settings-env-git-');
   const main = join(root, 'main');
   const worktree = join(root, 'linked');
-  const env = { ...process.env, HOME: root, GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_NOSYSTEM: '1' };
+  const env = cleanEnv({ HOME: root, GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_NOSYSTEM: '1' });
   const git = (args, cwd) => execFileSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', ...args], { cwd, env, stdio: 'pipe' });
   mkdirSync(main);
   git(['init', '-q'], main);
