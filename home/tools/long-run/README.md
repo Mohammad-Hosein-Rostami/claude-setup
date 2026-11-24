@@ -75,13 +75,13 @@ environment only. Fable is refused anywhere in a job; the default model is `clau
 |---|---|---|
 | `name` | `^[a-z0-9][a-z0-9-]{0,39}$` | required |
 | (account) | not a job field | the account selected at start |
-| `model` | `opus`, `sonnet`, `haiku`, or a full `claude-opus-*` / `claude-sonnet-*` / `claude-haiku-*` id; anything with `fable` is refused | `claude-opus-5-5` |
+| `model` | a full `claude-opus-*` / `claude-sonnet-*` / `claude-haiku-*` id; an alias (`opus`, `sonnet`, `haiku`) is refused, because Claude Code decides what an alias means; anything with `fable` is refused | `claude-opus-5-5` |
 | `effort` | `low` \| `medium` \| `high` \| `xhigh` \| `max` | not passed |
 | `cwd` | absolute (or `~/...`), an existing folder; on Windows none of `"` `%` `^` `&` `\|` `<` `>` | required (steps and items may override) |
 | `loopGuards.maxAttempts` | 1-10 failed attempts per step; a limit wait, pause, stop or takeover is not an attempt | 3 |
 | `loopGuards.maxStarts` | 2-100 `claude` starts per step, for any reason | 10 |
 | `retry` | first 10-3600 s, factor 1-10, max 60-21600 s, +-20% jitter | 60 s, x4, 1800 s |
-| `stepTimeoutMinutes` | optional, 5-10080; a step running longer is stopped and retried | none |
+| `stepTimeoutMinutes` | 5-10080, or `null` for none; a step running longer is stopped and retried | 240 |
 | `maxParallel` | 1-3 bosses at once in this run | 3 |
 | `steps` | 1-50 entries; ids unique across steps and items | required |
 | `steps[].prompt` / `promptFile` | exactly one; the file relative to the job file and inside its folder (no `..`, no link out), UTF-8, at most 100 KB, not empty | required (not on a group) |
@@ -91,8 +91,9 @@ environment only. Fable is refused anywhere in a job; the default model is `clau
 | `steps[].next` | `{ done?, blocked?, "needs-owner"?, failed? }` -> a step id or `"end"` | `done` -> the next step; the rest hold the run |
 | `steps[].maxVisits` | 1-10: how often a step may run in one run | 3 |
 
-The loop guards (`maxAttempts`, `maxStarts`, `maxVisits`) stop a step that loops; they are not usage budgets. There is no
-budget and no wait cap: a job spends what its steps need, and a weekly-limit wait can last days.
+The loop guards (`maxAttempts`, `maxStarts`, `maxVisits`) stop a step that loops; they are not usage budgets. The step timeout
+(240 minutes unless the job says otherwise) stops a step that is stuck. There is no budget and no wait cap: a job spends what
+its steps need, and a weekly-limit wait can last days.
 
 `start` copies the job, with every `promptFile` inlined, to `<run>/job.json`. Later edits of the original do nothing unless
 `resume --reload-job <file>` (or `rerun --reload-job`) is used; that is allowed only when the steps already finished keep their

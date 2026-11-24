@@ -6,6 +6,7 @@ import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DEFAULT_MODEL, JobError, loadJob, reloadChanges } from '../home/tools/long-run/lib/job.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cli, makeSandbox } from './long-run-helpers.mjs';
 
 function jobDir() {
   const dir = makeTempDir('long-run-job-');
@@ -29,7 +30,7 @@ const problems = (fn) => {
   assert.fail('the job was accepted');
 };
 
-test('defaults: model claude-opus-5-5, no effort, loop guards 3 / 10, retry 60 s x4 max 1800 s, 3 at once, 3 visits, no step timeout', () => {
+test('defaults: model claude-opus-5-5, no effort, loop guards 3 / 10, retry 60 s x4 max 1800 s, 3 at once, 3 visits, step timeout 240 min', () => {
   const dir = jobDir();
   const { job } = loadJob(write(dir, base(dir, [{ id: 'one', prompt: 'One.' }])));
   assert.equal(DEFAULT_MODEL, 'claude-opus-5-5');
@@ -37,7 +38,17 @@ test('defaults: model claude-opus-5-5, no effort, loop guards 3 / 10, retry 60 s
   assert.equal(job.steps[0].effort, null);
   assert.deepEqual(job.loopGuards, { maxAttempts: 3, maxStarts: 10 });
   assert.deepEqual(job.retry, { firstDelaySeconds: 60, factor: 4, maxDelaySeconds: 1800 });
-  assert.deepEqual([job.maxParallel, job.steps[0].maxVisits, job.stepTimeoutMinutes], [3, 3, null]);
+  assert.deepEqual([job.maxParallel, job.steps[0].maxVisits, job.stepTimeoutMinutes], [3, 3, 240]);
+});
+
+test('stepTimeoutMinutes: a job sets 5-10080 or null for none; outside that range it is refused', () => {
+  const dir = jobDir();
+  const timeout = (stepTimeoutMinutes) => loadJob(write(dir, base(dir, [{ id: 'one', prompt: 'x' }], { stepTimeoutMinutes }))).job.stepTimeoutMinutes;
+  assert.equal(timeout(null), null);
+  assert.equal(timeout(5), 5);
+  assert.equal(timeout(10080), 10080);
+  assert.match(problems(() => timeout(4)), /stepTimeoutMinutes/);
+  assert.match(problems(() => timeout(10081)), /stepTimeoutMinutes/);
 });
 
 test('Fable is refused in the job, a step and an item, as an alias or a full id', () => {
@@ -46,8 +57,19 @@ test('Fable is refused in the job, a step and an item, as an alias or a full id'
   assert.match(problems(() => loadJob(write(dir, base(dir, [{ id: 'one', prompt: 'x', model: 'claude-fable-5' }])))), /Fable is never used/);
   const group = { id: 'g', parallel: [{ id: 'a', prompt: 'x', model: 'Claude-FABLE-1' }, { id: 'b', prompt: 'y', cwd: dir }] };
   assert.match(problems(() => loadJob(write(dir, base(dir, [group])))), /Fable is never used/);
-  assert.match(problems(() => loadJob(write(dir, base(dir, [{ id: 'one', prompt: 'x', model: 'gpt-5' }])))), /a model is opus, sonnet, haiku/);
-  assert.equal(loadJob(write(dir, base(dir, [{ id: 'one', prompt: 'x', model: 'sonnet' }]))).job.steps[0].model, 'sonnet');
+  assert.match(problems(() => loadJob(write(dir, base(dir, [{ id: 'one', prompt: 'x', model: 'gpt-5' }])))), /a model is a full claude-opus-\*, claude-sonnet-\* or claude-haiku-\* id/);
+  assert.equal(loadJob(write(dir, base(dir, [{ id: 'one', prompt: 'x', model: 'claude-sonnet-5-5' }]))).job.steps[0].model, 'claude-sonnet-5-5');
+});
+
+test('model aliases are refused in the job, a step and an item, naming full ids; check exits 1 with that line', () => {
+  const dir = jobDir();
+  for (const alias of ['opus', 'sonnet', 'haiku']) {
+    assert.match(problems(() => loadJob(write(dir, base(dir, [{ id: 'one', prompt: 'x' }], { model: alias })))), /aliases such as opus or sonnet are refused/);
+  }
+  assert.match(problems(() => loadJob(write(dir, base(dir, [{ id: 'one', prompt: 'x', model: 'haiku' }])))), /for example claude-opus-5-5/);
+  const group = { id: 'g', parallel: [{ id: 'a', prompt: 'x', model: 'opus' }, { id: 'b', prompt: 'y', cwd: dir }] };
+  assert.match(problems(() => loadJob(write(dir, base(dir, [group])))), /full claude-opus-\*/);
+  assert.doesNotMatch(problems(() => loadJob(write(dir, base(dir, [{ id: 'one', prompt: 'x', model: 'claude-fable-5' }])))), /full claude-opus/, 'Fable gets its own refusal only');
 });
 
 test('prompt files: relative inside the job folder, CRLF kept, 100 KB allowed; .., a link out, non-UTF-8, empty and over 100 KB refused', () => {
@@ -110,4 +132,16 @@ test('a folder written ~/... is the same folder under the home folder; ~user is 
       else process.env[name] = value;
     }
   }
+});
+
+test('check <job> with "model": "opus" exits 1 naming full ids; a claude-fable id is still refused', () => {
+  const box = makeSandbox();
+  const job = (model) => box.writeJob({ name: 'aliased', model, cwd: box.work('repo'), steps: [{ id: 'one', prompt: 'One.' }] });
+  const aliased = cli(box, ['check', job('opus')]);
+  assert.equal(aliased.status, 1);
+  assert.match(aliased.stderr, /model: a model is a full claude-opus-\*, claude-sonnet-\* or claude-haiku-\* id, for example claude-opus-5-5/);
+  const fable = cli(box, ['check', job('claude-fable-5-5')]);
+  assert.equal(fable.status, 1);
+  assert.match(fable.stderr, /Fable is never used by long-run/);
+  assert.equal(cli(box, ['check', job('claude-sonnet-5-5')]).status, 0);
 });

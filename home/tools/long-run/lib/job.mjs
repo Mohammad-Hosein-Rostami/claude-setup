@@ -3,7 +3,8 @@
 // Exports: JobError, RUNNER_VERSION, DEFAULT_MODEL, ID_PATTERN, loadJob, freezeJob, readFrozenJob, reloadChanges, units, findUnit,
 //   folderKey.
 // Invariants: the job file is the owner's code (its check commands run in a shell), but every id, model, path and prompt is
-//   validated here before it reaches a path or a command; Fable is refused in every model field; prompts are read once and
+//   validated here before it reaches a path or a command; Fable is refused in every model field and only full model ids pass
+//   (no alias); a step is stopped after 240 minutes unless the job sets another limit or null; prompts are read once and
 //   inlined, so a run never rereads the owner's files; the normalized job always has every default filled in.
 import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
@@ -20,7 +21,6 @@ export const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
 const JOB_MAX_BYTES = 256 * 1024;
 const PROMPT_MAX_BYTES = 100 * 1024;
-const MODEL_ALIASES = ['opus', 'sonnet', 'haiku'];
 const MODEL_ID = /^claude-(?:opus|sonnet|haiku)-[a-z0-9.-]{1,40}$/;
 const FABLE = /fable/i;
 const WIN32_FOLDER_META = /["%^&|<>]/;
@@ -32,6 +32,8 @@ const DEFAULTS = {
   maxParallel: 3,
   maxVisits: 3,
   checkTimeoutMinutes: 30,
+  // A stuck step otherwise spends until the weekly limit (audit H11); a job may raise it or set null for none.
+  stepTimeoutMinutes: 240,
 };
 
 /** A job that cannot run; `problems` lists each reason, one line each. */
@@ -44,8 +46,9 @@ export class JobError extends Error {
 }
 
 const id = z.string().regex(ID_PATTERN, 'an id is 1-40 of a-z, 0-9 and -, starting with a letter or digit');
+// Full ids only: an alias such as `opus` is resolved by Claude Code and could one day name a model the runner refuses (audit H13).
 const model = z.string().refine((value) => !FABLE.test(value), 'Fable is never used by long-run (owner decision O5)')
-  .refine((value) => MODEL_ALIASES.includes(value) || MODEL_ID.test(value), 'a model is opus, sonnet, haiku or a full claude-opus-*, claude-sonnet-* or claude-haiku-* id');
+  .refine((value) => FABLE.test(value) || MODEL_ID.test(value), 'a model is a full claude-opus-*, claude-sonnet-* or claude-haiku-* id, for example claude-opus-5-5 or claude-sonnet-5-5 (aliases such as opus or sonnet are refused)');
 const prompted = { prompt: z.string().optional(), promptFile: z.string().optional() };
 const target = z.union([id, z.literal('end')]);
 const item = z.strictObject({ id, ...prompted, cwd: z.string().optional(), model: model.optional(), effort: z.enum(EFFORTS).optional() });
@@ -72,7 +75,7 @@ const JOB_SCHEMA = z.strictObject({
     factor: z.number().min(1).max(10).optional(),
     maxDelaySeconds: z.number().min(60).max(21600).optional(),
   }).optional(),
-  stepTimeoutMinutes: z.number().int().min(5).max(10080).optional(),
+  stepTimeoutMinutes: z.number().int().min(5).max(10080).nullable().optional(),
   maxParallel: z.number().int().min(1).max(3).optional(),
   steps: z.array(step).min(1).max(50),
 });
@@ -168,7 +171,7 @@ function normalize(raw, jobDir, platform) {
   const job = {
     name: raw.name, model: context.model, effort: context.effort, cwd: jobCwd,
     loopGuards: { ...DEFAULTS.loopGuards, ...raw.loopGuards }, retry: { ...DEFAULTS.retry, ...raw.retry },
-    stepTimeoutMinutes: raw.stepTimeoutMinutes ?? null, maxParallel: raw.maxParallel ?? DEFAULTS.maxParallel,
+    stepTimeoutMinutes: raw.stepTimeoutMinutes === undefined ? DEFAULTS.stepTimeoutMinutes : raw.stepTimeoutMinutes, maxParallel: raw.maxParallel ?? DEFAULTS.maxParallel,
     steps: raw.steps.map((entry) => normalizeStep(entry, context)),
   };
   if (problems.length === 0) checkCrossRules(job, problems, platform);
