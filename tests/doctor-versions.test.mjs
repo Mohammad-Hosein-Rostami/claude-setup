@@ -7,24 +7,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 import { cleanEnv } from './clean-env.mjs';
+import { sharedToolDir } from './shared-tools.mjs';
 
 const DOCTOR = fileURLToPath(new URL('../scripts/doctor.sh', import.meta.url));
 const INSTALL_CLI = fileURLToPath(new URL('../scripts/install/cli.mjs', import.meta.url));
 const skip = process.platform === 'win32' ? 'the fake tools are sh scripts' : false;
 const VERIFIED_ON_CLI = /^VERIFIED_ON_CLI=(\d+\.\d+\.\d+)$/m.exec(readFileSync(DOCTOR, 'utf8'))?.[1];
 
+const OUTPUT_VARIABLE = 'FAKE_TOOL_OUTPUT';
+/** A shared folder (a new executable is slow to start) with a fake `tool` that prints $FAKE_TOOL_OUTPUT whatever it is asked. */
+const fakeToolDir = (tool) => sharedToolDir({ [tool]: `#!/bin/sh\necho "$${OUTPUT_VARIABLE}"\n` });
+
 /** Runs one doctor check with a fake `tool` on PATH that prints `output` whatever it is asked. */
 function doctorWith(check, tool, output) {
-  const bin = makeTempDir('doctor-bin-');
+  const bin = fakeToolDir(tool);
   const home = makeTempDir('doctor-home-');
-  writeFileSync(join(bin, tool), `#!/bin/sh\necho '${output}'\n`);
-  chmodSync(join(bin, tool), 0o755);
-  const env = cleanEnv({ HOME: home, USERPROFILE: home, DOCTOR_ONLY: check, PATH: `${bin}${delimiter}${process.env.PATH}` });
+  const env = cleanEnv({ HOME: home, USERPROFILE: home, DOCTOR_ONLY: check, [OUTPUT_VARIABLE]: output, PATH: `${bin}${delimiter}${process.env.PATH}` });
   const run = spawnSync('bash', [DOCTOR], { encoding: 'utf8', env });
   return { status: run.status, out: run.stdout };
 }
@@ -110,11 +113,10 @@ test('doctor fails on a Node older than 22.15 and accepts 22.15 and later', { sk
 test('the whole doctor run checks Claude Code and fails below its floor', { skip }, () => {
   // No DOCTOR_ONLY: this pins that check_claude_version is in the run list at all. The repo suite is replaced by `true`, and every
   // other check reads the temp HOME, so only the claude line is asserted.
-  const bin = makeTempDir('doctor-bin-');
+  const bin = fakeToolDir('claude');
   const home = makeTempDir('doctor-home-');
-  writeFileSync(join(bin, 'claude'), "#!/bin/sh\necho '2.1.294 (Claude Code)'\n");
-  chmodSync(join(bin, 'claude'), 0o755);
   const env = cleanEnv({
+    [OUTPUT_VARIABLE]: '2.1.294 (Claude Code)',
     HOME: home,
     USERPROFILE: home,
     DOCTOR_PROJECT: home,
