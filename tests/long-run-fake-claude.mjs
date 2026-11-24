@@ -6,9 +6,10 @@
 // and its result, then `done` after <ms>), agent:<id> (starts a background agent <id> as Claude Code 2.1.330 streams it, starts a
 // grandchild in a process group of its own, like a subagent's Bash, writes its pid to $FAKE_LR_DIR/grandchild-<step>.pid, then
 // hangs; the grandchild outlives this fake unless someone ends it), agent-done:<id> (the same agent, finished, then `done`, no
-// grandchild), agent-crash:<id> (agent <id> left running and agent <id>x finished, then a crash), worktree:<name> and
-// worktree-dirty:<name> (`git worktree add .claude/worktrees/<name> -b <name>` in its folder, where Claude Code puts an agent's
-// worktree, the second with an uncommitted file in it, then a crash), worktree-other:<name> (the same at ../<name>, as another
+// grandchild), agent-crash:<id> (agent <id> left running and agent <id>x finished, then a crash), worktree:<name>,
+// worktree-dirty:<name> and worktree-ignored:<name> (`git worktree add .claude/worktrees/<name> -b <name>` in its folder, named by
+// an agent's result as Claude Code names an isolated agent's worktree; the second with an untracked file in it, the third with an
+// ignored `build.log`; then a crash), worktree-other:<name> (the same at ../<name>, named by no agent, as another
 // session's lane would be, then a crash). Every call appends one JSON line to $FAKE_LR_DIR/calls.jsonl: {step, mode, args, stdin, cwd,
 // envNames, account, tokenHash, pid, start, end, ended} (`end` and `ended` on a second line kind `end`), never the token itself;
 // each session writes its transcript to $CLAUDE_CONFIG_DIR/projects/fake-project/<session id>.jsonl (the open-session check).
@@ -99,11 +100,17 @@ if (name === 'agent-crash') {
   process.stderr.write('boom\\n');
   finish(1);
 }
-if (name === 'worktree' || name === 'worktree-dirty' || name === 'worktree-other') {
+if (['worktree', 'worktree-dirty', 'worktree-ignored', 'worktree-other'].includes(name)) {
   const path = name === 'worktree-other' ? join(process.cwd(), '..', value) : join(process.cwd(), '.claude', 'worktrees', value);
   const made = spawnSync('git', ['worktree', 'add', '-q', '-b', value, path], { encoding: 'utf8' });
   if (made.status !== 0) { process.stderr.write(made.stderr); finish(2); }
   if (name === 'worktree-dirty') writeFileSync(join(path, 'half-done.txt'), 'x');
+  if (name === 'worktree-ignored') writeFileSync(join(path, 'build.log'), 'x');
+  if (name !== 'worktree-other') {
+    out({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_' + value, name: 'Agent', input: { subagent_type: 'dev', description: 'Build', isolation: 'worktree' } }] } });
+    out({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_' + value, content: 'done' }] },
+      tool_use_result: { status: 'completed', agentId: 'ag' + value, worktreePath: path } });
+  }
   finish(1);
 }
 if (name === 'agent-done') {

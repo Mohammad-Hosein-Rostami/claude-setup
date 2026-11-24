@@ -6,7 +6,8 @@
 // Invariants: one driver per run (run-store lock); driver.json is written only here; a run-level pause or stop ends every child
 //   gracefully, waits until none runs, then exits the process (the journals are already written: the P3 crash path); SIGTERM,
 //   SIGINT and SIGHUP of the driver are a run-level pause (no boss is left running with nobody reading it; status says paused);
-//   at the end of a run the worktrees its bosses made are removed when they hold no work, else kept and named in the summary;
+//   at the end of a run the worktrees its bosses' agents named are removed when they hold no work, every other one is kept and
+//   named in the summary;
 //   every timer and signal handler is removed before drive() returns; a note that fails is one events.jsonl line, never a run
 //   failure.
 import { randomUUID } from 'node:crypto';
@@ -185,11 +186,8 @@ async function invokeInput(ctx, app) {
   return { input: null, config, event: 'resumed', detail: state.finished ? 'nothing left' : 'continue' };
 }
 
-// Claude Code makes an agent's isolated worktree under `<repo>/.claude/worktrees/`.
-const AGENT_WORKTREE = /[\\/]\.claude[\\/]worktrees[\\/]/;
-
-/** Whether the step's own agents made this worktree; any other that appeared (another session's lane, say) is only listed. */
-const madeByAgent = (worktree, journal) => AGENT_WORKTREE.test(worktree.path) || (journal.agents ?? []).some((agent) => agent.worktree === worktree.path);
+/** Whether an agent of this step named this worktree in its result; any other that appeared (another session's lane) is listed only. */
+const madeByAgent = (worktree, journal) => (journal.agents ?? []).some((agent) => agent.worktree === worktree.path);
 
 /**
  * End of run (audit Job A5): each agent worktree a step made is removed when it holds no work of its own, else kept; the

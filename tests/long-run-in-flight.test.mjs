@@ -21,7 +21,8 @@ function gitRepo(box) {
   const git = (...args) => spawnSync('git', ['-C', folder, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8', env: box.env });
   git('init', '-q', '-b', 'main');
   writeFileSync(join(folder, 'a.txt'), 'a');
-  git('add', 'a.txt');
+  writeFileSync(join(folder, '.gitignore'), '*.log\n');
+  git('add', 'a.txt', '.gitignore');
   assert.equal(git('commit', '-q', '-m', 'first').status, 0);
   return folder;
 }
@@ -75,11 +76,11 @@ test('resumeStateBlock is empty when nothing was in flight and lists at most 20 
   assert.match(block, /^- and 5 more$/m);
 });
 
-test('a worktree made during a step is listed in RESUME-STATE; at the end a clean agent worktree is removed, a dirty one or one outside .claude/worktrees kept', async () => {
+test('a worktree made during a step is listed in RESUME-STATE; at the end a clean agent-named worktree is removed; one with an untracked or ignored file, or named by no agent, is kept', async () => {
   const box = makeSandbox();
   const folder = gitRepo(box);
-  box.script({ one: ['worktree:wt-clean', 'done'], two: ['worktree-dirty:wt-dirty', 'done'], three: ['worktree-other:wt-other', 'done'] });
-  const steps = ['one', 'two', 'three'].map((id) => ({ id, prompt: `${id}.` }));
+  box.script({ one: ['worktree:wt-clean', 'done'], two: ['worktree-dirty:wt-dirty', 'done'], three: ['worktree-other:wt-other', 'done'], four: ['worktree-ignored:wt-ignored', 'done'] });
+  const steps = ['one', 'two', 'three', 'four'].map((id) => ({ id, prompt: `${id}.` }));
   const paths = createRun(box, { name: 'wts', cwd: folder, steps });
   assert.equal(await driveRun(box, paths), 'done');
   assert.match(stdinsOf(box, 'one')[1], /^- worktree "[^"]*wt-clean", branch "wt-clean": 0 uncommitted change\(s\), 0 commit\(s\) since the step began$/m);
@@ -88,12 +89,15 @@ test('a worktree made during a step is listed in RESUME-STATE; at the end a clea
   const dirty = journalOf(paths, 'two').worktrees[0];
   assert.equal(clean.cleanup, 'removed');
   assert.ok(!existsSync(clean.path));
-  assert.equal(dirty.cleanup, 'kept: uncommitted changes');
+  assert.equal(dirty.cleanup, 'kept: uncommitted, untracked or ignored files');
   assert.ok(existsSync(join(dirty.path, 'half-done.txt')), 'the dirty worktree and its work stay');
   const summary = readFileSync(paths.summary, 'utf8');
-  assert.match(summary, /^- two: `[^`]*wt-dirty` \(branch wt-dirty\): kept: uncommitted changes$/m);
+  assert.match(summary, /^- two: `[^`]*wt-dirty` \(branch wt-dirty\): kept: uncommitted, untracked or ignored files$/m);
   assert.match(summary, /^- one: `[^`]*wt-clean` \(branch wt-clean\): removed$/m);
   const other = journalOf(paths, 'three').worktrees[0];
   assert.equal(other.cleanup, 'kept: not an agent worktree of this run (listed only)');
-  assert.ok(existsSync(other.path), 'a clean worktree outside .claude/worktrees (another session\'s lane) is never removed');
+  assert.ok(existsSync(other.path), 'a clean worktree no agent named (another session\'s lane) is never removed');
+  const ignored = journalOf(paths, 'four').worktrees[0];
+  assert.equal(ignored.cleanup, 'kept: uncommitted, untracked or ignored files');
+  assert.ok(existsSync(join(ignored.path, 'build.log')), 'an ignored file keeps its worktree');
 });

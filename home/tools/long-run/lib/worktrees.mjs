@@ -2,7 +2,8 @@
 //   step's first start, how much work each holds, and the end-of-run removal of the ones that hold none.
 // Exports: WORKTREES_MAX, listWorktrees, newWorktrees, worktreeState, commitsSince, removeIfEmpty.
 // Invariants: reads git only (`worktree list --porcelain`, `status --porcelain`, `rev-list`), except removeIfEmpty, which removes
-//   a worktree only when it has no uncommitted change and no commit that is not on the step folder's HEAD or a remote, and only
+//   a worktree only when it has no uncommitted, untracked or ignored file and no commit that is not on the step folder's HEAD or a
+//   remote, and only
 //   with a plain `git worktree remove` (git itself refuses a dirty one); a branch is never deleted; worktrees that existed before
 //   the step's first start and the run's own lane worktrees (`long-run/<run>/...`) are never listed as made by a step.
 import { spawnSync } from 'node:child_process';
@@ -64,16 +65,17 @@ export function commitsSince(folder, base) {
 }
 
 /**
- * Removes a worktree a step made when it holds no work of its own: no uncommitted change and no commit that is not on the step
- * folder's HEAD or a remote-tracking branch. Unlocks it first when it is locked (Claude Code locks agent worktrees).
+ * Removes a worktree a step made when it holds no work of its own: no uncommitted, untracked or ignored file and no commit
+ * that is not on the step folder's HEAD or a remote-tracking branch. Unlocks it first when it is locked (Claude Code locks agent worktrees).
  * @param {{path: string}} worktree
  * @param {string} folder the step folder (its HEAD is where finished work lands).
  * @returns {string} `removed`, `gone` (no longer a worktree) or `kept: <why>`, for the summary.
  */
 export function removeIfEmpty(worktree, folder) {
-  const status = git(worktree.path, ['status', '--porcelain']);
+  // Untracked and ignored files too: `git worktree remove` deletes them, and status.showUntrackedFiles=no would hide them.
+  const status = git(worktree.path, ['status', '--porcelain', '--untracked-files=all', '--ignored']);
   if (status.status !== 0) return 'gone';
-  if (status.stdout.trim() !== '') return 'kept: uncommitted changes';
+  if (status.stdout.trim() !== '') return 'kept: uncommitted, untracked or ignored files';
   const folderHead = git(folder, ['rev-parse', '--verify', 'HEAD']);
   const landed = folderHead.status === 0 ? [folderHead.stdout.trim()] : [];
   const own = git(worktree.path, ['rev-list', '--count', 'HEAD', '--not', '--remotes', ...landed]);
