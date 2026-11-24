@@ -1,14 +1,15 @@
 // Tests for .githooks/pre-commit, run through real `git commit` in throw-away repos. The hook is the safety floor only: gitleaks on
 // the staged changes, the person's private words in the staged files (scripts/share-check.mjs --staged) and `node --check` on each
 // staged hook file under home/hooks/. It runs no test.
-// Two kinds of repo: one holding a copy of .githooks without scripts/ beside it (share-check says "not run"), and one whose
-// core.hooksPath is this repo's own .githooks, so the hook finds the real share-check script and the repo's own deny list
-// (personal/share-deny.txt, untracked). gitleaks is a stub on PATH, except in the one test of the repo's .gitleaks.toml, which
-// needs the real one; its made-up token is built at run time, so no file of this repo holds one.
+// Two kinds of repo: one holding a copy of .githooks without scripts/ beside it (share-check says "not run"), and one whose hooks
+// folder holds only a pre-commit that runs this repo's own .githooks/pre-commit, so the hook finds the real share-check script and
+// the repo's own deny list (personal/share-deny.txt, untracked), and commit-msg (which refuses a bad list too) cannot stand in for
+// it. gitleaks is a stub on PATH, except in the one test of the repo's .gitleaks.toml, which needs the real one; its made-up token
+// is built at run time, so no file of this repo holds one.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, cpSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, cpSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CLEAN_ENV, git, makeRepo } from './git-tidy-helpers.mjs';
@@ -103,20 +104,24 @@ test('pre-commit stops the commit when gitleaks finds something', { skip }, () =
 });
 
 /**
- * A repo whose core.hooksPath is this repo's .githooks (so the real share-check runs) with `seed` committed past the hooks.
- * `list`: the text of personal/share-deny.txt, or 'no-personal' (no personal/ folder) or 'no-list' (personal/ without the list).
+ * A repo whose only hook is this repo's .githooks/pre-commit (so the real share-check runs) with `seed` committed past the hooks.
+ * `list`: the text of personal/share-deny.txt, or 'no-personal' (nothing at personal/), 'no-list' (personal/ without the list) or
+ * 'dangling' (personal is a link that leads nowhere).
  * `gitleaks`: 'stub' (exits 0) or 'real' (the installed one, with this repo's .gitleaks.toml committed in the seed).
  */
 function makeLiveHookRepo({ list = `${WORD}\n`, gitleaks = 'stub', seed = {} } = {}) {
   const repo = makeRepo();
-  if (list !== 'no-personal') mkdirSync(join(repo, 'personal'));
-  if (list !== 'no-personal' && list !== 'no-list') writeFileSync(join(repo, 'personal', 'share-deny.txt'), list);
+  if (list === 'dangling') symlinkSync(join(repo, '..', 'gone'), join(repo, 'personal'));
+  else if (list !== 'no-personal') mkdirSync(join(repo, 'personal'));
+  if (!['no-personal', 'no-list', 'dangling'].includes(list)) writeFileSync(join(repo, 'personal', 'share-deny.txt'), list);
   const files = { 'docs/a.md': 'clean\n', ...seed };
   write(repo, files);
   if (gitleaks === 'real') copyFileSync(join(ROOT, '.gitleaks.toml'), join(repo, '.gitleaks.toml'));
   git(repo, 'add', '--', ...Object.keys(files), ...(gitleaks === 'real' ? ['.gitleaks.toml'] : []));
   git(repo, 'commit', '-q', '--no-verify', '-m', 'seed');
-  git(repo, 'config', 'core.hooksPath', join(ROOT, '.githooks'));
+  const hooks = realpathSync(makeTempDir('githooks-live-'));
+  writeFileSync(join(hooks, 'pre-commit'), `#!/usr/bin/env bash\nexec bash ${JSON.stringify(join(ROOT, '.githooks', 'pre-commit'))} "$@"\n`, { mode: 0o755 });
+  git(repo, 'config', 'core.hooksPath', hooks);
   const path = gitleaks === 'real' ? process.env.PATH : `${stubGitleaks(0)}:${process.env.PATH}`;
   const sh = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8', env: { ...OUTSIDE_A_TEST_RUN, PATH: path } });
   return { repo, sh };
@@ -187,13 +192,15 @@ test('pre-commit: no list says "not run" in a clone without personal/, and fails
   assert.equal(notRun.status, 0, notRun.stderr);
   assert.match(notRun.stderr, /^share-check: not run \(no deny list at .*personal\/share-deny\.txt\)$/m);
 
-  const owner = makeLiveHookRepo({ list: 'no-list' });
-  write(owner.repo, { 'docs/a.md': 'clean\nmore\n' });
-  git(owner.repo, 'add', 'docs/a.md');
-  const refused = owner.sh('commit', '-q', '-m', 'change a');
-  assert.notEqual(refused.status, 0);
-  assert.match(refused.stderr, /^share-check: error: no deny list at .*share-deny\.txt, but .*personal exists; .*cp '.*personal\.example\/share-deny\.txt'/m);
-  assert.equal(lastSubject(owner.repo), 'seed');
+  for (const list of ['no-list', 'dangling']) {
+    const owner = makeLiveHookRepo({ list });
+    write(owner.repo, { 'docs/a.md': `${WORD}\nmore\n` });
+    git(owner.repo, 'add', 'docs/a.md');
+    const refused = owner.sh('commit', '-q', '-m', 'change a');
+    assert.notEqual(refused.status, 0, list);
+    assert.match(refused.stderr, /^share-check: error: no deny list at .*share-deny\.txt, but .*personal exists; .*cp '.*personal\.example\/share-deny\.txt'/m, list);
+    assert.equal(lastSubject(owner.repo), 'seed', list);
+  }
 });
 
 test('pre-commit with the real gitleaks refuses a made-up login token at tests/recall-x.test.mjs (no allowlist)', { skip: skip || (!HAS_GITLEAKS && 'gitleaks is not installed') }, () => {
@@ -203,7 +210,9 @@ test('pre-commit with the real gitleaks refuses a made-up login token at tests/r
   git(repo, 'add', 'tests/recall-x.test.mjs');
   const refused = sh('commit', '-q', '-m', 'add recall fixture');
   assert.notEqual(refused.status, 0);
-  assert.match(refused.stderr, /leaks found: 1/); // the real gitleaks: it names no file unless --verbose
-  assert.ok(!(refused.stdout + refused.stderr).includes(token), 'the hook output redacts the token');
+  const output = refused.stdout + refused.stderr;
+  assert.match(output, /^File:\s+tests\/recall-x\.test\.mjs$/m, 'the finding is shown (--verbose), so a leak of its text would show');
+  assert.match(output, /^Secret:.*REDACTED/m); // gitleaks colours the word, also into a pipe
+  assert.ok(!output.includes(token.slice(-20)), 'the hook output redacts the token');
   assert.equal(lastSubject(repo), 'seed');
 });

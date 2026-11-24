@@ -8,7 +8,8 @@
 set -euo pipefail
 command -v gitleaks >/dev/null || { echo "gitleaks not installed; see tools/Brewfile" >&2; exit 1; }
 # `git --staged` is the pre-commit form since gitleaks 8.19 (`protect` is deprecated); it reads the index git commits from.
-gitleaks git --staged --redact
+# --verbose names the file and line of a finding; --redact keeps the secret itself out of that output.
+gitleaks git --staged --redact --verbose
 check="$(dirname "$0")/../scripts/share-check.mjs"
 if [ -f "$check" ]; then
   node "$check" --staged
