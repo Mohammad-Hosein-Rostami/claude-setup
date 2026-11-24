@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "leftOut": ["\\.(test|spec)\\.[cm]?[jt]sx?$", "\\.(md|markdown|txt|rst|adoc)$"],
+  "keep": ["^home/agents/[^/]*\\.md$", "(^|/)\\.claude/agents/[^/]*\\.md$", "^home/skills/.*/skill\\.md$", "^home/claude\\.md$", "(^|/)(claude|agents)\\.md$", "^home/rules/[^/]*\\.md$", "^settings/[^/]*\\.json$"],
+  "classes": {
+    "security": {
+      "words": ["auth", "authn", "authz", "authenticat(e|ed|es|ion|or)", "authoriz(e|ed|es|ation|er)", "oauth", "login", "logins", "logout", "signin", "sessions?", "tokens?", "secrets?", "jwts?", "csrf", "xsrf", "cors", "credentials?", "passwords?", "passwd", "keychains?", "crypto", "cookies?", "permissions?", "guards?", "sandbox(es)?", "uploads?", "webhooks?", "accounts?", "sanitiz(e|ed|es|er|ers|ing|ation)"]
+    },
+    "data": {
+      "paths": ["(^|/)(migrations?|prisma)/", "\\.sql$", "schema\\."]
+    },
+    "money": {
+      "paths": ["payment", "invoice", "billing", "refund", "stripe", "wallet"]
+    },
+    "concurrency": {
+      "paths": ["(^|[^a-z0-9])(un)?lock(s|ed|ing|file)?([^a-z0-9]|$)", "(^|[^a-z0-9])(mutex|semaphore|queue|worker|flock)(es|s)?([^a-z0-9]|$)"]
+    },
+    "gate": {
+      "paths": ["^home/hooks/", "^home/tools/(land|git-tidy|risk)/", "(^|/)\\.github/workflows/", "(^|/)\\.husky/", "(^|/)\\.claude/(settings[^/]*\\.json|hooks/)", "^home/agents/[^/]*\\.md$", "(^|/)\\.claude/agents/[^/]*\\.md$", "^home/skills/.*/skill\\.md$", "^home/claude\\.md$", "(^|/)(claude|agents)\\.md$", "^home/rules/[^/]*\\.md$", "^settings/[^/]*\\.json$"]
+    }
+  },
+  "large": { "lines": 400, "files": 15 }
+}
