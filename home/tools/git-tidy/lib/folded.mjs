@@ -29,7 +29,7 @@ export function historyShas(tip, entries) {
 }
 
 /**
- * The commits reachable from `include` and from none of `exclude` (revisions or full refs), as `[{ hash, isMerge }]`; null
+ * The commits reachable from `include` and from none of `exclude` (revisions or full refs), as `[{ hash, parents, isMerge }]`; null
  * when git cannot walk them (a missing commit).
  */
 export function commitsOutside(dir, include, exclude) {
@@ -38,7 +38,7 @@ export function commitsOutside(dir, include, exclude) {
   if (walk.status !== 0) return null;
   return walk.stdout.split('\n').filter((line) => line !== '').map((line) => {
     const [hash, ...parents] = line.split(' ');
-    return { hash, isMerge: parents.length > 1 };
+    return { hash, parents, isMerge: parents.length > 1 };
   });
 }
 
@@ -111,20 +111,38 @@ function branchHistories(repo) {
   return new Map(listBranches(repo).map(({ name, tip }) => [name, historyShas(tip, newestFirst(name))]));
 }
 
+// The commits of `graph` (Map(hash -> parents), commits the base lacks) reachable from `starts`.
+function reachableIn(graph, starts) {
+  const seen = new Set();
+  const pending = starts.filter((hash) => graph.has(hash));
+  while (pending.length > 0) {
+    const hash = pending.pop();
+    if (seen.has(hash)) continue;
+    seen.add(hash);
+    pending.push(...graph.get(hash).filter((parent) => graph.has(parent)));
+  }
+  return seen;
+}
+
 /**
- * For the unmerged branches `names`: Map(name -> the live branch whose history holds all its commits). Such a branch is a
- * stacked lane or a folded test branch that goes when that branch lands, so it is a hint only, never removed. Ancestry only.
+ * For the unmerged branches `names`: Map(name -> the live branch whose history holds all its commits, so its tip). Such a
+ * branch is a stacked lane or a folded test branch that goes when that branch lands, so it is a hint only, never removed.
+ * Ancestry only. One walk of every history reads the commit graph, so the cost in git calls does not grow with the branches.
  */
 export function inLaneHolders(repo, names) {
   if (names.length === 0) return new Map();
   const histories = branchHistories(repo);
+  const present = new Set(existingCommits(repo.dir, [...new Set([...histories.values()].flat())]));
+  const graph = new Map((commitsOutside(repo.dir, [...present], [repo.baseRef]) ?? []).map(({ hash, parents }) => [hash, parents]));
   const holders = new Map();
-  for (const name of names) {
-    const tip = histories.get(name)?.[0];
-    const others = [...histories].filter(([other]) => other !== name && other !== repo.base);
-    const inAll = tip !== undefined && commitsOutside(repo.dir, [tip], [repo.baseRef, ...new Set(others.flatMap(([, shas]) => shas))])?.length === 0;
-    const holder = inAll ? others.find(([, shas]) => commitsOutside(repo.dir, [tip], [repo.baseRef, ...shas])?.length === 0) : undefined;
-    if (holder) holders.set(name, holder[0]);
+  for (const [holder, shas] of histories) {
+    if (holder === repo.base || holders.size === names.length) continue;
+    const reach = reachableIn(graph, shas.filter((sha) => present.has(sha)));
+    for (const name of names) {
+      const tip = histories.get(name)?.[0];
+      // Two branches at one tip are copies of each other (copies.mjs decides which stays), so neither holds the other.
+      if (!holders.has(name) && tip !== shas[0] && reach.has(tip)) holders.set(name, holder);
+    }
   }
   return holders;
 }

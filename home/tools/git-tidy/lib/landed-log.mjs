@@ -21,7 +21,12 @@ const MAX_LINE_COMMITS = 500;
 const HASH = /^[0-9a-f]{40}([0-9a-f]{24})?$/; // a full SHA-1 or SHA-256 object name
 const MS_PER_SECOND = 1000;
 
-const logPath = (dir) => join(gitText(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir']), LOG_FILE);
+// The log's path per folder, read once: prune records each deletion, and one git call per deleted branch would add up.
+const logPaths = new Map();
+function logPath(dir) {
+  if (!logPaths.has(dir)) logPaths.set(dir, join(gitText(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir']), LOG_FILE));
+  return logPaths.get(dir);
+}
 
 /**
  * The history of `branch`, read before land moves it: `{ branch, tip, shas, patchIds, lastCommitMs }`. `shas` are its tip and
