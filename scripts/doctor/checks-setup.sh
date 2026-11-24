@@ -185,18 +185,25 @@ check_notify() {
 }
 
 # share-check (scripts/share-check.mjs) refuses only the words of the person's own personal/share-deny.txt: a missing list or one
-# with comments only protects nothing, so it is one WARN. The words are counted with share-check's own parser (parseDenyList).
+# with comments only protects nothing, so it is one WARN. A missing list beside an existing personal/ (a folder or any link, as
+# share-check tells it) is a FAIL with the fix, because the commit hooks refuse every commit then. The words are counted with
+# share-check's own parser (parseDenyList).
 check_share_deny() {
   local list="$INSTALL_REPO/personal/share-deny.txt" count
   count="$(node --input-type=module -e '
-    import { readFileSync } from "node:fs";
+    import { lstatSync, readFileSync } from "node:fs";
+    import { dirname } from "node:path";
     import { pathToFileURL } from "node:url";
     const { parseDenyList } = await import(pathToFileURL(process.argv[1]).href);
+    const list = process.argv[2];
     let text = "";
-    try { text = readFileSync(process.argv[2], "utf8"); } catch (error) { if (error.code !== "ENOENT") throw error; }
-    console.log(parseDenyList(text).length);' "$REPO/scripts/share-check/match.mjs" "$list" 2>/dev/null)" \
+    try { text = readFileSync(list, "utf8"); } catch (error) { if (error.code !== "ENOENT") throw error; }
+    const missingBesidePersonal = text === "" && lstatSync(list, { throwIfNoEntry: false }) === undefined
+      && lstatSync(dirname(list), { throwIfNoEntry: false }) !== undefined;
+    console.log(missingBesidePersonal ? "missing" : parseDenyList(text).length);' "$REPO/scripts/share-check/match.mjs" "$list" 2>/dev/null)" \
     || { bad "share-check deny list $list is not readable"; return; }
-  if [ "$count" -gt 0 ]; then ok "share-check deny list: $count words"
+  if [ "$count" = missing ]; then bad "share-check deny list $list is missing beside $INSTALL_REPO/personal, so every commit there fails; run: cp '$INSTALL_REPO/personal.example/share-deny.txt' '$list'"
+  elif [ "$count" -gt 0 ]; then ok "share-check deny list: $count words"
   else warn "add your private names to personal/share-deny.txt so share-check can protect them"; fi
 }
 

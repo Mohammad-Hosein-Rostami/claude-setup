@@ -32,7 +32,9 @@ to `~/.claude-backup-<stamp>/`, never deleted. One install runs at a time: a sec
 After the first install, fill your deny list: `personal/share-deny.txt` (git-ignored, in your own `personal/`) starts as an empty
 template. Put one private word or phrase per line in it (your name, your employer, clients, project and machine names), so
 `scripts/share-check.mjs` and the commit-msg hook can keep them out of the shared files and commit messages. While the list is
-missing or holds only comments, share-check prints `not run` and `doctor.sh` gives one WARN. Each person keeps their own list;
+empty or holds only comments, share-check prints `not run` and `doctor.sh` gives one WARN. A list missing beside an existing
+`personal/` makes the commit hooks refuse every commit, and `doctor.sh` FAILs with the `cp` from `personal.example/share-deny.txt`
+that fixes it. Each person keeps their own list;
 `node scripts/share-check.mjs` checks the tracked files against it.
 
 ## settings and local.json
