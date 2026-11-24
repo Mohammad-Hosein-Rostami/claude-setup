@@ -114,7 +114,8 @@ function killGroup(child) {
   try {
     process.kill(-child.pid, 'SIGTERM');
   } catch (error) {
-    if (error.code !== 'ESRCH') throw error;
+    // ESRCH: the group is gone; EPERM: macOS says so for a group left with only exited (zombie) members
+    if (error.code !== 'ESRCH' && error.code !== 'EPERM') throw error;
   }
 }
 
@@ -139,13 +140,9 @@ function startLogged(command, repo, logPath) {
   return { child, exited };
 }
 
-/** On SIGINT, SIGTERM or SIGHUP, and at exit, kills the running child's group; the exit frees the slot and the ticket (queue.mjs). */
+/** SIGINT, SIGTERM and SIGHUP exit; at exit the running child's group is killed, and queue.mjs frees the slot and the ticket. */
 function stopChildOnExit(current) {
-  const stop = (signal) => {
-    if (current.child !== null) killGroup(current.child);
-    process.exit(128 + constants.signals[signal]);
-  };
-  for (const signal of STOP_SIGNALS) process.once(signal, stop);
+  for (const signal of STOP_SIGNALS) process.once(signal, () => process.exit(128 + constants.signals[signal]));
   process.once('exit', () => current.child !== null && killGroup(current.child));
 }
 

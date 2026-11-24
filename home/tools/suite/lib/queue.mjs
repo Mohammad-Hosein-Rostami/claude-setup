@@ -160,7 +160,6 @@ function heldSlot(slotDir, token) {
  */
 export async function acquireSlot({ stateDir, slots, label }) {
   const dirs = folders(stateDir);
-  mkdirSync(dirs.slots, { recursive: true });
   mkdirSync(dirs.tickets, { recursive: true });
   const text = JSON.stringify({ pid: process.pid, since: new Date().toISOString(), ...label });
   const ticketPath = takeTicket(dirs.tickets, text);
@@ -168,6 +167,9 @@ export async function acquireSlot({ stateDir, slots, label }) {
   process.once('exit', dropTicket);
   try {
     for (;;) {
+      // made again at every check: the state folder may be deleted at any time
+      mkdirSync(dirs.slots, { recursive: true });
+      mkdirSync(dirs.tickets, { recursive: true });
       writeFileSync(ticketPath, text); // the new time shows this waiter is alive; also brings back a ticket removed as stale
       reclaimStaleSlots(dirs.slots);
       const slot = isMyTurn(dirs, ticketPath, slots) ? takeFreeSlot(dirs.slots, slots, label) : null;
