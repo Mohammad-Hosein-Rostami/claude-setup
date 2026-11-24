@@ -1,101 +1,58 @@
-// Tests for home/hooks/git-tidy-gate.mjs: at the end of a turn (Stop), of a subagent (SubagentStop) and before a compaction (PreCompact)
-// the setup's git hygiene is checked, so leftovers of a re-done lane and an unlanded lane never pile up unseen (C37).
-// Every repo is built in a temp folder (git-tidy-helpers.mjs); the hook runs as the real process with a private HOME, except the tests
-// that need an outside part (the check child, a clock): those call `decide` with fakes for just that part.
+// Tests for home/hooks/git-tidy-gate.mjs, now SessionStart only: it names the lanes of the session's repo that are not yet landed,
+// never blocks, caches the check verdict per repo state, never runs a program the repository config names, and says nothing (exit 0)
+// outside a repository, on bad input or on another event. Every repo and HOME is a cs-test temp folder.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { decide, openLanes } from '../home/hooks/git-tidy-gate.mjs';
+import { cachedVerdict, storeVerdict } from '../home/hooks/lib/tidy-gate-store.mjs';
 import { addWorktree, CLEAN_ENV, commit, git, makeRepo } from './git-tidy-helpers.mjs';
-import { billAndGinShape, CHECK_TIMEOUT_FOR_TESTS_MS, gateSession, HOUR_MS, inProcessGate, linkStatus, oldLane, SESSION } from './git-tidy-gate-helpers.mjs';
+import { gateSession, HOOK, inProcessGate, oldLane, SESSION } from './git-tidy-gate-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
-const HOOK = fileURLToPath(new URL('../home/hooks/git-tidy-gate.mjs', import.meta.url));
+const MINUTE_MS = 60_000;
+const REFRESH_WAIT_MS = 20_000; // the detached refresh of a loaded machine
+const POLL_MS = 100;
 
-test('a repo with nothing to clean passes silently', () => {
-  const gate = gateSession();
-  assert.equal(gate.stop(makeRepo()), null);
+test('a repo with no unlanded lane prints nothing at session start', () => {
+  assert.equal(gateSession().start(makeRepo()), null);
 });
 
-test('a re-done lane and agent leftovers block the lead once, with the exact prune line; the same state then passes', () => {
-  const gate = gateSession();
-  const dir = billAndGinShape();
-  const reason = gate.stop(dir);
-  assert.match(reason, /superseded-copy lane\/x\b/);
-  assert.match(reason, /agent-leftover worktree-agent-aaa/);
-  assert.match(reason, /agent-leftover worktree-agent-bbb/);
-  assert.match(reason, /git-tidy\.mjs prune .* --apply --include-recent/);
-  assert.equal(gate.stop(dir), null, 'block once per state, like commit-gate');
-});
-
-test('a changed state blocks again, a continued stop at most twice in a row', () => {
-  const gate = gateSession();
-  const dir = billAndGinShape();
-  assert.ok(gate.stop(dir));
-  for (const name of ['aaa', 'bbb', 'ccc']) git(dir, 'branch', `worktree-agent-n${name}`, 'main');
-  assert.ok(gate.stop(dir, { stop_hook_active: true }), 'new leftovers are a new state');
-  git(dir, 'branch', 'worktree-agent-ddd', 'main');
-  assert.ok(gate.stop(dir, { stop_hook_active: true }), 'second block in the chain');
-  git(dir, 'branch', 'worktree-agent-eee', 'main');
-  assert.equal(gate.stop(dir, { stop_hook_active: true }), null, 'the chain bound lets the third pass, so a stop is never held for long');
-});
-
-test('after the leftovers are pruned the state is clean and the stop passes', () => {
-  const gate = gateSession();
-  const dir = billAndGinShape();
-  assert.ok(gate.stop(dir));
-  git(dir, 'branch', '-D', 'lane/x', 'worktree-agent-aaa', 'worktree-agent-bbb');
-  assert.equal(gate.stop(dir), null);
-});
-
-test('a merge commit on the base blocks with the rebase advice, a merged branch with the prune line', () => {
-  const gate = gateSession();
+test('an unlanded lane is named at session start, one line each, under the repo folder', () => {
   const dir = makeRepo();
-  git(dir, 'checkout', '-q', '-b', 'side');
-  commit(dir, 'side.txt');
-  git(dir, 'checkout', '-q', 'main');
-  commit(dir, 'main.txt');
-  git(dir, 'merge', '-q', '--no-ff', '-m', 'merge side', 'side');
-  const reason = gate.stop(dir);
-  assert.match(reason, /merge-commit \S+ "merge side"/);
-  assert.match(reason, /rebase/);
-  assert.match(reason, /merged-branch side/);
-  assert.match(reason, /prune .* --apply --include-recent/);
+  oldLane(dir, 'lane/one');
+  const text = gateSession().start(dir);
+  assert.match(text, /^git: lanes not yet landed in .+ \(land or prune them, one line of history\):\n- lane\/one: /);
+  assert.equal(text.split('\n').length, 2, text);
 });
 
-test('a cache hit runs no check', async () => {
-  const dir = billAndGinShape();
-  const gate = gateSession();
-  const env = { ...CLEAN_ENV, HOME: gate.home, USERPROFILE: gate.home, CLAUDE_PROJECT_DIR: dir, GIT_TIDY_GATE_CHECK_TIMEOUT_MS: String(CHECK_TIMEOUT_FOR_TESTS_MS) };
-  let childRuns = 0;
-  const countingCheck = (...args) => {
-    childRuns += 1;
-    return undefined;
+test('a cache hit runs no check; a verdict older than ten minutes is checked again', async () => {
+  const dir = makeRepo();
+  oldLane(dir, 'lane/one');
+  const gate = inProcessGate(dir);
+  assert.match(await gate.start(), /lane\/one/);
+  let runs = 0;
+  const countingCheck = () => {
+    runs += 1;
+    return { base: 'main', findings: [], hints: [] };
   };
-  const input = { hook_event_name: 'Stop', session_id: SESSION, cwd: dir };
-  const first = await decide(input, env, {});
-  assert.equal(first.block, true);
-  const second = await decide(input, env, { runCheck: countingCheck });
-  assert.equal(second.block, false);
-  assert.equal(childRuns, 0, 'the verdict of the first stop is read from the cache');
-  assert.equal(gate.run(input, dir).status, 0, 'the real hook process reads the same cache'); // no wall-time bound: the suite runs files in parallel
+  assert.match(await gate.start({ runCheck: countingCheck, now: Date.now() + MINUTE_MS }), /lane\/one/, 'one minute later the cache answers');
+  assert.equal(runs, 0);
+  assert.equal(await gate.start({ runCheck: countingCheck, now: Date.now() + 11 * MINUTE_MS }), '', 'eleven minutes later the check runs again');
+  assert.equal(runs, 1);
 });
 
-test('a check that is not done within the timeout passes, and one detached refresh fills the cache for the next stop', async () => {
-  const dir = billAndGinShape();
-  const gate = gateSession();
-  const env = { ...CLEAN_ENV, HOME: gate.home, USERPROFILE: gate.home, CLAUDE_PROJECT_DIR: dir };
-  const input = { hook_event_name: 'Stop', session_id: SESSION, cwd: dir };
-  assert.deepEqual(await decide(input, env, { checkTimeoutMs: 1 }), { block: false });
-  const deadline = Date.now() + 20_000;
+test('a check that is not done in time says nothing, and one detached refresh fills the cache for the next start', async () => {
+  const dir = makeRepo();
+  oldLane(dir, 'lane/late');
+  const gate = inProcessGate(dir);
+  assert.equal(await gate.start({ checkTimeoutMs: 1 }), '');
+  const deadline = Date.now() + REFRESH_WAIT_MS;
   let filled = false;
   while (!filled && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    const cached = await decide(input, env, { runCheck: () => undefined }); // a cache miss would run this fake and so not block
-    filled = cached.block === true;
+    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+    filled = /lane\/late/.test(await gate.start({ runCheck: () => undefined })); // a cache miss runs this fake and names nothing
   }
   assert.ok(filled, 'the refresh stored the verdict');
 });
@@ -115,133 +72,68 @@ test('the check child never runs a program the repository config names (fsmonito
   git(worktree, 'status', '--porcelain');
   assert.ok(existsSync(marker), 'sanity: plain git runs the program');
   unlinkSync(marker);
-  gateSession().stop(dir);
+  gateSession().start(dir);
   assert.ok(!existsSync(marker), 'the program did not run during the gate');
 });
 
-test('a repository whose own config defines a filter is never checked (git status would run its program)', () => {
-  const dir = billAndGinShape();
-  git(dir, 'config', 'filter.sneaky.clean', 'cat');
-  assert.equal(gateSession().stop(dir), null);
+test('a repository whose own config, or another worktree\'s config view, defines a filter is never checked', () => {
+  const own = makeRepo();
+  oldLane(own, 'lane/one');
+  git(own, 'config', 'filter.sneaky.clean', 'cat');
+  assert.equal(gateSession().start(own), null);
+  const shared = makeRepo();
+  oldLane(shared, 'lane/two');
+  const lane = addWorktree(shared, 'wt-lane', 'lane/y');
+  const include = join(makeTempDir('git-tidy-gate-include-'), 'filter.cfg');
+  writeFileSync(include, '[filter "sneaky"]\n\tclean = cat\n');
+  git(shared, 'config', 'includeIf.onbranch:main.path', include); // only the worktree on main sees the filter
+  assert.equal(gateSession().start(lane), null);
 });
 
-// base tip moved this session -------------------------------------------------------------------------------------------------
-
-function transcriptStartedAt(startMs) {
-  const path = join(makeTempDir('git-tidy-gate-transcript-'), 'lead.jsonl');
-  writeFileSync(path, `${JSON.stringify({ type: 'summary' })}\n${JSON.stringify({ type: 'user', timestamp: new Date(startMs).toISOString() })}\n`);
-  return path;
-}
-
-test('a base tip that moved during the session is not judged: no suite PASS is asked for, so the stop passes (checks reset S2)', async () => {
+test('the check child never runs the gpg program of a signed commit (log.showSignature in the repository config)', () => {
   const dir = makeRepo();
-  const { stop } = inProcessGate(dir);
-  assert.deepEqual(await stop({ transcript_path: transcriptStartedAt(Date.now() - HOUR_MS) }), { block: false });
-  assert.deepEqual(await stop({}), { block: false });
+  const marker = join(makeTempDir('git-tidy-gate-marker-'), 'ran');
+  const program = join(makeTempDir('git-tidy-gate-gpg-'), 'gpg.sh');
+  writeFileSync(program, `#!/bin/sh\ntouch '${marker}'\ncase "$*" in *--verify*) exit 0;; esac\ncat >/dev/null\nprintf -- '-----BEGIN PGP SIGNATURE-----\\n\\nAAAA\\n-----END PGP SIGNATURE-----\\n'\nprintf '[GNUPG:] SIG_CREATED D 1 8 00 1 ABCD\\n' >&2\n`);
+  chmodSync(program, 0o755);
+  git(dir, 'config', 'gpg.program', program);
+  git(dir, 'checkout', '-q', '-b', 'side');
+  writeFileSync(join(dir, 's.txt'), 's');
+  git(dir, 'add', 's.txt');
+  git(dir, 'commit', '-q', '-S', '-m', 'signed side');
+  git(dir, 'checkout', '-q', 'main');
+  commit(dir, 'm.txt');
+  git(dir, 'merge', '-q', '--no-ff', '-S', '-m', 'signed merge', 'side');
+  oldLane(dir, 'lane/after-merge');
+  git(dir, 'config', 'log.showSignature', 'true');
+  if (existsSync(marker)) unlinkSync(marker); // signing the commits above ran the program too
+  git(dir, 'log', '--merges', '--format=%s');
+  assert.ok(existsSync(marker), 'sanity: plain git runs the program');
+  unlinkSync(marker);
+  assert.match(gateSession().start(dir), /lane\/after-merge/, 'the check ran');
+  assert.ok(!existsSync(marker), 'the gate did not run the program');
 });
 
-// unlanded lanes --------------------------------------------------------------------------------------------------------------
+test('the store drops the oldest repos before it would pass the size it can read back', () => {
+  const env = { HOME: makeTempDir('git-tidy-gate-store-') };
+  const verdict = { base: 'main', findings: [{ kind: 'merge-commit', subject: 'a', detail: 'z'.repeat(30_000) }], hints: [] };
+  for (const top of ['/r/1', '/r/2', '/r/3']) storeVerdict(env, SESSION, { top, fingerprint: 'f' }, verdict);
+  assert.deepEqual(cachedVerdict(env, SESSION, { top: '/r/3', fingerprint: 'f' }), verdict, 'the newest repo is kept');
+  assert.equal(cachedVerdict(env, SESSION, { top: '/r/1', fingerprint: 'f' }), undefined, 'the oldest made room');
+});
 
-test('an unlanded lane that no open STATUS.md row names blocks once with the land command', () => {
+test('outside a git repository, with unusable input or with another event, the hook says nothing and exits 0', () => {
   const gate = gateSession();
+  assert.equal(gate.start(makeTempDir('git-tidy-gate-plain-')), null);
   const dir = makeRepo();
-  oldLane(dir, 'lane/r4-x');
-  linkStatus(gate, dir, [['wip', 'something else entirely']]);
-  const reason = gate.stop(dir);
-  assert.match(reason, /unlanded-lane\? lane\/r4-x/);
-  assert.match(reason, /land-lane\.mjs --branch lane\/r4-x/);
-  assert.equal(gate.stop(dir), null);
-});
-
-test('an open row that names the branch, or its last path segment, keeps the lane; a done row does not', () => {
-  const named = gateSession();
-  const dir = makeRepo();
-  oldLane(dir, 'lane/r4-x');
-  linkStatus(named, dir, [['impl-x', 'lane r4-x: implement it']]);
-  assert.equal(named.stop(dir), null, 'the last path segment r4-x is named');
-
-  const done = gateSession();
-  const other = makeRepo();
-  oldLane(other, 'lane/r4-x');
-  linkStatus(done, other, [['impl-x', 'lane r4-x: implement it', true]]);
-  assert.match(done.stop(other), /unlanded-lane\? lane\/r4-x/);
-});
-
-test('with no STATUS.md linked an unlanded lane is not judged (nothing to name it)', () => {
-  const dir = makeRepo();
-  oldLane(dir, 'lane/r4-x');
-  assert.equal(gateSession().stop(dir), null);
-});
-
-// subagents -------------------------------------------------------------------------------------------------------------------
-
-test('a subagent whose own empty worktree-agent branch is left behind is told to delete it, once', () => {
-  const gate = gateSession();
-  const dir = makeRepo();
-  git(dir, 'branch', 'worktree-agent-a1', 'main');
-  git(dir, 'branch', 'worktree-agent-a2', 'main');
-  const reason = gate.agentStop(dir);
-  assert.match(reason, /git branch -d worktree-agent-a1\b/);
-  assert.doesNotMatch(reason, /worktree-agent-a2/, 'another agent\'s branch is not this agent\'s to delete');
-  assert.equal(gate.agentStop(dir), null);
-});
-
-test('a subagent branch with a commit of its own, one still checked out, or no branch at all passes', () => {
-  const gate = gateSession();
-  const withWork = makeRepo();
-  git(withWork, 'checkout', '-q', '-b', 'worktree-agent-a1');
-  commit(withWork, 'agent.txt');
-  git(withWork, 'checkout', '-q', 'main');
-  assert.equal(gate.agentStop(withWork), null);
-  git(withWork, 'branch', 'worktree-agent-a2', 'worktree-agent-a1');
-  assert.equal(gateSession().agentStop(withWork), null, 'another agent branch at the same commit does not make the work a copy');
-
-  const checkedOut = makeRepo();
-  addWorktree(checkedOut, 'wt-agent', 'worktree-agent-a1');
-  assert.equal(gateSession().agentStop(checkedOut), null);
-
-  assert.equal(gateSession().agentStop(makeRepo()), null);
-});
-
-test('a subagent stop ignores the repository leftovers the lead is told about, and a read-only agent is never blocked', () => {
-  const dir = billAndGinShape();
-  assert.equal(gateSession().agentStop(dir), null);
-  git(dir, 'branch', 'worktree-agent-a1', 'main');
-  assert.equal(gateSession().agentStop(dir, { agent_type: 'Explore' }), null);
-});
-
-// compaction ------------------------------------------------------------------------------------------------------------------
-
-test('PreCompact prints one line per open lane, and nothing when there is none', () => {
-  const gate = gateSession();
-  const dir = makeRepo();
-  assert.deepEqual(gate.compact(dir), []);
   oldLane(dir, 'lane/one');
-  oldLane(dir, 'lane/two');
-  const out = gate.compact(dir);
-  assert.equal(out.length, 2);
-  assert.match(out[0], /open lane lane\/one/);
-  assert.match(out[1], /open lane lane\/two/);
-});
-
-// failures never trap a session -------------------------------------------------------------------------------------------------
-
-test('outside a git repository, with unusable input or with an unusable event, the hook says nothing and exits 0', () => {
-  const gate = gateSession();
-  const outside = makeTempDir('git-tidy-gate-plain-');
-  assert.equal(gate.stop(outside), null);
-  assert.equal(gate.stop(makeRepo(), { session_id: '../escape' }), null);
+  assert.equal(gate.start(dir, { session_id: '../escape' }), null);
+  for (const event of ['Stop', 'SubagentStop', 'PreCompact', 'PostToolUse']) {
+    const result = gate.run({ hook_event_name: event, session_id: SESSION, cwd: dir }, dir);
+    assert.deepEqual([result.status, result.stdout], [0, ''], event);
+  }
   const garbage = spawnSync(process.execPath, [HOOK], { input: 'not json', encoding: 'utf8', env: { ...CLEAN_ENV, HOME: gate.home } });
   assert.equal(garbage.status, 0);
   assert.match(garbage.stderr, /^git-tidy-gate: /);
   assert.equal(garbage.stdout, '');
-});
-
-test('openLanes lists the unmerged branches by name and detail', async () => {
-  const dir = makeRepo();
-  oldLane(dir, 'lane/one');
-  const { env } = inProcessGate(dir);
-  const lines = await openLanes({ hook_event_name: 'PreCompact', session_id: SESSION, cwd: dir }, env, {});
-  assert.equal(lines.length, 1);
-  assert.match(lines[0], /^open lane lane\/one: /);
 });
