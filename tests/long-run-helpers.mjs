@@ -91,11 +91,11 @@ export function createRun(box, job, { account = 'a', now = new Date() } = {}) {
 }
 
 /** Runs the driver of `paths` in this process with a fake clock and no notes; a reply is applied as `resume` would. */
-export async function driveRun(box, paths, { clock = fakeClock(), reply = null, notes = [], killAfter } = {}) {
+export async function driveRun(box, paths, { clock = fakeClock(), reply = null, notes = [], killAfter, notifier = null } = {}) {
   if (reply) writeJson(join(paths.dir, 'resume.json'), { action: 'continue', text: null, item: null, id: `${Date.now()}-${Math.random()}`, ...reply });
   return drive(paths, {
     env: box.env, platform: process.platform, now: clock.now, sleep: clock.sleep, random: () => 0.5, keepAwake: false,
-    exit: (code) => { throw new Error(`driver exit ${code}`); }, notifier: async (texts) => { notes.push(texts); return []; },
+    exit: (code) => { throw new Error(`driver exit ${code}`); }, notifier: notifier ?? (async (texts) => { notes.push(texts); return []; }),
     limitsDir: join(box.dir, 'limits'), ...(killAfter ? { killAfter } : {}),
   });
 }
