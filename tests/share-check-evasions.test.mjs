@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CLEAN_ENV, commit, git, makeRepo } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { sharedToolDir } from './shared-tools.mjs';
 
 const CLI = fileURLToPath(new URL('../scripts/share-check.mjs', import.meta.url));
 const COMMIT_MSG_HOOK = fileURLToPath(new URL('../.githooks/commit-msg', import.meta.url));
@@ -125,8 +126,13 @@ test('R8: --commit-msg checks the message as git commits it, without comments or
 
 test('R8: the commit-msg hook refuses a commit whose message holds a deny word and lets a clean one through', () => {
   const dir = repoWithList();
-  const hooks = makeTempDir('share-hooks-');
-  writeFileSync(join(hooks, 'commit-msg'), `#!/usr/bin/env bash\nexec bash ${JSON.stringify(COMMIT_MSG_HOOK)} "$@"\n`, { mode: 0o755 });
+  const wrapper = `#!/usr/bin/env bash\nexec bash ${JSON.stringify(COMMIT_MSG_HOOK)} "$@"\n`;
+  // POSIX: one shared hooks folder (shared-tools.mjs: no first-run check per run); git only reads it
+  let hooks;
+  if (process.platform === 'win32') {
+    hooks = makeTempDir('share-hooks-');
+    writeFileSync(join(hooks, 'commit-msg'), wrapper, { mode: 0o755 });
+  } else hooks = sharedToolDir({ 'commit-msg': wrapper });
   git(dir, 'config', 'core.hooksPath', hooks);
   writeFileSync(join(dir, 'a.md'), 'clean\n');
   git(dir, 'add', 'a.md');
