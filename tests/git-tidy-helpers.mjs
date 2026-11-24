@@ -6,14 +6,13 @@
 //   and no session id is set, so a child process never reads the real session's state (~/.claude/state/<tool>/<id>.json).
 import { spawnSync } from 'node:child_process';
 import { realpathSync, utimesSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
-import { makeTempDir } from './temp-dir-helpers.mjs';
+import { makeTempDir, testTempRoot } from './temp-dir-helpers.mjs';
 
 export const CLI = fileURLToPath(new URL('../home/tools/git-tidy/git-tidy.mjs', import.meta.url));
-const TEMP_ROOT = realpathSync(tmpdir());
+const TEMP_ROOT = realpathSync(testTempRoot()); // where makeTempDir makes every test folder
 const NO_GIT_CONFIG = { GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
 const IDENTITY = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 const PINNED_HOME = makeTempDir('git-tidy-home-');
