@@ -3,11 +3,15 @@ name: clean-code
 description: Use when writing or changing code, and again before finishing a coding step - naming, size, complexity, types, errors, comments, duplication, dead code, scope.
 ---
 
-The code-level half of the core rules (the C ids are the ones dev's agent file lists). Enforce the limits with the project's
-linter where it has one.
+The code-level half of the core rules (the C ids are the ones dev's agent file lists). The project's linter enforces the limits
+where it has one; tess runs it, and whoever writes reads the diff against them.
 
-1. Scope: build only what the task asks (C1, KISS and YAGNI); touch only the files it needs (C18); fix the root cause, not the
-   symptom, at every site of its class (C22).
+1. Scope and simplicity: the exact result in the simplest well-structured code a person can read; simple never cuts the result.
+   Build only what the task asks (C1, KISS and YAGNI): no feature, refactor, file, flag, option, helper or test it did not ask
+   for, and no abstraction it does not need (step 8). Touch only the files it needs (C18); fix the root cause, not the symptom,
+   at every site of its class (C22). No handling for states that cannot happen; validation only at the boundary (step 6). An
+   extra you think would help goes under `Suggested:` in the report, not into the diff; complexity a requirement truly needs
+   stays, with a comment saying why.
 2. Names say what a thing is or does: nouns for types, verbs for functions, `is/has/can` for booleans; no `data`, `util`,
    `helper`, `manager`, `temp` (C5). One word per concept everywhere.
 3. One function, one job (C3): at most 40 lines, 4 parameters (an options object beyond), nesting 3, complexity 10, cognitive
@@ -40,7 +44,7 @@ Before finishing, check the smells agents leave behind:
 | `any`, casts, non-null assertions | `no-explicit-any`, `no-non-null-assertion`, `tsc --strict` |
 | One-implementation interface, wrapper, factory | count the callers |
 | `process.env` or hard-coded hosts outside config | grep |
-| Diff touches more than the task needs | `git diff --stat` (C18) |
+| Diff touches more than the task needs; a new file, flag, option or dependency it did not need | `git diff --stat` and the brief (C18) |
 | Deleted, skipped or weakened tests | grep the diff for `skip`, `.only`, `ts-ignore`, `eslint-disable` (C13) |
 
-Done-gate: lint clean at these limits; no new duplicate blocks; every new abstraction has a named caller; no check weakened.
+Done-gate: the diff within these limits (lint clean where tess runs it); no new duplicate blocks; every new abstraction has a named caller; no check weakened.

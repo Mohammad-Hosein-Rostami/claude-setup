@@ -29,8 +29,10 @@ description: Use when reviewing a diff, or before returning a risky lane - check
    - Shell: an `EXIT` trap set before the values it removes; secrets in a child's argv.
    - Node: object-literal lookups on untrusted keys read the prototype; a promise with no catch ends the process; `fetch` keeps
      custom auth headers on a cross-origin redirect.
-6. Design (Google headings, only where a rule breaks, never taste): design, functionality, complexity, tests, naming, comments,
-   consistency, documentation.
+6. Design and simplicity (Google headings, only where a rule breaks, never taste): design, functionality, complexity, tests,
+   naming, comments, consistency, documentation. Needless complexity is a rule break (C1, C33): an abstraction with one caller,
+   a wrapper, an option nobody sets, a file, flag or dependency the spec does not need, defensive code for impossible states,
+   code a reader cannot follow without its author. Name the simpler form; follow-up unless it breaks an acceptance line.
 7. Each finding: file:line, a one-sentence claim, the invariant, other sites of the class (with the search used), a repro command
    or `follow-up`. A guess you could not check is not reported.
 

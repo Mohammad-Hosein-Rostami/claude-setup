@@ -17,7 +17,7 @@ Write the plan into the detail file before the first check runs.
 
    | Kind / risk | Checks |
    |---|---|
-   | any code | typecheck; lint on changed files; related tests (the runner's own: `vitest related <files>`, `jest --findRelatedTests <files>`; else test files that import or are named for the changed files); build when the project has one |
+   | any code | typecheck; lint on changed files; related tests (the runner's own: `vitest related <files>`, `jest --findRelatedTests <files>`; node:test repos: `node ~/.claude/tools/suite/suite.mjs related --base <base> --tip <tip>`; else test files that import or are named for the changed files); build when the project has one |
    | risky or large, or no related-test mapping | the full suite instead of related tests; build; review; edge cases; base comparison for every failure |
    | dependencies | `<pm> audit --prod` at high severity (network: `not run (network)` when offline); lockfile diff: new packages, `hasInstallScript`, widened ranges, a new registry or a git or URL source; osv-scanner when installed |
    | security class | `standards/security.md` S1-S11 against the diff; gitleaks on the range when installed (`gitleaks git --log-opts="<base>..<tip>" --redact`) |
@@ -36,8 +36,9 @@ Write the plan into the detail file before the first check runs.
    live system.
 8. Test-file changes inside a code diff: list each edited or deleted assertion and each new skip, `.only`, `todo` or raised timeout
    as a finding candidate (agents edit tests to pass them).
-9. Order: cheap and narrow first (typecheck, lint, related tests), then build and suite. Run every planned check; never stop at the
-   first failure.
+9. Order: cheap and narrow first (typecheck, lint, related tests), then build and suite. The full suite runs once per tree, through
+   `node ~/.claude/tools/suite/suite.mjs run --cache -- <command>` (the machine-wide queue). Run every planned check; never stop
+   at the first failure.
 
 Done-gate: the plan names every check with its command or `not run (why)`, the acceptance map has no blank line, and the
 edge-case list names what each probe touches.
