@@ -14,8 +14,9 @@
 // - a value with blanks filled in for an unquoted `$X` (`X="push --force"; git $X`) is one word to zsh and several to bash:
 //   commandReadings gives both readings, and the guard judges each one with every rule (an rm reads both itself: lib/rm-paths.mjs).
 // - a shell reads its commands from stdin: `curl x | bash`, `bash <<EOF`, `bash < file`, `sh -s`; an interpreter (python, node, perl,
-//   ruby, deno, bun, php) reads its code from a pipe or a file: `base64 -d | python3`, `node < x.js` (from a heredoc its code is judged).
-// - a variable inside the command word (`git$IFS'push'`, `git${IFS}push`), and `$IFS` anywhere in the line (IFS_EXPANSION_REASON).
+//   ruby, deno, bun, php) reads its code from a pipe or a file: `base64 -d | python3`, `node < x.js`, or a here-string or
+//   unquoted heredoc whose text the shell fills in (`python3 <<< "$(x)"`); from any other heredoc its code is judged.
+// - a variable inside the command word (`git$IFS'push'`, `git${IFS}push`), and `$IFS` anywhere in the line but inside single quotes (IFS_EXPANSION_REASON).
 // - `env -S "cmd"` and `su -c "cmd"` take the command as ONE string.
 // - a brace word the guard cannot list (`{-c,"$X"}`, more than 64 words; lib/braces.mjs) at or before the command word, or in a command
 //   whose words a rule reads (UNLISTED_BRACES_REASON); `echo {$a,b}` stays quiet.
@@ -59,10 +60,17 @@ function hasScriptFile(args) {
 const STDIN_PATH = /^\/(?:dev\/stdin|dev\/fd\/0|proc\/self\/fd\/0)$/;
 
 // interpreter options whose value is the next word, so it is not taken for a script file (`node -r dotenv/config`, `python3 -W ignore`)
-const INTERPRETER_VALUE_OPTIONS = new Set(['-W', '-X', '-r', '--require', '--import', '--loader', '--experimental-loader', '-C', '--conditions', '-I', '-M']);
+const INTERPRETER_VALUE_OPTIONS = new Set(['-W', '-X', '-r', '--require', '--import', '--loader', '--experimental-loader', '-C', '--conditions']);
 const DENO_RUN = 'run'; // deno's subcommand before the script word
 const PYTHON_MODULE = '-m'; // `python3 -m pytest`: runs a module, reads no code from stdin
 const HEREDOC_OR_STRING = /^\d*<<(?!\()/; // `<<EOF`, `<<-EOF`, `<<<text`: the code is in the command text itself
+// `$(…)`, `${…}`, `$name` or a backtick: text the shell makes when the line runs, so the guard cannot read it beforehand
+const EXPANSION = /\$[({\w]|`/;
+const HERE_STRING = /<<</; // `<<<"text"`: the shell always fills it in
+// `<<EOF`, `<<-EOF`: filled in too; a quoted delimiter (`<<'EOF'`, `<<"EOF"`, `<<\EOF`) keeps the text as written
+const UNQUOTED_HEREDOC = /(?<!<)<<(?!-?[ \t]*['"\\])(?!<)/;
+const readableCode = (line) => !EXPANSION.test(line) || !(HERE_STRING.test(line) || UNQUOTED_HEREDOC.test(line));
+const stdinReason = (cmd) => `${cmd} reads its code from stdin (a pipe or a file), so what runs is hidden; write the code out or run a script file`;
 
 /** True when the interpreter is given a script file or a module: a positional word that is no option value, `-` or redirect target. */
 function hasInterpreterScript(args) {
@@ -78,15 +86,19 @@ function hasInterpreterScript(args) {
 /**
  * `curl x | python3`, `base64 -d | node`, `node < x.js`, `perl -`: an interpreter reads its code from a pipe or a file, so the guard
  * cannot see it (like `| sh`). From a heredoc or here-string (`python3 - <<'EOF'`) the code is in the command text: it is judged like
- * `-c` code (lib/inline-code.mjs buildsCommand on the line's text), so the common inline script runs unasked.
+ * `-c` code (lib/inline-code.mjs buildsCommand on the line's text), so the common inline script runs unasked; unless the shell
+ * fills that text in when it runs (`python3 <<< "$(curl x)"`, an unquoted heredoc with `$name`), which hides it like a pipe.
  */
 function interpreterFromStdin(seg, parsed, line) {
   const { cmd, args: written } = parsed;
   const args = cmd?.startsWith('deno') && written[0] === DENO_RUN ? written.slice(1) : written; // `deno run -` reads stdin too
   if (!INTERPRETERS.test(cmd ?? '') || interpreterCode(cmd, args) !== undefined || hasInterpreterScript(args)) return undefined;
-  if (args.some((word) => HEREDOC_OR_STRING.test(word)) && seg.piped !== true) return buildsCommand(line) ? INLINE_COMMAND_REASON : undefined;
+  if (args.some((word) => HEREDOC_OR_STRING.test(word)) && seg.piped !== true) {
+    if (!readableCode(line)) return stdinReason(cmd);
+    return buildsCommand(line) ? INLINE_COMMAND_REASON : undefined;
+  }
   const fed = seg.piped === true || args.some((word) => STDIN_REDIRECT.test(word));
-  return fed ? `${cmd} reads its code from stdin (a pipe or a file), so what runs is hidden; write the code out or run a script file` : undefined;
+  return fed ? stdinReason(cmd) : undefined;
 }
 
 function shellFromStdin(seg, parsed, shellScript) {
@@ -148,8 +160,14 @@ export const IFS_EXPANSION_REASON = 'the line expands $IFS, which can join words
   + "(`git$IFS'push'` is git and push); write the words out with spaces";
 const IFS_EXPANSION = /\$\{?IFS\b/; // `$IFS`, `${IFS}`, `${IFS:0:1}`, anywhere in the text: rarely needed, and an easy way to hide a word break
 
-/** `$IFS` anywhere in the line: a separator filled in at run time hides where one word ends (audit H1). */
-const ifsExpansion = (line) => (IFS_EXPANSION.test(line) ? IFS_EXPANSION_REASON : undefined);
+// single-quoted text keeps `$IFS` as written (`grep -n '$IFS' x`); it is dropped only on a line with no `"` or `\`, where a quote
+// cannot be escaped or nested, so the quotes are read as the shell reads them
+const SINGLE_QUOTED = /'[^']*'/g;
+const QUOTING_TRICKS = /["\\]/;
+const withoutSingleQuoted = (line) => (QUOTING_TRICKS.test(line) ? line : line.replace(SINGLE_QUOTED, ''));
+
+/** `$IFS` anywhere in the line outside single quotes: a separator filled in at run time hides where one word ends (audit H1). */
+const ifsExpansion = (line) => (IFS_EXPANSION.test(withoutSingleQuoted(line)) ? IFS_EXPANSION_REASON : undefined);
 
 const RM = 'rm'; // the one command that judges both readings of its words itself
 const ARITHMETIC_JOIN = '((';// the operators in front of the first word of a `$((..))` or `((..))` body (lib/shell-words.mjs `.joinedBy`)

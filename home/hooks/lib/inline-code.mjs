@@ -14,25 +14,34 @@
 /** The interpreters whose `-e`/`-c`/`-p`/`--eval` code the guard reads (also `.exe` and versioned names such as python3.12). */
 export const INTERPRETERS = /^(?:node|python[\d.]*|perl|ruby|deno|bun|php)(?:\.exe)?$/;
 const CODE_FLAG = /^-[a-zA-Z]*[ecEp]$|^--(?:eval|print)$/;
-const CODE_FLAG_ATTACHED = /^--(?:eval|print)=/;
+// code glued to its flag: `--eval=code`, `-c"code"` (the shell hands over `-ccode`), perl `-le'code'`. Only plain on/off letters
+// may come before the code letter, so `-help`, `-version`, `-Werror` or `-Mstrict` are not read as code.
+const ATTACHED_CODE = /^--(?:eval|print)=(.*)$|^-[abBdIilnOqsSTuw]*[ecEp](.+)$/s;
 const PHP_CODE_FLAG = '-r'; // php's own flag for code on the command line (`php -e` is something else)
+const PHP_ATTACHED_CODE = /^-r(.+)$/s; // `php -r'code'`
 const DENO_EVAL = 'eval'; // `deno eval "<code>"`
 
 /**
  * @param {string} cmd the command name (lib/command-of.mjs)
  * @param {string[]} args its words
- * @returns {string | undefined} the code an interpreter is given on its command line, or undefined when it gets none there
+ * @returns {string | undefined} the code an interpreter is given on its command line (after its flag or glued to it), or undefined
+ *   when it gets none there
  */
 export function interpreterCode(cmd, args) {
   if (!INTERPRETERS.test(cmd)) return undefined;
   if (cmd.startsWith('deno') && args[0] === DENO_EVAL) return args.find((word, at) => at > 0 && !word.startsWith('-'));
-  const isCodeFlag = (word) => (cmd.startsWith('php') ? word === PHP_CODE_FLAG : CODE_FLAG.test(word) || CODE_FLAG_ATTACHED.test(word));
-  const at = args.findIndex(isCodeFlag);
-  if (at === -1) return undefined;
-  return CODE_FLAG_ATTACHED.test(args[at]) ? args[at].slice(args[at].indexOf('=') + 1) : args[at + 1];
+  const php = cmd.startsWith('php');
+  for (const [at, word] of args.entries()) {
+    if (php ? word === PHP_CODE_FLAG : CODE_FLAG.test(word)) return args[at + 1];
+    const glued = (php ? PHP_ATTACHED_CODE : ATTACHED_CODE).exec(word);
+    if (glued) return glued[1] ?? glued[2];
+  }
+  return undefined;
 }
 
-const RUNS_COMMAND = /child_process|\bexec\w*|\bspawn\w*|\bsystem\s*\(|subprocess|popen|\bRuntime\b|shell_exec|passthru|proc_open|\bqx\b|Open3|Deno\.(?:Command|run)\b/i;
+// a call that runs a program: `execSync(`, `spawn(`, `os.system(`, perl's `system 'x'` and `exec "x"` (no brackets needed there).
+// `process.execPath`, `sys.executable` and `platform.system()` only name or describe the interpreter, so they do not count.
+const RUNS_COMMAND = /child_process|(?<!platform\.)\b(?:exec|spawn|system)\w*(?:\s*\(|\s+['"`$@[])|subprocess|popen|\bRuntime\b|shell_exec|passthru|proc_open|\bqx\b|Open3|Deno\.(?:Command|run)\b/i;
 // a string glued to something: `'g'+'it'`, `'gi'.'t'` (Perl, PHP), `'gi' 't'` (Python joins adjacent strings), `x + 'push'`
 const GLUED_STRING = /['"`][ \t]*(?:\+|\.(?![\w$])|['"`])|(?:\+|\.)[ \t]*['"`]/;
 // other ways to build text: join, a template or f-string slot, character codes, base64 decoding, reversing

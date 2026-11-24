@@ -51,6 +51,13 @@ const SAME_CLASS = [
   'tea pr merge 3', 'tea pulls merge 3', 'tea release create v1', 'ionice -c3 glab mr merge 1',
   'git update-ref refs/heads/main abc', 'git update-ref -d refs/heads/lane', 'git -C ../base update-ref refs/heads/main abc',
   'pwsh -enc ZQBjAGgAbwA=', 'powershell -EncodedCommand ZQ==', 'powershell.exe -ec ZQ==', 'pwsh -e ZQ==', 'pwsh /enc ZQ==', 'pwsh -encodedc ZQ==',
+  // found in review of the first fix: code glued to its flag, text the shell fills in, forge api writes, a git subcommand in a variable
+  `python3 -c"import os; os.system('gi'+'t push')"`, `perl -e'system("gi"."t push")'`, `perl -le'system("gi"."t push")'`,
+  `ruby -e'system("gi" + "t push")'`, `node --eval="require('child_process').execSync('g'+'it push')"`,
+  'python3 <<< "$(echo Z2l0IHB1c2g= | base64 -d)"', 'node <<EOF\n$(cat x.js)\nEOF', 'python3 - <<EOF\nimport os\nos.system("$CMD")\nEOF',
+  'glab api -X PUT projects/1/merge_requests/2/merge', 'hub api -X PUT repos/o/r/pulls/1/merge', 'tea api -X POST /repos/o/r/pulls/1/merge',
+  'glab api projects/1/merge_requests/2/notes -f body=x', 'git pu${NOPE}sh origin main', 'git ${x}push origin main',
+  'tea -l work pulls merge 1', 'tea pulls --login work merge 1',
 ];
 
 const STAY_ALLOWED = [
@@ -63,6 +70,10 @@ const STAY_ALLOWED = [
   'pwsh -Command Get-ChildItem', 'powershell -ExecutionPolicy Bypass -File build.ps1', 'glab release list', 'glab mr list', 'hub release',
   'hub release show v1', 'tea releases ls', 'tea pr list', 'git log --oneline | head', 'while IFS= read -r line; do echo "$line"; done < f',
   "IFS=, read -r a b <<< 'x,y'",
+  // false asks found in review: names of the interpreter itself, an isolated python script, `$IFS` as data, forge api reads
+  `node -p "process.execPath + ' ' + process.version"`, 'python3 -c "import sys; print(sys.executable)"',
+  'python3 -c "import platform; print(platform.system())"', 'python3 -I x.py < f', 'cat f | python3 -I x.py', "grep -n '$IFS' x",
+  'glab api projects/1/merge_requests', 'hub api repos/o/r', `perl -Mstrict -e 'print 1'`, 'node --help', 'python3 -Werror x.py < f',
 ];
 
 test('H1: every command of the audit table that was allowed now asks', () => {

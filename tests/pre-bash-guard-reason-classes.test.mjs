@@ -64,6 +64,7 @@ const NEVER_BOUNCED = [
   ['gh pr merge', 'gh pr merge 12'],
   ['forge merge', 'glab mr merge 1'],
   ['forge release change', 'tea release create v1'],
+  ['forge api write', 'glab api -X POST projects/1/merge_requests/2/merge'],
   ['git update-ref', 'git update-ref refs/heads/main HEAD~1'],
   ['interpreter code that builds its command', `node -e "require('child_process').execSync('l'+'s')"`],
   ['PowerShell -EncodedCommand', 'pwsh -enc ZQBjAGgAbwA='],

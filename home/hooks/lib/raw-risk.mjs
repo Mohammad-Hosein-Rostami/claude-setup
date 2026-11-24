@@ -216,7 +216,7 @@ function ghMutation(after) {
 
 const WRAPPERS = new Set(['sudo', 'nohup', 'time', 'env', 'exec', 'command']);
 const SCRIPT_INTERPRETERS = /^(?:perl|python[\d.]*|php|node|ruby|deno|bun|osascript|fish|pwsh|powershell|expect|script|npx)$/;
-const SCRIPT_FLAG = /^-[a-zA-Z]*[ecpr]$|^--(?:eval|print|command)$/i;
+const SCRIPT_FLAG = /^-[a-zA-Z]*[ecpr](?:$|['"])|^--(?:eval|print|command)(?:$|=)/i; // also code glued on: -c"x", --eval=x
 const TMUX_RUNNERS = new Set(['new', 'new-session', 'new-window', 'split-window', 'send-keys', 'send', 'run-shell', 'run', 'respawn-pane']);
 const FLAG_WINDOW = 6;
 

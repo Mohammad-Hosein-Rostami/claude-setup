@@ -103,6 +103,7 @@ const ASK_CLASS_PATTERNS = [
   ['gh pr merge', /^gh pr merge changes the target branch/],
   ['forge merge', /^(?:glab|hub|tea) .*merges a pull request into the target branch/],
   ['forge release change', /^(?:glab|hub|tea) .* changes a published release/],
+  ['forge api write', /^(?:glab|hub|tea) api \w+ changes data on the forge/],
   ['git update-ref', /^git update-ref moves a ref by plumbing/],
   ['interpreter code that builds its command', /^interpreter code runs a command it builds from pieces/],
   ['PowerShell -EncodedCommand', /^PowerShell -EncodedCommand runs base64 text/],

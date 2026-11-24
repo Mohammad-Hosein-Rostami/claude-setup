@@ -1,5 +1,6 @@
 // Outward actions that always need the owner's confirmation: `git push`, `gh release *`, `gh pr merge`, `gh repo edit --visibility`,
-// `gh secret set`, `gh workflow run`, a `gh api graphql` mutation, package publish, and the merge and release verbs of glab, hub and tea.
+// `gh secret set`, `gh workflow run`, a `gh api graphql` mutation, package publish, and the merge and release verbs and `api` writes of
+// glab, hub and tea.
 // Exports: parsePushArgs(rest), pushAsk(options), outwardAsk(cmd, args) -> reason | undefined.
 // The guard turns a reason into a PreToolUse permissionDecision "ask", which prompts even in bypassPermissions mode.
 // Read-only or rehearsal forms stay allowed: `git push --dry-run`, `npm publish --dry-run`, `gh release list|view|download`.
@@ -108,9 +109,20 @@ const FORGE_MERGE_GROUPS = new Map([['glab', new Set(['mr'])], ['tea', new Set([
 const FORGE_MERGE_VERBS = new Set(['merge', 'accept']);
 const FORGE_RELEASE_GROUPS = new Map([['glab', new Set(['release'])], ['hub', new Set(['release'])], ['tea', new Set(['releases', 'release', 'r'])]]);
 const FORGE_RELEASE_READ = new Set(['list', 'ls', 'view', 'show', 'download']);
+// tea's options that take a value and may stand before the verb (`tea -l work pulls merge 1`)
+const TEA_VALUE_OPTIONS = new Set([...GH_VALUE_OPTIONS, '-l', '--login', '-r', '--repo', '-R', '--remote', '-o', '--output']);
+const FORGE_API = 'api';
+
+// `glab api`, `hub api`, `tea api`: every write asks (-X POST|PUT|PATCH|DELETE, or a body by -f/-F, read as gh's); the forges'
+// paths differ too much to single out the risky ones as gh api does
+function forgeApiAsk(cmd, args) {
+  const method = ghApiMethod(args) ?? '';
+  return MUTATING_METHOD.test(method) ? `${cmd} api ${method.toUpperCase()} changes data on the forge; confirm with the owner` : undefined;
+}
 
 function forgeAsk(cmd, args) {
-  const [group, action] = positionals(args, GH_VALUE_OPTIONS);
+  const [group, action] = positionals(args, cmd === 'tea' ? TEA_VALUE_OPTIONS : GH_VALUE_OPTIONS);
+  if (group === FORGE_API) return forgeApiAsk(cmd, args);
   const merges = cmd === 'hub' ? group === 'merge' : FORGE_MERGE_GROUPS.get(cmd)?.has(group) && FORGE_MERGE_VERBS.has(action);
   if (merges) return `${cmd} ${cmd === 'hub' ? 'merge' : `${group} ${action}`} merges a pull request into the target branch; confirm with the owner`;
   // `hub release` alone lists the releases; any other verb (create, edit, delete) changes one
