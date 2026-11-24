@@ -46,15 +46,15 @@ const denied = (out) => out?.permissionDecision === 'deny';
 // isolation: "worktree" keeps the writer isolation gate (another gate of the same hook) out of these tests
 const call = (type, prompt = 'do the job', extra = {}) => ({ description: 'job', prompt, subagent_type: type, model: 'sonnet', isolation: 'worktree', ...extra });
 
-test('no gate but the route redirects a plain Agent call: a main agent starts every other type, only the boss lex, dev and tess', () => {
-  const types = ['dev-ui', 'dev-pixel', 'dev-debug', 'dev-run', 'lex-scout', 'lex-web', 'tess-review', 'tess-write', 'pixel-qa', 'test-writer', 'security-auditor', 'Explore', 'general-purpose'];
+test('no gate but the route redirects a plain Agent call: a main agent starts every other type, only the boss lex, dev, tess and max', () => {
+  const types = ['dev-part', 'dev-docs', 'tess-simple', 'tess-edge', 'dev-ui', 'dev-pixel', 'dev-debug', 'dev-run', 'lex-scout', 'lex-web', 'tess-review', 'tess-write', 'pixel-qa', 'test-writer', 'security-auditor', 'Explore', 'general-purpose'];
   const brief = 'do the job\nMATRIX: none: not a screen, a hook test'; // the MATRIX line keeps the UI gate quiet
   // one session per call: the main-agent cap (6 at once per session) is not what this test is about
   for (const type of types) assert.equal(denied(session().send(call(type, brief), FROM_AGENT)), false, type);
   assert.equal(denied(session().send(call('general-purpose', 'research the best queue for this'), FROM_AGENT)), false, 'a research question too');
-  for (const type of ['lex', 'dev', 'tess']) {
+  for (const type of ['lex', 'dev', 'tess', 'max']) {
     assert.equal(denied(session().send(call(type, brief), FROM_BOSS)), false, `the boss starts ${type}`);
-    assert.match(session().send(call(type, brief), FROM_AGENT).permissionDecisionReason, /^agent route: only the boss starts lex, dev and tess/, `a main agent never starts ${type}`);
+    assert.match(session().send(call(type, brief), FROM_AGENT).permissionDecisionReason, /^agent route: only the boss starts lex, dev, tess and max;/, `a main agent never starts ${type}`);
   }
 });
 

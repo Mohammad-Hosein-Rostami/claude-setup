@@ -1,9 +1,9 @@
 // Tests for the main-agent cap of home/hooks/agent-budget.mjs, enforced through agent-model-guard.mjs (PreToolUse Agent|Task): at
-// most MAX_AGENTS_PER_TYPE (3) lex, 3 dev and 3 tess launched from the main session run at once (a full type blocks no other), helpers (a call with agent_id) never count, a launch
+// most MAX_AGENTS_PER_TYPE (3) lex, 3 dev, 3 tess and 3 max launched from the main session run at once (a full type blocks no other), helpers (a call with agent_id) never count, a launch
 // another gate denies holds no slot, pending launches expire, a started one runs until its SubagentStop (or STALE_MS idle), a
 // resumed main agent counts again, and an unusable record denies (fail closed). The route gate: the boss (no agent_id) starts only
-// lex, dev, tess, claude-code-guide and statusline-setup; any other type is denied with the route; a subagent starting lex, dev or
-// tess is denied with the needs: route, and its own helpers are free. The budget
+// lex, dev, tess, max, claude-code-guide and statusline-setup; any other type is denied with the route; a subagent starting lex, dev,
+// tess or max is denied with the needs: route, and its own helpers are free. The budget
 // hook itself prints nothing.
 // Each test has a private HOME (the records) and its own session id; call counters live in a private TMPDIR.
 import assert from 'node:assert/strict';
@@ -148,9 +148,9 @@ test('a call another gate denies holds no slot: the route gate before the cap, t
   assert.equal(readStore(s).launches.length, 1, 'the denied writer gave its slot back');
 });
 
-const ROUTE_LEAD = 'agent route: the boss starts lex, dev or tess;';
+const ROUTE_LEAD = 'agent route: the boss starts lex, dev, tess or max;';
 const helperRoute = (type, owner) => `${ROUTE_LEAD} ${type} is ${owner}'s helper: start ${owner} with the brief, and it starts ${type}`;
-const otherRoute = (type) => `${ROUTE_LEAD} ${type} is not one of them: start lex (research, design), dev (build, fix) or tess (checks) with the brief`;
+const otherRoute = (type) => `${ROUTE_LEAD} ${type} is not one of them: start lex (research, design), dev (build, fix), tess (checks) or max (ship, release, production) with the brief`;
 
 test('the boss starting lex-web is denied every time with the route through lex; nothing is recorded', () => {
   const s = newSession();
@@ -163,14 +163,17 @@ test('the boss starting lex-web is denied every time with the route through lex;
 });
 
 test('every helper from the boss is denied with its own main agent named', () => {
-  const owners = { 'lex-scout': 'lex', 'lex-web': 'lex', 'dev-ui': 'dev', 'dev-pixel': 'dev', 'pixel-qa': 'dev', 'dev-debug': 'dev', 'dev-run': 'dev', 'tess-review': 'tess', 'tess-write': 'tess' };
+  const owners = {
+    'lex-scout': 'lex', 'lex-web': 'lex', 'dev-part': 'dev', 'dev-docs': 'dev', 'dev-ui': 'dev', 'dev-pixel': 'dev', 'pixel-qa': 'dev', 'dev-debug': 'dev',
+    'dev-run': 'dev', 'tess-review': 'tess', 'tess-write': 'tess', 'tess-simple': 'tess', 'tess-edge': 'tess',
+  };
   const s = newSession();
   for (const [type, owner] of Object.entries(owners)) assert.equal(guard(s, mainCall(type, type)).permissionDecisionReason, helperRoute(type, owner), type);
 });
 
-test('the boss starts lex, dev and tess, and Claude Code\'s claude-code-guide and statusline-setup', () => {
+test('the boss starts lex, dev, tess and max, and Claude Code\'s claude-code-guide and statusline-setup', () => {
   const s = newSession();
-  for (const type of ['lex', 'dev', 'tess', 'claude-code-guide', 'statusline-setup']) assert.ok(!denied(guard(s, mainCall(type, type))), type);
+  for (const type of ['lex', 'dev', 'tess', 'max', 'claude-code-guide', 'statusline-setup']) assert.ok(!denied(guard(s, mainCall(type, type))), type);
 });
 
 test('the other built-ins, an omitted type and any other agent are denied from the boss', () => {
@@ -191,18 +194,19 @@ test('a call from inside a subagent (agent_id) starts lex-web or any other type:
   }
 });
 
-const subagentRoute = (type) => `agent route: only the boss starts lex, dev and tess; ask it with the line 'needs: ${type} to <task>, `
+const subagentRoute = (type) => `agent route: only the boss starts lex, dev, tess and max; ask it with the line 'needs: ${type} to <task>, `
   + 'blocks: <what>\' (SendMessage to main from a background run, else in your report) and go on with what does not depend on it';
 // Each main agent and helper of the plan (lex-dev-tess plan, "Helpers it may start") with the helpers it starts
 const OWN_HELPERS = {
-  lex: ['lex-scout', 'lex-web'], dev: ['dev-ui', 'dev-pixel', 'dev-debug', 'dev-run'], tess: ['tess-review', 'tess-write'],
+  lex: ['lex-scout', 'lex-web'], dev: ['dev-part', 'dev-docs', 'dev-ui', 'dev-pixel', 'dev-debug', 'dev-run'],
+  tess: ['tess-review', 'tess-write', 'tess-simple', 'tess-edge'], max: ['lex-scout', 'lex-web', 'dev-run', 'dev-part', 'dev-docs', 'dev-debug'],
   'dev-pixel': ['pixel-qa', 'dev-run'], 'dev-ui': ['dev-run'], 'dev-debug': ['lex-scout'],
 };
 
-test('a subagent starting lex, dev or tess is denied every time with the needs: route; nothing is recorded', () => {
+test('a subagent starting lex, dev, tess or max is denied every time with the needs: route; nothing is recorded', () => {
   const s = newSession();
   for (const from of Object.keys(OWN_HELPERS)) {
-    for (const type of ['lex', 'dev', 'tess']) {
+    for (const type of ['lex', 'dev', 'tess', 'max']) {
       for (let send = 0; send < 2; send += 1) {
         const out = guard(s, mainCall(`${from}-${send}`, type), { agent_id: `agent-${from}-1`, agent_type: from });
         assert.equal(out?.permissionDecisionReason, subagentRoute(type), `${from} -> ${type}, send ${send}`);
@@ -375,12 +379,7 @@ test('the budget hook fails open on bad input', () => {
   }
 });
 
-// max, the ship agent (ADR 0003), is the fourth main agent: the boss starts it, it has its own cap of 3, and the route texts name it
-// (lib/agent-route.mjs). dev-docs (dev's docs writer), dev-part, tess-simple and tess-edge are helpers of dev and tess.
-const SHIP_ROUTE_LEAD = 'agent route: the boss starts lex, dev, tess or max;';
-const shipHelperRoute = (type, owner) => `${SHIP_ROUTE_LEAD} ${type} is ${owner}'s helper: start ${owner} with the brief, and it starts ${type}`;
-const shipSubagentRoute = (type) => `agent route: only the boss starts lex, dev, tess and max; ask it with the line 'needs: ${type} to <task>, `
-  + 'blocks: <what>\' (SendMessage to main from a background run, else in your report) and go on with what does not depend on it';
+// max, the ship agent (ADR 0003), is the fourth main agent: the boss starts it and it has its own cap of 3 (lib/agent-route.mjs)
 const MAIN_TYPES_WITH_MAX = ['dev', 'tess', 'lex', 'max'];
 
 test('the guard runs 3 max as well (12 in all) and denies the 4th max every time, naming the type and its ids', () => {
@@ -405,15 +404,8 @@ test('the boss starts max; a subagent starting max is denied every time with the
   for (const from of [...Object.keys(OWN_HELPERS), 'max']) {
     for (let send = 0; send < 2; send += 1) {
       const out = guard(s, mainCall(`${from}-${send}`, 'max'), { agent_id: `agent-${from}-1`, agent_type: from });
-      assert.equal(out?.permissionDecisionReason, shipSubagentRoute('max'), `${from} -> max, send ${send}`);
+      assert.equal(out?.permissionDecisionReason, subagentRoute('max'), `${from} -> max, send ${send}`);
     }
   }
   assert.equal(existsSync(storeOf(s)), false, 'a route deny takes no main-agent slot');
-});
-
-test('dev-part, dev-docs, tess-simple and tess-edge from the boss are denied with their own main agent named', () => {
-  const owners = { 'dev-part': 'dev', 'dev-docs': 'dev', 'tess-simple': 'tess', 'tess-edge': 'tess' };
-  const s = newSession();
-  for (const [type, owner] of Object.entries(owners)) assert.equal(guard(s, mainCall(type, type)).permissionDecisionReason, shipHelperRoute(type, owner), type);
-  assert.equal(existsSync(storeOf(s)), false, 'no route deny takes a slot');
 });
