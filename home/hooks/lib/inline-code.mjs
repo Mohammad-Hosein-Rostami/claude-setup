@@ -5,7 +5,8 @@
 // Why (audit H1): `node -e "require('child_process').execSync('g'+'it push')"` runs `git push`, but no rule sees the word, because the
 // code glues it together from pieces. The guard cannot run the code to find out, so code that runs a command (child_process, exec,
 // spawn, system, subprocess, popen, Runtime) AND builds text from pieces (a `+` or `.` next to a string, adjacent strings, join,
-// a template or f-string slot, chr / fromCharCode / base64 decoding) asks. Code that runs a plain literal command is left to the
+// a template or f-string slot, chr / fromCharCode / base64 decoding) or names a dangerous program alone in a string (its words
+// passed as a list: `execFileSync('git', ['push'])`) asks. Code that runs a plain literal command is left to the
 // other rules, which read it as words (lib/raw-risk.mjs); a piece of an outward word only hides it once glued to the rest.
 // PowerShell's -EncodedCommand (any prefix PowerShell accepts: -e, -ec, -enc ...) runs base64 text the guard cannot read: it asks too.
 // Pure, no I/O; every pattern is linear in the code length. A false positive costs one dialog, so both conditions must hold.
@@ -36,12 +37,16 @@ const RUNS_COMMAND = /child_process|\bexec\w*|\bspawn\w*|\bsystem\s*\(|subproces
 const GLUED_STRING = /['"`][ \t]*(?:\+|\.(?![\w$])|['"`])|(?:\+|\.)[ \t]*['"`]/;
 // other ways to build text: join, a template or f-string slot, character codes, base64 decoding, reversing
 const BUILT_TEXT = /\bjoin\s*\(|\$\{|\bf['"][^'"]*\{|fromCharCode|\bchr\s*\(|\batob\s*\(|b64decode|base64|Buffer\.from|\bdecode\s*\(|\[::-1\]|\breverse\s*\(/;
+// a dangerous program named alone in a string, its words passed apart (`execFileSync('git', ['push'])`, `subprocess.run(['rm', '-rf', p])`):
+// the word rules never see `git push` as two words of one command
+const LISTED_PROGRAM = /['"`](?:git|gh|glab|hub|tea|rm|npm|pnpm|yarn|bun|npx|dd|ssh|scp|rsync|psql|mysql|bash|sh|zsh)['"`]/;
+
 /**
  * @param {string} code interpreter code (from the command line or a heredoc)
  * @returns {boolean} true when the code runs a command and builds text from pieces (a piece of an outward word such as `'it pu'`
  *   is only dangerous glued to the rest; a whole literal `git push` is read by lib/raw-risk.mjs, which also bounces it for a rewrite)
  */
-export const buildsCommand = (code) => RUNS_COMMAND.test(code) && (GLUED_STRING.test(code) || BUILT_TEXT.test(code));
+export const buildsCommand = (code) => RUNS_COMMAND.test(code) && (GLUED_STRING.test(code) || BUILT_TEXT.test(code) || LISTED_PROGRAM.test(code));
 
 export const INLINE_COMMAND_REASON = 'interpreter code runs a command it builds from pieces, so the guard cannot see what runs; '
   + 'write the command out in its own Bash call';

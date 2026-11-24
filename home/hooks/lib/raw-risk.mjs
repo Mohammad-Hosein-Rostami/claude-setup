@@ -6,7 +6,7 @@
 // -> string[] and UNREADABLE_NAME_REASON (a command word outside ASCII next to a dangerous word: a look-alike name hides what runs).
 // Hidden-execution constructs: `$(`, backtick, `<<` / `<<<` (except a plain top-level heredoc with a quoted delimiter read by cat or tee, whose
 // body is data), `<(` / `>(`, `eval`, `trap`, `source` / `.`, `coproc`, `case`, a carriage return, a pipe into a shell, and the commands that
-// run a text argument: watch, parallel, `PROMPT_COMMAND=`, `script|expect -c`, `perl|python|node|ruby|deno|bun -e|-c|-p`, `osascript -e`,
+// run a text argument: watch, parallel, `PROMPT_COMMAND=`, `script|expect -c`, `perl|python|node|ruby|deno|bun -e|-c|-p`, `php -r`, `deno eval`, `osascript -e`,
 // `tmux new|send-keys`, `fish|pwsh -c`, `npx -c`, `npm exec -c`. Git constructs, whose commands lib/git-runs.mjs cannot read: config read
 // from a file (`GIT_CONFIG_GLOBAL|SYSTEM=` other than /dev/null, `include.path`, `includeIf.<condition>.path`), and in a line that runs
 // git, a variable or config key whose value git runs (git-runs COMMAND_ENV, configKind) next to a `$`, backtick, `+=`, `declare`, `read`
@@ -215,8 +215,8 @@ function ghMutation(after) {
 }
 
 const WRAPPERS = new Set(['sudo', 'nohup', 'time', 'env', 'exec', 'command']);
-const SCRIPT_INTERPRETERS = /^(?:perl|python3?|node|ruby|deno|bun|osascript|fish|pwsh|powershell|expect|script|npx)$/;
-const SCRIPT_FLAG = /^-[a-zA-Z]*[ecp]$|^--(?:eval|print|command)$/i;
+const SCRIPT_INTERPRETERS = /^(?:perl|python[\d.]*|php|node|ruby|deno|bun|osascript|fish|pwsh|powershell|expect|script|npx)$/;
+const SCRIPT_FLAG = /^-[a-zA-Z]*[ecpr]$|^--(?:eval|print|command)$/i;
 const TMUX_RUNNERS = new Set(['new', 'new-session', 'new-window', 'split-window', 'send-keys', 'send', 'run-shell', 'run', 'respawn-pane']);
 const FLAG_WINDOW = 6;
 
@@ -226,7 +226,7 @@ function runsText(words) {
     const next = words.slice(i + 1, i + 1 + FLAG_WINDOW);
     if (word.startsWith('PROMPT_COMMAND=')) return true;
     if ((word === 'watch' || word === 'parallel') && (i === 0 || WRAPPERS.has(words[i - 1]))) return true;
-    if (SCRIPT_INTERPRETERS.test(word)) return next.some((w) => SCRIPT_FLAG.test(w));
+    if (SCRIPT_INTERPRETERS.test(word)) return next.some((w) => SCRIPT_FLAG.test(w)) || (word === 'deno' && next[0] === 'eval'); // php -r, deno eval
     if (word === 'exec' && ['npm', 'pnpm', 'yarn'].includes(words[i - 1])) return next.some((w) => w === '-c' || w === '--call');
     return word === 'tmux' && next.some((w) => TMUX_RUNNERS.has(w));
   });

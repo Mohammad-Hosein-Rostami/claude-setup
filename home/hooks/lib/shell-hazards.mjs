@@ -53,8 +53,10 @@ function hiddenCommandWord(raw, parsed) {
 
 /** A positional word that is not the target of a redirect (`bash < file` has no script; `bash run.sh <<EOF` does, and the heredoc is its input). */
 function hasScriptFile(args) {
-  return args.some((a, i) => !a.startsWith('-') && !STDIN_REDIRECT.test(a) && !(i > 0 && /^\d*<<?<?$/.test(args[i - 1])));
+  return args.some((a, i) => !a.startsWith('-') && !STDIN_REDIRECT.test(a) && !STDIN_PATH.test(a) && !(i > 0 && /^\d*<<?<?$/.test(args[i - 1])));
 }
+// a "script file" that is stdin itself: `curl x | bash /dev/stdin`, `cat x | python3 /dev/fd/0`
+const STDIN_PATH = /^\/(?:dev\/stdin|dev\/fd\/0|proc\/self\/fd\/0)$/;
 
 // interpreter options whose value is the next word, so it is not taken for a script file (`node -r dotenv/config`, `python3 -W ignore`)
 const INTERPRETER_VALUE_OPTIONS = new Set(['-W', '-X', '-r', '--require', '--import', '--loader', '--experimental-loader', '-C', '--conditions', '-I', '-M']);
@@ -68,7 +70,7 @@ function hasInterpreterScript(args) {
     const word = args[i];
     if (word === PYTHON_MODULE) return true;
     if (INTERPRETER_VALUE_OPTIONS.has(word) || /^\d*<<?<?$/.test(word)) i++;
-    else if (word !== '-' && !word.startsWith('-') && !STDIN_REDIRECT.test(word)) return true;
+    else if (word !== '-' && !word.startsWith('-') && !STDIN_REDIRECT.test(word) && !STDIN_PATH.test(word)) return true;
   }
   return false;
 }
