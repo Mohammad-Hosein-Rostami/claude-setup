@@ -44,7 +44,8 @@ check_prod_hosts() {
 
 # The accepted list (doctor.sh accepted_file, ACCEPTED_IDS). Absent is normal: every WARN stays a WARN, as on a teammate's machine.
 # A link or a file that is not plain accepts nothing; that, and an id doctor cannot accept (a typo, or the production host list,
-# which stays a WARN), is one WARN for the file. An empty file is an ok line with 0 ids.
+# which stays a WARN), is one WARN for the file. A retired id (RETIRED_ACCEPTED_IDS) is skipped silently. An empty file is an ok
+# line with 0 ids.
 check_doctor_accepted() {
   local file id count=0 unknown=""
   file="$(accepted_file)"
@@ -53,7 +54,10 @@ check_doctor_accepted() {
   fi
   if [ ! -f "$file" ]; then ok "no doctor accepted list ($file): every machine WARN is shown as a WARN"; return 0; fi
   while IFS= read -r id; do
-    case " $ACCEPTED_IDS " in *" $id "*) count=$((count + 1)) ;; *) unknown="$unknown $(tr -cd '[:alnum:]._-' <<<"$id" | head -c 40)" ;; esac
+    case " $ACCEPTED_IDS " in
+      *" $id "*) count=$((count + 1)) ;;
+      *) case " $RETIRED_ACCEPTED_IDS " in *" $id "*) ;; *) unknown="$unknown $(tr -cd '[:alnum:]._-' <<<"$id" | head -c 40)" ;; esac ;;
+    esac
   done < <(accepted_ids)
   if [ -n "$unknown" ]; then warn "doctor accepted list ($file) holds ids doctor cannot accept:$unknown (known: $ACCEPTED_IDS; the production host list WARN is never accepted)"
   else ok "doctor accepted list: $count ids ($file)"; fi

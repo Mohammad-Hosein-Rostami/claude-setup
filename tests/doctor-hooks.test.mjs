@@ -1,4 +1,5 @@
-// Tests for the doctor checks check_plugin_session_start, check_hook_files, check_workflows_gone and check_prod_hosts (scripts/doctor.sh, DOCTOR_ONLY mode).
+// Tests for the doctor checks check_plugin_session_start, check_hook_files, check_workflows_gone, check_prod_hosts and
+// check_doctor_accepted (scripts/doctor.sh, DOCTOR_ONLY mode).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -106,4 +107,21 @@ test('check_prod_hosts fails when the prod-hosts file is a link, and passes for 
   });
   assert.equal(plain.status, 0);
   assert.match(plain.stdout, /^ok\s+prod-hosts list: 1 entries/m);
+});
+
+// Lead decision 2026-11-24: ollama-off named recall's Ollama check, which was removed; an older machine's accepted list that still
+// holds it gets no WARN (the id is skipped, not counted), while an id doctor never knew still gets one.
+test('check_doctor_accepted skips the retired ollama-off id silently and still warns about an unknown id', async () => {
+  const home = makeTempDir('doctor-home-');
+  const list = join(home, 'accepted');
+  const run = () => spawnSync('bash', [DOCTOR], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home, USERPROFILE: home, DOCTOR_ONLY: 'check_doctor_accepted', CLAUDE_DOCTOR_ACCEPTED_FILE: list },
+  });
+  await writeFile(list, 'ollama-off\napple-terminal-notes\n');
+  const retired = run();
+  assert.doesNotMatch(retired.stdout, /^WARN/m);
+  assert.match(retired.stdout, /^ok\s+doctor accepted list: 1 ids/m);
+  await writeFile(list, 'ollama-off\nolama-of\n');
+  assert.match(run().stdout, /^WARN\s+doctor accepted list .* holds ids doctor cannot accept: olama-of \(/m);
 });

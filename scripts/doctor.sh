@@ -31,6 +31,9 @@ warn() { echo "WARN  $1"; }
 # ACCEPTED_IDS can be accepted: the production host list WARN never can (owner, FR8). A list that is a link or not a plain file
 # accepts nothing; check_doctor_accepted reports it, and an unknown id, as one WARN.
 ACCEPTED_IDS="apple-terminal-notes"
+# Ids of checks that were removed: an older machine's list may still hold them, so check_doctor_accepted skips them without a WARN
+# (never counted, never accepting anything). ollama-off: recall's Ollama check, removed with recall (lex-dev-tess plan, 2026-11-24).
+RETIRED_ACCEPTED_IDS="ollama-off"
 accepted_file() { echo "${CLAUDE_DOCTOR_ACCEPTED_FILE:-$CLAUDE_DIR/private/doctor-accepted}"; }
 # The ids listed in the accepted file, one per line (Windows line ends dropped); nothing when it is missing, a link or not plain.
 accepted_ids() {
