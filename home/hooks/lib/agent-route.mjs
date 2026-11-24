@@ -17,8 +17,8 @@ const BOSS_BUILT_INS = ['claude-code-guide', 'statusline-setup'];
 // Which main agent starts each helper of home/agents, so a deny names the route
 const HELPER_OWNERS = {
   'lex-scout': 'lex', 'lex-web': 'lex',
-  'dev-ui': 'dev', 'dev-pixel': 'dev', 'pixel-qa': 'dev', 'dev-debug': 'dev', 'dev-run': 'dev',
-  'tess-review': 'tess', 'tess-write': 'tess',
+  'dev-part': 'dev', 'dev-ui': 'dev', 'dev-pixel': 'dev', 'pixel-qa': 'dev', 'dev-debug': 'dev', 'dev-run': 'dev',
+  'tess-review': 'tess', 'tess-write': 'tess', 'tess-simple': 'tess', 'tess-edge': 'tess',
 };
 
 /**

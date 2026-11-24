@@ -5,8 +5,9 @@
 // model are not routed, and nothing is routed while CLAUDE_CODE_SUBAGENT_MODEL_FORCE is on under every env the session may run with (Claude Code then ignores `model`). Input that is not a JSON object, and any crash of the guard, deny the call (the no-Fable gate fails closed).
 // Pin floor (lib/agent-pins.mjs): the agent file Claude Code loads sets a floor for its own model and effort, so a lower per-call
 // value is left out (haiku < sonnet < opus; low < ... < max); this is how each agent keeps the pin of the plan (lex, dev, dev-ui,
-// dev-pixel, dev-debug, tess-review, tess-write on Opus; lex-web, pixel-qa, tess on Sonnet; lex-scout, dev-run on Haiku: the frontmatter of
-// home/agents/<name>.md). A failure there leaves the input as it is (stderr line). A rewrite is allow + the full updatedInput.
+// dev-pixel, dev-debug, tess-review, tess-write on Opus; lex-web, pixel-qa, tess, dev-part, tess-simple, tess-edge on Sonnet; lex-scout,
+// dev-run on Haiku: the frontmatter of home/agents/<name>.md). A failure there leaves the input as it is (stderr line). A rewrite is
+// allow + the full updatedInput.
 // Gates, in order (the first deny wins; each deny-once gate lets the identical call through when it is sent again):
 //   R. Main-agent route (lib/agent-route.mjs mainRouteReason): the main session starts only lex, dev and tess (and Claude Code's
 //      claude-code-guide and statusline-setup); any other type from the main session is denied every time with the route to take.
@@ -33,7 +34,7 @@
 //   4. Writer isolation (lib/writer-agents.mjs, lib/agent-launches.mjs): a writer launched while another plain writer of this session
 //      runs must be isolated (`isolation: "worktree"`, or a `worktree: <abs path>` brief field naming a linked worktree no open writer
 //      holds) or read-only (a line starting `read-only:` or `scratchpad-only:`), else it is denied once with advice; a brief naming
-//      more than one worktree is denied once too. Who writes: lib/agent-roles.mjs isWriterRole (dev, dev-ui, dev-pixel, dev-debug, tess-write;
+//      more than one worktree is denied once too. Who writes: lib/agent-roles.mjs isWriterRole (dev, dev-part, dev-ui, dev-pixel, dev-debug, tess-write;
 //      never lex or the read-only agents; other types by their agent file). A record that cannot be read denies (fail closed).
 // SendMessage (its own PreToolUse entry) runs none of the gates above: its only gate is the main-agent cap for a message that would resume a stopped lex,
 // dev or tess (agent-budget.mjs resumeCapReason), denied every time while 3 of its type run. It fails open: a record it cannot read,
@@ -84,7 +85,7 @@ const denyOutput = (reason) => `${JSON.stringify({ hookSpecificOutput: { hookEve
 const WORKTREE_ISOLATION = 'worktree';
 const PARALLEL_WRITER_ADVICE = 'Another writing agent of this session is still running in the shared folder: give this one `isolation: "worktree"`, '
   + 'or make its worktree first (`git worktree add -b <branch> <path> <base>`) and add the brief line `worktree: <absolute path>`, or wait for the '
-  + 'running writer. Roles: `dev`, `dev-ui`, `dev-pixel`, `dev-debug` and `tess-write` write; a reading job goes to `lex-scout`, `dev-run`, `tess` or `tess-review` '
+  + 'running writer. Roles: `dev`, `dev-part`, `dev-ui`, `dev-pixel`, `dev-debug` and `tess-write` write; a reading job goes to `lex-scout`, `dev-run`, `tess` or `tess-review` '
   + '(or starts `read-only:`).';
 const MANY_WORKTREES_ADVICE = 'A writer works in one lane worktree, and this brief names more than one, so none was taken: name one worktree, '
   + 'this writer\'s own, in its `worktree:` field.';

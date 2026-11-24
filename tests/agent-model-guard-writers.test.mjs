@@ -317,7 +317,7 @@ test('a made-up path, the lead\'s folder, a relative path, a Windows drive path 
     const second = s.launch({ description: 'build', prompt: laneBrief(path), subagent_type: 'general-purpose' });
     assert.ok(denied(second), name);
     assert.match(second.permissionDecisionReason, /`worktree: <absolute path>`/, name);
-    assert.match(second.permissionDecisionReason, /`dev`, `dev-ui`, `dev-pixel`, `dev-debug` and `tess-write` write; a reading job goes to `lex-scout`, `dev-run`, `tess` or `tess-review`/, `${name}: the advice names the roles`);
+    assert.match(second.permissionDecisionReason, /`dev`, `dev-part`, `dev-ui`, `dev-pixel`, `dev-debug` and `tess-write` write; a reading job goes to `lex-scout`, `dev-run`, `tess` or `tess-review`/, `${name}: the advice names the roles`);
     assert.doesNotMatch(second.permissionDecisionReason, /general-purpose/, `${name}: the advice never sends the job to general-purpose`);
     assert.ok(!denied(s.launch({ description: 'build', prompt: laneBrief(path), subagent_type: 'general-purpose' })), `${name}: the identical resend runs`);
   }
