@@ -3,17 +3,19 @@
 // that writes the full output to a temp log, prints the log's path first (so a run the Bash tool kills on its timeout still names
 // it), then only the last TRIM_LINES lines once the runner ends, and exits with the runner's own exit code. The log stays in the
 // temp folder for the OS to clean, so it can be read after the call. Exports: trimAnswer(input, env) -> hook stdout ('' or the updatedInput JSON), trimmedCommand(command), isTrimmedRunner(command),
-// TRIM_LINES, NO_TRIM_ENV.
+// TRIM_LINES, TRIM_ENV.
 // Only plain runner calls are rewritten: `node --test`, `npm|pnpm|yarn test`, `npm|pnpm|yarn run build`, vitest, jest, pytest, `go test`,
 // `cargo test`, after optional `NAME=value` words. Anything with a pipe, redirect, `;`, `&`, a substitution or a line break keeps its own
 // output handling, as does a call sent with run_in_background (its output goes to a file already) or by any tool but Bash
-// (PowerShell has other syntax; Monitor streams lines). CLAUDE_GUARD_NO_TRIM=1 turns it off.
-// No permission decision is given with the rewrite, so the normal permission flow still applies (Claude Code 2.1.330 applies
-// updatedInput without one; docs: hooks "PreToolUse decision control"; permission rules are matched against the rewritten command).
+// (PowerShell has other syntax; Monitor streams lines).
+// Opt-in: CLAUDE_GUARD_TRIM=1 (in the env of a person's settings/local.json) turns it on; it is off by default. Why: no permission
+// decision is given with the rewrite, so the normal permission flow applies to the REWRITTEN command (Claude Code 2.1.330 applies
+// updatedInput without one; docs: hooks "PreToolUse decision control"), and a project allow rule such as `Bash(pnpm test:*)` no
+// longer matches it: everyone on by default would get prompts they do not get today.
 // Invariants: pure apart from reading env; every other field of the tool input is kept (updatedInput replaces the whole input).
 
 export const TRIM_LINES = 150; // enough for a failure summary and its stack, far less than a full run
-export const NO_TRIM_ENV = 'CLAUDE_GUARD_NO_TRIM';
+export const TRIM_ENV = 'CLAUDE_GUARD_TRIM'; // '1' turns the rewrite on (see the header)
 const BASH_TOOL = 'Bash';
 const ASSIGNMENT = /^[A-Za-z_]\w*=\S*$/; // `CI=1 pnpm test`
 const SHELL_SYNTAX = /[|&;<>`\n\r]|\$\(/; // pipes, lists, redirects, substitutions: the command handles its own output
@@ -51,12 +53,12 @@ export function trimmedCommand(command) {
 /**
  * The hook's answer for a Bash call the guard lets run: the rewrite for a plain test or build runner, else nothing.
  * @param {{tool_name?: string, tool_input: {command: string, run_in_background?: boolean}}} input the hook input
- * @param {Record<string, string | undefined>} env process environment (NO_TRIM_ENV)
+ * @param {Record<string, string | undefined>} env process environment (TRIM_ENV)
  * @returns {string} hook stdout: '' (run as sent) or one PreToolUse JSON line with updatedInput
  */
 export function trimAnswer(input, env = process.env) {
   const { tool_input: toolInput } = input;
-  const trims = env[NO_TRIM_ENV] !== '1' && input.tool_name === BASH_TOOL && toolInput.run_in_background !== true && isTrimmedRunner(toolInput.command);
+  const trims = env[TRIM_ENV] === '1' && input.tool_name === BASH_TOOL && toolInput.run_in_background !== true && isTrimmedRunner(toolInput.command);
   if (!trims) return '';
   const updatedInput = { ...toolInput, command: trimmedCommand(toolInput.command) };
   return `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput } })}\n`;

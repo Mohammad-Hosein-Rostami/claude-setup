@@ -8,7 +8,7 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { isTrimmedRunner, NO_TRIM_ENV, TRIM_LINES, trimmedCommand } from '../home/hooks/lib/output-trim.mjs';
+import { isTrimmedRunner, TRIM_ENV, TRIM_LINES, trimmedCommand } from '../home/hooks/lib/output-trim.mjs';
 import { hookEnv } from './hook-env.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -18,8 +18,10 @@ const FAKE_LINES = 400;
 const FAKE_EXIT = 3;
 const LOG_LINE = /^\[guard: full log: (.+); its last 150 lines follow when the run ends\]$/;
 
-/** The guard hook's stdout for one Bash call. */
-function hookAnswer(toolInput, extraEnv = {}, toolName = 'Bash') {
+const TRIM_ON = { [TRIM_ENV]: '1' };
+
+/** The guard hook's stdout for one Bash call, with the trim switched on unless extraEnv says otherwise. */
+function hookAnswer(toolInput, extraEnv = TRIM_ON, toolName = 'Bash') {
   const input = JSON.stringify({ cwd: PROJECT, session_id: 'sess-1', tool_name: toolName, tool_input: toolInput });
   const { status, stdout, stderr } = spawnSync(process.execPath, [GUARD], { input, encoding: 'utf8', env: hookEnv({ CLAUDE_PROJECT_DIR: PROJECT, ...extraEnv }) });
   assert.equal(status, 0, stderr);
@@ -35,16 +37,16 @@ test('runner calls are rewritten; anything with shell syntax, other commands and
   for (const command of others) assert.equal(isTrimmedRunner(command), false, command);
 });
 
-test('through the hook: the rewrite keeps every other field; background, Monitor, PowerShell and CLAUDE_GUARD_NO_TRIM=1 get none', () => {
+test('through the hook: the rewrite keeps every other field; background, Monitor, PowerShell and the switch off get none', () => {
   const toolInput = { command: 'pytest -q', description: 'run the tests', timeout: 60000 };
   const { hookSpecificOutput } = JSON.parse(hookAnswer(toolInput));
   assert.equal(hookSpecificOutput.hookEventName, 'PreToolUse');
   assert.equal(hookSpecificOutput.permissionDecision, undefined, 'no decision: the normal permission flow still applies');
   assert.deepEqual(hookSpecificOutput.updatedInput, { ...toolInput, command: trimmedCommand('pytest -q') });
   assert.equal(hookAnswer({ ...toolInput, run_in_background: true }), '');
-  assert.equal(hookAnswer(toolInput, {}, 'Monitor'), '');
-  assert.equal(hookAnswer(toolInput, {}, 'PowerShell'), '');
-  assert.equal(hookAnswer(toolInput, { [NO_TRIM_ENV]: '1' }), '');
+  assert.equal(hookAnswer(toolInput, TRIM_ON, 'Monitor'), '');
+  assert.equal(hookAnswer(toolInput, TRIM_ON, 'PowerShell'), '');
+  assert.equal(hookAnswer(toolInput, { [TRIM_ENV]: '0' }), '', 'off unless switched on');
   assert.equal(hookAnswer({ command: 'git status --short' }), '', 'not a runner: no output, as before');
 });
 
