@@ -1,5 +1,5 @@
 // Tests for the main-agent cap of home/hooks/agent-budget.mjs, enforced through agent-model-guard.mjs (PreToolUse Agent|Task): at
-// most MAX_MAIN_AGENTS (6) agents launched from the main session run at once, helpers (a call with agent_id) never count, a launch
+// most MAX_MAIN_AGENTS (3) agents launched from the main session run at once, helpers (a call with agent_id) never count, a launch
 // another gate denies holds no slot, pending launches expire, a started one runs until its SubagentStop (or STALE_MS idle), a
 // resumed main agent counts again, and an unusable record denies (fail closed). The route gate: the boss (no agent_id) starts only
 // lex, dev, tess, claude-code-guide and statusline-setup; any other type is denied with the route; a subagent starting lex, dev or
@@ -43,7 +43,7 @@ const seedStore = (s, record) => {
 const claim = (s, type = 'lex', extra = {}) => claimMainSlot({ session_id: s.session, tool_input: { subagent_type: type }, ...extra }, s.env);
 /** How many launches hold a slot now: a claim lists every running launch, its own included, and is given back at once. */
 function running(s) {
-  const probe = claim(s, 'probe');
+  const probe = claim(s, 'lex');
   assert.equal(releaseMainSlot(s.session, probe.key, s.env), true);
   return probe.running.length - 1;
 }
@@ -86,15 +86,15 @@ const touchCounter = (session, agent, ms) => {
   utimesSync(path, ms / SECOND_MS, ms / SECOND_MS);
 };
 
-test('the cap is 6 main agents', () => {
-  assert.equal(MAX_MAIN_AGENTS, 6);
+test('the cap is 3 main agents (owner, 2026-11-24)', () => {
+  assert.equal(MAX_MAIN_AGENTS, 3);
 });
 
-test('the guard runs 6 main agents and denies the 7th every time, naming the running types; a stop frees a slot', () => {
+test('the guard runs 3 main agents and denies the 4th every time, naming the running types; a stop frees a slot', () => {
   const s = newSession();
-  const types = ['lex', 'dev', 'tess', 'lex', 'dev', 'tess'];
+  const types = ['lex', 'dev', 'tess'];
   types.forEach((type, n) => assert.ok(!denied(guard(s, mainCall(n, type))), `launch ${n + 1}`));
-  const expected = `agent cap: 6 main agents of this session run (${types.join(', ')}); wait for one to return `
+  const expected = `agent cap: 3 main agents of this session run (${types.join(', ')}); wait for one to return `
     + `(store: ${storeOf(s)})`;
   assert.equal(guard(s, mainCall(7)).permissionDecisionReason, expected);
   assert.ok(denied(guard(s, mainCall(7))), 'the identical call sent again is denied too');
@@ -104,13 +104,21 @@ test('the guard runs 6 main agents and denies the 7th every time, naming the run
   assert.ok(!denied(guard(s, mainCall(9))), 'one agent returned: the next launch runs');
 });
 
-test('helpers are never capped: a call from inside a subagent (agent_id) runs while 6 main agents run, and takes no slot', () => {
+test('helpers are never capped: a call from inside a subagent (agent_id) runs while 3 main agents run, and takes no slot', () => {
   const s = newSession();
   for (let n = 0; n < MAX_MAIN_AGENTS; n += 1) assert.ok(!denied(guard(s, mainCall(n))));
   for (const type of ['lex-scout', 'dev-run', 'tess-review', 'lex-web']) {
     assert.ok(!denied(guard(s, mainCall(type, type), { agent_id: 'agent-dev-1', agent_type: 'dev' })), type);
   }
   assert.equal(readStore(s).launches.length, MAX_MAIN_AGENTS);
+});
+
+test('the boss\'s Claude Code built-ins (claude-code-guide, statusline-setup) run while 3 main agents run, and take no slot', () => {
+  const s = newSession();
+  for (let n = 0; n < MAX_MAIN_AGENTS; n += 1) assert.ok(!denied(guard(s, mainCall(n))));
+  for (const type of ['claude-code-guide', 'statusline-setup']) assert.ok(!denied(guard(s, mainCall(type, type))), type);
+  assert.equal(readStore(s).launches.length, MAX_MAIN_AGENTS);
+  assert.equal(claim(s, 'claude-code-guide').state, 'helper');
 });
 
 test('a call another gate denies holds no slot: the route gate before the cap, the writer gate after it gives the slot back', () => {
@@ -205,12 +213,12 @@ test('a hook input with no usable session id is not capped (no store can be name
   assert.equal(claimMainSlot({ tool_input: { subagent_type: 'lex' } }, s.env).state, 'unrecorded');
 });
 
-test('seven launches in one message (parallel hook processes) run exactly 6 and deny 1, every round', async () => {
+test('four launches in one message (parallel hook processes) run exactly 3 and deny 1, every round', async () => {
   for (let round = 0; round < 3; round += 1) {
     const s = newSession();
     const outs = await Promise.all(Array.from({ length: MAX_MAIN_AGENTS + 1 }, (_, n) => guardAsync(s, mainCall(n))));
     assert.equal(outs.filter((out) => !denied(out)).length, MAX_MAIN_AGENTS, JSON.stringify(outs));
-    assert.equal(readStore(s).launches.length, MAX_MAIN_AGENTS, 'the store holds exactly the 6 recorded, whole');
+    assert.equal(readStore(s).launches.length, MAX_MAIN_AGENTS, 'the store holds exactly the 3 recorded, whole');
   }
 });
 

@@ -1,5 +1,5 @@
-// The main-agent cap: at most MAX_MAIN_AGENTS (6) agents started from the main session (lex, dev, tess and any other the boss
-// starts) run at once; helpers, started by another agent, are never capped. Nothing else: no call counts shown, no nudges, no
+// The main-agent cap: at most MAX_MAIN_AGENTS (3) main agents (lex, dev or tess started by the main session) run at once; helpers,
+// started by another agent, and the boss's Claude Code built-ins (claude-code-guide, statusline-setup) are never capped. Nothing else: no call counts shown, no nudges, no
 // report caps.
 // Events: agent-model-guard.mjs (PreToolUse Agent|Task) calls claimMainSlot before a launch and releaseMainSlot when a later gate
 // denies it; this hook records the rest. A call with `agent_id` in its input comes from inside a subagent, so it is a helper's.
@@ -37,7 +37,7 @@ import { withSessionLock } from './lib/session-lock.mjs';
 import { isSessionId, readSessionFile, writeSessionFile } from './lib/session-store.mjs';
 import { agentTypeOf, callCounterPath } from './lib/writer-agents.mjs';
 
-export const MAX_MAIN_AGENTS = 6; // the owner's limit of main agents at once (lex-dev-tess plan, "Rules")
+export const MAX_MAIN_AGENTS = 3; // the owner's limit of main agents at once (owner, 2026-11-24; it was 6)
 export const PENDING_MS = 2 * 60 * 1000; // a launch the permission dialog, Esc or another hook stops gets no SubagentStart
 export const STALE_MS = 3 * 60 * 60 * 1000; // 3 h with no tool call: longer than a main agent waits on its helpers
 const CLOCK_SKEW_MS = 60 * 1000;
@@ -135,15 +135,15 @@ function withRecord(session, env, change) {
  * @param {unknown} input the PreToolUse hook input: session_id, agent_id (set inside a subagent), tool_input.subagent_type
  * @param {Record<string, string | undefined>} env HOME / USERPROFILE (the store)
  * @returns {{state: 'helper' | 'unrecorded' | 'recorded' | 'full' | 'unusable', key?: string, running: Array<{type: string}>, storePath?: string}}
- *   helper: a call from inside a subagent (never capped); unrecorded: no usable session id (no store can be named); recorded: the
+ *   helper: a call from inside a subagent, or of a type that is no main agent (never capped); unrecorded: no usable session id (no store can be named); recorded: the
  *   slot is taken under `key`; full: MAX_MAIN_AGENTS run; unusable: the store cannot be read or written, or its lock stays taken
  */
 export function claimMainSlot(input, env = process.env) {
   try {
-    if (input?.agent_id) return { state: 'helper', running: [] };
+    const type = agentTypeOf(input?.tool_input?.subagent_type);
+    if (input?.agent_id || !MAIN_AGENT_TYPES.includes(type)) return { state: 'helper', running: [] };
     const session = input?.session_id;
     if (!isSessionId(session)) return { state: 'unrecorded', running: [] };
-    const type = agentTypeOf(input.tool_input?.subagent_type);
     const done = withRecord(session, env, (record, now) => {
       if (record.launches.length >= MAX_MAIN_AGENTS) return { state: 'full', running: record.launches };
       const key = randomBytes(KEY_BYTES).toString('hex');

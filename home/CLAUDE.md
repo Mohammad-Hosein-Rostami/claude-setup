@@ -13,7 +13,7 @@ the brief come first; these lines hold for everyone.
   waiting on the owner, or stopped with a reason.
 - The boss starts only `lex`, `dev` and `tess`, never a helper directly (the guard denies it); research goes through `lex`,
   which starts `lex-web` or `lex-scout`.
-- At most 6 main agents (lex, dev, tess started by the boss) run at once; the helpers they start are not counted.
+- At most 3 main agents (lex, dev, tess started by the boss) run at once; the helpers they start are not counted.
 - Only the boss starts `lex`, `dev` and `tess` (the guard denies it from any other agent); an agent asks for one with
   `needs: <agent> to <task>, blocks: <what>`, sent to `main` by SendMessage from a background run, else in its report.
 - A `needs:` line arrives: the boss starts that agent, keeps track of who is on what, and sends the result to the asking agent by

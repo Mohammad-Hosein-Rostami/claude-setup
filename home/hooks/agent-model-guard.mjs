@@ -16,7 +16,7 @@
 //   1. Copy-branch brief (lib/copy-branch-brief.mjs): a writer brief that creates `<lane>-2` instead of continuing `<lane>` (deny once).
 //   2. UI brief (lib/ui-brief-gate.mjs): a dev-pixel or pixel-qa brief that names no usable coverage matrix (`MATRIX: <path>`, or
 //      `MATRIX: none: <reason>`) gets the ui-coverage init advice (deny once).
-//   3. Main-agent cap (agent-budget.mjs claimMainSlot): at most MAX_MAIN_AGENTS agents launched from the main session run at once;
+//   3. Main-agent cap (agent-budget.mjs claimMainSlot): at most MAX_MAIN_AGENTS (3) lex, dev or tess launched from the main session run at once;
 //      denied every time while full, and when the record cannot be read (fail closed). A call from inside a subagent (a helper) is
 //      never capped. A launch a later gate denies gives its slot back (releaseMainSlot).
 //   4. Writer isolation (lib/writer-agents.mjs, lib/agent-launches.mjs): a writer launched while another plain writer of this session

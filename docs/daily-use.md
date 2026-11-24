@@ -12,7 +12,7 @@ Keep extra usage off in claude.ai so nothing can bill credits.
 ## A normal task
 - One task per session. For an unrelated next task, `/clear` or start a new session first.
 - The main session is the boss: it routes the work, asks you what only you can decide and lands branches; it does no work
-  itself. It starts three main agents, at most 6 at once:
+  itself. It starts three main agents, at most 3 at once:
   - `lex` clarifies, researches, compares, designs and plans, and writes the acceptance lines. It asks you its questions at
     the start of a job. Its helpers: `lex-scout` (code and doc lookups) and `lex-web` (web research with sources).
   - `dev` writes code, config and fixes in its own worktree. Its helpers: `dev-ui` (screens, components, forms), `dev-pixel`
