@@ -14,7 +14,7 @@ The command is `../account.mjs`; the shell functions are in `home/shell/`. No np
   job may spend), `check.mjs` (valid / revoked: one Haiku call through `claude-call.mjs`).
 - The Haiku child: `claude-call.mjs` (`callHaiku`: one `claude -p --model haiku` call on the account `accountForCall`
   picks, no billing variables in its environment), `usage.mjs` (its usage rows, `~/.claude/state/account` or
-  `ACCOUNT_STATE_DIR`), `private-fs.mjs`. They came from the removed recall tool (2026-11-24).
+  `ACCOUNT_STATE_DIR`), `private-fs.mjs`.
 - Shared by every `claude` child: `claude-child.mjs` (`childEnv` drops the billing variables, `TOKEN_SHAPED` finds
   token-shaped text, `claudeLaunch` starts `claude.cmd` through a shell with quoted arguments on Windows). Used by
   `claude-call.mjs` and the long-run tool (`home/tools/long-run/lib/claude-run.mjs`).

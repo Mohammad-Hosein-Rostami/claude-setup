@@ -80,7 +80,7 @@ or a command line, or committing it, is not.
   "401". Anything else is `check failed: <class>`: the token is stored anyway and the line says so. `claude auth status`
   is never the proof: it says "logged in" for any token without asking the server (probe ACC-3).
 - **Hook jobs** (`claude-call.mjs`). Claude Code removes `CLAUDE_CODE_OAUTH_TOKEN` from the environment of its hooks
-  (probe ACC-9a, CLI 2.1.329; issue #101890), which is why a hook job (the removed recall checkpoint was one) had no login. A `claude -p` child that
+  (probe ACC-9a, CLI 2.1.329; issue #101890), which is why a hook job had no login. A `claude -p` child that
   is given the variable does use it (probe (a2)). So a hook job reads the token from the store: the account named by
   `CLAUDE_ACCOUNT` (hooks do see that variable), else the default account, else none. With none it starts no `claude`
   at all, because a token-less child would spend whatever login is stored in the Keychain, and it writes one `auth` row. A
