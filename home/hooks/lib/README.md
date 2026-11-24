@@ -17,8 +17,8 @@ Reading a shell command (used by `pre-bash-guard.mjs`; pure functions, they neve
 
 Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
 - `command-checks.mjs`, `rm-paths.mjs`, `bare-glob.mjs`, `find-delete.mjs`, `eval-check.mjs`, `shell-hazards.mjs`, `dangerous-scan.mjs`,
-  `raw-risk.mjs`, `outward.mjs`, `remote.mjs`, `git-runs.mjs`: one file per kind of risky command (`rm -r`,
-  `find -delete`, `eval`, hidden execution, push or publish, production hosts, commands git runs).
+  `raw-risk.mjs`, `outward.mjs`, `deploy.mjs`, `remote.mjs`, `git-runs.mjs`: one file per kind of risky command (`rm -r`,
+  `find -delete`, `eval`, hidden execution, push or publish, deploy and cloud verbs, production hosts, commands git runs).
 - `rm-kind.mjs`: is an `rm` recursive as far as its option words can be read (an unquoted `$F` where the options stand counts); `moved-text.mjs`: after a `cd`, a recursive `rm` or deleting `find` in quoted text or in the body of a heredoc a program runs asks.
 - `other-deleters.mjs`: deleters other than `rm` (rimraf, `rsync --delete`, PowerShell and `cmd` delete text), judged on the same targets as `rm -r`.
 - `inline-code.mjs`: the code an interpreter gets on its command line; code that runs a command it builds from pieces, and PowerShell
@@ -56,7 +56,7 @@ Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
 - `verdict.mjs`: shared wording of the reasons.
 
 Asking and remembering:
-- `timed-ask.mjs`: the timed dialog (osascript, PowerShell or zenity).
+- `timed-ask.mjs`: the timed dialog (osascript, PowerShell or zenity); an outward ask from agent type `max` runs only after a click on Allow.
 - `timed-ask-text.mjs`: the dialog's text for `timed-ask.mjs`: masked, visible values, detail lines, the timeout rule.
 - `timed-ask-async.mjs`: the same dialog as a promise that an abort signal (or `closeLiveDialogs`, run when the hook is stopped) can close; used by the question popups.
 - `question-reply.mjs`: AskUserQuestion for `permission-timed-allow.mjs`, one popup per question with its own wait.
