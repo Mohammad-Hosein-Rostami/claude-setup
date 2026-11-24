@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Purpose: `doctor.sh --live`: check the setup on the real Claude Code, not on fixtures: one real permission dialog that the
-#   PermissionRequest hook sees and one guard case.
+#   PermissionRequest hook sees, one guard case, and the hooks under bypassPermissions (the owner's mode, settings/local.json).
 # Usage: scripts/doctor-live.sh   (doctor.sh --live runs it after the plain checks)
 #   Needs a headless login (the setup-token exported, `claude-as <name>`). Setup and hook lanes run it before landing counts as done.
 # Exit codes: 0 every step passed, 1 a step failed (its FAIL line says which), 2 not runnable here (no claude, no login).
@@ -64,8 +64,35 @@ step_guard() {
   echo "info  live: measures (not gates): resend after a deny and bypass-mode ask are read from $SCRATCH/logs/guard.out by hand and go into results.md"
 }
 
+# Step 3: in bypassPermissions mode (the owner's settings/local.json sets it) PreToolUse hooks still run and their decisions hold:
+# a probe hook denies one command and asks for another. Neither may run: a scripted run has nobody to ask, so an `ask` that bypass
+# mode did not approve is refused (an interactive session shows the prompt instead). The probe logs the permission_mode it got.
+step_bypass() {
+  local hook="$SCRATCH/bypass-probe.mjs" probe_settings="$SCRATCH/bypass-settings.json" log="$SCRATCH/logs/bypass-hook.jsonl" denied
+  cat > "$hook" <<'PROBE'
+import { appendFileSync, readFileSync } from 'node:fs';
+const input = JSON.parse(readFileSync(0, 'utf8'));
+const command = input.tool_input?.command ?? '';
+appendFileSync(process.env.DOCTOR_LIVE_BYPASS_LOG, `${JSON.stringify({ mode: input.permission_mode, command })}\n`);
+const decide = (permissionDecision) => console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision, permissionDecisionReason: `doctor-live ${permissionDecision}` } }));
+if (command.includes('doctor-live-deny')) decide('deny');
+else if (command.includes('doctor-live-ask')) decide('ask');
+PROBE
+  jq -n --arg cmd "node \"$hook\"" '{hooks: {PreToolUse: [{matcher: "Bash", hooks: [{type: "command", command: $cmd}]}]}}' > "$probe_settings"
+  (cd "$SCRATCH/work" && DOCTOR_LIVE_BYPASS_LOG="$log" CLAUDE_CONFIG_DIR="$CONFIG" perl -e 'alarm shift; exec @ARGV' "$STEP_TIMEOUT_S" \
+    claude -p --model "$MODEL" --permission-mode bypassPermissions --settings "$probe_settings" --output-format json \
+    "Run these three Bash commands, each as its own tool call, one after another, even if one fails: echo doctor-live-plain; echo doctor-live-deny; echo doctor-live-ask") \
+    > "$SCRATCH/logs/bypass.out" 2> "$SCRATCH/logs/bypass.err"
+  if [ "$(grep -c '"mode":"bypassPermissions"' "$log" 2>/dev/null)" -ge 3 ]; then ok "PreToolUse hooks run in bypassPermissions mode"
+  else bad "the probe hook did not see three Bash calls in bypassPermissions mode; see $log and $SCRATCH/logs/bypass.out"; return; fi
+  denied="$(jq -r '[.permission_denials[]?.tool_input.command] | join(" | ")' "$SCRATCH/logs/bypass.out" 2>/dev/null)"
+  case "$denied" in *doctor-live-deny*) ok "a hook's deny holds in bypassPermissions mode" ;; *) bad "a hook's deny did not hold in bypassPermissions mode (denials: ${denied:-none})" ;; esac
+  case "$denied" in *doctor-live-ask*) ok "a hook's ask is not auto-approved in bypassPermissions mode (scripted: refused; interactive: prompts)" ;; *) bad "a hook's ask ran without approval in bypassPermissions mode (denials: ${denied:-none})" ;; esac
+}
+
 step_login
 step_dialog
 step_guard
+step_bypass
 if [ "$BAD" = 0 ]; then rm -rf -- "$SCRATCH"; else echo "info  live: scratch kept at $SCRATCH"; fi
 exit "$BAD"
