@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { availableGb, judgeFreeSpace } from '../home/tools/disk-free/disk-free.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 import { cleanEnv } from './clean-env.mjs';
+import { sharedToolDir } from './shared-tools.mjs';
 
 const TOOL = fileURLToPath(new URL('../home/tools/disk-free/disk-free.mjs', import.meta.url));
 const KB_PER_GB = 1024 * 1024;
@@ -107,8 +108,13 @@ test('a folder too big to measure in time is still named, without a size', async
 });
 
 test('the time limit covers all folders together, so many slow folders cannot pass the runner timeout', async () => {
-  const slowBin = makeTempDir('disk-free-slow-du-');
-  await writeFile(join(slowBin, 'du'), '#!/bin/sh\nexec sleep 5\n', { mode: 0o755 });
+  const slowDu = '#!/bin/sh\nexec sleep 5\n';
+  // POSIX: one shared copy (shared-tools.mjs), so its first-run check never lands inside the timed run
+  let slowBin;
+  if (process.platform === 'win32') {
+    slowBin = makeTempDir('disk-free-slow-du-');
+    await writeFile(join(slowBin, 'du'), slowDu, { mode: 0o755 });
+  } else slowBin = sharedToolDir({ du: slowDu });
   const home = await fakeHome({ derivedData: 1, simulators: 1, caches: 1, npm: 1 });
   const startedAt = Date.now();
   const result = check(home, 3, { PATH: `${slowBin}:${process.env.PATH}`, DISK_FREE_DU_TIMEOUT_MS: '1000' });
