@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { hookEnv } from './hook-env.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
-import { WAIT_ADVICE, WAIT_CALL, WAIT_START_FORM } from '../home/hooks/lib/wait-advice.mjs';
+import { WAIT_ADVICE, WAIT_START_FORM } from '../home/hooks/lib/wait-advice.mjs';
 
 const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
 const PROJECT = resolve('/work/proj');
@@ -75,11 +75,15 @@ test('a loop that sleeps 5 s or more, or a lone sleep of 30 s or more, is denied
 /** The sentences of an advice text: cut after each full stop that a blank follows (`2 h)` stays whole). */
 const sentencesOf = (text) => text.split(/(?<=\.)\s+/);
 
-test('the deny reason names run_in_background, timeout and the 2-h maximum in one sentence, and the path for a run over 2 h', () => {
+// Two sentences name run_in_background: the start of a long command (with its timeout) and the check loop sent to the background
+// as the other way to wait (the Monitor sentence); a third would be a copy that can drift.
+test('the deny reason names run_in_background, timeout and the 2-h maximum in one sentence, the background check loop in one more, and the path for a run over 2 h', () => {
   const { reason } = guardSession().run(BOUNCED[0]);
   const background = sentencesOf(reason).filter((sentence) => /run_in_background/.test(sentence));
-  assert.equal(background.length, 1, reason);
+  assert.equal(background.length, 2, reason);
   assert.match(background[0], /set timeout to its expected run plus a margin, at most 7200000 ms \(2 h\)/);
+  assert.match(background[1], /^To wait for anything else \(a file, a log line, a server\), use the Monitor tool .* or send the check loop itself with run_in_background: true: its exit is the notice\.$/);
+  assert.doesNotMatch(background[1], /timeout/, 'the timeout rule lives in the start sentence only');
   assert.match(reason, /Set timeout for every background command/);
   assert.match(reason, /unattended run \(-p, Agent SDK, CI, cloud\)[^.]*30 min \(10 min for a text -p prompt\)/);
   const overTwoHours = sentencesOf(reason).find((sentence) => /over 2 h/.test(sentence)) ?? '';
@@ -157,18 +161,19 @@ test('a background sleep loop next to a push or a whole-folder rm still asks on 
   assert.doesNotMatch(merge.reason, /run_in_background/);
 });
 
-const MOVED_AFTER_MS = 180000; // a background subagent's foreground command is moved to the background after 3 min
-const MS_PER_SECOND = 1000;
 /** A command form of the advice (`<command> > <log> ...`) as an agent would send it. */
 const asSent = (form) => form.replaceAll('<log>', '/tmp/suite.log').replace('<command>', 'node --test tests/*.test.mjs');
+// A bounded `for` loop that pauses between looks at one file (the advice no longer names a wait loop; this is the shape the 5 s rule
+// must still let through). `pauseLoop(n)` writes it with an n-second pause.
+const pauseLoop = (seconds) => `for i in $(seq 80); do [ -f /tmp/suite.log.exit ] && break; sleep ${seconds}; done`;
+const SHORT_PAUSE_SECONDS = 2;
+const LONGEST_PAUSE_SECONDS = 4; // the longest whole-second pause under the 5 s loop limit
+const LOOP_LIMIT_SECONDS = 5;
 
-test('the way to wait that the advice and the agents name runs at the first send: the background start, then the counted foreground wait call', () => {
+test('the start form that the advice and dev-run name runs at the first send in the background, and the advice makes its completion notice the wait', () => {
   const session = guardSession();
   assert.deepEqual(session.run(asSent(WAIT_START_FORM), 'sess-1', IN_BACKGROUND), { decision: 'allow' });
-  assert.deepEqual(session.run(asSent(WAIT_CALL)), { decision: 'allow' });
-  assert.deepEqual(session.run(asSent(WAIT_CALL)), { decision: 'allow' }, 'sent again while the command still runs');
-  assert.ok(WAIT_ADVICE.includes(WAIT_START_FORM), 'the advice names the start form');
-  assert.ok(WAIT_ADVICE.includes(WAIT_CALL), 'the advice names the wait call');
+  assert.ok(WAIT_ADVICE.includes(`started as ${WAIT_START_FORM}. Its completion notice is the wait`), 'the advice names the start form, then the notice');
 });
 
 test('the start form removes an old <log>.exit first, so the wait for a second run never ends at once on the first run\'s exit code; the guard lets it run at the first send, foreground and background', () => {
@@ -177,8 +182,12 @@ test('the start form removes an old <log>.exit first, so the wait for a second r
   assert.deepEqual(guardSession().run(asSent(WAIT_START_FORM), 'sess-1', IN_BACKGROUND), { decision: 'allow' }, 'background');
 });
 
-test('the wait call ends by itself before a background subagent\'s foreground command would be moved (3 min), and only its short pause keeps it from the advice', () => {
-  const [, rounds, pause] = /seq (\d+)\).*sleep (\d+);/.exec(WAIT_CALL);
-  assert.ok(Number(rounds) * Number(pause) * MS_PER_SECOND < MOVED_AFTER_MS, `${rounds} rounds of ${pause} s`);
-  assert.equal(guardSession().run(asSent(WAIT_CALL).replace(`sleep ${pause};`, 'sleep 5;')).decision, 'deny', 'the same loop with a 5 s sleep is a poll loop');
+test('a bounded for pause loop with a sleep under 5 s runs at every send, and the same loop at 5 s is denied as a poll loop', () => {
+  const session = guardSession();
+  assert.deepEqual(session.run(pauseLoop(SHORT_PAUSE_SECONDS)), { decision: 'allow' });
+  assert.deepEqual(session.run(pauseLoop(SHORT_PAUSE_SECONDS)), { decision: 'allow' }, 'sent again');
+  assert.deepEqual(session.run(pauseLoop(LONGEST_PAUSE_SECONDS)), { decision: 'allow' }, 'just under the limit');
+  const { decision, reason } = guardSession().run(pauseLoop(LOOP_LIMIT_SECONDS));
+  assert.equal(decision, 'deny', 'the same loop with a 5 s sleep is a poll loop');
+  assert.ok(reason.includes(WAIT_ADVICE), 'denied with the wait advice');
 });
