@@ -198,8 +198,8 @@ test('hook: a failure inside the pin floor lets the call run unchanged, with a s
 });
 
 // H2: the no-Fable gate fails closed. Each case names what the agent would run on when it is not known.
-// R1: the advice names the agent's own pin (opus for lex, dev and tess), so a resend never runs them lower than their pin
-const NAME_A_MODEL = 'name the model its agent file should pin in the Agent call, never Fable (`model: "opus"` for lex, dev and tess)';
+// R1: the advice names the agent's own pin (opus for lex, dev, tess and max), so a resend never runs them lower than their pin
+const NAME_A_MODEL = 'name the model its agent file should pin in the Agent call, never Fable (`model: "opus"` for lex, dev, tess and max)';
 const pinFile = (name, pins) => `---\nname: ${name}\ndescription: test agent\n${pins}---\nbody\n`;
 
 test('hook: an agent file that cannot be read (mode 000) denies with the reason; readable again, the call runs', (t) => {
@@ -280,9 +280,30 @@ test('hook: a Fable pin in a form not read as written (indented mapping, block s
   assert.deepEqual([plain.status, plain.stdout], [0, ''], 'an indented opus pin runs');
 });
 
-test('hook: the deny advice for an unknown model names opus for lex, dev and tess, and no lower model (R1)', () => {
+test('hook: the deny advice for an unknown model names opus for lex, dev, tess and max, and no lower model (R1)', () => {
   const reason = deniedReason(runWithAgents({ ...BASE, subagent_type: 'some-plugin:agent' }));
   assert.ok(reason.endsWith(`; ${NAME_A_MODEL}.`), reason);
-  assert.ok(reason.includes('`model: "opus"` for lex, dev and tess'), reason);
-  assert.doesNotMatch(reason, /"(sonnet|haiku)"/, 'all three main agents pin opus: a lower model in the advice would run one below its pin');
+  assert.ok(reason.includes('`model: "opus"` for lex, dev, tess and max'), reason);
+  assert.doesNotMatch(reason, /"(sonnet|haiku)"/, 'all four main agents pin opus: a lower model in the advice would run one below its pin');
+});
+
+// max, the ship agent the boss starts, pins Opus 5.5 at high (owner decision): a lower model or effort in the call is left out like dev's,
+// a higher one runs as sent, and Fable is denied
+const SHIP_AGENT = 'max';
+const copyShipAgent = (agents) => copyFileSync(join(AGENTS, `${SHIP_AGENT}.md`), join(agents, `${SHIP_AGENT}.md`));
+
+test('hook: max from the boss: haiku, sonnet and low effort are left out to its Opus/high pin, max effort runs as sent, fable is denied', () => {
+  for (const lower of [{ model: 'haiku' }, { model: 'sonnet' }, { effort: 'low' }]) {
+    const run = runWithAgents({ ...BASE, subagent_type: SHIP_AGENT, ...lower }, copyShipAgent);
+    assert.equal(run.status, 0, run.stderr);
+    assert.deepEqual(JSON.parse(run.stdout).hookSpecificOutput, {
+      hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: { ...BASE, subagent_type: SHIP_AGENT },
+    }, JSON.stringify(lower));
+  }
+  for (const kept of [{ model: 'opus' }, { effort: 'max' }, {}]) {
+    const run = runWithAgents({ ...BASE, subagent_type: SHIP_AGENT, ...kept }, copyShipAgent);
+    assert.deepEqual([run.status, run.stdout, run.stderr], [0, '', ''], JSON.stringify(kept));
+  }
+  const reason = deniedReason(runWithAgents({ ...BASE, subagent_type: SHIP_AGENT, model: 'fable' }, copyShipAgent));
+  assert.equal(reason, `${FABLE_REASON}: leave \`model\` out of the Agent call (it was \`fable\`).`);
 });
