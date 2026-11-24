@@ -13,7 +13,7 @@ import { originOf } from './agent-call-origin.mjs';
 import { hookEnv } from './hook-env.mjs';
 import { agentHomeEnv } from './agent-home-helpers.mjs';
 import { IDLE_MS, PENDING_MS } from '../home/hooks/lib/agent-launches.mjs';
-import { callCounterPath, worktreeValues } from '../home/hooks/lib/writer-agents.mjs';
+import { callCounterPath, isWritingAgent, worktreeValues } from '../home/hooks/lib/writer-agents.mjs';
 import { isWriterRole } from '../home/hooks/lib/agent-roles.mjs';
 import { fastestCpuMs } from './timing.mjs';
 import { git, makeRepo } from './git-tidy-helpers.mjs';
@@ -242,7 +242,7 @@ test('tess-write is a writer: from inside an agent it needs its own lane worktre
   assert.ok(!denied(s.launch(writer('dev', { prompt: 'lane one' }))), 'the first writer runs');
   const plain = s.launch(writer('tess-write', { prompt: 'write the gap tests' }));
   assert.ok(denied(plain), 'tess-write with no worktree next to a running writer');
-  assert.match(plain.permissionDecisionReason, /`dev-debug` and `tess-write` write/);
+  assert.match(plain.permissionDecisionReason, /`dev-debug`, `tess-write` and `max` write/);
   const lane = writerSession({ cwd: repo });
   assert.ok(!denied(lane.launch(writer('dev', { prompt: 'lane one' }))), 'the first writer runs');
   assert.ok(!denied(lane.launch(writer('tess-write', { prompt: laneBrief(worktree) }))), 'tess-write naming its own linked worktree runs');
@@ -318,7 +318,7 @@ test('a made-up path, the lead\'s folder, a relative path, a Windows drive path 
     const second = s.launch({ description: 'build', prompt: laneBrief(path), subagent_type: 'general-purpose' });
     assert.ok(denied(second), name);
     assert.match(second.permissionDecisionReason, /`worktree: <absolute path>`/, name);
-    assert.match(second.permissionDecisionReason, /`dev`, `dev-part`, `dev-ui`, `dev-pixel`, `dev-debug` and `tess-write` write; a reading job goes to `lex-scout`, `dev-run`, `tess` or `tess-review`/, `${name}: the advice names the roles`);
+    assert.match(second.permissionDecisionReason, /Roles: `dev`, `dev-part`, `dev-docs`, `dev-ui`, `dev-pixel`, `dev-debug`, `tess-write` and `max` write; a reading job goes to `lex-scout`, `dev-run`, `tess` or `tess-review`/, `${name}: the advice names the roles`);
     assert.doesNotMatch(second.permissionDecisionReason, /general-purpose/, `${name}: the advice never sends the job to general-purpose`);
     assert.ok(!denied(s.launch({ description: 'build', prompt: laneBrief(path), subagent_type: 'general-purpose' })), `${name}: the identical resend runs`);
   }
@@ -503,4 +503,69 @@ test('isWriterRole: dev-part writes, tess-simple does not', () => {
   const env = { HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: makeTempDir('writer-role-project-') };
   assert.equal(isWriterRole(PART_BUILDER, env), true);
   assert.equal(isWriterRole(READ_ONLY_HELPER, env), false);
+});
+
+// The ship agent max and dev's docs writer dev-docs write in their own worktree (lib/agent-roles.mjs WRITER_ROLES, lib/writer-agents.mjs
+// WRITER_TYPES); tess's helpers tess-simple and tess-edge only read (READ_ONLY_ROLES, READ_ONLY_TYPES).
+const NEW_WRITERS = ['max', 'dev-docs'];
+const READ_ONLY_TESS_HELPERS = ['tess-simple', 'tess-edge'];
+
+test('max and dev-docs are writers: next to a running writer each needs its own lane worktree', () => {
+  for (const type of NEW_WRITERS) {
+    const { repo, worktree } = repoWithLaneWorktree([`${type}-lane`]);
+    const plain = writerSession({ cwd: repo });
+    assert.ok(!denied(plain.launch(writer('dev', { prompt: 'lane one' }))), `${type}: the first writer runs`);
+    const refused = plain.launch(writer(type));
+    assert.ok(denied(refused), `${type} with no worktree next to a running writer`);
+    assert.match(refused.permissionDecisionReason, /^Not started: Another writing agent of this session is still running in the shared folder/, type);
+    const lane = writerSession({ cwd: repo });
+    assert.ok(!denied(lane.launch(writer('dev', { prompt: 'lane one' }))), `${type}: the first writer runs`);
+    assert.ok(!denied(lane.launch(writer(type, { prompt: laneBrief(worktree) }))), `${type} naming its own linked worktree runs`);
+    assert.deepEqual(recordOf(lane).launches.map((launch) => launch.isolated === true), [false, true], type);
+  }
+});
+
+test('tess-simple and tess-edge are read-only: they run next to a running writer and never count as one', () => {
+  for (const type of READ_ONLY_TESS_HELPERS) {
+    const s = writerSession(); // one session per type, as in the read-only test above
+    assert.ok(!denied(s.launch(writer(type, { prompt: 'first' }))), `${type} alone`);
+    assert.ok(!denied(s.launch(writer('dev', { prompt: 'lane one' }))), `the first writer runs although ${type} ran`);
+    assert.ok(!denied(s.launch(writer(type, { prompt: 'while a writer runs' }))), `${type} while a writer runs`);
+    const second = s.launch(writer('dev', { prompt: 'lane two' }));
+    assert.ok(denied(second), `a second writer next to the running one (${type} did not count)`);
+    assert.match(second.permissionDecisionReason, /^Not started: Another writing agent of this session is still running in the shared folder/, type);
+  }
+});
+
+test('isWriterRole and isWritingAgent decide max, dev-docs, tess-simple and tess-edge by name, whatever their agent file says', () => {
+  const home = makeTempDir('writer-role-name-home-');
+  const env = { HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: makeTempDir('writer-role-name-project-') };
+  const agents = join(home, '.claude', 'agents');
+  mkdirSync(agents, { recursive: true });
+  // files that contradict the name: a writer whose tools cannot write, a reader whose tools can; the name must win
+  for (const type of NEW_WRITERS) writeFileSync(join(agents, `${type}.md`), `---\nname: ${type}\ndescription: test agent\ntools: Read, Grep\n---\n`);
+  for (const type of READ_ONLY_TESS_HELPERS) writeFileSync(join(agents, `${type}.md`), `---\nname: ${type}\ndescription: test agent\ntools: Read, Write, Edit\n---\n`);
+  for (const type of NEW_WRITERS) {
+    assert.equal(isWriterRole(type, env), true, `isWriterRole ${type}`);
+    assert.equal(isWritingAgent(type, env), true, `isWritingAgent ${type}`);
+  }
+  for (const type of READ_ONLY_TESS_HELPERS) {
+    assert.equal(isWriterRole(type, env), false, `isWriterRole ${type}`);
+    assert.equal(isWritingAgent(type, env), false, `isWritingAgent ${type}`);
+  }
+});
+
+// dev-docs, dev's docs writer, is started from inside dev or max (agent_id) and pins Sonnet 5.5 at high like dev-part: the owner's decision
+const DOCS_WRITER = 'dev-docs';
+
+test('dev-docs from inside dev: opus runs as sent, fable is denied, haiku and medium are left out to its Sonnet/high pin', () => {
+  const send = (extra) => writerSession().launch(writer(DOCS_WRITER, extra)); // one session each: no other writer runs
+  assert.equal(send({ model: 'opus' }), null, 'a model above the pin runs unchanged, model kept');
+  const fable = send({ model: 'fable' });
+  assert.ok(denied(fable), 'fable');
+  assert.match(fable.permissionDecisionReason, /^Not started: Fable is never used for an agent .*leave `model` out of the Agent call \(it was `fable`\)/);
+  const call = writer(DOCS_WRITER);
+  for (const lower of [{ model: 'haiku' }, { effort: 'medium' }]) {
+    assert.deepEqual(send(lower), { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: call }, JSON.stringify(lower));
+  }
 });
