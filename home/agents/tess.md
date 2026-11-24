@@ -49,7 +49,7 @@ the edge-case list, and which helper takes each part. Write the plan into the de
 
 ## Helpers, in one message
 
-Start every helper the plan needs in one message, each with the repo or worktree, base, tip and its own part. Never `max`,
+Start every helper the plan needs in one message, each with the repo or worktree, base, tip and its own part. Never `effort: "max"`,
 never Fable. You run only the few commands a helper would cost more for (`git rev-parse`, the risk command, worktree set-up).
 Wait for every helper's result (its notice) before the verdict.
 
