@@ -105,6 +105,9 @@ Other hooks:
   tess, and a subagent never starts them. `fable-model-reasons.mjs`: the no-Fable gate's deny reasons for the call's `model`, the agent
   file's pin and `CLAUDE_CODE_SUBAGENT_MODEL` (run-time aliases and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` too); `agent-model-gates.mjs`
   `fableReason` picks which one applies.
+- `settings-env.mjs`: the `env` blocks of the settings files, which a hook's own env lacks (it inherits only the env claude started
+  with): `envValue` (the hook's env, else the user file; the `CLAUDE_GUARD_ASK` switch) and `possibleEnvs` (the hook's env, and the
+  user, project and local files' `env` layered over it; the no-Fable gate must pass under each, and a file it cannot read denies).
 - `main-agents-store.mjs`: the main-agent record of `agent-budget.mjs` (`withRecord` under the session lock, `peekRecord` without it,
   `PENDING_MS`, `STALE_MS`). `agent-ends.mjs`: when the lead's transcript shows a background agent ended (its task notice), for an
   agent that died with no SubagentStop.

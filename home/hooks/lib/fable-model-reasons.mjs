@@ -12,7 +12,7 @@
 // `default`) to another model (2.1.330 names them in its model env list); one that names Fable turns every agent on that alias into
 // a Fable agent, so while one does, every Agent call is denied (remappedAliasReason).
 // Exports: FABLE_RULE, NAME_A_MODEL, callModelReason(model), foundPinReason(type, pin, env, isPlainModelName), isModelForced(env),
-// forcedModelReason(callModel, env), remappedAliasReason(env).
+// forcedModelReason(callModel, env), remappedAliasReason(env), unreadableSettingsReason(file).
 // Invariants: pure (reads only its arguments); each reason is one line of fixed text plus quoted values.
 import { quotedValue } from './agent-brief.mjs';
 
@@ -67,7 +67,7 @@ export function foundPinReason(type, pin, env, isPlainModelName) {
 /**
  * Whether CLAUDE_CODE_SUBAGENT_MODEL_FORCE is on, read as Claude Code reads it (see the header): then CLAUDE_CODE_SUBAGENT_MODEL
  * decides the agent's model.
- * @param {Record<string, string | undefined>} env the hook's environment (Claude Code passes the settings `env` to it)
+ * @param {Record<string, string | undefined>} env one env the session may run with (lib/settings-env.mjs possibleEnvs)
  * @returns {boolean} true only for `1`, `true`, `yes` or `on` (any case, trimmed)
  */
 export function isModelForced(env) {
@@ -85,6 +85,15 @@ export function remappedAliasReason(env) {
   if (names.length === 0) return '';
   return `${FABLE_RULE}: ${names.join(', ')} points a model alias at \`${quotedValue(env[names[0]])}\`, so an agent on that alias would run on Fable; `
     + 'remove it from the environment or the settings `env`, then launch again.';
+}
+
+/**
+ * The no-Fable reason while a settings file exists but cannot be read: its `env` may name Fable (lib/settings-env.mjs).
+ * @param {string} file the settings file
+ * @returns {string} one line naming the file
+ */
+export function unreadableSettingsReason(file) {
+  return `${FABLE_RULE}: the settings file \`${quotedValue(file)}\` cannot be read, so its \`env\` may point an agent at Fable; fix the file, then launch again.`;
 }
 
 /**
