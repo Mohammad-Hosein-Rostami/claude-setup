@@ -32,7 +32,10 @@ test('claim: lane-1 at the base on a new branch, locked; output names the folder
   const result = claim(repo, 'feat/a', base, env);
   assert.equal(result.status, 0, result.stderr);
   const folder = poolPath(repo, 1);
-  assert.deepEqual(lines(result), [`lane: ${folder}`, 'kept: none', 'installed: none']);
+  const output = lines(result);
+  assert.deepEqual(output.slice(0, 3), [`lane: ${folder}`, 'kept: none', 'installed: none']);
+  assert.equal(output.length, 4, result.stdout);
+  assert.match(output[3], /^fill: (clone \d+\.\d s, \d+ entries, repaired 0|checkout \(.+\))$/); // checkout where cloning is not possible
   assert.equal(git(folder, 'symbolic-ref', 'HEAD'), 'refs/heads/feat/a');
   assert.equal(head(folder), base);
   assert.equal(lockReasonOf(repo, folder), 'locked cs-lane-pool feat/a');
