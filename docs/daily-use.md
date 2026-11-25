@@ -51,8 +51,11 @@ Keep extra usage off in claude.ai so nothing can bill credits.
      (`node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim --repo <main checkout> --branch lane/<id> --base <main sha>`)
      and gives dev that folder. No agent makes its own folder.
   3. When dev reports, it lands the piece with the `land` script, one at a time, and ticks again: that tick checks main.
-  4. When 3 features have landed unchecked, or the job's last piece has landed, it starts one `tess` per feature on main.
-     tess answers `main: ok` or `main: must-fix <n>`; a must-fix becomes the next piece (`Fix:`).
+  4. When 3 features have landed unchecked, or the job's last piece has landed, it starts one `tess` per feature. Each
+     tess tests a frozen snapshot of main in its own lane (`lane claim --snapshot --base <main sha>`), never the main
+     folder, which keeps moving as pieces land. Only one of them runs the full suite; the others reuse its result. tess
+     answers `main: ok` or `main: must-fix <n>`; the boss re-checks a must-fix on the newest main, then makes it the next
+     piece (`Fix:`).
 - After 3 rounds of fix and review on one area, the boss stops patching and sends the area to `lex` for a redesign; on the
   redesigned tasks only a regression that a fix caused counts as a must-fix.
 - Helpers are not counted. Two lanes or helpers never change the same file at once. Technical choices are made and stated in one line; your decisions are asked.

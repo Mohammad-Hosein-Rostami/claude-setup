@@ -33,9 +33,11 @@ the brief come first; these lines hold for everyone.
 ## Quality checks (tess)
 - dev's report carries `risk:` (the `risk` command), lex's plan `risk:` and `qa:` per feature; the boss routes on the higher,
   and `risk: unknown` counts as risky. Tests and checks are tess's, in the background and only on main; dev and its helpers
-  only build (dev-debug runs repros). A tess round: when 3 features have landed unchecked or the job's last piece has landed,
-  one tess per feature with `main: <sha>`, `feature:`, `commits:`, `suite: yes|no` (yes on exactly one); it checks in its
-  own pool lane at main's sha and replies `main: ok` or `main: must-fix <n>`.
+  only build (dev-debug runs repros). Nobody tests or edits in the main folder: it is only where the boss lands. A tess
+  round, when 3 features have landed unchecked or the job's last piece has landed: per tess, the boss claims a snapshot lane
+  at main's commit X (`node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim --repo <abs> --snapshot --base <X>`), briefs
+  `main: <X>`, `worktree:`, `feature:`, `commits:`, `suite: yes|no` (yes on exactly one; the others reuse its result) and
+  runs `lane release` after it returns. tess tests its own feature and replies `main: ok` or `main: must-fix <n>`.
 - tess work by change (the full table is in `qa-plan`): docs or text only, `risk: none` -> none; code with `risk: none` ->
   `checks` in its feature's tess round; risky (security, data, money, concurrency, gate, large) -> lands, then `full` at once
   on main for that feature, and no new piece touches its files until tess returns; the owner asks -> what was asked; a
@@ -43,8 +45,9 @@ the brief come first; these lines hold for everyone.
   pixel-qa; its logic code follows these rows).
 - After 3 fix-and-review rounds on one area, stop patching: send the area to `lex` for a redesign; on the redesign's tasks
   (`after-redesign: yes` in tess's brief) only a regression a fix caused is a must-fix.
-- Findings: a must-fix -> a new piece at the head of the queue (`Fix:`; with a repro, on tess-write's `test/<topic>` branch),
-  and the owner hears it in one line; tess-write's passing tests land as their own piece; a follow-up -> the final answer.
+- Findings: the boss re-checks a must-fix's repro in a snapshot lane of the newest main, then makes it a new piece at the
+  head of the queue (`Fix:`; with a repro, on tess-write's `test/<topic>` branch) and tells the owner in one line;
+  tess-write's new tests land on main like any other piece; a follow-up -> the final answer.
 
 ## Questions for the owner
 - Owner questions: lex asks at job start; any agent that needs the owner stops and returns a `questions:` block; the boss asks

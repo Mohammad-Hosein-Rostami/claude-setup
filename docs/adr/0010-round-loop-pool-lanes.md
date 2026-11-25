@@ -48,9 +48,11 @@ C, with the round loop:
    the tick marks `overlap` or `stray` lands after the other one, with `--test`.
 5. tess is due when 3 features are landed and not yet checked, when the job's last piece has landed, or at once when a risky
    feature has landed; no new piece touches a risky feature's files until tess returns. The boss starts one tess per feature
-   (at most 3) with `main: <sha>`, `feature:`, `commits:` and `suite: yes` on exactly one of them. tess checks in its own pool
-   lane at main's sha and replies `main: ok` or `main: must-fix <n>`.
-6. A must-fix becomes a new piece at the head of the queue (`Fix:`); a follow-up goes into the final answer.
+   (at most 3) with `main: <sha>`, `worktree:`, `feature:`, `commits:` and `suite: yes` on exactly one of them. Each tess
+   tests in its own snapshot lane, detached at that sha (`lane claim --snapshot --base <sha>`, released after it returns),
+   never in the main folder, which keeps moving; it replies `main: ok` or `main: must-fix <n>`.
+6. The boss re-checks a must-fix's repro on the newest main, then makes it a new piece at the head of the queue (`Fix:`); a
+   follow-up goes into the final answer.
 
 lex works only for the boss: every `needs: lex` goes to the boss, which decides. `land` keeps pool folders for reuse.
 

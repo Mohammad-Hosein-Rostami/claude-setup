@@ -47,8 +47,12 @@ what it does. Everything is plain text and Node scripts. You can read, change an
    `qa-plan` skill (`home/CLAUDE.md`, "Quality checks", sums it up): dev's report names the change's risk
    (`node ~/.claude/tools/risk/risk.mjs`). A risky change lands, then gets `tess` on main at once, and no new piece touches its
    files until tess returns; other code changes get `tess` when 3 features have landed unchecked or the job's last piece has
-   landed; docs and text only get none; and what you ask for runs at once. tess checks in its own pool lane at main's commit
-   and answers `main: ok` or `main: must-fix <n>`; a must-fix becomes a new piece. dev and its helpers run no tests; tess
+   landed; docs and text only get none; and what you ask for runs at once. Nobody tests or edits in the main folder: it is
+   only where the boss lands, and it keeps moving. Each tess tests its own feature in a snapshot lane, a lane detached at
+   main's commit (`git-tidy lane claim --snapshot --base <sha>`), released after it returns. Only one full suite runs per
+   commit; its result is kept in `<git common dir>/cs-suite/<sha>.txt` and the other tess reuse it. tess answers
+   `main: ok` or `main: must-fix <n>`; the boss re-checks a must-fix on the newest main, then makes it a new piece, and
+   tess-write's new tests land like any other piece. dev and its helpers run no tests; tess
    hands the runs to `tess-run` (full suites, installs and builds run directly, a full suite once per tree), edge cases to `tess-edge`, the simplicity review to `tess-simple`, a review to `tess-review` and
    missing tests to `tess-write`, and keeps the verdict. No check runs by itself when an agent stops; no hook calls the risk
    command.
