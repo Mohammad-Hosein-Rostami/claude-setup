@@ -1,8 +1,0 @@
-# Machine facts you have seen and accept, for scripts/doctor.sh (never commit your real list).
-# Copy to ~/.claude/private/doctor-accepted (or point CLAUDE_DOCTOR_ACCEPTED_FILE at it). One id per line; `#` starts a comment.
-# An accepted fact prints as INFO instead of WARN, so the summary's WARN count shows only what needs work. Doctor only reads this file.
-# Without the file every WARN stays a WARN. A file that is a link accepts nothing; an id doctor does not know is ignored; either
-# gives one WARN. The production host list WARN (no ~/.claude/private/prod-hosts) can never be accepted.
-#
-# apple-terminal-notes  Apple Terminal shows no desktop notes (at most a bell).
-apple-terminal-notes
