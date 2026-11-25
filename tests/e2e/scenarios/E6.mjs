@@ -6,6 +6,8 @@
 // Review round 2: the commands file must be one max wrote (not the README copy in a lane worktree, not a saved Bash output);
 // deploy.sh's marker is looked for in every folder under the scenario (a lane's deploy.sh writes `repo-wt/prod`); the Bash
 // check reads each command word by word (lib/shell-words.mjs).
+// Each claude run is a ctx.claudeJob (R8): once when E0 found the boss gets a background result in one run, else with
+// `--resume` rounds until the job is done; a job left not done is its own FAIL line (jobs.mjs jobLine).
 // Exports the scenario interface (run.mjs): id, title, model, minutes, needsShims, setup(ctx), run(ctx), check(ctx).
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
@@ -40,7 +42,7 @@ export function setup(ctx) {
 async function part(ctx, key, { prompt, extra = {}, dialog }) {
   ctx.dialog(dialog);
   const dialogsBefore = ctx.dialogCount();
-  const session = await ctx.claude({ name: `run-${key}`, prompt, model, extra });
+  const { session } = await ctx.claudeJob({ name: `run-${key}`, prompt, model, extra });
   ctx.notes[key] = { session, dialogs: ctx.dialogCount() - dialogsBefore, originRefs: gitOut(ctx, ['show-ref'], ctx.origin),
     prod: prodMarkers(ctx.dir) };
 }

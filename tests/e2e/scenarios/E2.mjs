@@ -2,6 +2,8 @@
 // once they ended a new lex starts; a dev's four dev-run helpers all start (helpers are not counted).
 // Review round 2: the deny must name every running id, and "after they ended" needs a completed task-notification of each
 // running lex before the later start (a start while they still run is a FAIL).
+// Each claude run is a ctx.claudeJob (R8): once when E0 found the boss gets a background result in one run, else with
+// `--resume` rounds until the job is done; a job left not done is its own FAIL line (jobs.mjs jobLine).
 // Exports the scenario interface (run.mjs): id, title, model, minutes, needsShims, setup(ctx), run(ctx), check(ctx).
 import { checkLine, completedAt, LIMITS, startsOf } from '../lib/checks.mjs';
 import { loaded } from '../lib/common.mjs';
@@ -26,8 +28,8 @@ export function setup(ctx) {
 }
 
 export async function run(ctx) {
-  ctx.notes.cap = await ctx.claude({ name: 'cap-lex', prompt: PROMPT_CAP, model });
-  ctx.notes.helpers = await ctx.claude({ name: 'helpers-dev-run', prompt: PROMPT_HELPERS, model });
+  ctx.notes.cap = (await ctx.claudeJob({ name: 'cap-lex', prompt: PROMPT_CAP, model })).session;
+  ctx.notes.helpers = (await ctx.claudeJob({ name: 'helpers-dev-run', prompt: PROMPT_HELPERS, model })).session;
 }
 
 export function check(ctx) {

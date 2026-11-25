@@ -2,8 +2,8 @@
 // started), usage errors (exit 2), the dry run (C-2: exit 0, `--model` on every claude line, Fable only on E4's deny lines), a
 // usage limit (exit 3, the reset time printed, no retry), SIGINT (every process of the run ended), E7 run for real against
 // land in throwaway repos (exit 0), the login preflight (not logged in: one line, exit 2, no scenario), a login refusal (the
-// whole run stops, exit 2), no `--resume` after an error result, an E0 that throws closing the gate, and `--real-home`
-// giving the real HOME to E9 only.
+// whole run stops, exit 2), no `--resume` after an error result, an E0 that throws closing the gate, `--real-home`
+// giving the real HOME to E9 only, and E0(a) setting the answer mode of the later jobs (R8).
 // Safety: a real `claude` never runs. Every runner gets a PATH whose first folder holds a fake `claude`, a temp HOME (with a
 // made-up settings.json and CLAUDE.md) and a temp TMPDIR, so its run root, results and the HOME it copies are all in the case.
 import assert from 'node:assert/strict';
@@ -54,6 +54,12 @@ const ERROR_CLAUDE = `${LOG_CALL}emit({ type: 'result', is_error: true, result: 
 // says it is not logged in, as \`claude auth status\` does without a login
 const LOGGED_OUT_CLAUDE = LOG_CALL.replace(LOGGED_IN, `if (process.argv[2] === 'auth') { console.log(JSON.stringify({ loggedIn: false })); process.exit(0); }
 `);
+// answers every -p run with a good result: the digit 4 at once, or (FOUR_ON_RESUME) only in a `--resume` run, as a boss that
+// ends before its background agent does (E0(a) then needs rounds: the resume answer mode)
+const FOUR_AT_ONCE = `${LOG_CALL}emit({ type: 'result', is_error: false, result: '4', session_id: '${SESSION_ID}' });
+`;
+const FOUR_ON_RESUME = `${LOG_CALL}emit({ type: 'result', is_error: false, result: process.argv.includes('--resume') ? '4' : 'started', session_id: '${SESSION_ID}' });
+`;
 const FAILING_GIT = `#!/usr/bin/env node
 process.stderr.write('fatal: made-up git failure\\n');
 process.exit(128);
@@ -258,4 +264,17 @@ test('--real-home: the dry run gives the real HOME to E9 only; E0 keeps the temp
   assert.equal(homeOf('E9'), kase.env.HOME);
   assert.ok(homeOf('E0').startsWith(join(kase.dir, RUN_PREFIX)) && homeOf('E0').endsWith('/home'), homeOf('E0'));
   assert.ok(!/E9 run: not run/.test(stdout), 'E9 runs in this mode');
+});
+
+test("E0(a) sets the later jobs' answer mode: direct when it was done in one run, resume when it needed rounds", async () => {
+  const jobLineOf = (stdout) => /^E2 each claude job ended: .*$/m.exec(stdout)?.[0] ?? '';
+  const direct = makeCase(FOUR_AT_ONCE);
+  const once = await runRunner(['--only', 'E0,E2', '--out', direct.out], direct.env);
+  assert.match(once.stdout, /^e2e: E0 answer mode direct: later jobs run once$/m, once.stdout);
+  assert.match(jobLineOf(once.stdout), /\| done \(E0 answer mode: direct\) \| cap-lex: one run; helpers-dev-run: one run \| PASS$/);
+  assert.deepEqual(direct.calls().filter((one) => one.args.includes('--resume')), []);
+  const rounds = makeCase(FOUR_ON_RESUME);
+  const resumed = await runRunner(['--only', 'E0,E2', '--out', rounds.out], rounds.env);
+  assert.match(resumed.stdout, /^e2e: E0 answer mode resume: later jobs get --resume rounds until done$/m, resumed.stdout);
+  assert.match(jobLineOf(resumed.stdout), /\| done \(E0 answer mode: resume\) \| cap-lex: one run; helpers-dev-run: one run \| PASS$/);
 });

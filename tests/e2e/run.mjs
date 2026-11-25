@@ -12,7 +12,8 @@
 // repo in it; every printed or kept text is redacted; at a usage limit every scenario stops, the reset time is printed and
 // nothing is retried; in a finally block and on SIGINT/SIGTERM every process group of the run is ended and checked gone; the
 // root is removed only when this run made it. `--real-home` gives the real HOME only to a scenario that needs it (E9,
-// `needsRealHome`); the others keep the temp HOME, and the dry run prints each scenario's HOME.
+// `needsRealHome`); the others keep the temp HOME, and the dry run prints each scenario's HOME. E0(a) sets the answer mode
+// the later jobs run in (lib/jobs.mjs, R8): once, or with `--resume` rounds until done.
 import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +26,7 @@ import { commonLines } from './lib/common.mjs';
 import { makeContext, makeOps, makeRunState } from './lib/context.mjs';
 import { childEnv } from './lib/env.mjs';
 import { buildHome, homePaths } from './lib/home.mjs';
+import { ANSWER_MODES, answerModeOf } from './lib/jobs.mjs';
 import { leakSnapshot, realRepoOf } from './lib/leaks.mjs';
 import { LOGIN_LINE, loginPreflight, PREFLIGHT_ARGS } from './lib/login.mjs';
 import { ALLOWED_MODELS, modelOfArgs } from './lib/models.mjs';
@@ -126,6 +128,11 @@ async function runEach(run, scenarios, { print, records, outDir }) {
     const lines = run.login ? [checkLine(`${scenario.title}: every claude run is logged in`, 'logged in', `${run.login.name}: ${run.login.text}`, false)] : outcome.lines;
     for (const line of lines) print(scenario.id, line);
     if (scenario.id === 'E0' && lines.some((line) => line.gate && statusOf(line) !== 'PASS')) gate = lines.some((line) => line.error) ? GATE_ERROR : GATE_REASON;
+    if (scenario.id === 'E0') {
+      // R8: how the later jobs run (lib/jobs.mjs); E0(a) not done or not run keeps the resume rounds
+      run.answerMode = answerModeOf(ctx.notes.a);
+      say(`e2e: E0 answer mode ${run.answerMode}: later jobs ${run.answerMode === ANSWER_MODES.direct ? 'run once' : 'get --resume rounds until done'}`);
+    }
     copyRedacted(ctx.logs, join(outDir, scenario.id, 'logs'));
     records.push(scenarioRecord(scenario, ctx, lines));
   }

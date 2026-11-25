@@ -1,11 +1,12 @@
 // Check lines every scenario gets, and small readers the scenarios share. Exports: loaded(ctx, session), loadedAll(ctx),
 // agentsOf(ctx, type), GIT_FAILED, gitOut(ctx, args, cwd), readFailed(text), sameRead(a, b), readText(a, b), sessionLines(ctx),
-// noFableLine(ctx), timeLine(ctx, minutes), commonLines(ctx, minutes), textOf(session).
+// noFableLine(ctx), timeLine(ctx, minutes), commonLines(ctx, minutes), textOf(session). commonLines also holds jobs.mjs jobLine.
 // Why: plan section 10 (empty is not clean): a `claude` that exits early, a run with no result, a missing transcript or a
 // scenario past its wall-clock budget is a FAIL line of its own, so a scenario's specific checks can never pass on nothing; and
 // no scenario may run a Fable model anywhere (owner rule), so every scenario with a claude run gets that line.
 // Invariants: reads only; a session is loaded once (by its stream's session id, from the HOME the children used).
 import { checkLine, fableModels } from './checks.mjs';
+import { jobLine } from './jobs.mjs';
 import { loadSession } from './transcripts.mjs';
 
 /** @returns {ReturnType<typeof loadSession>} the transcripts of one claude run (cached on the session) */
@@ -84,4 +85,4 @@ export function noFableLine(ctx) {
 export const timeLine = (ctx, minutes) => checkLine(`finished within ${minutes} min`, 'no child timed out', ctx.timedOut ? 'a child timed out' : 'in time', !ctx.timedOut);
 
 /** @returns {object[]} the lines every live scenario gets after its own */
-export const commonLines = (ctx, minutes) => [...sessionLines(ctx), noFableLine(ctx), timeLine(ctx, minutes)].filter(Boolean);
+export const commonLines = (ctx, minutes) => [...sessionLines(ctx), jobLine(ctx.jobs), noFableLine(ctx), timeLine(ctx, minutes)].filter(Boolean);

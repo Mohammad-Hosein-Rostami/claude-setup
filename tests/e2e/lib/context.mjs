@@ -9,12 +9,14 @@
 // scenario's own names only; each child's timeout is what is left of the scenario's wall-clock budget; once a usage limit is
 // seen (run.limit), a run is refused its login (run.login, login.mjs) or the run is interrupted, no new child starts; the
 // `--resume` rounds stop at the first run that ended with an error or no result. HOME: `--real-home` gives the real HOME
-// (run.realPaths) only to a scenario that exports `needsRealHome = true` (E9); every other scenario keeps the temp HOME.
+// (run.realPaths) only to a scenario that exports `needsRealHome = true` (E9); every other scenario keeps the temp HOME. A job
+// (claudeJob) runs once when E0 found the `direct` answer mode, else with `--resume` rounds until jobDone (jobs.mjs, R8).
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { LIMITS } from './checks.mjs';
 import { runClaude } from './claude-run.mjs';
 import { childEnv } from './env.mjs';
+import { ANSWER_MODES, jobDone } from './jobs.mjs';
 import { loginRefusal } from './login.mjs';
 import { dialogCalls } from './logs.mjs';
 import { claudeArgs } from './models.mjs';
@@ -70,12 +72,13 @@ export function makeOps({ dry, root, record }) {
  * @param {{dry: boolean, root: string, setupFrom: string, realHome: string, realHomeMode: boolean, paths: object, realPaths?: object,
  *   childPath?: string, quietLog?: string, dialogLog?: string, dialogModeFile?: string,
  *   registry?: import('./processes.mjs').ProcessRegistry}} spec
- * @returns {object} the run's shared state: these fields, plus the stop switch, the limit seen and every session id of the run
+ * @returns {object} the run's shared state: these fields, plus the stop switch, the limit seen, every session id of the run and
+ *   E0's answer mode (null until E0 ran; jobs.mjs answerModeOf)
  */
 export function makeRunState(spec) {
   const controller = new AbortController();
   const run = {
-    ...spec, controller, signal: controller.signal, limit: null, login: null, interrupted: false, sessionIds: new Set(), before: null,
+    ...spec, answerMode: spec.answerMode ?? null, controller, signal: controller.signal, limit: null, login: null, interrupted: false, sessionIds: new Set(), before: null,
     stopAtLimit(limit) {
       if (run.limit === null) run.limit = limit;
       controller.abort();
@@ -111,7 +114,7 @@ export function makeContext(run, scenario) {
   const ctx = {
     id: scenario.id, dry: run.dry, run, dir, repo: join(dir, 'repo'), origin: join(dir, 'origin.git'), logs: join(dir, 'logs'),
     paths, setupFrom: run.setupFrom, realHome: run.realHome, realHomeMode,
-    phase: 'setup', steps, sessions: [], notes: {}, timedOut: false, notRun: null, deadlineMs,
+    phase: 'setup', steps, sessions: [], jobs: [], notes: {}, timedOut: false, notRun: null, deadlineMs,
     record: (text, extra = {}) => steps.push({ phase: ctx.phase, text, ...extra }),
     tool: (...parts) => join(run.setupFrom, 'home', 'tools', ...parts),
     remainingMs: () => Math.max(MIN_CHILD_MS, deadlineMs - Date.now()),
@@ -183,6 +186,23 @@ export function makeContext(run, scenario) {
       const done = isDone(session);
       const ran = rounds === 0 ? 'one run' : `${rounds} resume round(s)`;
       return { session, sessions, rounds, mode: !done && failed() ? `${ran}, stopped: ${session.result ? 'an error result' : 'no result'}` : ran, done };
+    },
+    /**
+     * One scenario job, run the way E0 found (R8): once in the `direct` answer mode, else claudeUntil(spec, isDone). Each job is
+     * kept in ctx.jobs, so commonLines (jobLine) fails a job left not done and names the mode.
+     * @returns {Promise<{session: object, sessions: object[], rounds: number, mode: string, done: boolean}>}
+     */
+    async claudeJob(spec, isDone = (session) => jobDone(paths.projectsDir, session)) {
+      const answer = run.answerMode ?? `${ANSWER_MODES.resume} (E0 not run)`;
+      let job;
+      if (run.answerMode === ANSWER_MODES.direct) {
+        const session = await ctx.claude(spec);
+        job = { session, sessions: [session], rounds: 0, mode: 'one run', done: !run.dry && isDone(session) };
+      } else {
+        job = await ctx.claudeUntil(spec, isDone);
+      }
+      ctx.jobs.push({ name: spec.name, answer, mode: job.mode, done: job.done });
+      return job;
     },
   };
   const pushed = (session) => { ctx.sessions.push(session); return session; };

@@ -2,6 +2,8 @@
 // tries to start a dev is denied and asks for it with a `needs: dev to ...` line in its report.
 // Review round 2: a deny counts only with the guard's own route text (home/hooks/lib/agent-route.mjs), never a word "lex" that
 // may be the one inside "lex-web" (an "Agent type lex-web not found" error is no route).
+// Each claude run is a ctx.claudeJob (R8): once when E0 found the boss gets a background result in one run, else with
+// `--resume` rounds until the job is done; a job left not done is its own FAIL line (jobs.mjs jobLine).
 // Exports the scenario interface (run.mjs): id, title, model, minutes, needsShims, setup(ctx), run(ctx), check(ctx).
 import { checkLine, LIMITS, startsOf } from '../lib/checks.mjs';
 import { loaded } from '../lib/common.mjs';
@@ -29,8 +31,8 @@ export function setup(ctx) {
 }
 
 export async function run(ctx) {
-  ctx.notes.direct = await ctx.claude({ name: 'direct-lex-web', prompt: PROMPT_DIRECT, model });
-  ctx.notes.viaLex = await ctx.claude({ name: 'lex-starts-dev', prompt: PROMPT_LEX, model });
+  ctx.notes.direct = (await ctx.claudeJob({ name: 'direct-lex-web', prompt: PROMPT_DIRECT, model })).session;
+  ctx.notes.viaLex = (await ctx.claudeJob({ name: 'lex-starts-dev', prompt: PROMPT_LEX, model })).session;
 }
 
 export function check(ctx) {

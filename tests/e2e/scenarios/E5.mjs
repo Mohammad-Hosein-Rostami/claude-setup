@@ -1,6 +1,8 @@
 // E5, the guard switch (plan section 9): with CLAUDE_GUARD_ASK=allow (a) an ask runs with no dialog and logs switch-allow;
 // (b) a disguised push is bounced once, then opens the dialog, which denies, and the bare origin is unchanged; (c) without the
 // switch the same ask opens the dialog, which times out, and the command runs (timed allow).
+// Each claude run is a ctx.claudeJob (R8): once when E0 found the boss gets a background result in one run, else with
+// `--resume` rounds until the job is done; a job left not done is its own FAIL line (jobs.mjs jobLine).
 // Exports the scenario interface (run.mjs): id, title, model, minutes, needsShims, setup(ctx), run(ctx), check(ctx).
 import { checkLine, LIMITS } from '../lib/checks.mjs';
 import { gitOut, readText, sameRead } from '../lib/common.mjs';
@@ -27,7 +29,7 @@ export function setup(ctx) {
 async function part(ctx, key, { prompt, extra, dialog }) {
   ctx.dialog(dialog);
   const dialogsBefore = ctx.dialogCount();
-  const session = await ctx.claude({ name: `part-${key}`, prompt, model, extra });
+  const { session } = await ctx.claudeJob({ name: `part-${key}`, prompt, model, extra });
   ctx.notes[key] = { session, dialogs: ctx.dialogCount() - dialogsBefore, subjects: gitOut(ctx, ['log', '--format=%s', 'main']).split('\n'),
     originRefs: gitOut(ctx, ['show-ref'], ctx.origin) };
 }
