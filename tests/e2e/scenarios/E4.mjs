@@ -7,6 +7,7 @@
 import { FABLE_RULE } from '../../../home/hooks/lib/fable-model-reasons.mjs';
 import { checkLine, LIMITS, startsOf } from '../lib/checks.mjs';
 import { loaded } from '../lib/common.mjs';
+import { redactedSlice } from '../lib/redact.mjs';
 import { makeLibrary } from '../lib/repo.mjs';
 
 export const id = 'E4';
@@ -34,7 +35,7 @@ export async function run(ctx) {
 const lexStarts = (ctx, session) => (session ? startsOf(loaded(ctx, session).lines).filter((start) => start.type === 'lex') : []);
 const gated = (start) => start.denied && start.denyText.includes(FABLE_RULE);
 const shown = (starts) => (starts.length === 0 ? 'no start'
-  : starts.map((start) => `${start.model ?? 'pinned'}: ${gated(start) ? 'denied by the gate' : start.denied ? `denied: ${start.denyText.slice(0, 80)}` : 'started'}`).join(', '));
+  : starts.map((start) => `${start.model ?? 'pinned'}: ${gated(start) ? 'denied by the gate' : start.denied ? `denied: ${redactedSlice(start.denyText, 80)}` : 'started'}`).join(', '));
 
 export function check(ctx) {
   const named = lexStarts(ctx, ctx.notes.models);

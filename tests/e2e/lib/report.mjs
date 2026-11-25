@@ -18,8 +18,9 @@ export const statusOf = (line) => (line.notRun === true ? 'NOT RUN' : line.pass 
 /** @returns {object} a line for a check that could not run, with the reason as its observed value */
 export const notRunLine = (check, reason) => ({ check, expected: 'the scenario runs', observed: `not run: ${reason}`, pass: false, notRun: true });
 
+// masked before it is cut: a value of no known shape cut in two would no longer be matched (review round 4, R3)
 const cut = (text) => {
-  const flat = String(text).replace(/\s+/g, ' ').trim();
+  const flat = redact(text).replace(/\s+/g, ' ').trim();
   return flat.length > OBSERVED_MAX_CHARS ? `${flat.slice(0, OBSERVED_MAX_CHARS)}...` : flat;
 };
 

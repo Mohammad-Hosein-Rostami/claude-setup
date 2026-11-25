@@ -9,7 +9,8 @@ The normal suite tests the runner itself without a real `claude`: `tests/e2e-che
 `tests/e2e-traps.test.mjs` (the checkers, on fixture transcripts and failed git reads), `tests/e2e-jobs.test.mjs` (when a job is
 done), `tests/e2e-safety.test.mjs` (model, redaction, env, HOME and cleanup rules) and `tests/e2e-runner.test.mjs` (the command
 line, against a fake `claude`), `tests/e2e-login.test.mjs` and `tests/e2e-login-run.test.mjs` (where the login comes from,
-with a made-up token in a file account store).
+with a made-up token in a file account store, and that no kept file holds it) and `tests/e2e-cuts.test.mjs` (masking before a
+cut).
 
 ## Before a run
 
@@ -76,11 +77,15 @@ Each check prints one line: `<scenario> <check> | <expected> | <observed> | PASS
   and a temp HOME. That HOME links `agents`, `hooks`, `rules`, `skills`, `standards`, `tools` and `statusline.mjs` from the
   checkout under test, holds copies of your `settings.json` and `CLAUDE.md`, and has empty `logs/`, `state/` and `projects/`.
   The settings copy points its hooks at the temp HOME, drops `CLAUDE_GUARD_ASK` and turns auto-continue at a usage limit off.
+  It also drops every API key, auth token, base URL and model remap from its `env`, and the credential helpers
+  (`apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`): Claude Code applies the settings `env` to a session after the
+  runner has cleaned the process environment. `CLAUDE_CODE_SUBAGENT_MODEL` stays, as the setup's own model pin.
 - Every `claude -p` names `--model opus` or `--model sonnet` (or a full Opus or Sonnet id). The one place that builds its
   arguments, `lib/models.mjs`, refuses any other model, and the dry run fails if a command line lacks one.
 - The sessions get a clean environment: API keys, auth tokens, base URLs and model remaps are removed. E4 sets one model remap
   on purpose, to check that it is denied.
-- Printed lines, `results.json` and the kept logs pass through a redactor that masks keys, tokens and Bearer values.
+- Printed lines, `results.json` and the kept logs pass through a redactor that masks keys, tokens and Bearer values. A text
+  is masked before it is cut short for a check line.
 - The dialog tool (`osascript` on macOS, `zenity` on Linux), `afplay`, `notify-send` and `powershell` are replaced by stand-ins
   that log their arguments, so no dialog, sound or notification reaches you; each dialog gets the answer a scenario scripts.
 - At the end, or on Ctrl-C, every process the run started is ended and the run folder is removed; the runner removes only a
@@ -95,6 +100,7 @@ Each check prints one line: `<scenario> <check> | <expected> | <observed> | PASS
 - On Windows, the scenarios that need the stand-ins are reported NOT RUN.
 - `--real-home` applies to E9 only, not to the whole run, and E11's real guard log check is NOT RUN under it.
 - E0's answer mode also applies to E2, E3, E5 and E6, not only to E1. A job left not done fails its own line.
+- The settings copy drops billing variables and credential helpers as well as `CLAUDE_GUARD_ASK`.
 - The login check runs once before any scenario, and a refused login stops the run with exit 2.
 - Without a token in the terminal, the runner reads the saved account itself and never prints it. `--no-stored-login` turns
   that off.

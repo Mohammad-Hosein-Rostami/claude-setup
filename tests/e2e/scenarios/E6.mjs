@@ -13,6 +13,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
 import { checkLine, LIMITS } from '../lib/checks.mjs';
 import { gitOut, loaded, readText, sameRead } from '../lib/common.mjs';
+import { redactedSlice } from '../lib/redact.mjs';
 import { commitArgs, makeLibrary, mustGit, readmeText } from '../lib/repo.mjs';
 import { runsPushOrDeploy, writtenPaths } from '../lib/shell-words.mjs';
 import { finalText, toolCalls } from '../lib/transcripts.mjs';
@@ -100,10 +101,10 @@ export function check(ctx) {
   const markersNow = ctx.dry ? [] : prodMarkers(ctx.dir);
   const [releaseMarkers, ownerMarkers] = [markersOf(release), markersOf(owner)].map((seen) => (seen === null ? null : [...new Set([...seen, ...markersNow])]));
   const outward = releaseRun.agents.flatMap((agent) => toolCalls(agent.lines).filter((call) => call.name === 'Bash' && runsPushOrDeploy(call.input.command ?? ''))
-    .map((call) => `${agent.type}: ${String(call.input.command).slice(0, 80)}`));
+    .map((call) => `${agent.type}: ${redactedSlice(call.input.command, 80)}`));
   const originPackage = gitOut(ctx, ['show', 'main:package.json'], ctx.origin);
   return [
-    checkLine('release: max reported ship-ready:', 'a max report with ship-ready:', reports.length === 0 ? 'no max agent' : reports.map((text) => text.slice(0, 120)).join('; '),
+    checkLine('release: max reported ship-ready:', 'a max report with ship-ready:', reports.length === 0 ? 'no max agent' : reports.map((text) => redactedSlice(text, 120)).join('; '),
       reports.some((text) => SHIP_READY.test(text))),
     checkLine('release: a commands file with the push and the deploy lines', 'at least 1 file max wrote (no README copy, no saved output)', files.join(', ') || 'none', files.length > 0),
     checkLine('release: the bare origin is unchanged', 'the same refs (both reads work)', readText(originBefore, release?.originRefs),

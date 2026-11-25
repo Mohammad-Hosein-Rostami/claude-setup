@@ -1,11 +1,13 @@
 // Masks every token-shaped text before the harness prints, logs or writes it (owner rule: never a token in a log, a result or a
-// commit). Exports: REDACTED, registerSecret(value), redact(text), redactJson(value).
+// commit). Exports: REDACTED, registerSecret(value), redact(text), redactedSlice(text, maxChars), redactJson(value).
 // What is masked: Anthropic keys and OAuth tokens (`sk-ant-...`, any kind), `Bearer <value>`, an `Authorization:` header, and the
 // value of any JSON field or `NAME=value` pair whose name says token, secret, key, password or authorization
 // (`"accessToken": "..."`, `CLAUDE_CODE_OAUTH_TOKEN=...`). The stream of a `claude` child is redacted line by line before it is
 // written, so a checker never reads a raw token either. The runner's own login token (CLAUDE_CODE_OAUTH_TOKEN, env.mjs) is masked
 // by its value too, whatever its shape, wherever it shows up, and so is every value registered at run time (registerSecret:
 // the token the runner read from the claude-account store, review round 3).
+// A text is always masked before it is cut (redactedSlice, report.mjs): a cut through a value of no known shape would leave a
+// part the exact-value mask no longer matches (review round 4, R3).
 // Invariants: reads nothing but that one env value and the registered values (held in memory only, never written); masking is
 // idempotent (redact(redact(x)) === redact(x)); non-string input is turned into a string first.
 
@@ -42,6 +44,13 @@ export function redact(text) {
   const masked = values.reduce((out, value) => out.split(value).join(REDACTED), String(text ?? ''));
   return PATTERNS.reduce((out, [pattern, replacement]) => out.replace(pattern, replacement), masked);
 }
+
+/**
+ * @param {unknown} text a text a check line shows only the start of (a deny, a report, a command from a transcript)
+ * @param {number} maxChars how much of it is shown
+ * @returns {string} the text redacted first, then cut to maxChars
+ */
+export const redactedSlice = (text, maxChars) => redact(text).slice(0, maxChars);
 
 /**
  * @param {unknown} value a value about to be written as JSON (results.json)

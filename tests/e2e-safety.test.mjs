@@ -211,6 +211,22 @@ test('settingsCopy: hook paths move to the temp HOME, the guard switch is droppe
   assert.equal(claudeMdCopy('@/real/setup/home/CLAUDE.md\n@/real/personal/CLAUDE.md', '/real/setup', '/lane'), '@/lane/home/CLAUDE.md\n@/real/personal/CLAUDE.md');
 });
 
+test('settingsCopy: every billing variable, base URL, model remap, login token and credential helper of the settings is dropped', () => {
+  // Claude Code applies the settings env after childEnv cleaned the process env: a key kept here would bill the API
+  const billing = { ANTHROPIC_API_KEY: 'made-up-key', ANTHROPIC_AUTH_TOKEN: 'made-up-auth', ANTHROPIC_BASE_URL: 'http://127.0.0.1:9',
+    ANTHROPIC_MODEL: 'made-up-model', ANTHROPIC_DEFAULT_OPUS_MODEL: 'made-up-remap', ANTHROPIC_DEFAULT_MODEL: 'made-up-remap',
+    ANTHROPIC_SMALL_FAST_MODEL: 'made-up-remap', CLAUDE_CODE_USE_BEDROCK: '1', CLAUDE_CODE_USE_VERTEX: '1', CLAUDE_CODE_USE_FOUNDRY: '1',
+    AWS_BEARER_TOKEN_BEDROCK: 'made-up-bearer', ANTHROPIC_FOUNDRY_BASE_URL: 'http://127.0.0.1:9', CLOUD_ML_BASE_URL: 'http://127.0.0.1:9',
+    [LOGIN_ENV]: 'made-up-login-in-settings' };
+  const kept = { CLAUDE_CODE_SUBAGENT_MODEL: 'claude-sonnet-5-5', BASH_DEFAULT_TIMEOUT_MS: '1000' }; // the setup's own pins stay
+  const real = JSON.stringify({ env: { ...billing, ...kept }, apiKeyHelper: '/bin/echo made-up', awsAuthRefresh: 'made-up', awsCredentialExport: 'made-up', model: 'opus' });
+  const copy = JSON.parse(settingsCopy(real, '/Users/o', '/tmp/run/home'));
+  assert.deepEqual(copy.env, kept);
+  for (const key of ['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport']) assert.equal(key in copy, false, key);
+  assert.equal(copy.model, 'opus');
+  assert.deepEqual(JSON.parse(settingsCopy(JSON.stringify({ apiKeyHelper: 'x' }), '/Users/o', '/tmp/run/home')), { autoContinueAtUsageLimit: false }, 'no env: still no helper');
+});
+
 const RUN_ROOT = '/made-up/cs-test-e2e-run';
 const REAL_HOME = '/made-up/real-home';
 

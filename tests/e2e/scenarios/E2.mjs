@@ -7,6 +7,7 @@
 // Exports the scenario interface (run.mjs): id, title, model, minutes, needsShims, setup(ctx), run(ctx), check(ctx).
 import { checkLine, completedAt, LIMITS, startsOf } from '../lib/checks.mjs';
 import { loaded } from '../lib/common.mjs';
+import { redactedSlice } from '../lib/redact.mjs';
 import { makeLibrary } from '../lib/repo.mjs';
 
 export const id = 'E2';
@@ -51,7 +52,7 @@ export function check(ctx) {
   return [
     checkLine(`${LIMITS.mainAgentCap} lex start before the deny`, LIMITS.mainAgentCap, `${running.length} started, ${capStarts.length} lex call(s)`,
       running.length === LIMITS.mainAgentCap),
-    checkLine('the 4th lex start is denied, naming the running ids', 'a deny that names every running lex', deny === null ? 'no deny' : deny.denyText.slice(0, 200),
+    checkLine('the 4th lex start is denied, naming the running ids', 'a deny that names every running lex', deny === null ? 'no deny' : redactedSlice(deny.denyText, 200),
       namesRunning),
     checkLine('after they ended a new lex starts', 'at least 1 lex start after a completed notice of each running lex',
       `${later.length} of ${laterStarts.length} later start(s); ${ended.size} completed notice(s)`, later.length >= 1),

@@ -7,6 +7,7 @@
 // Exports the scenario interface (run.mjs): id, title, model, minutes, needsShims, setup(ctx), run(ctx), check(ctx).
 import { checkLine, LIMITS, startsOf } from '../lib/checks.mjs';
 import { loaded } from '../lib/common.mjs';
+import { redactedSlice } from '../lib/redact.mjs';
 import { makeLibrary } from '../lib/repo.mjs';
 import { finalText } from '../lib/transcripts.mjs';
 
@@ -42,12 +43,12 @@ export function check(ctx) {
   const reports = lexAgents.map((agent) => finalText(agent.lines)?.text ?? '');
   return [
     checkLine('the boss starting lex-web directly is denied with the route', `every lex-web start denied with "${HELPER_ROUTE}"`,
-      webStarts.length === 0 ? 'no lex-web start' : webStarts.map((start) => (start.denied ? start.denyText.slice(0, 160) : 'started')).join('; '),
+      webStarts.length === 0 ? 'no lex-web start' : webStarts.map((start) => (start.denied ? redactedSlice(start.denyText, 160) : 'started')).join('; '),
       webStarts.length > 0 && webStarts.every((start) => start.denied && start.denyText.includes(HELPER_ROUTE))),
     checkLine("lex's dev start is denied", `every dev start of a lex denied with "${SUBAGENT_ROUTE}"`,
       `${devStarts.length} start(s), ${devStarts.filter((start) => start.denied && start.denyText.includes(SUBAGENT_ROUTE)).length} denied with the route`,
       devStarts.length > 0 && devStarts.every((start) => start.denied && start.denyText.includes(SUBAGENT_ROUTE))),
-    checkLine("the lex report asks for dev with needs:", 'a `needs: dev to ...` line', reports.map((text) => text.slice(0, 160)).join('; ') || 'no lex report',
+    checkLine("the lex report asks for dev with needs:", 'a `needs: dev to ...` line', reports.map((text) => redactedSlice(text, 160)).join('; ') || 'no lex report',
       reports.some((text) => NEEDS_DEV.test(text))),
   ];
 }
