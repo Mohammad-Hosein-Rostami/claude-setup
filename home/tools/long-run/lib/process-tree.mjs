@@ -1,5 +1,5 @@
 // Purpose: end a process and everything it started. Every tool that runs a command ends it here, so they all end a tree the
-//   same way: `land` (the lane's test), `suite` (a test command) and `long-run` (a boss, a step check).
+//   same way: `land` (the lane's test) and `long-run` (a boss, a step check).
 //   A `claude -p` boss runs in its own process group, but a subagent's Bash runs in a group of its own (live test 2026-11-24),
 //   so for a boss a group signal alone can leave it running: long-run reads the tree before each signal (listDescendants) and
 //   ends whatever of it outlives the boss afterwards (sweepDescendants).
@@ -17,8 +17,8 @@ import { msFromEnv } from './env-ms.mjs';
 
 /** How long a tree gets between SIGTERM and SIGKILL: time for a test runner or a shell to clean up, short enough for a stop. */
 export const TERM_GRACE_MS = 3 * 1000;
-// The grace sweepDescendants gives a boss's leftovers: TERM_GRACE_MS, or its knob (env-ms.mjs, tests; `land` and `suite`
-// never sweep, so their grace stays TERM_GRACE_MS).
+// The grace sweepDescendants gives a boss's leftovers: TERM_GRACE_MS, or its knob (env-ms.mjs, tests; `land` never sweeps,
+// so its grace stays TERM_GRACE_MS).
 const SWEEP_GRACE_MS = msFromEnv('CLAUDE_LONG_RUN_SWEEP_GRACE_MS', TERM_GRACE_MS);
 // How often a tree that got SIGTERM is checked for whether it is gone.
 const POLL_MS = 100;
