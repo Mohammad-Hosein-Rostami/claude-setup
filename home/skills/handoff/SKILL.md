@@ -11,9 +11,9 @@ Write `HANDOFF.md` in the project root (never committed: hide it with `.git/info
 3. **Decisions**: one item each, with why.
 4. **Files touched**: from `git status --porcelain` and `git log --oneline <start>..HEAD` (paste the command output, never
    from memory); the branch and head sha the same way. Then the session id (`echo $CLAUDE_CODE_SESSION_ID`) and its agents,
-   with their branches and folders, from `node ~/.claude/tools/board/board.mjs show --refresh`, and every open branch and
-   worktree from `git worktree list`, each pasted as printed (never kept by hand); the note adds only each one's owner and
-   what it waits for.
+   with their branches and folders, from `node ~/.claude/tools/board/board.mjs show --refresh`, and main, the lanes and the
+   queue from `node ~/.claude/tools/board/board.mjs tick --repo <abs main checkout> [--plan <abs pieces.json>]`, each pasted
+   as printed (never kept by hand); the note adds only each one's owner and what it waits for.
 5. **Last check**: the command run and its exact result or error text (copied from the log).
 6. **Open questions**: each with who decides.
 7. **Next**: ordered steps, each concrete enough to run without asking.
