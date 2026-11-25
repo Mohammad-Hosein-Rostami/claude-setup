@@ -1,14 +1,14 @@
-// The status line rows (spec R18, owner decisions RC14 to RC18 of 2026-11-22): at most 5 rows when busy, 2 when idle, at 100 columns:
-//   ? ANSWER NEEDED · 1 question · recommended answer taken in 1:40                 (alert: only while a question or prompt waits)
+// The status line rows (spec R18, owner decisions RC14 to RC18 of 2026-11-22): at most 4 rows when busy, 2 when idle, at 100 columns:
 //   agents  5 running · 1 done · ! tess-review quiet 6 min                       (only while an agent runs, layout.mjs)
 //   git     claude-setup  main  ↑2 to push · 1 staged · 3 changed · 1 new · stash 1   (git-rows.mjs gitLineRows)
 //   lanes   r18-git ↑2 ~3 dev · r18-est ↑4 ready to land                                   (git row 2: lanes or a 2nd repo)
 //   session Opus 5.5 high · context 29% · 5h 90% left, empty ~22:32 · 7d 47% left · acct mine
-// Budget (layout.mjs rowBudget: 6, 4 or 2 by LINES): over it the rows are kept in this order: session, git 1, alert, agents, git 2;
+// Budget (layout.mjs rowBudget: 6, 4 or 2 by LINES): over it the rows are kept in this order: session, git 1, agents, git 2;
 // they print top to bottom as above. Never blank: `git loading` before the board's first refresh, `context ?` before the first call.
-// No job, step or estimate rows (plan 2026-11-24: estimates and job machinery removed).
+// No job, step or estimate rows (plan 2026-11-24: estimates and job machinery removed), and no alert row: nothing marks a waiting
+// question since the question popup was removed (2026-11-25).
 // Exports: statusRows(view, look) -> string[] (never more than rowBudget(view.env) rows); sessionRow(view, look) (statusline.mjs
-// prints it alone when drawing fails); alertRow(view, look) -> string | null; contextOf(window, env); paceOf(limitsFile, nowMs).
+// prints it alone when drawing fails); contextOf(window, env); paceOf(limitsFile, nowMs).
 // Rules (audit cases of `certainty/statusline-audit.md`, fixes of display design 4.6): context is the input tokens of the last call
 // against the auto-compact window (CLAUDE_CODE_AUTO_COMPACT_WINDOW, else the model's window), never `used_percentage`; `context ?`
 // while `current_usage` is null or all zero (before the first call, after /compact: case 9); a limit shows `<1% left` rather than
@@ -18,9 +18,9 @@
 // than 5 min; it never notifies. From 150k tokens `/clear` follows the context. The session row drops acct, then 7d, then the 5 h
 // clock.
 // Colour (cells.mjs, RC14): model, effort, context and limit values `session`, clocks `time`, labels dim; yellow from 60 % used,
-// red over 80 %, the pace yellow, the alert magenta.
+// red over 80 %, the pace yellow.
 // Invariants: pure (no I/O); every outside text goes through cleanText; every row fits look.columns.
-import { clockOf, cleanText, fitParts, LABEL_FROM_COLUMNS, labelled, STATE } from './cells.mjs';
+import { clockOf, cleanText, fitParts, labelled, STATE } from './cells.mjs';
 import { gitLineRows } from './git-rows.mjs';
 import { agentsSummaryRow, rowBudget } from './layout.mjs';
 
@@ -28,22 +28,19 @@ const TOKENS_PER_K = 1000;
 const PERCENT = 100;
 const MS_PER_S = 1000;
 const MS_PER_MIN = 60_000;
-const S_PER_MIN = 60;
 const CLEAR_CTX_TOKENS = 150_000; // from here /clear before the next task (home/CLAUDE.md, token discipline)
 const WARN_USED_PCT = 60; // spec-tui-2: context or a limit 60-80 % used is yellow, over 80 % red, below 60 % the session colour
 const BLOCK_USED_PCT = 80;
 const SAMPLE_AGE_SHOWN_MIN = 5;
 const MAX_NAME_CHARS = 24;
 const MAX_EFFORT_CHARS = 8;
-const ASKING_MARGIN_MS = 60 * MS_PER_S; // asking-marker.mjs STALE_MARGIN_S: expiresAt is the default's time plus this margin
 /** The rows kept when the budget is short, most useful first (spec R18); they print in ROW_ORDER. */
-const KEEP_ORDER = ['session', 'git1', 'alert', 'agents', 'git2'];
-const ROW_ORDER = ['alert', 'agents', 'git1', 'git2', 'session'];
+const KEEP_ORDER = ['session', 'git1', 'agents', 'git2'];
+const ROW_ORDER = ['agents', 'git1', 'git2', 'session'];
 
 const isNumber = (value) => typeof value === 'number' && Number.isFinite(value);
 /** A part whose leading label (`context`, `5h`, `7d`, `acct`) is dim and whose value keeps the part's state. */
 const dimLabel = (part, label) => ({ ...part, spans: [{ text: label, state: STATE.dim }, { text: part.text.slice(label.length), state: part.state }] });
-const pad2 = (value) => String(value).padStart(2, '0');
 
 /**
  * @param {object | undefined} window the input's `context_window`
@@ -183,34 +180,6 @@ export function paceOf(limitsFile, nowMs) {
   return outMs < resetMs && resetMs > nowMs ? { outMs, ageMin: Math.round((nowMs - newest.t) / MS_PER_MIN) } : null;
 }
 
-/** `0:40` from a duration in ms. */
-const minSec = (ms) => { const s = Math.max(0, Math.round(ms / MS_PER_S)); return `${Math.floor(s / S_PER_MIN)}:${pad2(s % S_PER_MIN)}`; };
-
-/** The alert's parts: `? ANSWER NEEDED` (bold), what waits, when the default is taken; all magenta (needs you). */
-function askingParts(asking, nowMs, look) {
-  const count = Number.isInteger(asking.count) && asking.count > 1 ? asking.count : 1;
-  const question = asking.kind === 'question';
-  const what = question ? `${count} ${count === 1 ? 'question' : 'questions'}` : 'a permission prompt';
-  const leftMs = isNumber(asking.expiresAt) ? asking.expiresAt - ASKING_MARGIN_MS - nowMs : 0;
-  const goes = question ? (look.columns >= LABEL_FROM_COLUMNS ? 'recommended answer taken in' : 'default in') : 'goes ahead in';
-  return [
-    { text: `? ${question ? 'ANSWER' : 'OK'} NEEDED`, state: STATE.wait, bold: true },
-    { text: what, state: STATE.wait, drop: 1 },
-    leftMs > 0 ? { text: `${goes} ${minSec(leftMs)}`, state: STATE.wait } : null,
-  ].filter(Boolean);
-}
-
-/**
- * The alert row: only while a question or a permission prompt waits on the owner (the asking marker).
- * @param {{ asking: object | null, nowMs: number }} view
- * @param {ReturnType<import('./cells.mjs').lookOf>} look the terminal
- * @returns {string | null} the row starting with `? `, or null
- */
-export function alertRow({ asking, nowMs }, look) {
-  if (asking === null || typeof asking !== 'object') return null;
-  return fitParts(askingParts(asking, nowMs, look), look);
-}
-
 /** The session folder as the no-repository row names it: `~` for the home folder, else its last name; null when unknown. */
 function folderShown(input, env) {
   const cwd = input?.workspace?.current_dir ?? input?.cwd;
@@ -227,19 +196,18 @@ function kept(rows, budget) {
 }
 
 /**
- * All rows of one render within the row budget (spec R18): alert, agents, git 1, git 2, session.
- * @param {{ input: object, board: object | null, asking: object | null, limitsFile: object | null,
+ * All rows of one render within the row budget (spec R18): agents, git 1, git 2, session.
+ * @param {{ input: object, board: object | null, limitsFile: object | null,
  *   account: string | undefined, env: object, nowMs: number, timeZone: string }} view
  * @param {ReturnType<import('./cells.mjs').lookOf>} look the terminal
- * @returns {string[]} 2 to 5 rows: 2 when idle in a repository with no lanes (git and session)
+ * @returns {string[]} 2 to 4 rows: 2 when idle in a repository with no lanes (git and session)
  */
 export function statusRows(view, look) {
   const { board, nowMs } = view;
   const folder = folderShown(view.input, view.env);
   const [git1, git2 = null] = gitLineRows(board, 2, look, folder);
   const rows = {
-    alert: alertRow(view, look), agents: agentsSummaryRow(board, { nowMs }, look),
-    git1, git2, session: sessionRow(view, look),
+    agents: agentsSummaryRow(board, { nowMs }, look), git1, git2, session: sessionRow(view, look),
   };
   const budget = rowBudget(view.env);
   const shown = kept(rows, budget);

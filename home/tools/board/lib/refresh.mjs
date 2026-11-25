@@ -1,11 +1,11 @@
-// The board file of a session: which agents work on what, what waits on the owner, and the git state of every worktree, for the
+// The board file of a session: which agents work on what and the git state of every worktree, for the
 // status line (spec-p5 `r9-board`, spec-tui "Data and speed"). A detached refresh
 // writes it, one at a time, at most every LIVE_EVERY_MS while an agent is live and every IDLE_EVERY_MS when idle; a refresh
 // over BUDGET_MS keeps the old data and marks the board stale (the agent cursors and git cache it read are kept all the same).
 // Exports: boardDir(env), readBoard(session, env), buildBoard(source, deps), collectBoard(source, deps) -> { board,
 // cache }, refreshBoard(source, deps) -> boolean, claimBoardRefresh(session, deps) -> boolean, startBoardRefresh(session, deps) ->
 // boolean, findTranscript(session, projectsDir); MAX_BOARD_BYTES.
-// File: ~/.claude/state/board/<session>.json = { session, at, stale, refreshStartedAt, asking,
+// File: ~/.claude/state/board/<session>.json = { session, at, stale, refreshStartedAt,
 // agents: [agents.mjs entries plus repo (its repository's name), wt, branch, unplaced (repos.mjs placeAgents)], repo: git-state.mjs repo plus { name }
 // (repos.mjs) and { tip, landed } (repo-stats.mjs) | null, repos: the other used repositories (same shape without the stats), git: { branch, ahead, behind, changed } | null }
 // (<= MAX_BOARD_BYTES: done agents go first, then the oldest, until it fits). Cache (cache-file.mjs, <session>.json): { cursors, git,
@@ -17,7 +17,6 @@
 // matched to those worktrees by path prefix (repos.mjs placeAgents). One refresh at a time per session: an O_EXCL lock file
 // (disk-free/lib/lock-file.mjs, review L1), broken once it is LOCK_STALE_MS old (review SEC-2: a hung refresh must not be
 // joined by a new one every IN_FLIGHT_MS).
-// `needs you` is the session's asking marker.
 // Invariants: agent transcripts are an internal format: every parser fails soft, so an unreadable part never throws; written
 // through session-store.mjs (no links, 0600, temp file and rename); git runs only in git-state.mjs, with fixed flags and its own
 // timeouts; `git-tidy check` never runs here; nothing here throws.
@@ -28,7 +27,6 @@ import { releaseLock, takeLock } from '../../disk-free/lib/lock-file.mjs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readAsking } from '../../../hooks/lib/asking-marker.mjs';
 import { isSessionId, readSessionFile, writeSessionFile } from '../../../hooks/lib/session-store.mjs';
 import { sessionAgents } from './agents.mjs';
 import { readCacheFile, writeCacheFile } from './cache-file.mjs';
@@ -137,10 +135,8 @@ export function collectBoard({ session, transcriptPath, cwd }, { env = process.e
   // repo-stats runs on the trusted shared git folder, never on a worktree path a stale cached state shows (review SEC-10)
   const stats = repoStats({ common: git.common, base: primary?.base ?? null, cache: cache?.stats ?? null, nowMs, startMs: gitStartMs });
   const repo = primary === null ? null : { ...primary, tip: stats.stats?.tip ?? null, landed: stats.stats?.landed ?? null };
-  const marker = readAsking(session, env, nowMs);
-  const asking = marker === null ? null : { kind: marker.kind, count: marker.count, expiresAt: marker.expiresAt };
   const board = {
-    session, at: nowMs, stale: null, refreshStartedAt: null, asking, agents: placed.agents, repo,
+    session, at: nowMs, stale: null, refreshStartedAt: null, agents: placed.agents, repo,
     repos: others, git: git.git,
   };
   return { board: fitted(board), cache: { cursors: found.cursors, git: git.cache, stats: stats.cache, lead, used } };
@@ -170,7 +166,7 @@ export function claimBoardRefresh(session, { env = process.env, nowMs = Date.now
     if (!isSessionId(session)) return false;
     const old = readBoard(session, env);
     if (!due(old, nowMs)) return false;
-    const base = old ?? { session, at: 0, stale: null, refreshStartedAt: null, asking: null, agents: [], repo: null, git: null };
+    const base = old ?? { session, at: 0, stale: null, refreshStartedAt: null, agents: [], repo: null, git: null };
     return writeSessionFile(boardDir(env), session, JSON.stringify({ ...base, refreshStartedAt: nowMs }));
   } catch {
     return false; // no claim, no spawn: a broken board folder never causes a refresh storm

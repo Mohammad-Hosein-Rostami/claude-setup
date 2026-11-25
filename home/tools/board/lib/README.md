@@ -24,10 +24,10 @@ The boss's sync (`tick`, run by hand after every agent report and every land):
   features due for tess and a suggested next step.
 - `tick-plan.mjs`: reads and checks the plan's pieces.json, and reads and writes the job's tess marks.
 
-Drawing: the status line is 2 rows when calm and at most 5 when busy (alert, agents summary, git, lanes and session). Colour
+Drawing: the status line is 2 rows when calm and at most 4 when busy (agents summary, git, lanes and session). Colour
 marks a state only, never an agent or a branch.
 - `cells.mjs`: the cells every row is drawn with: glyphs, state colours, durations, clocks, row labels, fitting parts to a width.
 - `local-clock.mjs`: the local wall clock of an instant (the reset clocks on the session row).
-- `render.mjs`: the status line rows, in order: alert, agents summary, git, lanes and session.
+- `render.mjs`: the status line rows, in order: agents summary, git, lanes and session.
 - `layout.mjs`: the row budget and the status line's one agents summary row.
 - `git-rows.mjs`: the status line's git rows (the session's repository and its lanes, else one row per used repository).

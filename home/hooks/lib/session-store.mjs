@@ -1,5 +1,5 @@
 // Small state files keyed by an id, safe against planted links and special files. Each caller keeps one JSON file per session id in
-// its own folder (lib/asking-marker.mjs, for example, under ~/.claude/state).
+// its own folder (the board files of tools/board/lib/refresh.mjs, for example, under ~/.claude/state).
 // Exports: isSessionId(session), readSessionFile(dir, session, maxBytes) -> text | null | undefined,
 // writeSessionFile(dir, session, text, options?) -> boolean; for lib/session-lock.mjs: lstatOrNull, isPrivateFile, sameNode, privateFolder,
 // READ_FLAGS, CREATE_FLAGS, FILE_MODE, TEMP_NAME_BYTES.

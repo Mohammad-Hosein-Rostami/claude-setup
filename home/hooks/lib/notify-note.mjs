@@ -2,20 +2,18 @@
 // note and its queue were removed on 2026-11-24, nothing queued one):
 // their texts, the terminal sequence that carries them (a hook's `terminalSequence` output: OSC 9, 99 or 777, or a bare BEL;
 // hooks docs "Emit terminal notifications") and the channel the owner picked.
-// Exports: needsYouText(type, marker, now), stoppedText(sample), quotaText(type), noteSequence(text, channel),
+// Exports: needsYouText(type), stoppedText(sample), quotaText(type), noteSequence(text, channel),
 // effectiveChannel(env), terminalName(env); NOTE_TITLE.
 // Channel: `preferredNotifChannel` of Claude Code's global config (`$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`);
 // `notifications_disabled` gives no note; `auto` (or none) picks by the terminal: Ghostty OSC 777, Kitty OSC 99, Apple Terminal a
 // bell only (it shows no desktop note), else OSC 9 (iTerm2, WezTerm, Windows Terminal).
-// Invariants: a note text has no control, format (bidi override, isolate, mark) or line-separator character (UNSAFE_TEXT: each is dropped), so no text can end the sequence early, add one, or reorder or split the note; the
-// asking marker holds no question text, so a question note shows at most its short header label (cleanHeader: control characters
-// dropped, the marker's one cap); a reset time is shown only when a limit sample has one, never guessed; nothing here throws (any
-// failure reads as no note).
+// Invariants: a note text has no control, format (bidi override, isolate, mark) or line-separator character (UNSAFE_TEXT: each is
+// dropped), so no text can end the sequence early, add one, or reorder or split the note; a reset time is shown only when a limit
+// sample has one, never guessed; nothing here throws (any failure reads as no note).
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readPlainFile } from './plain-file.mjs';
-import { cleanHeader, STALE_MARGIN_S, UNSAFE_TEXT } from './asking-marker.mjs';
 
 export const NOTE_TITLE = 'Claude';
 const ESC = '\u001b';
@@ -23,36 +21,28 @@ const BEL = '\u0007';
 const MAX_TEXT_CHARS = 160;
 const MAX_CONFIG_BYTES = 16 * 1024 * 1024; // the global config holds every project's history; a bigger file is not read
 const MS_PER_S = 1000;
-const S_PER_MIN = 60;
 const FULL_PERCENT = 100;
 const ELICITATION_TYPES = ['elicitation_dialog', 'elicitation_url_dialog'];
 const WINDOW_LABEL = { five_hour: '5-hour', seven_day: '7-day' };
 const CHANNELS = ['auto', 'iterm2', 'iterm2_with_bell', 'terminal_bell', 'kitty', 'ghostty', 'notifications_disabled'];
+/**
+ * Characters no note text may carry: control characters, line and paragraph separators (U+2028/2029), and format characters (the bidi
+ * overrides, isolates and marks that reorder text, zero-width and tag characters), except ZWNJ and ZWJ, which Persian words and emoji
+ * need and which move nothing.
+ */
+const UNSAFE_TEXT = /[\p{Cc}\p{Zl}\p{Zp}]|(?![\u200c\u200d])\p{Cf}/gu;
 
 const clean = (text) => String(text ?? '').replace(UNSAFE_TEXT, '').slice(0, MAX_TEXT_CHARS);
 const pad2 = (n) => String(n).padStart(2, '0');
 const clock = (epochMs) => { const d = new Date(epochMs); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
-const minSec = (ms) => { const s = Math.max(0, Math.round(ms / MS_PER_S)); return `${Math.floor(s / S_PER_MIN)}:${pad2(s % S_PER_MIN)}`; };
 
 /**
  * @param {string} type the Notification hook's notification_type
- * @param {{ kind: string, tool: string, count: number, expiresAt: number, header?: string } | null} marker the session's asking marker (readAsking)
- * @param {number} now epoch ms
  * @returns {string | null} `Needs you: ...`, or null for a type that is not a wait on the owner
  */
-export function needsYouText(type, marker, now) {
-  const isPrompt = type === 'permission_prompt' || ELICITATION_TYPES.includes(type);
-  if (!isPrompt) return null;
-  if (marker) {
-    const left = minSec(marker.expiresAt - STALE_MARGIN_S * MS_PER_S - now);
-    const header = cleanHeader(marker.header);
-    const scope = header === '' ? '' : ` (${header})`;
-    const what = marker.kind === 'question'
-      ? (marker.count > 1 ? `question 1 of ${marker.count}${scope}` : `a question${scope}`)
-      : `permission for ${clean(marker.tool)}`;
-    return `Needs you: ${what} · default in ${left}`;
-  }
-  return type === 'permission_prompt' ? 'Needs you: a permission prompt' : 'Needs you: an MCP server asks for input';
+export function needsYouText(type) {
+  if (type === 'permission_prompt') return 'Needs you: a permission prompt';
+  return ELICITATION_TYPES.includes(type) ? 'Needs you: an MCP server asks for input' : null;
 }
 
 /**

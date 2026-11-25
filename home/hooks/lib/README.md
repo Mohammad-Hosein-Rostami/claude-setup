@@ -7,8 +7,9 @@ dependencies. Each file starts with a comment that lists its exports.
 ## What is here
 
 Notes and per-session state:
-- `notify-note.mjs`: the texts and terminal sequences of `notify.mjs` (a question note shows the marker's short header: `a question (Scope)`) and the effective channel.
-- `session-store.mjs`: small per-session files (`asking-marker.mjs` and others). It checks the folder and file
+- `notify-note.mjs`: the texts and terminal sequences of `notify.mjs` and the effective channel; every note text drops control,
+  format (bidi overrides and isolates, zero-width) and line-separator characters (`UNSAFE_TEXT`).
+- `session-store.mjs`: small per-session files (the board files and others). It checks the folder and file
   with lstat, never follows a link or waits on a FIFO, and cleans up only its own old files.
 - `session-lock.mjs`: `withSessionLock` makes hooks that record at the same moment take turns, so none drops another's record
   (built on `session-store.mjs`). The lock holds `<pid> <random token>` and is removed only by the run that holds it; a lock is
@@ -18,7 +19,6 @@ Notes and per-session state:
   linked back. If the stale lock's holder releases in that instant and two callers take the name, the moved lock is deleted: a lock
   is not guaranteed to survive a take-over. A caller may name the lock file (`lockFile`).
 - `plain-file.mjs`: the one safe open (no waiting, no link followed, regular files only, no append to a hard-linked file, a size cap) for the session transcript and the other files the hooks and tools read or append.
-- `asking-marker.mjs`: the small file `~/.claude/state/asking/<session>.json` that says a question or permission prompt waits for the owner; read by the status line, `notify.mjs` and the board. No hook writes it since the question popup was removed (2026-11-25), so the readers find none. It holds the first question's short header label (`header`, cut and cleaned by `cleanHeader` at `MAX_HEADER_CHARS` by the writer and by `readAsking`: control, format (bidi overrides and isolates, zero-width) and line-separator characters and `;` are dropped (`UNSAFE_TEXT`, also used for every note text); a marker without one reads as empty) and no question text. It expires by age.
 
 Other hooks:
 - `diagnostics.mjs`: used by `post-edit.mjs` (parses a failed format run into `file:line RULE-ID message` lines). `format-trust.mjs`: used by `post-edit.mjs` (whether a project's `format` script may run: `CLAUDE_POST_EDIT_TRUST_FORMAT=1` for the project, else only one plain call of a known formatter, as its binary). `edit-log.mjs`: the per-user hook temp root (`tempRoot`, `checkedTempRoot`) that `team-switch.mjs` keeps its notice markers in.
