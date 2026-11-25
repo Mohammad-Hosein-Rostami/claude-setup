@@ -4,8 +4,10 @@
 // `<scenario> <check> | <expected> | <observed> | PASS|FAIL|NOT RUN`, and `<out>/results.json`. Usage: `--help` (lib/cli.mjs).
 // Exit: 0 every check passed, 1 a check failed or did not run, 2 usage error, no CS_E2E_LIVE=1 or not logged in, 3 stopped at
 // a usage limit.
-// Login (lib/login.mjs): before any scenario `claude auth status --json` runs with a child's env and the temp HOME; without a
-// login the run prints one line and exits 2. A claude run refused its login stops the whole run (exit 2, one line).
+// Login: first the token is found (lib/stored-login.mjs: CLAUDE_CODE_OAUTH_TOKEN, else the claude-account store, read once
+// with the real HOME; none: one line, exit 2); only the account name and the source are printed and kept. Then (lib/login.mjs)
+// `claude auth status --json` runs with a child's env and the temp HOME; without a login the run prints one line and exits 2.
+// A claude run refused its login stops the whole run (exit 2, one line).
 // Safety (owner rules): a live run needs CS_E2E_LIVE=1, else nothing is made or started; `--dry-run` prints every setup step
 // and command line and starts nothing; every `claude` argv comes from claudeArgs (an allowed `--model`, never Fable); every
 // child gets childEnv (no API key, no auth token, no base URL); every write is inside the run root; the only remote is a bare
@@ -24,7 +26,7 @@ import { checkLine } from './lib/checks.mjs';
 import { liveAllowed, LIVE_SWITCH, loadScenarios, parseArgs, USAGE, UsageError } from './lib/cli.mjs';
 import { commonLines } from './lib/common.mjs';
 import { makeContext, makeOps, makeRunState } from './lib/context.mjs';
-import { childEnv } from './lib/env.mjs';
+import { childEnv, useLogin } from './lib/env.mjs';
 import { buildHome, homePaths } from './lib/home.mjs';
 import { ANSWER_MODES, answerModeOf } from './lib/jobs.mjs';
 import { leakSnapshot, realRepoOf } from './lib/leaks.mjs';
@@ -36,6 +38,7 @@ import { EXIT, exitCodeOf, formatLine, notRunLine, statusOf, writeResults } from
 import { makeRunRoot, removeProjectFolders, removeRunRoot, removeStaleRoots, RUN_PREFIX } from './lib/scratch.mjs';
 import { childPath, installShims } from './lib/shims.mjs';
 import { resetText } from './lib/stream.mjs';
+import { resolveLogin } from './lib/stored-login.mjs';
 
 const CHECKOUT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const GATE_REASON = 'E0(e) failed: the nested claude runs are not logged in on the subscription';
@@ -140,6 +143,15 @@ async function runEach(run, scenarios, { print, records, outDir }) {
 
 /** The whole live run (the header's safety rules). @returns {Promise<number>} the exit code */
 async function liveRun(options, scenarios) {
+  // the login first, with the real env and HOME (nothing made yet); the token goes to the child env and the redactor only
+  const found = await resolveLogin({ setupFrom: options.setupFrom, useStore: options.storedLogin });
+  if (!found.ok) {
+    say(found.line);
+    say(`e2e: ${found.detail}`);
+    return EXIT.usage;
+  }
+  useLogin(found.token);
+  const loginFrom = { source: found.source, name: found.name };
   const realHome = homedir();
   const madeRoots = new Set();
   const registry = new ProcessRegistry();
@@ -177,7 +189,7 @@ async function liveRun(options, scenarios) {
       loginMissing = true;
       say(LOGIN_LINE);
     } else {
-      say(`e2e live run: root ${root}; results ${outDir}${stale.length ? `; removed ${stale.length} stale root(s)` : ''}; login ${login.detail}`);
+      say(`e2e live run: root ${root}; results ${outDir}${stale.length ? `; removed ${stale.length} stale root(s)` : ''}; ${found.line}, ${login.detail}`);
       if (realPaths) say(`e2e: --real-home: only a scenario that needs it (E9) uses the real HOME ${realPaths.home} (owner opt-in); the rest keep the temp HOME`);
       if (process.platform !== 'win32') {
         popupDir = (await popupMaker())('deny').env.PATH.split(delimiter)[0];
@@ -213,7 +225,7 @@ async function liveRun(options, scenarios) {
   const limit = run?.limit ?? null;
   const login = loginMissing ? { name: 'preflight', text: LOGIN_LINE } : run?.login ?? null;
   const code = exitCodeOf({ lines: all, limit, login });
-  writeResults(outDir, { root, setupFrom: options.setupFrom, realHomeMode: options.realHomeMode, limit, login, exit: code, scenarios: records,
+  writeResults(outDir, { root, setupFrom: options.setupFrom, realHomeMode: options.realHomeMode, loginFrom, limit, login, exit: code, scenarios: records,
     run: all.filter((line) => !records.some((record) => record.lines.includes(line))) });
   if (loginMissing) return code;
   if (run?.login) say(`e2e: stopped: ${run.login.scenario} ${run.login.name} was refused its login (${run.login.text}); ${LOGIN_LINE}. Nothing was retried.`);

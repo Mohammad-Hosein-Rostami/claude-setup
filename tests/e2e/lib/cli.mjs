@@ -18,6 +18,7 @@ const SCENARIO_KEYS = ['id', 'title', 'model', 'minutes', 'needsShims', 'setup',
 export const USAGE = `usage: node tests/e2e/run.mjs --list
        node tests/e2e/run.mjs --dry-run [--only <id,...> | --all] [--setup-from <checkout>] [--real-home]
        ${LIVE_SWITCH}=1 node tests/e2e/run.mjs (--only <id,...> | --all) [--out <dir>] [--setup-from <checkout>] [--real-home]
+         [--no-stored-login]
   --list         the scenarios, one per line
   --dry-run      print every setup step and the exact command lines; start nothing (no ${LIVE_SWITCH} needed)
   --only E0,E7   run these scenarios (ids: ${SCENARIO_IDS.join(' ')})
@@ -25,18 +26,20 @@ export const USAGE = `usage: node tests/e2e/run.mjs --list
   --out <dir>    where results.json and the redacted logs go (default: a new folder in the temp root)
   --setup-from   the checkout under test (default: the one this runner is in)
   --real-home    the children use the real HOME instead of a temp one (only with the owner's OK; E9 needs it)
-exit: 0 every check passed, 1 a check failed or did not run, 2 usage error or no ${LIVE_SWITCH}=1, 3 stopped at a usage limit`;
+  --no-stored-login  without CLAUDE_CODE_OAUTH_TOKEN, do not read the claude-account store; the preflight decides
+exit: 0 every check passed, 1 a check failed or did not run, 2 usage error, no ${LIVE_SWITCH}=1 or no login, 3 stopped at a usage limit`;
 
 /** A command line the runner cannot run (exit 2). */
 export class UsageError extends Error {}
 
 const VALUE_FLAGS = new Set(['--only', '--out', '--setup-from']);
-const SWITCH_FLAGS = new Set(['--list', '--dry-run', '--all', '--real-home', '--help']);
+const SWITCH_FLAGS = new Set(['--list', '--dry-run', '--all', '--real-home', '--no-stored-login', '--help']);
 
 /**
  * @param {string[]} argv the arguments after the script
  * @param {{setupFrom: string}} defaults the checkout this runner is in
- * @returns {{mode: 'help' | 'list' | 'dry' | 'live', ids: string[], out: string | null, setupFrom: string, realHomeMode: boolean}}
+ * @returns {{mode: 'help' | 'list' | 'dry' | 'live', ids: string[], out: string | null, setupFrom: string, realHomeMode: boolean,
+ *   storedLogin: boolean}}
  * @throws {UsageError}
  */
 export function parseArgs(argv, { setupFrom }) {
@@ -51,14 +54,15 @@ export function parseArgs(argv, { setupFrom }) {
       at += 1;
     } else throw new UsageError(`unknown argument: ${arg}`);
   }
-  if (flags.has('--help')) return { mode: 'help', ids: [], out: null, setupFrom, realHomeMode: false };
+  if (flags.has('--help')) return { mode: 'help', ids: [], out: null, setupFrom, realHomeMode: false, storedLogin: true };
   if (flags.has('--only') && flags.has('--all')) throw new UsageError('--only and --all cannot both be given');
   const ids = flags.has('--only') ? selectIds(flags.get('--only')) : [...SCENARIO_IDS];
   const mode = flags.has('--list') ? 'list' : flags.has('--dry-run') ? 'dry' : 'live';
   if (mode === 'live' && !flags.has('--only') && !flags.has('--all')) throw new UsageError('name the scenarios: --only <id,...> or --all');
   const from = flags.get('--setup-from') ?? setupFrom;
   if (!existsSync(join(from, 'home', 'agents'))) throw new UsageError(`--setup-from ${from} is not a claude-setup checkout (no home/agents)`);
-  return { mode, ids, out: flags.get('--out') ?? null, setupFrom: realpathSync(from), realHomeMode: flags.has('--real-home') };
+  return { mode, ids, out: flags.get('--out') ?? null, setupFrom: realpathSync(from), realHomeMode: flags.has('--real-home'),
+    storedLogin: !flags.has('--no-stored-login') };
 }
 
 /** @returns {string[]} the named ids in run order (E11 last) @throws {UsageError} for an empty list or an unknown id */

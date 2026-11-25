@@ -14,6 +14,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { fakeStack } from './claude-fakes.mjs';
 import { cleanEnv } from './clean-env.mjs';
+import { madeUpToken } from './e2e-fixtures.mjs';
 import { LOGIN_LINE, PREFLIGHT_ARGS } from './e2e/lib/login.mjs';
 import { RUN_PREFIX } from './e2e/lib/scratch.mjs';
 import { makeTempDir, testTempRoot } from './temp-dir-helpers.mjs';
@@ -65,7 +66,8 @@ process.stderr.write('fatal: made-up git failure\\n');
 process.exit(128);
 `;
 
-/** A case folder: TMPDIR, a temp HOME with made-up owner files, and a fake claude first on PATH. */
+/** A case folder: TMPDIR, a temp HOME with made-up owner files, a fake claude first on PATH, and the made-up login token of a
+ * `claude-as` terminal (the first login source, so the runner never reads an account store; e2e-login-run.test.mjs reads one). */
 function makeCase(fakeClaude = LIMIT_CLAUDE) {
   const dir = makeTempDir('e2er-');
   assert.equal(testTempRoot(dir), dir, 'the case folder is short enough to be the runner temp root');
@@ -79,7 +81,8 @@ function makeCase(fakeClaude = LIMIT_CLAUDE) {
   chmodSync(join(bin, 'claude'), 0o755);
   const claudeLog = join(dir, 'claude.log');
   const env = cleanEnv({ HOME: home, USERPROFILE: home, TMPDIR: dir, PATH: `${bin}${delimiter}${process.env.PATH}`, CS_E2E_LIVE: '1',
-    ANTHROPIC_API_KEY: 'from-the-test', FAKE_E2E_CLAUDE_LOG: claudeLog, FAKE_E2E_CHILD_PID: join(dir, 'child.pid') });
+    ANTHROPIC_API_KEY: 'from-the-test', FAKE_E2E_CLAUDE_LOG: claudeLog, FAKE_E2E_CHILD_PID: join(dir, 'child.pid'),
+    CLAUDE_CODE_OAUTH_TOKEN: madeUpToken() });
   delete env.NODE_TEST_CONTEXT;
   const calls = () => (existsSync(claudeLog) ? readFileSync(claudeLog, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
   const runRoots = () => readdirSync(dir).filter((name) => name.startsWith(RUN_PREFIX));

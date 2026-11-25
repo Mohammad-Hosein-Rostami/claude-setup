@@ -8,7 +8,8 @@ needs `CS_E2E_LIVE=1`.
 The normal suite tests the runner itself without a real `claude`: `tests/e2e-checks.test.mjs`, `tests/e2e-reads.test.mjs` and
 `tests/e2e-traps.test.mjs` (the checkers, on fixture transcripts and failed git reads), `tests/e2e-jobs.test.mjs` (when a job is
 done), `tests/e2e-safety.test.mjs` (model, redaction, env, HOME and cleanup rules) and `tests/e2e-runner.test.mjs` (the command
-line, against a fake `claude`).
+line, against a fake `claude`), `tests/e2e-login.test.mjs` and `tests/e2e-login-run.test.mjs` (where the login comes from,
+with a made-up token in a file account store).
 
 ## Before a run
 
@@ -16,9 +17,17 @@ line, against a fake `claude`).
   `ui-check`), as `scripts/install.sh` does.
 - `~/.claude/settings.json` and `~/.claude/CLAUDE.md` must exist; the runner copies them and stops with a clear message if
   either is missing.
-- Start the run from a terminal opened with `claude-as <account>`, so the subscription login is in its environment. A Claude
-  Code session cannot hand its own login on. The runner passes on only `CLAUDE_CODE_OAUTH_TOKEN` from its environment, and
-  never writes or prints it.
+- The sessions need a subscription login, and a Claude Code session cannot hand its own login on. The runner takes it once,
+  before it makes anything, in this order:
+  1. `CLAUDE_CODE_OAUTH_TOKEN` of the terminal it runs in (a terminal opened with `claude-as <account>`).
+  2. Otherwise, the account saved with the `claude-account` tool: the one `CLAUDE_ACCOUNT` names, else your default. These are
+     the same rules hook jobs use.
+
+  The token goes only into the sessions' environment, never on a command line or into a file. The runner prints only the
+  source and the account name (`login: stored account <name>`). Printed lines, `results.json` and the kept logs mask the
+  token's exact value as well as anything token-shaped. When there is no saved account, or the store cannot be read (a locked
+  Keychain), the runner prints `no saved account: the owner runs E0 from a claude-as terminal` with the reason and exits 2.
+  `--no-stored-login` skips the store; then the login check below decides. The dry run reads no login.
 - Before any scenario, the runner runs `claude auth status --json` with the sessions' environment and the temp HOME. When that
   says you are not logged in, it prints one line and exits 2. A session that is refused its login stops the whole run the
   same way (exit 2), and nothing is retried. E0(e) also checks that every nested session ran logged in; when it fails, no
@@ -51,12 +60,13 @@ Options:
 - `--only E0,E7` or `--all`: which scenarios, in run order.
 - `--out <dir>`: where `results.json` and the redacted logs and transcripts go (default: a new folder in the temp folder).
 - `--setup-from <checkout>`: the checkout under test (default: the one the runner is in).
+- `--no-stored-login`: without `CLAUDE_CODE_OAUTH_TOKEN`, do not read the saved account.
 - `--real-home`: E9 uses your real HOME, because long-run reads its token from the account store, which refuses a temp
   HOME. Every other scenario keeps the temp HOME, and the dry run prints each scenario's HOME. Without this option, E9 is
   reported NOT RUN. With it, E11's check of the real guard log is NOT RUN, because E9 writes to that log, so the run exits 1.
 
-Exit codes: 0 every check passed; 1 a check failed or did not run; 2 a usage error, no `CS_E2E_LIVE=1`, or not logged in;
-3 stopped at a usage limit (the reset time is printed, and nothing is retried).
+Exit codes: 0 every check passed; 1 a check failed or did not run; 2 a usage error, no `CS_E2E_LIVE=1`, no login, or not
+logged in; 3 stopped at a usage limit (the reset time is printed, and nothing is retried).
 
 Each check prints one line: `<scenario> <check> | <expected> | <observed> | PASS`, `FAIL` or `NOT RUN`.
 
@@ -86,3 +96,5 @@ Each check prints one line: `<scenario> <check> | <expected> | <observed> | PASS
 - `--real-home` applies to E9 only, not to the whole run, and E11's real guard log check is NOT RUN under it.
 - E0's answer mode also applies to E2, E3, E5 and E6, not only to E1. A job left not done fails its own line.
 - The login check runs once before any scenario, and a refused login stops the run with exit 2.
+- Without a token in the terminal, the runner reads the saved account itself and never prints it. `--no-stored-login` turns
+  that off.
