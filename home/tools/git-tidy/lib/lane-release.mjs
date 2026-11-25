@@ -5,14 +5,16 @@
 // Exports: RECLAIM_IDLE_MS, releaseLane, detachLandedSlot, reclaimLanes, baseNames, branchTip, slotTree, recordFolder (lane-pool.mjs
 //   re-exports the first four, so callers import them from there).
 // Invariants:
-// - Release and reclaim run under the one pool lock of the repository (pool-lock.mjs), the lock a claim takes too.
+// - Release, reclaim and land's detach run under the one pool lock of the repository (pool-lock.mjs), the lock a claim takes too.
 // - Facts are read again right before each detach and removal (lane-slots.mjs readSlot), never trusted from an earlier read.
 // - Release detaches, unlocks and deletes a landed branch (prune's compare-and-delete; kept when its reflog holds commits found nowhere
 //   else); it never detaches or deletes a base branch and refuses a folder a claim is filling. Land detaches the landed folder and
 //   prune deletes the branch. The folder stays a plain detached worktree that `git-tidy prune` keeps.
 // - Release and land's detach delete the slot's fill file (lane-fill-state.mjs) before they switch or unlock: a fill file counts on a
-//   detached, pool-locked slot (lane-slots.mjs), the state both pass through. Land's detach switches before it unlocks, so a failed
-//   switch leaves the folder locked on its branch.
+//   detached, pool-locked slot (lane-slots.mjs), the state both pass through.
+// - Land's detach runs under the pool lock and reads the slot inside it; it frees only the pool slot that holds the landed branch at
+//   the landed sha with clean tracked files (fill file, switch, unlock, in that order); any other pool slot holding it is kept as it
+//   is, locked, and the result says why and the `lane release` step. Neither land unlocks or removes a pool slot.
 // - Reclaim removes a free folder with `git worktree remove` (never --force; it deletes ignored files too, such as a cloned `.env`)
 //   only when its HEAD reflog holds no commit found nowhere else (prune's rule) and no ignored folder holds a git repository
 //   (lane-slots.mjs removalLossWhy). Every removal writes a job-made record (disk-free/lib/job-made.mjs) when a session id is known.
@@ -30,6 +32,7 @@ export const RECLAIM_IDLE_MS = 24 * 60 * 60 * 1000; // fixes-spec revision 2 (U8
 const HEADS = 'refs/heads/';
 const MS_PER_HOUR = 60 * 60 * 1000;
 const SESSION_VARIABLES = ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID'];
+const RELEASE_COMMAND = 'node ~/.claude/tools/git-tidy/git-tidy.mjs lane release';
 
 /** The base branch and every other base candidate that exists here (main, master, develop): none of them is ever a lane. */
 export const baseNames = (repo) => new Set([repo.base, ...repo.knownBases]);
@@ -95,30 +98,55 @@ export function releaseLane(repo, folder) {
   return withPoolLock(commonDirOf(repo), `release ${folder}`, () => releaseUnderLock(repo, folder));
 }
 
+/** git's first non-empty message line (a local copy: git-tidy imports nothing from home/tools/land). */
+const firstLine = (text) => text.split(/[\r\n]+/).find((line) => line.trim() !== '')?.trim() ?? '';
+
+/** The result for a pool slot land could not free: it stays as it is (locked), and `why` ends with the `lane release` step. */
+const keptSlot = (repo, folder, why) => ({
+  folder: null,
+  kept: folder,
+  other: null,
+  why: `${why}; deal with that, then free it with: ${RELEASE_COMMAND} --repo ${repo.dir} --folder ${folder}`,
+});
+
+// Every fact is read here, under the pool lock, so no claim, release or reclaim can change the slot between the read and the act.
+function detachUnderLock(repo, branch, landedSha) {
+  const worktrees = listWorktrees(repo);
+  const tree = worktrees.find((entry) => !entry.main && !entry.missing && entry.branch === branch);
+  if (tree === undefined) return { folder: null, kept: null, other: null };
+  if (!isPoolSlot(repo, tree.path, worktrees)) return { folder: null, kept: null, other: tree };
+  const head = gitText(tree.path, ['rev-parse', '--verify', 'HEAD^{commit}']);
+  if (head !== landedSha) return keptSlot(repo, tree.path, `its HEAD is at ${head}, not at the landed ${landedSha}`);
+  const tracked = gitText(tree.path, ['status', '--porcelain', '--untracked-files=no', '--ignore-submodules=none']);
+  if (tracked !== '') return keptSlot(repo, tree.path, 'it has tracked changes');
+  deleteFillFile(commonDirOf(repo), readSlot(repo, tree.path, worktrees).slot); // first: see the header
+  const switched = runGit(tree.path, ['switch', '--quiet', '--detach', landedSha]);
+  if (switched.status !== 0) return keptSlot(repo, tree.path, `git switch failed: ${firstLine(switched.stderr)}`);
+  if (tree.locked) {
+    const unlocked = runGit(repo.dir, ['worktree', 'unlock', '--', tree.path]); // after the switch: a failed one keeps the lock
+    if (unlocked.status !== 0) return keptSlot(repo, tree.path, `git worktree unlock failed: ${firstLine(unlocked.stderr)}`);
+  }
+  return { folder: tree.path, kept: null, other: null };
+}
+
 /**
- * After land's fast-forward: the pool folder holding `branch` is unlocked and detached at `landedSha`, so prune deletes the branch and
- * keeps the folder for the next lane. A folder that is not a pool slot, or no longer exactly at the landed sha with clean tracked files,
- * is left to prune as before.
+ * After land's fast-forward, under the pool lock: the pool folder holding `branch` is detached at `landedSha` and unlocked, so prune
+ * deletes the branch and keeps the folder for the next lane. A pool folder that is not exactly at the landed sha with clean tracked
+ * files, or whose switch or unlock fails, is kept as it is (locked); land never unlocks or removes it any other way.
  * @param {object} repo openRepo's result (opened in the base folder)
  * @param {string} branch the landed lane
  * @param {string} landedSha the full sha that landed
- * @returns {{ folder: string|null, why?: string }} never throws: the base already moved, so a failure is reported, not raised
+ * @returns {{ folder: string|null, kept: string|null, other: object|null, why?: string }}
+ *   folder: the pool folder now free; kept: the pool folder that holds or held `branch` and is not free (why says what stopped it
+ *   and the release step); other: the listWorktrees entry of a worktree outside the pool that holds `branch` (the caller's to
+ *   remove); all null: no worktree holds it (why set: the detach could not run, nothing was touched). Never throws: the base
+ *   already moved, so a failure is reported, not raised. The caller must not hold the pool lock (withPoolLock is not re-entrant).
  */
 export function detachLandedSlot(repo, branch, landedSha) {
   try {
-    const worktrees = listWorktrees(repo);
-    const tree = worktrees.find((entry) => !entry.main && !entry.missing && entry.branch === branch);
-    if (tree === undefined || !isPoolSlot(repo, tree.path, worktrees)) return { folder: null };
-    const head = gitText(tree.path, ['rev-parse', '--verify', 'HEAD^{commit}']);
-    if (head !== landedSha) return { folder: null, why: `${tree.path} is at ${head}, not at the landed ${landedSha}` };
-    const tracked = gitText(tree.path, ['status', '--porcelain', '--untracked-files=no', '--ignore-submodules=none']);
-    if (tracked !== '') return { folder: null, why: `${tree.path} has tracked changes` };
-    deleteFillFile(commonDirOf(repo), readSlot(repo, tree.path, worktrees).slot); // first: see the header
-    gitText(tree.path, ['switch', '--quiet', '--detach', landedSha]);
-    if (tree.locked) gitText(repo.dir, ['worktree', 'unlock', '--', tree.path]); // after the switch: a failed one keeps the lock
-    return { folder: tree.path };
+    return withPoolLock(commonDirOf(repo), `land ${branch}`, () => detachUnderLock(repo, branch, landedSha));
   } catch (error) {
-    return { folder: null, why: error.message };
+    return { folder: null, kept: null, other: null, why: error.message };
   }
 }
 

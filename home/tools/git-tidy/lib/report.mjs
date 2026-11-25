@@ -64,6 +64,13 @@ function uiProofText({ tip, why, uiDepth }) {
   return `ui-proof: the ui check plan (${uiDepth}) of ${short} is not proved: ${why} (ui-proof plan --base <base> --tip ${short} --request <brief> shows what it needs; prove it on the rebased tip, then land again)`;
 }
 
+/** The line about land's pool folder (detachLandedSlot's result): detached, not freed (kept locked) or the detach skipped; [] for none. */
+function detachText({ folder, kept, why } = {}, tip) {
+  if (typeof folder === 'string') return [`lane folder ${folder} detached at ${tip} (kept for the next lane)`];
+  if (typeof kept === 'string') return [`lane folder ${kept} not freed: ${why}`];
+  return typeof why === 'string' ? [`lane folder detach skipped: ${why}`] : [];
+}
+
 /** The lines of a proved check plan: `ui plan <depth>: proved`, then its `follow-up:` lines. */
 const planText = (uiPlan) => (uiPlan ? [`ui plan ${uiPlan.depth}: proved`, ...uiPlan.followUps] : []);
 
@@ -81,6 +88,6 @@ export function formatLand(result, json) {
   if (status === 'base-moved') return `base-moved: ${why ?? 'the base moved during the landing'}: land again with --tip ${tip} (the lane stays rebased, nothing landed)`;
   const outcome = findings.length === 0 ? ['check: clean'] : findings.map(line);
   const refused = cleanupRefused === null ? [] : [`cleanup skipped: ${cleanupRefused}`];
-  const detached = typeof result.detached?.folder === 'string' ? [`lane folder ${result.detached.folder} detached at ${tip} (kept for the next lane)`] : [];
+  const detached = detachText(result.detached, tip);
   return [`landed ${tip}`, ...(from ? [`from ${from}`] : []), ...planText(result.uiPlan), ...upstreamLines, ...detached, ...removed.map((entry) => `removed ${entry}`), ...refused, ...outcome].join('\n');
 }

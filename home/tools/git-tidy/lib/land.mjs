@@ -15,7 +15,8 @@
 //   A full land fast-forwards only the `tip` sha the caller gave (the commit its own checks ran on): when the rebase rewrites it (the base
 //   moved after the caller rebased and checked it), the result is `base-moved` with the new tip, the lane stays rebased and nothing lands.
 //   A lane held by a pool folder (`.claude/worktrees/lane-<n>`, lib/lane-pool.mjs) is detached at the landed sha right after the
-//   fast-forward and before cleanup, so prune deletes its branch and keeps the folder for the next lane (`detached`).
+//   fast-forward and before cleanup, so prune deletes its branch and keeps the folder for the next lane (`detached`); a pool folder
+//   that cannot be detached stays locked (`detached.kept`, `detached.why`).
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -121,10 +122,12 @@ function fastForward(repo, baseFolder, tip) {
 }
 
 // Prune everything provable after the landing; a refusal (UsageError) is the answer, never an exit 2 for a base that already moved.
-function cleanUp(atBase, branch) {
+// `other` is detachLandedSlot's entry of a worktree outside the pool that holds the lane (read under the pool lock), or null.
+function cleanUp(atBase, branch, other) {
   try {
-    // The landed lane's own worktree may be locked by the git-tidy-gate hook (r9-wt-lock): unlock it so prune can remove it; no other lock is touched.
-    for (const tree of listWorktrees(atBase).filter((entry) => entry.locked && !entry.main && entry.branch === branch)) runGit(atBase.dir, ['worktree', 'unlock', '--', tree.path]);
+    // That worktree may be locked by the git-tidy-gate hook (r9-wt-lock): unlock it so prune can remove it. A pool folder is
+    // detachLandedSlot's alone and never unlocked here; no other lock is touched.
+    if (other?.locked) runGit(atBase.dir, ['worktree', 'unlock', '--', other.path]);
     const items = pruneRepo(atBase, { apply: true, includeRecent: [branch] });
     return { removed: items.filter((entry) => REMOVED_ACTIONS.has(entry.action)).map((entry) => `${entry.kind} ${entry.subject}`), cleanupRefused: null };
   } catch (error) {
@@ -147,7 +150,8 @@ function cleanUp(atBase, branch) {
  *   patchesChanged: number, removed: string[], cleanupRefused: string|null, findings: object[], files: string[], why: string|null }} `tip`
  *   is the lane's tip after the rebase, `from` the base tip before the fast-forward (landed only), `files` the conflicting files (or the
  *   oversize ones), `removed` what cleanup removed (`<kind> <name or path>`), `findings` what `check` still reports on the base afterwards;
- *   a landing also carries `detached: { folder: string|null, why?: string }`, the pool folder left detached at the landed sha (null: none)
+ *   a landing also carries `detached: { folder: string|null, kept: string|null, other: object|null, why?: string }`, detachLandedSlot's
+ *   result: the pool folder left detached at the landed sha, or the one kept locked and why (null: none)
  * @throws {UsageError} when the base folder is not ready (not checked out, tracked changes, an untracked path in the way), the lane
  *   is missing or is the base, or a rebase or merge is unfinished somewhere; any other git failure throws an Error
  */
@@ -175,6 +179,6 @@ export function landLane(repo, branch, { rebaseOnly = false, tip: expectedTip = 
   const from = landedFrom(repo, readBefore);
   const atBase = openRepo(baseFolder, repo.base);
   const detached = detachLandedSlot(atBase, branch, tip); // a pool lane folder stays, detached at the landed sha, for the next lane
-  const { removed, cleanupRefused } = cleanUp(atBase, branch);
+  const { removed, cleanupRefused } = cleanUp(atBase, branch, detached.other);
   return result('landed', { from, patchesChanged, removed, cleanupRefused, findings: runCheck(atBase).findings, upstream, detached });
 }
