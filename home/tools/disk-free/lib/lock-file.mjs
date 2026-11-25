@@ -1,4 +1,5 @@
-// A lock file for the disk-clean start hook and for `disk-clean --apply`. Exports: takeLock, releaseLock.
+// A lock file for the disk-clean start hook and for `disk-clean --apply`. Exports: takeLock, releaseLock, breakStale (also used by
+// long-run's run lock, long-run/lib/run-store.mjs).
 // The lock is a file made with O_EXCL (O_NOFOLLOW, O_NONBLOCK: a link or FIFO is never followed or waited on). A lock older than `staleMs`
 // belongs to a crashed process and is broken, but never by two processes at once: a breaker first creates a claim file named after the
 // stale lock's inode and time with O_EXCL, so only one breaker works on that lock, looks at the lock again, removes it only if it is still
@@ -42,7 +43,7 @@ function createExclusive(path) {
 const sameFile = (a, b) => b !== null && a.ino === b.ino && a.mtimeMs === b.mtimeMs;
 
 /** Removes the stale lock `seen` if this call is the only breaker of it and it is still that file; true when it is gone by this call. */
-function breakStale(lockPath, seen, nowMs, staleMs) {
+export function breakStale(lockPath, seen, nowMs, staleMs) {
   const claim = `${lockPath}.break-${seen.ino}-${seen.mtimeMs}`;
   if (!createExclusive(claim)) {
     const claimInfo = statOrNull(claim);

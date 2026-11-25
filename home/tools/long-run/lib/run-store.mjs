@@ -1,20 +1,19 @@
 // Purpose: where a long run keeps its state (spec 7.6) and the small file primitives on it: paths, atomic JSON, the driver lock
 //   and its heartbeat, per-run events, step journals, folder locks (one live run per folder) and the run list.
 // Exports: RunBusy, STALE_BEAT_MS, RUN_ID_PATTERN, stateRoot, runPaths, newRunId, readJson, writeJson, appendJsonLine,
-//   readJsonLines, readRunJob, readJournal, writeJournal, isPidAlive, driverAlive, acquireLock, releaseLock, claimFolder, releaseFolder,
-//   listRunIds, ensureRunDirs.
+//   readJsonLines, readRunJob, readJournal, writeJournal, isPidAlive, driverAlive, acquireLock, releaseLock, runAccount, claimFolder,
+//   releaseFolder, listRunIds, ensureRunDirs.
 // Invariants: folders 0700 and files 0600 (account/lib/private-fs.mjs); every JSON file is replaced whole (temp + rename), so a
-//   reader never sees half of one; the lock file is created with flag "wx" and is broken only when its driver is gone (dead pid on
-//   this host, or a heartbeat older than STALE_BEAT_MS: a reused pid is caught by the beat age), unless ps shows that the process
-//   the lock names is the live process that took it, whatever the age of the lock or the beat (a starting driver has no beat
-//   yet; a driver after a sleep has an old one); where ps cannot tell (Windows, a lock without a start) the beat rule alone
-//   decides (unless the caller asks to keep any live pid's lock: `resume --account`); a release removes the lock only while it
-//   still names this process. Nothing here holds a token.
+//   reader never sees half of one; one holder rule (lockHolder) decides for every caller whether a run is held; the lock line
+//   `<pid> <host> <start>` is created whole with flag "wx" and, when nobody holds the run, broken by one breaker at a time
+//   (disk-free's breakStale) before it is created again; a release removes the lock only while it names this process; the lock
+//   file is read without following a link or waiting on a FIFO, at most 256 bytes. Nothing here holds a token.
 import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, constants, existsSync, lstatSync, openSync, readdirSync, readFileSync, readSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { PRIVATE_FILE_MODE, ensurePrivateDir, writeFileAtomic } from '../../account/lib/private-fs.mjs';
+import { breakStale } from '../../disk-free/lib/lock-file.mjs';
 import { processStarts } from '../../disk-free/lib/live-sessions.mjs';
 import { folderKey, readFrozenJob } from './job.mjs';
 
@@ -124,83 +123,142 @@ export function isPidAlive(pid) {
   }
 }
 
-/**
- * Whether the run's driver lives: its driver.json names a pid of this host that runs, with a beat younger than STALE_BEAT_MS.
- * @param {Record<string, string>} paths runPaths().
- * @param {Date} now the current time.
- * @returns {boolean}
- */
-export function driverAlive(paths, now = new Date()) {
-  const driver = readJson(paths.driver);
-  if (!driver || !existsSync(paths.lock)) return false;
-  const fresh = now.getTime() - Date.parse(driver.beatAt) < STALE_BEAT_MS;
-  return fresh && driver.host === hostname() && isPidAlive(driver.pid);
-}
-
 const MS_PER_SECOND = 1000;
 // ps lstart has whole seconds, and Linux derives it from boot time and clock ticks, so one process can read a second apart.
 const START_TOLERANCE_MS = 2000;
+const LOCK_READ_MAX_BYTES = 256; // a lock line is about 50 bytes; a bigger file is not a lock
+// `<pid> <host> <start epoch ms>`; main's drivers wrote `<pid> <host>` (no start).
+const LOCK_PATTERN = /^(\d+) (\S+)(?: (\d+))?\n?$/;
+const NO_FOLLOW = constants.O_NOFOLLOW ?? 0; // not defined on Windows
+const NO_BLOCK = constants.O_NONBLOCK ?? 0;
 
-/** The lock text: this process's pid, host and start (epoch ms), so a later reader can tell this process from a reused pid. */
-const lockText = () => `${process.pid} ${hostname()} ${Math.round(Date.now() - process.uptime() * MS_PER_SECOND)}\n`;
-
-/**
- * The pid of the live process on this host that the lock names, when it must keep the lock; else null. driverAlive misses a
- * live driver that has not written its first beat yet, or whose beat is old after a sleep; breaking its lock would leave it
- * running beside a second driver. `keepLivePid` keeps the lock for any live pid. Without it the pid must also be the lock's
- * taker by its ps start; where the start cannot be compared (Windows, a lock without a start), null leaves the choice to
- * driverAlive's beat rule, so a crashed run whose pid was reused can still be taken over.
- */
-function liveLockHolder(lockPath, keepLivePid) {
-  let text;
+function lstatOrNull(path) {
   try {
-    text = readFileSync(lockPath, 'utf8');
+    return lstatSync(path);
   } catch (error) {
-    if (error.code === 'ENOENT') return null; // released just now: nothing to protect
+    if (error.code === 'ENOENT') return null;
     throw error;
   }
-  const [pidText, host, startText] = text.trim().split(' ');
-  const pid = Number(pidText);
-  if (host !== hostname() || !isPidAlive(pid)) return null;
-  if (keepLivePid) return pid;
-  if (startText === undefined) return null;
-  const startMs = processStarts([pid]).get(pid);
-  const isTaker = startMs !== undefined && Math.abs(startMs - Number(startText)) <= START_TOLERANCE_MS;
-  return isTaker ? pid : null;
+}
+
+/** The text of the regular file at `path` (at most LOCK_READ_MAX_BYTES), never following a link or waiting on a FIFO; null when gone. */
+function readSmallFile(path) {
+  let fd;
+  try {
+    fd = openSync(path, constants.O_RDONLY | NO_FOLLOW | NO_BLOCK);
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+  try {
+    const buffer = Buffer.alloc(LOCK_READ_MAX_BYTES);
+    return buffer.toString('utf8', 0, readSync(fd, buffer, 0, buffer.length, 0));
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /**
- * Takes the run's driver lock.
- * @param {Record<string, string>} paths runPaths().
- * @param {Date} now the current time.
- * @param {{keepLivePid?: boolean}} options `keepLivePid`: never break a lock whose pid is alive on this host, even where ps
- *   cannot tell it from a reused pid (`resume --account`: a refusal is safe, a second driver is not).
- * @throws {RunBusy} when a live driver holds it, or the process the lock names must keep it (liveLockHolder).
+ * The lock file as data: null when there is none; `{ kind: 'other' }` for a link, FIFO, folder or text that is no lock;
+ * `{ kind: 'empty', mtimeMs }` while a taker is writing it; `{ kind: 'lock', pid, host, startMs }` (startMs null in main's form).
  */
-export function acquireLock(paths, now = new Date(), { keepLivePid = false } = {}) {
-  const text = lockText();
+function readLock(lockPath) {
+  const info = lstatOrNull(lockPath);
+  if (info === null) return null;
+  if (!info.isFile()) return { kind: 'other' };
+  if (info.size === 0) return { kind: 'empty', mtimeMs: info.mtimeMs };
+  const text = readSmallFile(lockPath);
+  if (text === null) return null;
+  const match = LOCK_PATTERN.exec(text);
+  if (match === null) return { kind: 'other' };
+  return { kind: 'lock', pid: Number(match[1]), host: match[2], startMs: match[3] === undefined ? null : Number(match[3]) };
+}
+
+/**
+ * Who holds the run (the one holder rule, for resume, the driver, pause, status and prune), or null when nobody does:
+ * (a) driver.json names a live pid on this host with a beat younger than STALE_BEAT_MS by the caller's `now` (main's rule);
+ * an empty lock younger than STALE_BEAT_MS (a taker is writing it); or the lock names a live pid on this host and (b) ps shows
+ * that pid started at the lock's start (the taker, however old its beat: starting, after a sleep), or (c) ps cannot tell and
+ * that start is under STALE_BEAT_MS ago (a starting taker). Anything else (a pid ps proves reused, main's lock without a start
+ * or an old start where ps cannot tell) leaves the beat rule alone to decide, so main's rule is the floor. (b), (c) and the
+ * empty-lock age use the real clock.
+ * @returns {{pid: number | null, how: 'driver' | 'lock' | 'writing'} | null}
+ */
+function lockHolder(paths, now) {
+  const lock = readLock(paths.lock);
+  if (lock === null) return null;
+  const driver = readJson(paths.driver);
+  const beatFresh = driver !== null && now.getTime() - Date.parse(driver.beatAt) < STALE_BEAT_MS;
+  if (beatFresh && driver.host === hostname() && isPidAlive(driver.pid)) return { pid: driver.pid, how: 'driver' };
+  const realNow = Date.now();
+  if (lock.kind === 'empty') return realNow - lock.mtimeMs < STALE_BEAT_MS ? { pid: null, how: 'writing' } : null;
+  if (lock.kind !== 'lock' || lock.startMs === null || lock.host !== hostname() || !isPidAlive(lock.pid)) return null;
+  const psStart = processStarts([lock.pid]).get(lock.pid);
+  const isTaker = psStart === undefined ? realNow - lock.startMs < STALE_BEAT_MS : Math.abs(psStart - lock.startMs) <= START_TOLERANCE_MS;
+  return isTaker ? { pid: lock.pid, how: 'lock' } : null;
+}
+
+/** Whether a live driver holds the run (lockHolder's rule); `paths` is runPaths(), `now` the time the beat is judged by. */
+export function driverAlive(paths, now = new Date()) {
+  return lockHolder(paths, now) !== null;
+}
+
+/** The lock line of this process; its start is ps's own view where ps runs, so (b) compares like with like. */
+function lockText() {
+  const startMs = processStarts([process.pid]).get(process.pid) ?? Math.round(Date.now() - process.uptime() * MS_PER_SECOND);
+  return `${process.pid} ${hostname()} ${startMs}\n`;
+}
+
+/** Creates the lock with flag "wx" (never through a link); false when a file is already there. */
+function createLock(lockPath, text) {
   try {
-    writeFileSync(paths.lock, text, { flag: 'wx', mode: PRIVATE_FILE_MODE });
-    return;
+    writeFileSync(lockPath, text, { flag: 'wx', mode: PRIVATE_FILE_MODE });
+    return true;
   } catch (error) {
-    if (error.code !== 'EEXIST') throw error;
-  }
-  if (driverAlive(paths, now)) throw new RunBusy(`run ${paths.runId} is busy: its driver runs (pid ${readJson(paths.driver)?.pid})`);
-  const holder = liveLockHolder(paths.lock, keepLivePid);
-  if (holder !== null) throw new RunBusy(`run ${paths.runId} is busy: pid ${holder} holds its lock`);
-  rmSync(paths.lock, { force: true });
-  try {
-    writeFileSync(paths.lock, text, { flag: 'wx', mode: PRIVATE_FILE_MODE });
-  } catch (error) {
-    if (error.code === 'EEXIST') throw new RunBusy(`run ${paths.runId} is busy: another driver took it just now`);
+    if (error.code === 'EEXIST') return false;
     throw error;
   }
+}
+
+const BUSY_HOW = { driver: (pid) => `its driver runs (pid ${pid})`, lock: (pid) => `pid ${pid} holds its lock`, writing: () => 'another driver is taking its lock' };
+
+/**
+ * Takes the run's driver lock. A lock nobody holds (lockHolder) is broken by one breaker at a time (disk-free's breakStale),
+ * then created again; losing any step is RunBusy.
+ * @param {Record<string, string>} paths runPaths().
+ * @param {Date} now the current time (for the beat).
+ * @throws {RunBusy} when the run is held, or another driver takes the lock first.
+ */
+export function acquireLock(paths, now = new Date()) {
+  const text = lockText();
+  const tookJustNow = () => new RunBusy(`run ${paths.runId} is busy: another driver took it just now`);
+  if (createLock(paths.lock, text)) return;
+  const seen = lstatOrNull(paths.lock);
+  if (seen === null && createLock(paths.lock, text)) return; // released between the two calls
+  if (seen === null) throw tookJustNow();
+  const holder = lockHolder(paths, now);
+  if (holder !== null) throw new RunBusy(`run ${paths.runId} is busy: ${BUSY_HOW[holder.how](holder.pid)}`);
+  if (!breakStale(paths.lock, seen, Date.now(), STALE_BEAT_MS)) throw new RunBusy(`run ${paths.runId} is busy: ${BUSY_HOW.writing()}`);
+  if (!createLock(paths.lock, text)) throw tookJustNow();
 }
 
 /** Removes the lock while it still names this process. */
 export function releaseLock(paths) {
-  if (!existsSync(paths.lock)) return;
-  if (readFileSync(paths.lock, 'utf8').split(' ')[0] === String(process.pid)) rmSync(paths.lock, { force: true });
+  const lock = readLock(paths.lock);
+  if (lock?.kind === 'lock' && lock.pid === process.pid) rmSync(paths.lock, { force: true });
+}
+
+/**
+ * The account run.json names now (`start` and `resume --account` write it), for a driver that follows a switch.
+ * @returns {string | null} null on any read or parse error ("no change"): timers read it, and a timer must never throw.
+ */
+export function runAccount(paths) {
+  try {
+    const account = readJson(paths.run)?.account;
+    return typeof account === 'string' ? account : null;
+  } catch {
+    return null; // a run.json being replaced or damaged: the next read tells
+  }
 }
 
 const folderLockPath = (root, folder) => join(root, 'cwd-locks', createHash('sha256').update(folderKey(folder)).digest('hex'));
