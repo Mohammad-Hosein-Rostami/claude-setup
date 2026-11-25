@@ -1,5 +1,5 @@
-// Tests of a clone-mode claim killed right after its end-step switch (lib/lane-pool.mjs endFill, lane-slots.mjs fillStateOf): the
-// fill file it leaves on a lane already handed out never lets a later claim empty that lane, also while a rebase there has HEAD detached.
+// Tests of a clone-mode claim killed right after its end-step switch (lib/lane-pool.mjs endFill, lane-slots.mjs fillStateOf): whatever
+// it leaves behind (a fill file, before MF-3's fix) never lets a later claim empty that lane, also while a rebase there has HEAD detached.
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -59,16 +59,18 @@ const fillFileOf = (repo, number) => join(git(repo, 'rev-parse', '--path-format=
 
 /**
  * The claim of KILLED_BRANCH is killed after its switch; then the worker of that lane commits a change of SHARED_FILE and keeps an
- * untracked NOTES_FILE, while main changes SHARED_FILE too. Returns the repo and the lane's folder.
+ * untracked NOTES_FILE, while main changes SHARED_FILE too. Returns the repo and the lane's folder. Whether a fill file was left is
+ * only logged: the code before MF-3's fix leaves one there, a fixed claim has deleted it before the switch.
+ * @param {import('node:test').TestContext} t the test, for the log line
  */
-function laneHandedOutByKilledClaim() {
+function laneHandedOutByKilledClaim(t) {
   const repo = sharedFileRepo();
   const base = git(repo, 'rev-parse', 'HEAD');
   const killed = claimJson(repo, KILLED_BRANCH, base, laneEnv({ pathFirst: [killAfterSwitchBin(KILLED_BRANCH)] }));
   assert.equal(killed.signal, 'SIGKILL', `the claim of ${KILLED_BRANCH} was not killed: ${killed.stdout}${killed.stderr}`);
   const folder = poolPath(repo, FIRST_SLOT);
   assert.equal(git(folder, 'branch', '--show-current'), KILLED_BRANCH, 'the killed claim had switched its folder to the branch');
-  assert.ok(existsSync(fillFileOf(repo, FIRST_SLOT)), 'the killed claim left its fill file behind');
+  t.diagnostic(`fill file left by the killed claim: ${existsSync(fillFileOf(repo, FIRST_SLOT))}`);
   writeFileSync(join(folder, SHARED_FILE), 'lane edit\n');
   git(folder, 'commit', '-q', '-am', 'lane work');
   writeFileSync(join(folder, NOTES_FILE), NOTES_TEXT);
@@ -87,8 +89,8 @@ function assertNextClaimKeepsNotes({ repo, base, folder }) {
   assert.equal(JSON.parse(next.stdout).folder, poolPath(repo, NEXT_SLOT), `${NEXT_BRANCH} is not given ${KILLED_BRANCH}'s folder`);
 }
 
-test("a killed claim's leftover fill file never lets a later claim empty its lane while a rebase there stops on a conflict", { skip: SKIP }, () => {
-  const handedOut = laneHandedOutByKilledClaim();
+test('a claim killed right after its switch never lets a later claim empty its lane while a rebase there stops on a conflict', { skip: SKIP }, (t) => {
+  const handedOut = laneHandedOutByKilledClaim(t);
   const rebase = spawnSync('git', ['rebase', 'main'], { cwd: handedOut.folder, encoding: 'utf8', env: CLEAN_ENV });
   assert.notEqual(rebase.status, 0, `the rebase onto main stops on the ${SHARED_FILE} conflict`);
   assert.equal(git(handedOut.folder, 'branch', '--show-current'), '', 'the stopped rebase has HEAD detached');
@@ -96,6 +98,6 @@ test("a killed claim's leftover fill file never lets a later claim empty its lan
   assertNextClaimKeepsNotes(handedOut);
 });
 
-test("a killed claim's leftover fill file never lets a later claim empty its lane while HEAD stays on the lane's branch", { skip: SKIP }, () => {
-  assertNextClaimKeepsNotes(laneHandedOutByKilledClaim());
+test("a claim killed right after its switch never lets a later claim empty its lane while HEAD stays on the lane's branch", { skip: SKIP }, (t) => {
+  assertNextClaimKeepsNotes(laneHandedOutByKilledClaim(t));
 });
