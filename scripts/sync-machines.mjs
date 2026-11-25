@@ -18,12 +18,16 @@
 // Invariants: everything that reaches an ssh line (base, tag, repo, host) is validated first; every remote command is ONE line,
 //   printed before it runs: perl's alarm (this Mac has no `timeout`), ssh, and the PATH export inside the quotes with the command.
 //   Every ssh and scp call carries SSH_OPTIONS: it never waits for a password or a host-key question, and gives up on a connect after 30 s.
+//   One sync at a time: the run lock <tmp>/sync-machines.lock holds the running sync's pid; a second sync exits 2, and the lock of a
+//   killed sync (its pid runs no more) is taken over and its leftover temp files are removed.
 import { spawn } from 'node:child_process';
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { releaseLock, takeLock } from '../home/tools/disk-free/lib/lock-file.mjs';
 import { readLocal, sharedPart, syncConfig } from './install/local-settings.mjs';
+import { isRunning } from './install/record.mjs';
 import { CLAUDE_FLOOR, afterInstallProblem, cliProblems, readReport } from './sync/cli-checks.mjs';
 
 const EXIT_FAILED = 1;
@@ -36,8 +40,10 @@ const SYNC_SECONDS = 540; // the remote pull and install
 const TRANSFER_SECONDS = 300; // the scp of the bundle over a slow link (the PC sits behind a phone relay)
 const TAIL_LINES = 10;
 // The temp files of a run: /tmp/sync-local-shared.json and /tmp/sync-sync-<target>.bundle, here and on each target (the names the
-// removed --row option gave by default, so a killed older run's leftover is still found).
+// removed --row option gave by default). Here they are made only under the run lock, after a killed run's leftovers are removed.
 const TEMP_PREFIX = 'sync';
+const RUN_LOCK_NAME = `${TEMP_PREFIX}-machines.lock`;
+const NEVER_BY_AGE = Infinity; // takeLock's limit that never breaks a lock for its age alone: a sync has no fixed length
 const PLAIN_BASE = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 const PLAIN_TAG = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const PLAIN_PATH = /^(\/|~\/)[A-Za-z0-9._/+@:~-]*$/; // absolute or ~/..., no space, quote, $, backtick or backslash
@@ -141,13 +147,38 @@ async function syncLocal(ctx) {
   return { installExit: install.status, sha: head.out.trim(), after: await readLocalCli() };
 }
 
-/** Creates an empty file nobody else holds (F2: a second run, or a killed one's leftover, is a usage error naming the file). */
-function claim(path) {
-  try { writeFileSync(path, '', { flag: 'wx', mode: 0o600 }); } catch (error) {
-    if (error.code === 'EEXIST') throw new UsageError(`${path} exists: another sync runs, or a killed one left it (remove it when none runs)`);
+/**
+ * Takes the lock over when the pid in it runs no more (a killed sync); false while its holder runs, or the file names no pid
+ * (a sync writing its pid this moment, or not a lock of ours: a link or FIFO is never read).
+ */
+function takeFromKilledSync(lockPath) {
+  const seen = lstatSync(lockPath, { throwIfNoEntry: false });
+  if (!seen) return takeLock(lockPath, Date.now(), NEVER_BY_AGE); // released meanwhile
+  if (!seen.isFile()) return false;
+  let holder;
+  try {
+    holder = Number(readFileSync(lockPath, 'utf8'));
+  } catch (error) {
+    if (error.code === 'ENOENT') return takeLock(lockPath, Date.now(), NEVER_BY_AGE); // released between the look and the read
     throw error;
   }
-  return path;
+  if (!Number.isInteger(holder) || holder <= 0 || isRunning(holder)) return false;
+  // "Now" is the seen lock's own time and the limit 0, so only that lock is broken: a newer one taken meanwhile stays.
+  return takeLock(lockPath, seen.mtimeMs, 0);
+}
+
+/**
+ * One sync at a time: takes the run lock (O_EXCL, disk-free/lib/lock-file.mjs) and writes this run's pid in it.
+ * @param {string} lockPath <tmp>/sync-machines.lock
+ * @returns {() => void} removes the lock
+ * @throws {UsageError} while another sync runs
+ */
+function lockRun(lockPath) {
+  if (!takeLock(lockPath, Date.now(), NEVER_BY_AGE) && !takeFromKilledSync(lockPath)) {
+    throw new UsageError(`another sync runs (${lockPath}); wait for it to end, or remove that file when none runs`);
+  }
+  writeFileSync(lockPath, String(process.pid));
+  return () => releaseLock(lockPath);
 }
 
 /**
@@ -214,22 +245,24 @@ function printRows(rows, json) {
   for (const row of rows) console.log(`${row.machine}: ${row.synced ? 'synced' : 'NOT synced'} sha ${row.sha || '-'} install ${row.installExit ?? '-'}${row.problem ? ` problem: ${row.problem}` : ''}`);
 }
 
-/** Claims this run's bundle and shared files, syncs every machine without a problem side by side, and removes the files. */
+/** Under the run lock: writes this run's bundle and shared files, syncs every machine without a problem side by side, and removes them. */
 async function syncAll(options, names, problems, reports) {
   if (!PLAIN_PATH.test(tmpdir())) throw new UsageError(`the temp folder ${tmpdir()} is not a plain path`);
-  const claimed = [];
+  const release = lockRun(join(tmpdir(), RUN_LOCK_NAME));
+  const sharedFile = join(tmpdir(), `${TEMP_PREFIX}-local-shared.json`);
+  const bundles = Object.fromEntries(options.targets.map((target) => [target.name, join(tmpdir(), `${TEMP_PREFIX}-sync-${target.name}.bundle`)]));
+  const removeTempFiles = () => [sharedFile, ...Object.values(bundles)].forEach((path) => rmSync(path, { force: true }));
   try {
-    const sharedFile = claim(join(tmpdir(), `${TEMP_PREFIX}-local-shared.json`));
-    claimed.push(sharedFile);
-    const bundles = Object.fromEntries(options.targets.map((target) => [target.name, claim(join(tmpdir(), `${TEMP_PREFIX}-sync-${target.name}.bundle`))]));
-    claimed.push(...Object.values(bundles));
-    writeFileSync(sharedFile, `${JSON.stringify(sharedPart(readLocal(join(options.localRepo, 'settings', 'local.json'))), null, 2)}\n`);
+    removeTempFiles(); // a killed sync's; a link there is removed, never followed
+    const shared = `${JSON.stringify(sharedPart(readLocal(join(options.localRepo, 'settings', 'local.json'))), null, 2)}\n`;
+    writeFileSync(sharedFile, shared, { flag: 'wx', mode: 0o600 });
     const ctx = { ...options, sharedFile, bundles };
     return await Promise.all(names.map((name, index) => (problems[name].length > 0
       ? { machine: name, synced: false, sha: '', installExit: null, problem: problems[name].join('; ') }
       : syncMachine(ctx, name, options.targets[index - 1], reports[index]))));
   } finally {
-    claimed.forEach((path) => rmSync(path, { force: true }));
+    removeTempFiles();
+    release();
   }
 }
 
@@ -256,7 +289,7 @@ async function main(argv) {
   const tips = await tipShas(options);
   const rows = await syncAll({ ...options, targets, tips }, names, problems, reports);
   printRows(rows, options.json);
-  return rows.every((row) => row.synced && row.installExit === 0) ? 0 : EXIT_FAILED;
+  return rows.every((row) => row.synced) ? 0 : EXIT_FAILED; // synced: installed with exit 0 and at the tip
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

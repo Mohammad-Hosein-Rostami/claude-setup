@@ -1,7 +1,7 @@
 // Purpose: the install record, ~/.claude/.claude-setup-install.json: what this installer made, what it moved aside, and where
 //   the links point. A second run reads it to change nothing; --uninstall reads it to undo exactly that and no more.
-// Exports: RECORD_NAME, INSTALL_LOCK_NAME, INSTALL_LOCK_STALE_MS, recordPath, lockInstall, loadRecord, saveRecord, remember,
-//   isMade, backup, ensureDir.
+// Exports: RECORD_NAME, INSTALL_LOCK_NAME, INSTALL_LOCK_STALE_MS, recordPath, isRunning, lockInstall, loadRecord, saveRecord,
+//   remember, isMade, backup, ensureDir.
 // Invariants: the record is written only when its content changes (a second identical run leaves it as it is); a file the
 //   installer did not make is never removed, only moved into the backup folder (~/.claude-backup-<stamp>/) and named here;
 //   one install at a time holds the lock from loading the record to saving it, so two runs never overwrite each other's entries.
@@ -24,8 +24,8 @@ export const INSTALL_LOCK_STALE_MS = 30 * 60 * 1000;
 const NEVER_BY_AGE = Infinity; // takeLock's limit that never breaks a lock for its age alone
 const LOCK_TEXT_MAX_BYTES = 64; // a pid; a bigger file is not ours
 
-/** True while process `pid` runs (EPERM: it runs as another user). */
-function isRunning(pid) {
+/** True while process `pid` runs (EPERM: it runs as another user). The sync's run lock uses it too (scripts/sync-machines.mjs). */
+export function isRunning(pid) {
   try {
     process.kill(pid, 0);
     return true;
