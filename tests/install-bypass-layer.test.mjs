@@ -1,12 +1,11 @@
 // Tests for the owner's bypass-permissions layer: a settings/local.json that sets `permissions.defaultMode: "bypassPermissions"`
-// (the owner's own machines; teammates keep the timed allow of settings/base.json) merges over base.json and the OS file without
-// dropping a hook or a deny rule, so every guard (pre-bash-guard, agent-budget, agent-model-guard, artifact-ask) and the
-// timed-allow hook stay registered. Exports: none (node:test file). The merge is the real scripts/merge-settings.jq; needs jq.
-// Whether Claude Code honours a hook's deny and ask in that mode is a live fact: scripts/doctor-live.sh step_bypass checks it.
+// merges over base.json and the OS file without dropping a hook or a deny rule, so every hook of the shared settings stays
+// registered. Exports: none (node:test file). The merge is the real scripts/merge-settings.jq; needs jq.
+// That base.json itself sets the mode is pinned by settings-full-access.test.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -15,7 +14,7 @@ const SETTINGS = fileURLToPath(new URL('../settings', import.meta.url));
 const FILTER = fileURLToPath(new URL('../scripts/merge-settings.jq', import.meta.url));
 const skip = spawnSync('jq', ['--version']).status === 0 ? false : 'jq not installed';
 const OWNER_LAYER = { skipDangerousModePermissionPrompt: true, permissions: { defaultMode: 'bypassPermissions' } };
-const GUARDS = ['pre-bash-guard.mjs', 'agent-budget.mjs', 'agent-model-guard.mjs', 'artifact-ask.mjs', 'permission-timed-allow.mjs'];
+const HOOKS = ['git-tidy-gate.mjs', 'disk-clean-start.mjs', 'project-merge.mjs', 'post-edit.mjs', 'notify.mjs'];
 
 /** base.json, then the OS file when it exists, then `local` (when given), through the real merge. */
 function merged(os, local) {
@@ -42,12 +41,6 @@ for (const os of ['macos', 'linux', 'windows']) {
     assert.deepEqual(hookCommands(owner), hookCommands(shared), 'the same hooks, in the same order');
     assert.deepEqual(owner.permissions.deny, shared.permissions.deny);
     const commands = Object.values(hookCommands(owner)).flat().join('\n');
-    for (const guard of GUARDS) assert.ok(commands.includes(`hooks/${guard}`), guard);
+    for (const hook of HOOKS) assert.ok(commands.includes(`hooks/${hook}`), hook);
   });
 }
-
-test('the shared settings set no bypass mode: teammates keep the timed allow', () => {
-  const base = JSON.parse(readFileSync(join(SETTINGS, 'base.json'), 'utf8'));
-  assert.equal(base.permissions?.defaultMode, undefined);
-  assert.ok(JSON.stringify(base.hooks.PermissionRequest).includes('permission-timed-allow.mjs'));
-});

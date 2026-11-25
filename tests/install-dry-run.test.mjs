@@ -1,5 +1,5 @@
-// Tests for `install --dry-run` (scripts/install.mjs): it names the git hooksPath it would set and the settings layers it would
-// merge, and still changes nothing. Exports: none (node:test file). The installer runs with HOME set to a temp folder and with
+// Tests for `install --dry-run` (scripts/install.mjs): it names the settings layers it would merge, and still changes
+// nothing. Exports: none (node:test file). The installer runs with HOME set to a temp folder and with
 // --no-plugins --no-tools (needs jq, like every install); the settings-layer cases use fake checkouts in temp folders.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,15 +14,15 @@ import { cleanEnv } from './clean-env.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const INSTALLER = join(REPO, 'scripts', 'install.mjs');
-const HOOKS_LINE = 'would set: git config core.hooksPath .githooks';
+const SET_HOOKS_LINE = /would set: git config core\.hooksPath/; // the commit hooks are removed: an install no longer sets a hooksPath
 const hooksPath = () => spawnSync('git', ['-C', REPO, 'config', '--get', 'core.hooksPath'], { encoding: 'utf8' }).stdout;
 
-test('--dry-run prints the hooksPath it would set and the settings layers, and changes nothing', () => {
+test('--dry-run prints the settings layers and no hooksPath to set, and changes nothing', () => {
   const home = makeTempDir('install-dry-run-');
   const before = hooksPath();
   const run = spawnSync(process.execPath, [INSTALLER, '--dry-run', '--no-plugins', '--no-tools'], { env: cleanEnv({ HOME: home, USERPROFILE: home }), encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
-  assert.ok(run.stdout.includes(HOOKS_LINE), run.stdout);
+  assert.doesNotMatch(run.stdout, SET_HOOKS_LINE);
   assert.match(run.stdout, new RegExp(`settings layers: settings/base\\.json \\+ settings/${OS_NAME}\\.json(?: \\+ settings/local\\.json)?\\n`));
   assert.ok(run.stdout.includes('(dry-run: nothing changed)'));
   assert.ok(run.stdout.includes(`write ${join(home, '.claude', 'CLAUDE.md')}: @${join(REPO, 'home', 'CLAUDE.md')}`), 'the generated CLAUDE.md is named, not made');

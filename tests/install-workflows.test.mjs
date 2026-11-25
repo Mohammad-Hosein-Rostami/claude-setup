@@ -1,7 +1,7 @@
 // Tests for scripts/install.sh (which runs scripts/install.mjs) now that workflows are gone (2026-11-22): no `workflows` link,
-// Workflow denied in settings.json, and the removed `--project-workflows <repo> [--copy]` options refused.
+// Workflow turned off in settings.json (disableWorkflows and the env switch, no deny rule), and the removed `--project-workflows <repo> [--copy]` options refused.
 // Exports: none (node:test file). Runs the real installer with HOME set to a temp folder and --no-plugins --no-tools,
-// so nothing outside the temp folder changes (the repo's own git hooksPath is set to the value it already has).
+// so nothing outside the temp folder changes.
 // Skips with a reason when jq is not installed.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -39,10 +39,11 @@ test('install no longer links home/workflows as ~/.claude/workflows', { skip }, 
   assert.equal(linkExists(join(home, '.claude', 'workflows')), false);
 });
 
-test('settings.json turns Workflow off (deny rule, no allow, no extra folder) and keeps the status line refresh', { skip }, () => {
+test('settings.json turns Workflow off (disableWorkflows and the env switch, no allow, no extra folder) and keeps the status line refresh', { skip }, () => {
   const { home } = install(() => []);
   const settings = JSON.parse(readFileSync(join(home, '.claude', 'settings.json'), 'utf8'));
-  assert.ok(settings.permissions.deny.includes('Workflow'));
+  assert.equal(settings.disableWorkflows, true);
+  assert.equal(settings.env.CLAUDE_CODE_DISABLE_WORKFLOWS, '1');
   assert.ok(!settings.permissions.allow.includes('Workflow'));
   assert.ok(!(settings.permissions.additionalDirectories ?? []).includes(join(home, '.claude', 'workflows')));
   assert.equal(settings.statusLine.refreshInterval, 5);
