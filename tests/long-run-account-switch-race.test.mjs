@@ -41,10 +41,7 @@ test('resume --account racing a plain resume never records a switch that the liv
       const driver = readJson(paths.driver);
       return driver?.pid !== firstPid && driver?.live?.one?.state === 'waiting-limit' && driverAlive(paths);
     };
-    // The `reloaded` line comes after resumeCommand's driverAlive check and before switchAccount: a plain resume run to its end
-    // here lands in the same gap that the Keychain read and the open-session check leave open in real use.
-    const write = (line) => {
-      if (!line.startsWith('reloaded')) return;
+    const runPlainResume = () => {
       const plain = cli(box, ['resume', paths.runId]);
       if (plain.status !== 0) throw new SetupError(`setup: the plain resume exited ${plain.status}: ${plain.stderr}`);
       const deadline = Date.now() + SETUP_WAIT_MS;
@@ -53,13 +50,28 @@ test('resume --account racing a plain resume never records a switch that the liv
         blockFor(SLICE_MS);
       }
     };
+    // The window is resumeCommand's gap between its driverAlive check and prepareResume's acquireLock: the token read of
+    // accountToken (the Keychain or store in real use) and the open-session check sit there. resumeCommand's first env read is
+    // that token read, so the plain resume runs to its end on that first read, with its driver in the limit wait before the switch
+    // takes the lock. The plain resume itself gets box.env, not the proxy, so it does not trigger again.
+    let plainResumed = false;
+    const env = new Proxy(box.env, {
+      get(target, key, receiver) {
+        if (!plainResumed) {
+          plainResumed = true;
+          runPlainResume();
+        }
+        return Reflect.get(target, key, receiver);
+      },
+    });
     let refused = null;
     try {
-      await resumeCommand({ runId: paths.runId, flags: { account: TO, 'reload-job': jobPath }, env: box.env, root: box.root, write });
+      await resumeCommand({ runId: paths.runId, flags: { account: TO, 'reload-job': jobPath }, env, root: box.root, write: () => {} });
     } catch (error) {
       if (error instanceof SetupError || !(error instanceof RunBusy)) throw error;
       refused = error;
     }
+    if (!plainResumed) throw new SetupError('setup: resumeCommand never read env, so the plain resume was not run in the gap');
 
     const switchIgnored = () => {
       const journal = journalOf(paths, 'one');
