@@ -21,9 +21,11 @@
 //   git-tidy's detachLandedSlot (../git-tidy/lib/lane-pool.mjs), never removed; any other worktree, or a pool folder that could not
 //   be detached, is unlocked when locked, then removed with `git worktree remove`; the branch goes with `git branch -d`. Git runs
 //   without a shell and without the variables that pick a repository (../git-tidy/lib/git.mjs).
-// - The land ledger gets one line per landing; a re-run that lands nothing new writes none (a line for the branch at the same
-//   landed sha is already there). The line is written only after the fast-forward; a line that cannot be written is one stderr
-//   warning, and the landing goes on and exits 0.
+// - The land ledger gets one line per landing, written only after the fast-forward. A base that moved always gets its line. A
+//   base that did not move gets none when the ledger already has a line for the branch at a sha the base holds: that is a
+//   re-run after a clean-up stop, also when other lanes moved the base before it. Otherwise (a lane with no new commit) it gets
+//   a line with 0 commits, so a reader sees the lane as landed. A line that cannot be written, or a ledger that cannot be read
+//   for that check, is one stderr warning each, and the landing goes on and exits 0.
 // - The clean-up after the landing runs `git-tidy prune --apply` over the repository: a branch goes only when its tip is on
 //   the base or merging it would change nothing, and only after it is written to the deletion log. A clean-up that fails (a
 //   deletion log that is not a regular file) is printed on stderr and removes nothing more; the landing stands and exits 0.
@@ -185,15 +187,22 @@ function removeLane({ dir, base }, branch, worktree, tip) {
 }
 
 /**
- * Whether the ledger already has a line for `branch` at `tip`. A re-run after a clean-up stop lands at the same tip, and a second
- * line would count that landing twice.
+ * Whether the ledger already holds this landing, so its line would count it twice: the base did not move (`baseSha` is `tip`)
+ * and a line for `branch` has a landed sha the base holds. A base that moved is a new landing and is never skipped, even on a
+ * second base checkout of the same repository (the ledger is one file per repository). A ledger that cannot be read counts as
+ * no line, with a warning on stderr, so the line is written (and appendLandEntry warns when that fails too).
  */
-function isInLedger(dir, branch, tip) {
+function isLandedBefore(dir, branch, { baseSha, tip }) {
+  if (baseSha !== tip) return false;
+  let entries;
   try {
-    return readLandEntries(dir).entries.some((entry) => entry.branch === branch && entry.to === tip);
-  } catch {
-    return false; // an unreadable ledger: write the line as before, and appendLandEntry warns when that fails too
+    ({ entries } = readLandEntries(dir));
+  } catch (error) {
+    console.error(`land: the ledger could not be read (${firstLine(error.message)}); the line of ${branch} is written without checking for an earlier one`);
+    return false;
   }
+  // runGit, not gitFlag: a line whose sha this clone does not have is simply not held, never a failed land
+  return entries.some((entry) => entry.branch === branch && runGit(dir, ['merge-base', '--is-ancestor', entry.to, tip]).status === 0);
 }
 
 /**
@@ -224,7 +233,7 @@ async function land({ branch, repo, test, testTimeoutSeconds }) {
   const count = gitText(checkout.dir, ['rev-list', '--count', `${baseSha}..${tip}`]);
   console.log(`landed ${branch} on ${checkout.base} at ${tip} (${count} commit(s))`);
   const entry = { at: new Date().toISOString(), repo: checkout.dir, branch, from: baseSha, to: tip, commits: Number(count) };
-  const ledgerWarning = isInLedger(checkout.dir, branch, tip) ? null : appendLandEntry(checkout.dir, entry);
+  const ledgerWarning = isLandedBefore(checkout.dir, branch, { baseSha, tip }) ? null : appendLandEntry(checkout.dir, entry);
   if (ledgerWarning !== null) console.error(ledgerWarning);
   for (const line of removeLane(checkout, branch, worktree, tip)) console.log(line);
   for (const line of sweepAfter(checkout, branch, tip)) console.log(line);

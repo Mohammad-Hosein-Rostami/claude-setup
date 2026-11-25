@@ -1,5 +1,6 @@
 // Purpose: the land ledger: one JSON line per landing, so a reader (board's `tick`) knows what landed and when without asking an
-//   agent. land.mjs appends a line right after its fast-forward; land itself never reads it.
+//   agent. land.mjs appends a line right after its fast-forward; when the base did not move it reads the ledger first, so a
+//   re-run of a landing writes no second line.
 // Exports: landLedgerPath, appendLandEntry, readLandEntries.
 // File: <HOME>/.claude/state/land/<repo-key>.jsonl. <repo-key> is the first 16 hex of the sha256 of the real path of the
 //   repository's git common dir (`git rev-parse --path-format=absolute --git-common-dir`), so every worktree of one repository and
@@ -10,14 +11,15 @@
 // - This file is the one place for the format: the writer and the reader both take the fields from ENTRY_FIELDS, in its order.
 // - An append never throws: a line that cannot be written is one warning line for stderr and the landing stands (`git-tidy range`
 //   finds its range again from the base's reflog). The file is opened without following a link or waiting on a FIFO, never
-//   through a second hard link, and never grows past MAX_LEDGER_BYTES, the most a read takes (hooks/lib/plain-file.mjs).
+//   through a second hard link, and never grows past MAX_LEDGER_BYTES, the most a read takes (hooks/lib/plain-file.mjs). A last
+//   line with no newline (a torn write) gets one before the new line, so it never swallows the next landing.
 // - A read skips, and counts, every line that does not parse or lacks a field; a missing file has no entries. Any other failure
 //   (git, a link, FIFO or folder at the path, a file past the cap) throws.
 import { createHash } from 'node:crypto';
-import { mkdirSync, realpathSync } from 'node:fs';
+import { mkdirSync, readSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { appendPlainFile, readPlainFile } from '../../hooks/lib/plain-file.mjs';
+import { appendPlainFile, readPlainFile, readPlainFileWith } from '../../hooks/lib/plain-file.mjs';
 import { gitText } from '../git-tidy/lib/git.mjs';
 import { firstLine } from './refusal.mjs';
 
@@ -26,6 +28,7 @@ const REPO_KEY_HEX = 16;
 const MAX_LEDGER_BYTES = 32 * 1024 * 1024;
 const FOLDER_MODE = 0o700;
 const COMMIT_NAME = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/; // a full SHA-1 or SHA-256 object name
+const NEWLINE = '\n';
 
 const isText = (value) => typeof value === 'string' && value !== '';
 const isCommitName = (value) => typeof value === 'string' && COMMIT_NAME.test(value);
@@ -57,6 +60,21 @@ export function landLedgerPath(repoDir, env = process.env) {
   return join(env.HOME || homedir(), '.claude', 'state', 'land', `${repoKey}.jsonl`);
 }
 
+/** NEWLINE when the ledger's last byte is not one (a torn last line), else '' (also for an empty or missing file). */
+function lineBreakBefore(path) {
+  try {
+    return readPlainFileWith(path, (fd, size) => {
+      if (size === 0) return '';
+      const last = Buffer.alloc(1);
+      readSync(fd, last, 0, 1, size - 1);
+      return last.toString() === NEWLINE ? '' : NEWLINE;
+    });
+  } catch (error) {
+    if (error.code === 'ENOENT') return '';
+    throw error;
+  }
+}
+
 const notWritten = ({ branch, to }, why) => `land: the ledger line of ${branch} was not written (${why}); the landing stands, and git-tidy range ${to} finds its range again`;
 
 /**
@@ -71,7 +89,8 @@ export function appendLandEntry(repoDir, entry, env = process.env) {
   try {
     const path = landLedgerPath(repoDir, env);
     mkdirSync(dirname(path), { recursive: true, mode: FOLDER_MODE });
-    if (appendPlainFile(path, `${JSON.stringify(ledgerFields(entry))}\n`, { maxBytes: MAX_LEDGER_BYTES })) return null;
+    const line = `${lineBreakBefore(path)}${JSON.stringify(ledgerFields(entry))}${NEWLINE}`;
+    if (appendPlainFile(path, line, { maxBytes: MAX_LEDGER_BYTES })) return null;
     return notWritten(entry, `${path} is not a plain file with one link, or would pass ${MAX_LEDGER_BYTES} bytes: move it away`);
   } catch (error) {
     return notWritten(entry, firstLine(error.message));
