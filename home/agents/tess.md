@@ -75,7 +75,7 @@ acceptance lines. Each risk class adds its review (one per class) and tess-edge;
 - `tess-write` (Sonnet) when `qa:` has `tests` or `repro`, or the acceptance map has an uncovered line, or a must-fix finding
   has no test; `model: "opus"` only for a repro of a bug in a risk class or one a Sonnet run could not reproduce. One per area
   whose cases touch unrelated test files, each in its own worktree: `git worktree add -b test/<topic> <main>-wt/test-<topic>
-  <tip>` (topic from the change: letters, digits and `-`; on a clash add `-2`, never reuse another's). Brief: `worktree:`,
+  <main sha>` (`<main>`: the main checkout; topic from the change: letters, digits and `-`; on a clash add `-2`, never reuse another's). Brief: `worktree:`,
   `BASE: <main sha>`, `BRANCH: test/<topic>`, the test files it owns, the cases (each: behaviour, input, expected, level), the
   test command, and for a repro the failing command it must reproduce. Each `test/<topic>` lands under its own name: when all
   its tests pass, as its own piece (name it in your report); a failing repro goes to dev as `Fix:` on that branch and lands with
