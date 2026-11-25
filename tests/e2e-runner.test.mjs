@@ -1,5 +1,5 @@
 // Tests of the e2e runner's command line (tests/e2e/run.mjs): the skip switch (no CS_E2E_LIVE=1: exit 2, nothing made or
-// started), usage errors (exit 2), the dry run (C-2: exit 0, `--model` on every claude line, Fable only on E4's deny lines), a
+// started), usage errors (exit 2), the dry run (C-2: exit 0, `--model` on every claude line, no Fable), a
 // usage limit (exit 3, the reset time printed, no retry), SIGINT (every process of the run ended), E7 run for real against
 // land in throwaway repos (exit 0), the login preflight (not logged in: one line, exit 2, no scenario), a login refusal (the
 // whole run stops, exit 2), no `--resume` after an error result, an E0 that throws closing the gate, `--real-home`
@@ -66,10 +66,14 @@ process.stderr.write('fatal: made-up git failure\\n');
 process.exit(128);
 `;
 
+// A case folder under the caller's TMPDIR can pass the 80-char runner temp root (macOS `mktemp -d` TMPDIRs are 60+ chars), so the
+// cases are made under /tmp where it exists; Windows keeps its default root.
+const SHORT_ROOT = process.platform === 'win32' ? undefined : '/tmp';
+
 /** A case folder: TMPDIR, a temp HOME with made-up owner files, a fake claude first on PATH, and the made-up login token of a
  * `claude-as` terminal (the first login source, so the runner never reads an account store; e2e-login-run.test.mjs reads one). */
 function makeCase(fakeClaude = LIMIT_CLAUDE) {
-  const dir = makeTempDir('e2er-');
+  const dir = makeTempDir('e2er-', SHORT_ROOT);
   assert.equal(testTempRoot(dir), dir, 'the case folder is short enough to be the runner temp root');
   const home = join(dir, 'home');
   mkdirSync(join(home, '.claude'), { recursive: true });
@@ -132,17 +136,20 @@ test('usage errors exit 2 before anything starts: an unknown --only id, no selec
   assert.deepEqual(kase.runRoots(), []);
 });
 
-test('C-2: --dry-run --all exits 0, every claude line names an allowed --model, Fable shows only on E4 lines, nothing starts', async () => {
+// E2-E5, E8 and E10 went with the guard and the popup; the six scenarios left print 6 claude lines in the dry run (E0, E1, E6, E9)
+const MIN_DRY_CLAUDE_LINES = 6;
+
+test('C-2: --dry-run --all exits 0, every claude line names an allowed --model, no line names Fable, nothing starts', async () => {
   const kase = makeCase();
   const { code, stdout } = await runRunner(['--dry-run', '--all'], kase.env);
   assert.equal(code, 0, stdout);
   const lines = stdout.split('\n');
   const claudeLines = lines.filter((line) => /(?:^|\s)claude -p /.test(line));
-  assert.ok(claudeLines.length >= 12, `${claudeLines.length} claude lines`);
+  assert.ok(claudeLines.length >= MIN_DRY_CLAUDE_LINES, `${claudeLines.length} claude lines`);
   for (const line of claudeLines) assert.match(line, / --model (?:opus|sonnet|claude-opus-5-5|claude-sonnet-5-5) /, line);
-  for (const line of lines.filter((one) => /fable/i.test(one))) assert.match(line, /^(?:# E4 |E4 run: \[E4 deny case\] )/, line);
+  assert.deepEqual(lines.filter((one) => /fable/i.test(one)), []);
   assert.ok(!/ANTHROPIC_API_KEY=/.test(stdout));
-  for (const id of ['E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E7', 'E8', 'E9', 'E10', 'E11']) assert.match(stdout, new RegExp(`^# ${id} `, 'm'));
+  for (const id of ['E0', 'E1', 'E6', 'E7', 'E9', 'E11']) assert.match(stdout, new RegExp(`^# ${id} `, 'm'));
   assert.deepEqual(kase.calls(), []);
   assert.deepEqual(kase.runRoots(), []);
 });
@@ -270,14 +277,14 @@ test('--real-home: the dry run gives the real HOME to E9 only; E0 keeps the temp
 });
 
 test("E0(a) sets the later jobs' answer mode: direct when it was done in one run, resume when it needed rounds", async () => {
-  const jobLineOf = (stdout) => /^E2 each claude job ended: .*$/m.exec(stdout)?.[0] ?? '';
+  const jobLineOf = (stdout) => /^E6 each claude job ended: .*$/m.exec(stdout)?.[0] ?? '';
   const direct = makeCase(FOUR_AT_ONCE);
-  const once = await runRunner(['--only', 'E0,E2', '--out', direct.out], direct.env);
+  const once = await runRunner(['--only', 'E0,E6', '--out', direct.out], direct.env);
   assert.match(once.stdout, /^e2e: E0 answer mode direct: later jobs run once$/m, once.stdout);
-  assert.match(jobLineOf(once.stdout), /\| done \(E0 answer mode: direct\) \| cap-lex: one run; helpers-dev-run: one run \| PASS$/);
+  assert.match(jobLineOf(once.stdout), /\| done \(E0 answer mode: direct\) \| run-release: one run; run-owner: one run; run-proxy: one run \| PASS$/);
   assert.deepEqual(direct.calls().filter((one) => one.args.includes('--resume')), []);
   const rounds = makeCase(FOUR_ON_RESUME);
-  const resumed = await runRunner(['--only', 'E0,E2', '--out', rounds.out], rounds.env);
+  const resumed = await runRunner(['--only', 'E0,E6', '--out', rounds.out], rounds.env);
   assert.match(resumed.stdout, /^e2e: E0 answer mode resume: later jobs get --resume rounds until done$/m, resumed.stdout);
-  assert.match(jobLineOf(resumed.stdout), /\| done \(E0 answer mode: resume\) \| cap-lex: one run; helpers-dev-run: one run \| PASS$/);
+  assert.match(jobLineOf(resumed.stdout), /\| done \(E0 answer mode: resume\) \| run-release: one run; run-owner: one run; run-proxy: one run \| PASS$/);
 });
