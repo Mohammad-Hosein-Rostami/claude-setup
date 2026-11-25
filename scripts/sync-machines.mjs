@@ -14,7 +14,7 @@
 //   installExit, problem }. installExit is install.sh's exit on this machine and the exit of the remote pull-and-install line on a
 //   target; null when the install did not run.
 // Exit: 0 every machine synced (installed with exit 0 and at the tip: the base branch's sha, or the tag's commit on a target of a
-//   --tag run), 1 a machine failed (its row says why), 2 usage, 3 a verify check failed.
+//   --tag run), 1 a machine failed (its row says why), 2 usage or another sync runs (the run lock below), 3 a verify check failed.
 // Invariants: everything that reaches an ssh line (base, tag, repo, host) is validated first; every remote command is ONE line,
 //   printed before it runs: perl's alarm (this Mac has no `timeout`), ssh, and the PATH export inside the quotes with the command.
 //   Every ssh and scp call carries SSH_OPTIONS: it never waits for a password or a host-key question, and gives up on a connect after 30 s.

@@ -59,7 +59,8 @@ some, `--json` for one JSON row per machine (the old `--checks` is refused with 
   `settings/local.json`. A machine that does not is skipped and its row says why (a target still on an old checkout is checked again after its install).
 - Each target gets a git bundle (`scp`), a fast-forward pull, the shared local values and `scripts/install.sh`. Each machine prints one line,
   `<machine>: synced sha <40-hex> install <exit>`. Nothing is pushed and no project repo on a target is touched. Every ssh line is printed before it runs.
-- Exit 0: every machine synced (install exit 0, at the base tip); 1: a machine failed (rows printed); 2: bad arguments or a leftover `/tmp/<row>-sync-*.bundle`; 3: verify failed.
+- Exit 0: every machine synced (install exit 0, at the base tip); 1: a machine failed (rows printed); 2: bad arguments, or another sync runs (its run lock `sync-machines.lock` in the temp folder; a killed sync's lock is
+  taken over and its leftover files removed); 3: verify failed.
 
 ## FIGMA_TOKEN (for `figma-pull`)
 Create a personal access token in Figma (Settings > Security) with read access to files. Keep it out of the repo,
