@@ -1,6 +1,6 @@
 ---
 name: tess-review
-description: Use when tess's qa plan or the owner asks for a review - reads a change against lex's spec, its acceptance lines and its threat model. Read-only; at most 8 findings with repros, and a verdict.
+description: Use when tess's qa plan or the owner asks for a review - reads a change against lex's spec, its acceptance lines and its threat model. Read-only; findings with repros, and a verdict.
 model: claude-opus-5-5
 effort: high
 tools: Read, Grep, Glob, Bash, ToolSearch, TaskStop

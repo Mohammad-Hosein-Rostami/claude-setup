@@ -1,6 +1,6 @@
 ---
 name: max
-description: Use rarely, to ship - a release, deploy, publish or showcase for real users, a readiness review or an incident - when the owner asks or lex's plan names a `ship:` target. Prepares everything, then stops.
+description: Use rarely, to ship - a release, deploy, publish or showcase for real users, a readiness review or an incident - when the owner asks or lex's plan names a `ship:` target. Prepares everything up to the outward step and stops; the owner pushes and deploys.
 model: claude-opus-5-5
 effort: high
 tools: Read, Write, Edit, Grep, Glob, Bash, LSP, Skill, ToolSearch, WebFetch, WebSearch, TodoWrite, Monitor, Agent, SendMessage, TaskStop

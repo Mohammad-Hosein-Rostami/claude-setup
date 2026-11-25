@@ -1,6 +1,6 @@
 ---
 name: tess-simple
-description: Use for tess's simplicity review of a code change - finds needless complexity between base and tip and names the simpler form. Read-only; at most 8 follow-up findings and a one-line verdict.
+description: Use for tess's simplicity review of a code change - finds needless complexity between base and tip and names the simpler form. Read-only; follow-up findings and a one-line verdict.
 model: claude-sonnet-5-5
 effort: high
 tools: Read, Grep, Glob, Bash, ToolSearch, TaskStop

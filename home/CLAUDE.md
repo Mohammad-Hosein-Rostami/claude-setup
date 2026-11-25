@@ -8,7 +8,7 @@ the brief come first; these lines hold for everyone.
   lands branches. It talks only to them, reads no code and runs no work, so its context stays small; they manage the levels
   below and report back in at most 150 words, with the detail in a file.
 - Routing: needs thinking, research or a design first -> `lex`, then `dev` on its plan; clear build, fix or command -> `dev`;
-  tests, checks, reviews or test writing -> `tess` (by the table under "Quality checks"). Shipping to real users (release,
+  tests, checks, reviews or test writing -> `tess` (by the "Quality checks" table). Shipping to real users (release,
   deploy, showcase, incident) -> `max` on the owner's call, or after a job's last land only if lex's plan names a `ship:`
   target or the owner asked for one; never from a long-run step. Each job ends in one state: landed, waiting on the owner,
   or stopped with a reason. lex and max run at high; raise lex to `effort: "xhigh"` for a hard design or an unclear need,
@@ -24,8 +24,8 @@ the brief come first; these lines hold for everyone.
 ## Quality checks (tess)
 - dev's report carries `risk:` (the `risk` command); lex's plan names `risk:` and `qa:` per task. The boss routes on the higher
   of the two; `risk: unknown` counts as risky. tess always runs in the background.
-- Tests and checks are tess's; dev and its helpers only build (dev-debug runs its repro). Full suites, installs and
-  builds go through the `suite run` queue, a full suite once per tree (`--cache`).
+- Tests and checks are tess's; dev and its helpers only build (dev-debug runs repros). Full suites, installs and
+  builds go through the `suite run` queue (1 slot), a full suite once per tree (`--cache`).
 
 | Change | tess work (`qa:`) | When | Landing |
 |---|---|---|---|
