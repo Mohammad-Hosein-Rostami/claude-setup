@@ -257,8 +257,9 @@ for a Node in use, C replaces only `lib/graph.mjs`.
   account names and paths are validated before they reach a path or a command.
 - Runaway: only the loop guards and the holds after repeated failure; no usage credits (an account without credits recorded
   off is refused), never Fable, never an API key, no `--bare`. A job with many or long steps spends what it needs.
-- Full access in `-p`: no command asks for permission, so a step can push or publish with nobody watching. AskUserQuestion
-  takes the recommended option after 2 minutes.
+- Full access in `-p`: no command asks for permission, so a step can push or publish with nobody watching. Where a step can
+  ask at all (see "Worktrees and half-made work stay on disk"), an unanswered AskUserQuestion auto-continues after 5 minutes
+  and takes the recommended option.
 - Two writers on one transcript: `resume` after a takeover refuses while the session looks open (its transcript changed in the
   last 60 s, or a running process has the session id in its command line) unless `--force`.
 

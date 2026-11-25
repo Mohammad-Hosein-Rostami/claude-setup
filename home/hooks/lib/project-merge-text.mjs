@@ -89,7 +89,7 @@ const settingsLine = (setup) => fitted('Settings that change ours: ', sortedOver
 function warningLine(setup) {
   const off = setup.overrides.filter(({ effect }) => effect === 'hooks-off' || effect === 'hides-our-rules');
   if (off.length === 0) return '';
-  return `${WARNING}${off.map(({ key, effect }) => `${key} ${EFFECTS[effect]}`).join('; ')}: our checks, guards or rules may not run here.`;
+  return `${WARNING}${off.map(({ key, effect }) => `${key} ${EFFECTS[effect]}`).join('; ')}: our hooks or rules may not run here.`;
 }
 
 function noteLine(notes, identity, shown) {

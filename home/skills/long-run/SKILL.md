@@ -21,7 +21,7 @@ crashes, reboots and usage limits. You only talk with the owner and drive the CL
    write its full id (`claude-sonnet-5-5`, not `sonnet`: the runner refuses aliases); never Fable (the runner refuses it). No account field: the runner uses the selected account and records it.
 2. Run `LR check ~/.claude/state/long-run/jobs/<name>.json` and show the owner the plan lines it prints.
 3. Ask in plain text whether to start. **Start only on the owner's typed yes in the chat.** Never ask through
-   AskUserQuestion or any popup: an unanswered question goes on with its default, and that is not a yes.
+   AskUserQuestion: an unanswered one goes on with its recommended option after 5 minutes, and that is not a yes.
 4. `LR start ~/.claude/state/long-run/jobs/<name>.json`; it prints `started <run-id>`. Then start the watch (next section).
 
 A refused `check` or `start` prints one line with the fix (for example the account needs
@@ -114,8 +114,8 @@ paused run they are refused. The tool README's section "What survives a stop" ha
 
 ## A question for the owner (`needs-owner`)
 
-Run `LR status <run>`, show the owner the question it prints for that step, and wait for their answer in the chat (never a
-popup). Then `LR resume <run> --answer "<their answer>"` (long answer: `--answer-file <f>`). For a parallel item add
+Run `LR status <run>`, show the owner the question it prints for that step, and wait for their answer in the chat (never
+AskUserQuestion). Then `LR resume <run> --answer "<their answer>"` (long answer: `--answer-file <f>`). For a parallel item add
 `--item <id>`.
 
 ## Exit codes
