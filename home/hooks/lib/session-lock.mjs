@@ -16,8 +16,7 @@
 //   after which it stores nothing; after a killed holder the next caller waits until that lock is STALE_LOCK_MS old (about 0.5 s).
 //   A caller that must not wait (the status line render) passes waitMs 0: one try, one stale check (a stale lock is removed for the
 //   next call), then nothing is stored.
-//   Only a send that may be denied (a bounce or advice) takes the lock: a plain allow never touches the store. A link, FIFO or folder
-//   at the lock's or the breaker's name makes the store unusable.
+//   A link, FIFO or folder at the lock's or the breaker's name makes the store unusable.
 // - Nothing here throws.
 import { randomBytes } from 'node:crypto';
 import { closeSync, fstatSync, linkSync, lstatSync, openSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs';

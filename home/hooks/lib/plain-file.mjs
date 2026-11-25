@@ -1,4 +1,4 @@
-// Opens for a file whose path someone else may have planted: the guard's host list, the decision log, the edit log and a session transcript.
+// Opens for a file whose path someone else may have planted: a session transcript, a hook's state or log file, a tool's record.
 // Exports: readPlainFile(path, maxBytes) -> string (throws);
 //   readPlainFileWith(path, read) -> what read returns (throws), for a caller that picks its own range from the size;
 //   appendPlainFile(path, text, {mode, maxBytes}) -> boolean; NOT_PLAIN_FILE.

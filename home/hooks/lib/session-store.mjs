@@ -60,7 +60,7 @@ export function lstatOrNull(path) {
 /**
  * @param {string} dir the store folder
  * @param {string} session the session id (see isSessionId)
- * @param {number} maxBytes a bigger file was not written by the guard, so it is not trusted
+ * @param {number} maxBytes a bigger file was not written by this store, so it is not trusted
  * @returns {string | null | undefined} the file's text; null when the folder or the file does not exist yet; undefined when the id is
  *   bad, the store is unusable (see the header), the file is too big or the read failed
  */
@@ -86,7 +86,7 @@ function readOpened(path, maxBytes) {
     if (!isPrivateFile(opened) || opened.size > maxBytes) return undefined;
     const buffer = Buffer.alloc(opened.size + 1);
     const length = readSync(fd, buffer, 0, buffer.length, 0);
-    return length > opened.size ? undefined : buffer.toString('utf8', 0, length); // more than fstat said: written in place, not by the guard
+    return length > opened.size ? undefined : buffer.toString('utf8', 0, length); // more than fstat said: written in place, not by this store
   } finally {
     closeSync(fd);
   }
