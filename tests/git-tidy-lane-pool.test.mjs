@@ -1,7 +1,7 @@
 // Tests of `git-tidy lane` (lib/lane-pool.mjs, lane-slots.mjs, pool-lock.mjs, lane-prep.mjs, lane-cli.mjs): claim, list, release, reclaim,
 // land's detach, the pool lock, the job-made record, the installs a claim runs, and `check`'s info lines. Every repo is a temp repo.
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -176,7 +176,10 @@ test('lane-prep: an install failure exits 1 with the "lane not ready" lines and 
   const folder = poolPath(repo, 1);
   assert.equal(result.status, 1);
   assert.equal(result.stdout, '', 'no lane: line');
-  const [first, second, third, fourth] = result.stderr.trim().split('\n');
+  // The first claim in a repository also keeps the pool out of its git status (2d9c4bb5) and says so before the failure lines.
+  const [notice, first, second, third, fourth] = result.stderr.trim().split('\n');
+  assert.match(notice, /^git-tidy: added \/\.claude\/worktrees\/ to .*exclude so lane folders stay out of git status$/);
+  assert.ok(readFileSync(join(repo, '.git', 'info', 'exclude'), 'utf8').split('\n').includes('/.claude/worktrees/'), 'the pool is excluded');
   assert.match(first, /^lane not ready: npm ci failed in \.: exit 1: fake npm broke$/);
   assert.equal(second, `  worktree: ${folder} (branch a)`);
   assert.ok(third.startsWith('  to finish:  cd ') && third.endsWith(' && npm ci'), third);
