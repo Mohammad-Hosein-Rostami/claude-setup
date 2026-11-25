@@ -2,7 +2,7 @@
 
 Lands one lane on its base branch with one command and keeps history one straight line: it rebases the lane onto the base,
 optionally tests the rebased tip, fast-forwards the base checkout to it with `git merge --ff-only`, then deletes the lane's
-worktree and branch, then every other branch whose work is provably in what landed (folded into the lane, or merged), and
+worktree and branch, then every other branch whose content is all on the base (one content proof, below), and
 ends with a `left:` list of the branches still there and why. It runs no review, and it never pushes. Node 22, git, no
 dependencies.
 
@@ -28,7 +28,7 @@ Steps, in order; nothing changes until every check has passed:
 
 1. Checks: the base checkout has a branch checked out, no unfinished rebase or merge and no changed or untracked file; the branch
    exists and is not the base; when the branch has a worktree, that worktree is clean too and is not the main worktree.
-2. Overlap: the base's sha is read once, and so is the lane's history ("Folded branches" below); the files both the base and the lane changed since their merge base (a rename counts
+2. Overlap: the base's sha is read once; the files both the base and the lane changed since their merge base (a rename counts
    as both paths) decide whether a test must run. A lane with no commit in common with the base is refused; so is a needed
    test for a branch with no worktree to run it in.
 3. Rebase onto that sha: with no test, in the lane's worktree, or, for a branch with no worktree, in the base checkout (which is
@@ -46,15 +46,16 @@ Steps, in order; nothing changes until every check has passed:
    A base that moved since step 2 is refused; after a passing test that leaves the lane at the tested sha, and the next `land`
    compares it with the moved base.
 6. Clean-up: a locked worktree is unlocked, then removed with `git worktree remove` (ignored files in it, such as notes or
-   `node_modules`, go with it); the branch is deleted with `git branch -d`. Before that, right after the fast-forward, the
-   landing is recorded ("Folded branches" below) with the history read in step 2, before anything moved the lane.
+   `node_modules`, go with it); the branch is deleted with `git branch -d`.
 7. Sweep (`sweep.mjs`): git-tidy's `prune --apply` over the whole repository, with all its safety checks
-   (`../git-tidy/README.md`, "prune"): branches folded into a lane that landed, merged branches, older copies, each with its
-   clean worktree. A dirty, locked or recently used worktree, a branch that moved, or any doubt keeps the branch, with the
-   reason. An unfinished rebase or merge in any worktree skips the sweep (`cleanup skipped: <reason>`); the record stays, so
-   the next `land` or `git-tidy prune --apply` still has the proof. Then `left:` names every branch still there: `in <B>
-   (lands with it)` (all its commits are in the live branch B: a stacked lane, a folded test branch), `kept: <reason>`,
-   `idle <h> h, ahead <n>` (no commit for 2 hours or more) or `active, ahead <n>`; at most 20 lines, then `+N more`.
+   (`../git-tidy/README.md`, "prune"): branches whose content is on the base ("Folded branches" below), older copies, each
+   with its clean worktree. A dirty, locked or recently used worktree, a branch that moved, or any doubt keeps the branch,
+   with the reason. An unfinished rebase or merge in any worktree skips the sweep (`cleanup skipped: <reason>`); a later
+   `land` or `git-tidy prune --apply` does it. A deletion log that is not safe to write stops the sweep before it removes
+   anything: one stderr line, exit 0. Then `left:` names every branch still there: `in <B> (lands with it)` (all its commits
+   are in the live branch B: a stacked lane, a folded test branch), `kept: <reason>`, `on <base> (<state>), not removed`
+   (merged, but the sweep was skipped), `idle <h> h, ahead <n>` (no commit for 2 hours or more) or `active, ahead <n>`; at
+   most 20 lines, then `+N more`.
 
 Output on success, one line per step:
 
@@ -63,7 +64,7 @@ landed feat/x on main at <full sha> (3 commit(s))
 removed worktree /path/to/lane
 deleted branch feat/x
 removed worktree /path/to/test-x
-deleted test/x (was <full sha>, folded into feat/x)
+deleted test/x (was <full sha>)
 kept /path/to/lane-y: 2 uncommitted or untracked files
 kept lane/y: checked out in /path/to/lane-y
 left:
@@ -77,31 +78,22 @@ With no other branch the block is `left: none`.
 ## Folded branches
 
 Work often reaches the landed lane through another branch: a `test/<topic>` branch fast-forwarded into it, a lane continued
-on a test branch, a lower lane of a stack, a cherry-pick, then rewritten (fixup, autosquash, a rebase with conflicts). Its
-old branch then has commits the base never got, so no ancestry or `git cherry` test proves it is done, and deleting the
-landed lane deletes its reflog, the only record of the fold.
+on a test branch, a lower lane of a stack, a cherry-pick, often rewritten on the way (fixup, autosquash, squash, rebase). Its
+old branch then has commits the base never got, so no ancestry or `git cherry` test proves it is done.
 
-So before anything moves the lane, `land` reads its history: its tip and its reflog positions down to its newest reset
-(`reset:` or `branch: Reset to`; older positions do not count, since the folded work may have been dropped on purpose
-there) and not past a step that may have dropped a commit (a `rebase --onto` or `drop` that left one out: a step counts
-only when the new position descends from the old one, is an amend of it, or merging the old one into it changes nothing),
-plus the `git patch-id --verbatim` and the exact change (files, modes and content before and after) of every commit they
-reach that the base lacks (none over 500 commits: ancestry only). Right after the fast-forward it appends that record to
-`<git common dir>/cs-tidy-log.jsonl`. A branch is `folded-branch` when the landing's landed tip is still on the base and
-every commit the branch has that the base lacks is reachable from that landing's positions, or (no merge commit among the
-rest) makes exactly a change that landing had: a matching patch id alone is no proof. When in doubt the branch stays and is
-listed under `left:`. Records are read for 30 days, so a branch kept today (a dirty worktree, recent use) is still proven at
-the next sweep. A record that cannot be written, or a clean-up that fails (a landing log that cannot be read), is printed on
-stderr and the landing stands with exit 0: the other branches then stay, as before.
+One content proof decides (decision record `docs/adr/0004-land-removes-folded-branches.md`): a branch is deleted only when
+its tip is an ancestor of the base, or `git merge-tree --write-tree <base> <branch>` prints exactly the base's tree, so
+merging it would change nothing and all its content is already on the base (`content-equal`). A fold that landed as it is,
+in other commits (a squash, a plain cherry-pick), goes. A fold the lane changed later (the folded commit fixed up or
+amended, a file removed again, a commit dropped by `rebase --onto`) stays and is named under `left:`: look at it, then
+delete it by hand with `git branch -D`. Reflogs and patch ids never delete a branch on their own.
 
-A folded branch's worktree is kept when it was used in the last 60 minutes after the lane's last commit (someone may still
-work there); used before that commit, it was left behind, and its recent use does not keep it. A read-only agent that touched
-nothing in it since that commit is the risk that remains.
-
-Every branch the sweep (or `git-tidy prune --apply`) deletes is appended to the same log, `{"deleted": {"branch", "sha",
-"reason", "at"}}`, and printed as `deleted <b> (was <sha>...)`. Restore one with `git branch <b> <sha>` within 2 weeks: git
-keeps unreachable commits that long by default (`gc.pruneExpire`). The log lives inside `.git`, never in a commit; a line that
-does not parse is skipped on its own, never taken as proof (a record after a torn last line starts a new line); past 1 MiB it is rewritten without the records older than 30 days.
+Every branch the sweep (or `git-tidy prune --apply`) deletes is first appended to `<git common dir>/cs-tidy-log.jsonl`,
+`{"deleted": {"branch", "sha", "reason", "at"}}`, and printed as `deleted <b> (was <sha>)`; a branch whose record cannot be
+written is kept. Restore one with `git branch <b> <sha>` within 2 weeks: git keeps unreachable commits that long by default
+(`gc.pruneExpire`). The log lives inside `.git`, never in a commit, and is opened only as a regular file: a symbolic link,
+a FIFO, a folder or a file that cannot be written in its place stops the sweep (stderr, exit 0; move it away). A record after
+a torn last line starts a line of its own.
 
 With a test, these lines come first (the overlap lines only when files overlap):
 
@@ -120,8 +112,9 @@ test passed on <full sha>
 | 2 | usage error |
 
 Git runs without a shell and without the variables that point it at another repository (`../git-tidy/lib/git.mjs`); the
-worktree list and the clean checks are git-tidy's (`../git-tidy/lib/repo.mjs`), and so are the landing log
-(`../git-tidy/lib/landed-log.mjs`), the fold proof (`../git-tidy/lib/folded.mjs`) and the sweep (`../git-tidy/lib/prune.mjs`); the test's process tree is ended by
+worktree list and the clean checks are git-tidy's (`../git-tidy/lib/repo.mjs`), and so are the content proof
+(`../git-tidy/lib/branches.mjs`), the deletion log (`../git-tidy/lib/deletion-log.mjs`), the `in <B>` hint
+(`../git-tidy/lib/in-lane.mjs`) and the sweep (`../git-tidy/lib/prune.mjs`); the test's process tree is ended by
 `../long-run/lib/process-tree.mjs`. Files: `land.mjs` (the CLI and its steps), `sweep.mjs` (step 7: the sweep and the `left:` block),
 `test-gate.mjs` (overlap, which test, the test step), `run-test.mjs` (runs the command), `refusal.mjs` (the refusal and the
-clean check). Tests: `tests/land.test.mjs`, `tests/land-test-gate.test.mjs`.
+clean check). Tests: `tests/land.test.mjs`, `tests/land-test-gate.test.mjs`, `tests/land-sweep*.test.mjs`, `tests/git-tidy-content-equal.test.mjs`.

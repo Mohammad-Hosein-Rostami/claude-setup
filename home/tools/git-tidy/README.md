@@ -1,10 +1,9 @@
 # git-tidy
 
 Checks that a repository's history is one straight line, and finds (and, on request, removes) the branches and worktrees
-whose work is already on the base, older copies of a re-done lane, branches folded into a lane that landed and the leftover
-branches of workflow agents; `land`
+whose work is already on the base, older copies of a re-done lane and the leftover branches of workflow agents; `land`
 puts a lane on the base. The rule it enforces: rebase, never merge; no merge commits; a branch and its
-worktree are removed once their work is on the base. Node 22 and git 2.38 or newer (`merge-tree --write-tree`), no dependencies. Git is run
+worktree are removed once their work is on the base. Node 22 and git 2.40 or newer (`merge-tree --write-tree` and its `--stdin` batch; an older git proves no `content-equal`, so nothing is deleted on it), no dependencies. Git is run
 without a shell, with an explicit folder, and `GIT_DIR`, `GIT_WORK_TREE` and the other variables that pick a repository
 are removed from its environment, so only the folder you give is ever read or changed.
 
@@ -19,7 +18,7 @@ It must be a local branch; when none is found the exit code is 2 and the message
 exits 2, deleting nothing, when the base was not given with `--base` and more than one of `main`, `master`, `develop`
 exists here: a wrong base would call work "merged" that is not on the branch you work against.
 
-`land` has its own codes (0 landed and clean, 1 landed with findings, 2 not ready or no `--tip`, 3 conflict, 5 base moved, 6 ui-proof, 7 new-file-size, 8 upstream-moved, 9 tip-moved). The plain landing route is the `land` tool (`tools/land/README.md`: rebase, `merge --ff-only`, then the branch and its worktree removed, the landing recorded, and `prune --apply` run over the repository, ending with a `left:` list). Landing has no test run and no review record; `--checks` and the old UI waiver flag are refused (exit 2).
+`land` has its own codes (0 landed and clean, 1 landed with findings, 2 not ready or no `--tip`, 3 conflict, 5 base moved, 6 ui-proof, 7 new-file-size, 8 upstream-moved, 9 tip-moved). The plain landing route is the `land` tool (`tools/land/README.md`: rebase, `merge --ff-only`, then the branch and its worktree removed, then `prune --apply` run over the repository, ending with a `left:` list). Landing has no test run and no review record; `--checks` and the old UI waiver flag are refused (exit 2).
 
 | Code | `check` | `prune` |
 | ---- | ------- | ------- |
@@ -30,7 +29,7 @@ exists here: a wrong base would call work "merged" that is not on the branch you
 ## check
 
 One line per item, `<kind> <subject> <detail>`, findings first, then hints (kind ends in `?`), then
-`git-tidy: N findings, M hints (base <branch>), all local refs on one line: yes|no` (no when there is a `merge-commit`, `tangled-ref`, `merged-branch`, `merged-tag`, `superseded-copy`, `agent-leftover` or `folded-branch` finding; hints do not count). `--json` prints `{ base, findings, hints }` with items
+`git-tidy: N findings, M hints (base <branch>), all local refs on one line: yes|no` (no when there is a `merge-commit`, `tangled-ref`, `merged-branch`, `merged-tag`, `superseded-copy` or `agent-leftover` finding; hints do not count). `--json` prints `{ base, findings, hints }` with items
 `{ kind, subject, detail }` (a path with spaces is exact there).
 
 | Finding | Meaning |
@@ -39,10 +38,10 @@ One line per item, `<kind> <subject> <detail>`, findings first, then hints (kind
 | `merged-branch <name> <hash> ancestor` | the branch tip is on the base (a branch created and never committed to also lands here) |
 | `tangled-ref <ref> <n> merge commits ...` | a local branch or a `backup/` tag (full ref name; not the base, not the current branch) that still reaches a merge commit no remote-tracking ref has (with no remote: that the base lacks). Old tangled history stays visible in `git log --graph --all` through such refs |
 | `merged-branch <name> <hash> patch-equal` | every non-merge commit has an equal patch on the base (a rebase or cherry-pick that landed) AND merging the branch into the base would change nothing (`git merge-tree --write-tree` gives the base's own tree). Patch ids ignore whitespace and skip merge commits, so the second proof is what keeps a branch that differs only in indentation, or holds a hand-made change in a merge, from being called merged |
+| `merged-branch <name> <hash> content-equal` | the one content proof for every other branch: merging it into the base changes nothing (`git merge-tree --write-tree` gives the base's own tree, checked for all unmerged branches in one `git merge-tree --stdin` call, `--allow-unrelated-histories` so an orphan branch is compared too), so all its content is already on the base, though no commit or patch of it is (a lane squashed into one commit, a test branch whose lane landed it as it is, a commit and its revert). Reflogs and patch ids alone never make a branch merged: a fold the lane changed later (a fixup, an amend, a removal) stays `unmerged-branch?` |
 | `merged-tag <tag> <hash> patch-equal` | a `backup/` tag that is not on the base's history but whose work is all on the base by the same test: a temporary backup made before a history clean-up. A tag that is an ancestor of the base (a release tag) is never reported |
 | `superseded-copy <name> <hash> all its work is in <B>` | an older copy of a re-done lane: it is in a family with B (same name once `-<n>`, `-fix`, `-fixes`, `-v<n>`, `-redo` are cut off, or the same tip) and its tip is an ancestor of B, or every `git patch-id --verbatim` of `base..<name>` is in `base..B` (`--verbatim`: a whitespace-only change is a different patch) and merging `<name>` into B changes nothing (`git merge-tree --write-tree` gives B's own tree); a branch with a merge commit only by the ancestor proof. B is never itself a copy; between branches that cover each other the newest committer date stays, then the one checked out in a worktree, then the name. The newest of the family is named by `unlanded-lane?` |
 | `agent-leftover <name> ...` | a `worktree-agent-*` (subagent) or `worktree-wf_*` (workflow agent) branch every commit of which is on the base or on a branch that is not an agent branch, and that no existing worktree has checked out (the Agent tool leaves one behind). It replaces the `merged-branch` line of the same branch |
-| `folded-branch <name> <hash> folded into <B> (landed <UTC time>)` | every commit of the branch that the base lacks is in the history of B, a lane that landed (from the landing log, "Landing log" below) and whose landed tip is still on the base: reachable from B's tip or the reflog positions B kept (since its newest reset, and not past a step that may have dropped a commit), or, with no merge commit among the rest, making exactly a change B's history made (the same `git patch-id --verbatim` and the same files before and after: a patch id alone leaves out line numbers). B is gone, so a fold that was rewritten later (fixup, autosquash, an amend, a cherry-pick) is still proven. Not reported for a branch that is a copy already |
 | `merged-worktree <path> branch <name>` | a linked worktree whose branch is a `merged-branch` |
 | `stale-worktree <path> folder missing` | a registered worktree whose folder is gone |
 | `dirty-base <path> <n> changed tracked files: ...` | the folder where the base is checked out has uncommitted changes to tracked files (untracked and ignored files do not count); edits belong in a lane worktree |
@@ -56,7 +55,7 @@ The base and the branch checked out in the main worktree are never reported as m
 | `merged-tag?`, `tangled-tag?` | the same two checks for a tag NOT named `backup/`. Whether a tag is published cannot be known without the network (a release tag on a backport branch is normal), so only `backup/` tags, the name the clean-up procedure gives its temporary tags, are findings |
 | `unmerged-branch?`, `unmerged-tag?` | a local branch or tag with commits the base lacks: how many, and the date of its last commit |
 | `unlanded-lane? <name> ahead <n>, no commit for <h> h: ...` | such a branch whose last commit is over 2 hours old: land it or say why it waits |
-| `in-lane? <name> all its commits are in <B>; it goes when <B> lands` | an unmerged branch whose every commit is reachable from the tip or reflog (since its newest reset) of B, a branch that has not landed: a stacked lane or a test branch folded into B. It replaces `unmerged-branch?` and `unlanded-lane?` for that branch, and it is never removed |
+| `in-lane? <name> all its commits are in <B>; it goes when <B> lands` | an unmerged branch whose every commit is reachable from the tip or reflog (since its newest reset) of B, a live branch: a stacked lane or a test branch folded into B. It replaces `unmerged-branch?` and `unlanded-lane?` for that branch. A hint only, never a reason to remove: if B drops the commit before it lands (`rebase --onto`), the branch stays |
 | `ignored-files?` | a merged worktree holds ignored files that exist only there (`prune` keeps it) |
 | `merged-remote-branch?` | an `origin/*` branch fully contained in the base's upstream; deleting it is the owner's call |
 | `behind-base?` | the current branch does not contain the base tip (rebase needed) |
@@ -100,32 +99,19 @@ and prints why. With `--apply`, in this order, each fact read again from git rig
    (`used <n> min ago (an agent may still work there)`), `--include-recent` does not lift it, because an agent may still be working there.
    An `agent-leftover` that is on the base is a merged branch for prune.
 
-5. Folded branches (`folded-branch`) go the copy way too, with these differences: the proof is the landing record (read again
-   right before the removal: the branch has not moved, the landed tip is still on the base and the record still proves it); the reflog check counts a commit as safe
-   when it is in that landing's history; and the worktree's recent use keeps it only when the use came after the landed lane's
-   last commit (or the lane has no commit of its own yet): a worktree last used before that commit was left behind when the work
-   moved on. Each deleted branch is printed `deleted <name> (was <hash>, folded into <B>)`.
-
-Every branch `--apply` deletes, of any kind, is written to the landing log with its sha and reason, so it can be restored.
+Each branch is written to the deletion log (below) before it is deleted; a branch whose record cannot be written is kept, and
+an `--apply` whose log is not safe to write removes nothing and exits 2.
 
 A failure of one item does not stop the others; the run ends with exit code 1 if anything was kept or failed.
 
-## Landing log
+## Deletion log
 
-`<git common dir>/cs-tidy-log.jsonl`, one JSON object per line, written by `lib/landed-log.mjs`. `tools/land` appends
-`{"landed": {branch, tip, shas, patchIds, changeIds, lastCommitMs, base, landedTip, landedAt}}` right after its
-fast-forward: the landed lane's tip and reflog positions, read before anything moved it, and the verbatim patch ids and
-change ids (a hash of each commit's raw diff: files, modes and content before and after) of the commits they reach (both null
-over 500 commits). The positions go down to the newest reset and stop at the newest reflog step that may have dropped a
-commit: a step counts only when the new position descends from the old one, has its parents (an amend), or merging the old
-one into it changes nothing (`git merge-tree`: a rebase or autosquash that kept every change). A `rebase --onto` or a `drop`
-that left a folded commit out ends the history there, so that branch stays. Deleting a branch deletes its reflog, so this record is the only proof left
-of what was folded into it. `prune --apply` appends `{"deleted": {branch, sha, reason, at}}`; restore with
-`git branch <name> <sha>` while git still keeps the commit (`gc.pruneExpire`, 2 weeks by default). Records older than 30
-days are not read; past 1 MiB the file is rewritten without them. Each line is parsed on its own: one that does not parse
-or does not have the shape is skipped, never taken as proof, and a record appended after a torn last line starts a new line;
-a landing whose landed tip is no longer on the base (the landing was undone) proves nothing; a missing log means no folded proofs. Positions `git gc` has removed are left out of a
-proof. Anyone who can write this file can delete branches directly, so it adds no new power.
+`<git common dir>/cs-tidy-log.jsonl`, written by `lib/deletion-log.mjs`: one `{"deleted": {branch, sha, reason, at}}` line per
+branch `prune --apply` deletes (and so land's sweep), appended before the delete. Restore one with `git branch <name> <sha>`
+while git still keeps the commit (`gc.pruneExpire`, 2 weeks by default). A record after a torn last line starts a line of its
+own. The log is opened only as a regular file: never through a symbolic link (it would write outside `.git`), never blocking
+on a FIFO; anything else in its place is refused with a message naming the path (move it away). Nothing reads the log to
+decide anything; it grows by one line per deleted branch, and deleting it by hand loses only the restore records.
 
 ## land
 

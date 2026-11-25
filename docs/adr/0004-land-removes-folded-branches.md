@@ -1,67 +1,60 @@
-# 0004: land removes the branches folded into the lane it landed
+# 0004: land removes the branches whose content landed, by one content proof
 
-- Status: accepted (the owner chose the deletion rule, 2026-11-25). Date: 2026-11-25.
+- Status: accepted (2026-11-25). The first version (record the landed lane's history and prove folds from it) was replaced
+  the same day: three reviews found holes in it, and the owner's standard is the simpler, safer rule. Date: 2026-11-25.
 
 ## Context
 
 Finished work often reaches a lane through a second branch before it lands: a fix made on the `test/<topic>` branch that
 the tests were written on, a helper or test branch fast-forwarded into the lane, a stack that picks up its lower lanes. On
-the way the commits are rewritten (fixup and autosquash, rebases with conflicts, cherry-picks). Three things then went
-wrong together:
+the way the commits are rewritten (fixup and autosquash, squashes, rebases, cherry-picks). Two things went wrong together:
 
-1. `land` deleted only the branch it landed, and deleting a branch deletes its reflog: the only record that the earlier
-   branch was folded into it. After that no tool could prove the earlier branch was done.
-2. git-tidy's proofs (ancestor; equal patch ids plus `merge-tree`; a copy within one name family) cannot see rewritten work,
-   so those branches showed as `unmerged-branch?`, exactly like the live lanes.
-3. Nothing ran `git-tidy prune` after a land, so even provable leftovers stayed.
+1. git-tidy's proofs (ancestor; equal patch ids plus `merge-tree`) do not see a branch whose content landed in other
+   commits (a squash), so such branches showed as `unmerged-branch?`, exactly like the live lanes.
+2. Nothing ran `git-tidy prune` after a land, so even provable leftovers stayed.
 
 Seven such branches were left in this repository at once; their clean-up was planned as a later job that nobody owned.
 
 ## Drivers
 
 - D1: no finished branch outlives its landing without a printed reason.
-- D2: nothing is deleted without proof that its commits are in what landed, and every deletion can be restored.
+- D2: nothing is deleted unless its content is on the base, and every deletion can be restored.
 - D3: stacked and live lanes are never touched.
 - D4: no new routine for agents to remember.
-- D5: plain structure.
+- D5: plain structure: a rule a person can check by hand.
 
 ## Options
 
-| Driver | 1. rules only | 2. prune after each land | 3. record the history, prove folds, then prune |
+| Driver | 1. rules only | 2. prune after each land, one content proof | 3. record the landed lane's history, prove folds from it |
 |---|---|---|---|
-| D1 | bad: the rule existed and was not followed | bad: 5 of the 7 leftovers stay | good |
-| D2 | ok (a person judges) | good | good: ancestry or a patch id in the landed history, no reset after the point it relies on, prune's other checks, deletions logged |
-| D3 | ok | good | good: proofs come only from landed lanes; a live stack gets the `in-lane?` hint |
+| D1 | bad: the rule existed and was not followed | ok: a fold the lane changed stays, named under `left:` | good |
+| D2 | ok (a person judges) | good: `git merge-tree` shows the content is on the base | bad: an amend, a same-parent move or a later removal made the history "prove" work that was not on the base |
+| D3 | ok | good | good |
 | D4 | bad | good | good |
-| D5 | good | good | ok: one log file and one proof module |
+| D5 | good | good: one git command per branch | bad: reflog steps, patch ids, change ids, a landing log |
 
 ## Decision
 
-Option 3. `land` reads the lane's history (its tip and reflog down to its newest reset, and the patch ids of the commits they
-reach) before anything moves the lane, appends it to `<git common dir>/cs-tidy-log.jsonl` right after the fast-forward, then
-runs `git-tidy prune --apply` over the repository and prints `left:`. Prune gets the `folded-branch` proof from those records.
+Option 2. After the fast-forward, `land` runs `git-tidy prune --apply` over the repository and prints `left:`. A branch is
+deleted only when ONE content proof holds: its tip is an ancestor of the base, or `git merge-tree --write-tree <base>
+<branch>` prints exactly the base's tree (merging it would change nothing, so all its content is on the base: state
+`content-equal`). Patch ids (`patch-equal`) only name the state of a branch that also passes `merge-tree`. Reflogs and
+landed history are never a reason to delete; they only give the `in <B> (lands with it)` hint of `left:`.
 
-- The proof comes from landed lanes only; a branch inside a live lane is a hint and is never deleted.
-- A reset ends the proof: positions older than the landed lane's newest `reset:` or `branch: Reset to` entry do not count,
-  because the folded work may have been dropped on purpose there.
-- A reflog step that may have dropped a commit ends the proof too: a step counts only when the new position descends from
-  the old one, is an amend of it, or merging the old one into it changes nothing (`git merge-tree`).
-- Cherry-picks count when they make exactly the change of a commit of the landed history: the same `git patch-id --verbatim`
-  and the same files before and after (a patch id alone leaves out line numbers).
-- A landing proves nothing once its landed tip is no longer on the base (the landing was undone).
-- A folded branch's worktree used in the last 60 minutes after the lane's last commit is kept; one last used before that
-  commit was left behind, so its recent use does not keep it. A dirty, locked or untracked worktree, ignored files that exist
-  only there, commits that exist only in a reflog and the not-started rule keep it as before.
-- Records are read for 30 days, so a branch kept today is still proven at the next prune. Every deleted branch is logged
-  with its sha and can be restored with `git branch <name> <sha>` within 2 weeks (`gc.pruneExpire`).
+- Prune's other checks stay: a dirty, locked or recently used worktree, ignored files that exist only there, commits that
+  exist only in a reflog, the not-started rule and the protected branches keep a branch.
+- Every branch is written to the deletion log `<git common dir>/cs-tidy-log.jsonl` with its sha before it is deleted, so it
+  can be restored with `git branch <name> <sha>` within 2 weeks (`gc.pruneExpire`). A branch whose record cannot be written
+  is kept. The log is opened only as a regular file (no symbolic link, no FIFO); anything else in its place stops the whole
+  clean-up before it removes anything, with one stderr line, and the land still exits 0.
+- The batch form `git merge-tree --stdin` checks every unmerged branch in one git call; `--allow-unrelated-histories` lets an
+  orphan branch be compared too (it is content-equal only when all its files are on the base as they are).
 
 ## Consequences
 
-- Good: every land leaves the repository tidy or names what stays and why, with no extra step.
-- Bad: land takes a little longer (one prune). A branch folded into a lane that was later reset, with no other proof, stays
-  on purpose. One more file inside `.git`.
-- A rebase that drops folded commits without a reset entry (`rebase -i` with `drop`, `rebase --onto`) ends the proof, so such
-  a branch stays. An amend counts as an edit, as a later commit would: an amend that undoes a folded tip commit still proves it.
-- A cherry-pick onto content that differs (the base changed the same file elsewhere) is not proven and stays.
-- Reversal signal: a deletion that had to be restored from the log, or a land clean-up over 5 s. Then narrow the proof to
-  ancestry of the landed lane's tip only.
+- Good: a person can check every deletion with one command. A rewrite of any kind (amend, `rebase --onto`, `drop`, a moved
+  ref, a later removal in the lane) can no longer make a branch look done.
+- Bad: a fold that the lane changed (a fixup of the folded commit, an amend after a fast-forward or a cherry-pick) stays,
+  named under `left:` as `active` or `idle`; it is deleted by hand (`git branch -D`) once a person has looked.
+- A revert pair (a commit and its revert) is content-equal and is deleted: no content is lost, only the two commits.
+- Reversal signal: a deletion that had to be restored from the log, or a land clean-up over 3 s on 30 branches.

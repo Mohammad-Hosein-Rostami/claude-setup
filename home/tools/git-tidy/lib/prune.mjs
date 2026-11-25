@@ -1,6 +1,5 @@
 // Purpose: `git-tidy prune`: remove the worktrees and branches whose work is already on the base, the older copies of a re-done
-//   lane and the leftover branches of workflow agents (lib/copies.mjs), the branches folded into a lane that landed
-//   (lib/folded.mjs, from the landing log lib/landed-log.mjs), and nothing else.
+//   lane and the leftover branches of workflow agents (lib/copies.mjs), and nothing else.
 // Exports: pruneRepo, deleteBranch (exported so a test can move a branch between the check and the delete), refuseUnsafeApply (land asks it first).
 // Invariants: the only writes are `git worktree prune`, `git worktree remove` (never --force), `git update-ref -d` with the
 //   old value and the removal of the branch's config section, and only with apply. Principle: remove only what is provably
@@ -8,12 +7,12 @@
 //   Before EACH removal the facts are read again from git, so what was true when the candidates were found is never
 //   trusted. A plan (no apply) trusts the candidates it was just given, which saves re-reading hundreds of branches.
 //   Anything not proven is kept, with the reason. Order: stale entries, worktrees, branches (a branch is free once its
-//   worktree is gone). Every deleted branch is written to the landing log with its sha, so it can be restored.
+//   worktree is gone). Every branch is written to the deletion log (deletion-log.mjs) with its sha before it is deleted, so it
+//   can be restored; one that cannot be written is kept. An apply whose log is unsafe (not a regular file) removes nothing.
 import { branchState, isMerged } from './branches.mjs';
 import { copyCandidates, isStillCopy } from './copies.mjs';
-import { FOLDED_KIND, foldedCandidates, isStillFolded } from './folded.mjs';
+import { checkDeletionLog, recordDeletion } from './deletion-log.mjs';
 import { UsageError, runGit } from './git.mjs';
-import { readLandings, recordDeletion } from './landed-log.mjs';
 import { findLeftovers } from './leftovers.mjs';
 import { branchReflogs, isNotStarted, reflogOnlyCommits } from './reflog.mjs';
 import { isBackupTag } from './tags.mjs';
@@ -25,8 +24,6 @@ const RECENT_MINUTES = 60;
 const IGNORED_SHOWN = 5;
 const NOT_STARTED = `not started yet (no commit of its own), used in the last ${RECENT_MINUTES} min`;
 const NOT_A_COPY = 'it is no longer a copy of a newer branch';
-const NOT_FOLDED = 'it moved, or its landing record no longer proves it folded';
-const MS_PER_MINUTE = 60_000;
 const item = (action, kind, subject, detail) => ({ action, kind, subject, detail });
 
 // Where verdicts read their facts: with apply, git is asked again each time; a plan reads the worktree list once and
@@ -61,19 +58,12 @@ function protectedReason(repo, name, worktrees) {
   return null;
 }
 
-// A copy's commits are safe when they are on the branch that holds its work (as a landed branch's are when on the base). A folded
-// branch's holder has landed and is gone: its landing record names what is safe instead (reflogReason).
-const holderRepo = (repo, copy) => (copy?.by && copy.kind !== FOLDED_KIND ? { ...repo, baseRef: `refs/heads/${copy.by}` } : repo);
-
-// Re-reads a copy's proof right before a removal: null when it still holds, else why the copy is kept.
-function lostProofReason(repo, copy) {
-  if (copy.kind === FOLDED_KIND) return isStillFolded(repo, copy) ? null : NOT_FOLDED;
-  return isStillCopy(repo, copy) ? null : NOT_A_COPY;
-}
+// A copy's commits are safe when they are on the branch that holds its work (as a landed branch's are when on the base).
+const holderRepo = (repo, copy) => (copy?.by ? { ...repo, baseRef: `refs/heads/${copy.by}` } : repo);
 
 /** Why a reflog forbids removal (commits that would be lost with it), or null. `reflogs` are `[{ cwd, ref }]`. */
-function reflogReason(repo, reflogs, branch, copy) {
-  const found = reflogOnlyCommits(repo, reflogs, branch, copy?.kind === FOLDED_KIND ? copy.landing : null);
+function reflogReason(repo, reflogs, branch) {
+  const found = reflogOnlyCommits(repo, reflogs, branch);
   if (found.unreadable) return 'a reflog cannot be read';
   if (found.truncated) return 'reflog has more than 200 entries, not checked';
   return found.count > 0 ? `reflog holds commits that are not on the base (${found.count})` : null;
@@ -90,14 +80,6 @@ function ignoredReason(path) {
 // `includeRecent` is true (every lane), or the names of the lanes that landed: only those skip the recent-use rule.
 const liftsRecentRule = (includeRecent, branch) => (Array.isArray(includeRecent) ? includeRecent.includes(branch) : includeRecent === true);
 
-// A folded branch's worktree last used before its lane's last commit was left behind when the work moved on (a tess-write
-// branch, a lower stacked lane), so its recent use does not keep it; a lane with no commit of its own yet still does.
-function outlivedFold(ctx, tree, copy, usedMinutesAgo) {
-  if (copy?.kind !== FOLDED_KIND) return false;
-  const usedAtLatestMs = Date.now() - usedMinutesAgo * MS_PER_MINUTE; // minutes are rounded down, so this is the latest it can be
-  return usedAtLatestMs <= copy.landing.lastCommitMs && !isNotStarted(ctx.repo, tree.branch);
-}
-
 // What the worktree holds that removal would destroy, or that says it is in use: unfinished operation, uncommitted or
 // untracked files, ignored files, commits only in a reflog, recent use. A copy's worktree may hold a live agent, so
 // --include-recent never lifts the recent-use rule for it.
@@ -107,7 +89,7 @@ function contentReason(ctx, tree, copy) {
   const changed = changedFileCount(tree.path);
   if (changed === null) return 'git status failed there, treated as dirty';
   if (changed > 0) return `${changed} uncommitted or untracked files`;
-  const reasons = [ignoredReason(tree.path), reflogReason(holderRepo(ctx.repo, copy), [ctx.branchReflog(tree.branch), { cwd: tree.path, ref: 'HEAD' }], tree.branch, copy)];
+  const reasons = [ignoredReason(tree.path), reflogReason(holderRepo(ctx.repo, copy), [ctx.branchReflog(tree.branch), { cwd: tree.path, ref: 'HEAD' }], tree.branch)];
   const found = reasons.find((reason) => reason !== null);
   if (found) return found;
   if (liftsRecentRule(ctx.includeRecent, tree.branch) && !copy) {
@@ -115,7 +97,7 @@ function contentReason(ctx, tree, copy) {
     return isNotStarted(ctx.repo, tree.branch) && minutesSinceUse(tree.path, RECENT_MINUTES) !== null ? NOT_STARTED : null;
   }
   const used = minutesSinceUse(tree.path, RECENT_MINUTES);
-  if (used === null || outlivedFold(ctx, tree, copy, used)) return null;
+  if (used === null) return null;
   return copy ? `used ${used} min ago (an agent may still work there)` : `used ${used} min ago (add --include-recent if you landed this lane yourself)`;
 }
 
@@ -135,8 +117,7 @@ function worktreeVerdict(ctx, candidate) {
   if (protection) return keep(protection);
   const copy = ctx.copies.get(tree.branch);
   if (copy) {
-    const lostProof = ctx.apply ? lostProofReason(repo, copy) : null;
-    if (lostProof) return keep(lostProof);
+    if (ctx.apply && !isStillCopy(repo, copy)) return keep(NOT_A_COPY);
   } else {
     const state = ctx.apply ? branchState(repo, tree.branch) : ctx.stateOf(tree.branch);
     if (!isMerged(state.state)) return keep(`branch ${tree.branch} is not on ${repo.base} (${state.ahead} commits ahead)`);
@@ -156,15 +137,14 @@ function branchVerdict(ctx, candidate, gone) {
   const copy = ctx.copies.get(name);
   const state = copy ? { state: copy.kind, tip: copy.tip } : ctx.apply ? branchState(repo, name) : candidate;
   if (copy) {
-    const lostProof = ctx.apply ? lostProofReason(repo, copy) : null;
-    if (lostProof) return keep(lostProof);
+    if (ctx.apply && !isStillCopy(repo, copy)) return keep(NOT_A_COPY);
   } else {
     if (state.state === 'missing') return keep('it is already gone');
     if (!isMerged(state.state)) return keep(`${state.ahead} commits are not on ${repo.base}`);
   }
   const holder = worktrees.find((entry) => entry.branch === name && !gone.has(entry.path));
   if (holder) return keep(`checked out in ${holder.path}`);
-  const lost = reflogReason(holderRepo(repo, copy), [ctx.branchReflog(name)], name, copy);
+  const lost = reflogReason(holderRepo(repo, copy), [ctx.branchReflog(name)], name);
   if (lost) return keep(lost);
   return { remove: true, tip: state.tip, state: state.state };
 }
@@ -220,18 +200,15 @@ export function deleteBranch(repo, name, tip) {
   return item('deleted', 'merged-branch', name, `was ${tip}${configFailed ? `; its config section could not be removed: ${config.stderr}` : ''}`);
 }
 
-// Writes a deleted branch to the landing log, so it can be restored; a folded branch's line names its lane.
-function logDeletion(repo, deleted, copy, verdict) {
-  const isFolded = copy?.kind === FOLDED_KIND;
-  const holder = copy?.by ? ` of ${copy.by}` : '';
-  const reason = isFolded ? `folded into ${copy.by}` : `${copy?.kind ?? verdict.state}${holder}`;
-  let detail = isFolded ? `${deleted.detail}, folded into ${copy.by}` : deleted.detail;
+// Writes the branch about to be deleted to the deletion log; returns null, or why it must be kept (the record failed).
+function unloggedReason(repo, name, verdict, copy) {
+  const reason = copy ? `${copy.kind}${copy.by ? ` of ${copy.by}` : ''}` : verdict.state;
   try {
-    recordDeletion(repo.dir, { branch: deleted.subject, sha: verdict.tip, reason });
+    recordDeletion(repo.dir, { branch: name, sha: verdict.tip, reason });
+    return null;
   } catch (error) {
-    detail = `${detail}; not written to the landing log (${error.message})`;
+    return `not written to the deletion log, so not deleted: ${error.message}`;
   }
-  return { ...deleted, kind: isFolded ? FOLDED_KIND : deleted.kind, detail };
 }
 
 function pruneBranch(ctx, candidate, gone) {
@@ -240,8 +217,8 @@ function pruneBranch(ctx, candidate, gone) {
   const kind = copy?.kind ?? 'merged-branch';
   if (!verdict.remove) return item('keep', kind, candidate.name, verdict.reason);
   if (!ctx.apply) return item('remove', kind, candidate.name, `${candidate.short} ${verdict.state}`);
-  const deleted = deleteBranch(ctx.repo, candidate.name, verdict.tip);
-  return deleted.action === 'deleted' ? logDeletion(ctx.repo, deleted, copy, verdict) : deleted;
+  const unlogged = unloggedReason(ctx.repo, candidate.name, verdict, copy);
+  return unlogged ? item('keep', kind, candidate.name, unlogged) : deleteBranch(ctx.repo, candidate.name, verdict.tip);
 }
 
 function detachedWorktrees(ctx) {
@@ -263,19 +240,20 @@ export function refuseUnsafeApply(repo) {
 /**
  * Plans (apply false) or performs (apply true) the removal of stale and merged worktrees and merged branches.
  * `leftovers` are the candidates (from findLeftovers); each is re-checked right before it is acted on, so candidates
- * found earlier may be out of date. `landings` (readLandings) prove the folded branches. `includeRecent` (true, or an array of lane names that it applies to) lifts only the "used in the last 60 minutes" rule, and not for a lane with no commit of
+ * found earlier may be out of date. `includeRecent` (true, or an array of lane names that it applies to) lifts only the "used in the last 60 minutes" rule, and not for a lane with no commit of
  * its own yet (see isNotStarted): that one stays protected while its worktree was used. Returns items
  * `{ action, kind, subject, detail }` with action `remove`/`keep` for a plan and `removed`/`deleted`/`kept`/`failed` for an
- * apply. Throws UsageError when apply meets an unfinished operation or an ambiguous base.
+ * apply. Throws UsageError when apply meets an unfinished operation, an ambiguous base or a deletion log that is not safe to write.
  */
-export function pruneRepo(repo, { apply, includeRecent = false, leftovers = findLeftovers(repo), landings = readLandings(repo.dir) }) {
-  if (apply) refuseUnsafeApply(repo);
+export function pruneRepo(repo, { apply, includeRecent = false, leftovers = findLeftovers(repo) }) {
+  if (apply) {
+    refuseUnsafeApply(repo);
+    checkDeletionLog(repo.dir); // without a safe log no branch may go, so nothing is removed
+  }
   const gone = new Set();
   const mergedNames = new Set(leftovers.mergedBranches.map((entry) => entry.name));
-  // A copy on the base is already a merged branch; only the others go through the copy path, a folded branch with them.
-  const sameWork = copyCandidates(repo, leftovers).filter((copy) => !mergedNames.has(copy.name));
-  const sameWorkNames = new Set(sameWork.map((copy) => copy.name));
-  const copies = [...sameWork, ...foldedCandidates(repo, landings, leftovers).filter((copy) => !sameWorkNames.has(copy.name))];
+  // A copy on the base is already a merged branch; only the others go through the copy path.
+  const copies = copyCandidates(repo, leftovers).filter((copy) => !mergedNames.has(copy.name));
   const ctx = makeContext(repo, { apply, includeRecent }, leftovers, copies);
   const copyBranches = copies.map((copy) => ({ name: copy.name, short: copy.tip.slice(0, 7) }));
   const copyWorktrees = listWorktrees(repo).filter((tree) => !tree.main && !tree.missing && ctx.copies.has(tree.branch)).map(({ path, branch }) => ({ path, branch }));

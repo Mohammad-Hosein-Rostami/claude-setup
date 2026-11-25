@@ -1,13 +1,15 @@
 // Purpose: the clean-up `land` runs once the lane has landed and its own branch is gone: git-tidy's `prune --apply` over the
-//   whole repository (branches folded into a landed lane, merged branches, copies, with all of prune's safety checks), then the
-//   `left:` block, one line per branch still there and why.
+//   whole repository (branches whose content is all on the base, copies, with all of prune's safety checks), then the `left:`
+//   block, one line per branch still there and why.
 // Exports: sweepRepo.
 // Invariants: removes only what prune proves; a prune that refuses (an unfinished rebase or merge in some worktree) removes
-//   nothing and prints `cleanup skipped: <reason>`, and the landing record stays, so a later prune still has the proof. Text from
-//   git (names, paths, messages) is printed without control characters.
+//   nothing and prints `cleanup skipped: <reason>`; a deletion log that is not safe to write stops it before anything is removed
+//   (prune throws, land prints it on stderr). Text from git (names, paths, messages) is printed without control characters.
+import { isMerged } from '../git-tidy/lib/branches.mjs';
 import { UNLANDED_AFTER_HOURS } from '../git-tidy/lib/check.mjs';
 import { commitDates } from '../git-tidy/lib/copies.mjs';
-import { inLaneHolders } from '../git-tidy/lib/folded.mjs';
+import { checkDeletionLog } from '../git-tidy/lib/deletion-log.mjs';
+import { inLaneHolders } from '../git-tidy/lib/in-lane.mjs';
 import { UsageError } from '../git-tidy/lib/git.mjs';
 import { findLeftovers } from '../git-tidy/lib/leftovers.mjs';
 import { pruneRepo } from '../git-tidy/lib/prune.mjs';
@@ -58,8 +60,9 @@ function leftLines(repo, items, now) {
   const reasons = keptReasons(repo, items);
   const holders = inLaneHolders(repo, states.filter(({ state }) => state === 'unmerged').map(({ name }) => name), states);
   const dates = commitDates(repo);
-  const why = ({ name, ahead }) => {
+  const why = ({ name, state, ahead }) => {
     if (reasons.has(name)) return `kept: ${plain(reasons.get(name))}`;
+    if (isMerged(state)) return `on ${repo.base} (${state}), not removed`;
     if (holders.has(name)) return `in ${holders.get(name)} (lands with it)`;
     const hours = Math.floor((now - (dates.get(name) ?? 0) * MS_PER_SECOND) / MS_PER_HOUR);
     return hours >= UNLANDED_AFTER_HOURS ? `idle ${hours} h, ahead ${ahead}` : `active, ahead ${ahead}`;
@@ -71,10 +74,12 @@ function leftLines(repo, items, now) {
 
 /**
  * Cleans the repository of the base checkout `{ dir, base }` after a landing and returns the lines to print: what prune
- * deleted, removed or kept (or `cleanup skipped: <reason>`), then the `left:` block. Throws when git fails unexpectedly.
+ * deleted, removed or kept (or `cleanup skipped: <reason>`), then the `left:` block. Throws, removing nothing, when the
+ * deletion log is not safe to write, and when git fails unexpectedly.
  */
 export function sweepRepo({ dir, base }, now = Date.now()) {
   const repo = openRepo(dir, base);
+  checkDeletionLog(repo.dir);
   const { items, skipped } = pruneItems(repo);
   const lines = skipped === null ? items.flatMap(itemLine) : [`cleanup skipped: ${plain(skipped)}`];
   return [...lines, ...leftLines(repo, items, now)];

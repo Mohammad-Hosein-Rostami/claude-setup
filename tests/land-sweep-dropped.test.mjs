@@ -1,7 +1,7 @@
-// Repro tests for land's sweep (home/tools/land/sweep.mjs, git-tidy lib/folded.mjs): a commit that the landed lane once held
-// but dropped with `git rebase --onto` (which writes no reset entry to its reflog) is not on the base, so the branch that holds
-// it must stay. Both fail on the tip: the branch is deleted as "folded" while its commit is on no branch.
-// Kept apart from land-sweep.test.mjs so these can be dropped on their own if the owner accepts the limit.
+// Repro tests for land's sweep (home/tools/land/sweep.mjs, git-tidy lib/branches.mjs content proof): a commit that the landed
+// lane once held but dropped with `git rebase --onto` (which writes no reset entry to its reflog) is not on the base, so the
+// branch that holds it must stay. Both failed on the old history proof: the branch was deleted as "folded" while its commit
+// was on no branch.
 // Each repository is a throw-away one in the OS temp folder (git-tidy-helpers.mjs: no user git config, private HOME).
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';

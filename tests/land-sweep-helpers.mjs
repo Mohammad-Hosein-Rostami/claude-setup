@@ -1,8 +1,8 @@
-// Shared fixtures for the tests of land's sweep (home/tools/land/sweep.mjs) and git-tidy's folded-branch proof
-// (home/tools/git-tidy/lib/folded.mjs, landed-log.mjs): run `land` as a child process, commit at a chosen time, set when a
-// worktree was last used, read the landing log, and build the folds the tests start from.
+// Shared fixtures for the tests of land's sweep (home/tools/land/sweep.mjs) and git-tidy's one content proof
+// (home/tools/git-tidy/lib/branches.mjs `content-equal`, deletion-log.mjs): run `land` as a child process, commit at a chosen
+// time, set when a worktree was last used, read the deletion log, and build the folds the tests start from.
 // Exports: LAND, LOG_FILE, land, outputLines, branchExists, tipOf, gitWith, datedEnv, commitAt, usedAgo, logPath, logRecords,
-//   addWorktreeAt, laneFixedOnTestBranch.
+//   logLines, addWorktreeAt, laneFixedOnTestBranch, laneSquashedOnTestBranch.
 // Invariants: every repository is a throw-away one from git-tidy-helpers.mjs (temp folder, no user git config, private HOME);
 //   git runs only inside the temp root and never through a shell.
 import assert from 'node:assert/strict';
@@ -14,7 +14,7 @@ import { CLEAN_ENV, addWorktree, backdate, commit, git, makeRepo } from './git-t
 import { testTempRoot } from './temp-dir-helpers.mjs';
 
 export const LAND = fileURLToPath(new URL('../home/tools/land/land.mjs', import.meta.url));
-export const LOG_FILE = 'cs-tidy-log.jsonl'; // the landing log's name inside the git common dir (landed-log.mjs)
+export const LOG_FILE = 'cs-tidy-log.jsonl'; // the deletion log's name inside the git common dir (deletion-log.mjs)
 const TEMP_ROOT = realpathSync(testTempRoot());
 const MS_PER_SECOND = 1000;
 // `git rebase -i` with this editor keeps the todo list as git wrote it, so `--autosquash` runs without a person.
@@ -61,10 +61,16 @@ export function usedAgo(worktree, msAgo) {
   for (const file of [join(gitDir, 'logs', 'HEAD'), join(gitDir, 'index'), ...tracked]) utimesSync(file, when, when);
 }
 
-/** The landing log of `repo`. */
+/** The deletion log of `repo`. */
 export const logPath = (repo) => join(git(repo, 'rev-parse', '--path-format=absolute', '--git-common-dir'), LOG_FILE);
 
-/** The parsed records of the landing log (`{ landed }` or `{ deleted }`), [] when there is none. */
+/** The non-empty lines of the deletion log, as written; [] when there is none. */
+export function logLines(repo) {
+  const path = logPath(repo);
+  return existsSync(path) ? readFileSync(path, 'utf8').split('\n').filter((line) => line !== '') : [];
+}
+
+/** The parsed records of the deletion log (`{ deleted }`), [] when there is none. */
 export function logRecords(repo) {
   const path = logPath(repo);
   if (!existsSync(path)) return [];
@@ -79,10 +85,29 @@ export function addWorktreeAt(repo, name, branch, start) {
 }
 
 /**
+ * A fold whose content lands as it is, but in another commit: `lane` (own worktree, one commit) continued on `test`, made at
+ * its tip in its own worktree, with a test commit, then squashed into one commit (`reset --soft` to the base and commit). Once
+ * `test` lands, every file of `lane` is on the base with the same content, while no commit or patch of `lane` is: only the
+ * content proof (`content-equal`) deletes it. The lane's worktree was last used two hours ago (backdate). Returns
+ * `{ repo, laneTree, testTree, laneTip, testTip }`.
+ */
+export function laneSquashedOnTestBranch({ lane = 'lane/x', test = 'test/x' } = {}) {
+  const repo = makeRepo();
+  const laneTree = addWorktree(repo, 'lane', lane);
+  const laneTip = commit(laneTree, 'feature.txt', 'feature v1\n');
+  const testTree = addWorktreeAt(repo, 'test', test, `refs/heads/${lane}`);
+  commit(testTree, 'feature.test.txt', 'checks the feature\n');
+  git(testTree, 'reset', '-q', '--soft', 'main');
+  git(testTree, 'commit', '-q', '-m', 'feature and its test in one commit');
+  backdate(laneTree);
+  return { repo, laneTree, testTree, laneTip, testTip: tipOf(repo, test) };
+}
+
+/**
  * The observed fold (plan case a): `lane` (own worktree, one commit) continued on `test`, made at its tip in its own worktree,
  * with a test commit and a fixup of the lane's commit squashed in by `rebase -i --autosquash`. The lane's commit is then on no
- * branch but in `test`'s history. `msAgo` dates every commit of `test` (the landed lane's last commit). The lane's worktree
- * was last used two hours ago (backdate), so only a fold proof decides. Returns `{ repo, laneTree, testTree, laneTip, testTip }`.
+ * branch but in `test`'s history, and its content (feature v1) is not on the base once `test` lands: `lane` must stay. `msAgo` dates every commit of `test` (the landed lane's last commit). The lane's worktree
+ * was last used two hours ago (backdate), so only the content proof decides. Returns `{ repo, laneTree, testTree, laneTip, testTip }`.
  */
 export function laneFixedOnTestBranch({ lane = 'lane/x', test = 'test/x', msAgo = 0 } = {}) {
   const repo = makeRepo();

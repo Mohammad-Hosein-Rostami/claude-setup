@@ -4,7 +4,7 @@
 //   summary. JSON carries the same items, so a path with spaces stays exact there.
 const line = ({ kind, subject, detail }) => `${kind} ${subject} ${detail}`;
 // Findings that mean some local branch or tag still shows old, tangled or already merged history in `git log --graph --all`.
-const ONE_LINE_BREAKERS = new Set(['merge-commit', 'tangled-ref', 'merged-branch', 'merged-tag', 'superseded-copy', 'agent-leftover', 'folded-branch']);
+const ONE_LINE_BREAKERS = new Set(['merge-commit', 'tangled-ref', 'merged-branch', 'merged-tag', 'superseded-copy', 'agent-leftover']);
 const baseLine = ({ base, baseSource }) => `base: ${base} (${baseSource})`;
 
 // Info items (check.mjs) are neither findings nor hints: `lane folders: 3 free`, `not started: <branch> in <path> ...`.
