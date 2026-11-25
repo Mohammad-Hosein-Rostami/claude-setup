@@ -126,32 +126,43 @@ function replyOf(flags) {
 
 const pauseFirst = (runId, to) => `run ${runId} is running; pause it first: long-run pause ${runId}, then resume --account ${to}`;
 
-/**
- * `resume --account`: run.json names the new account (each unfinished step takes it at its next start, step.mjs).
- * @throws {RunBusy} when a driver started since resume's first check (a plain resume in the gap the store read leaves).
- */
+/** `resume --account`: run.json names the new account (each unfinished step takes it at its next start, step.mjs). */
 function switchAccount(paths, to, write) {
   const run = readJson(paths.run);
   if (to === run.account) {
     write(`already on ${to}`);
     return;
   }
-  // Under the run lock, so no driver can be live while run.json changes: a driver that already runs would keep its steps on
-  // the old account and the old account's limit wait, so it refuses the switch and nothing is written.
-  try {
-    acquireLock(paths);
-  } catch (error) {
-    if (error instanceof RunBusy) throw new RunBusy(pauseFirst(paths.runId, to));
-    throw error;
+  const now = new Date();
+  writeJson(paths.run, { ...run, account: to, switches: [...(run.switches ?? []), { from: run.account, to, at: now.toISOString() }] });
+  const detail = `account ${run.account} -> ${to}`;
+  recordEvent(paths, { event: 'account-switched', detail, at: now, data: { from: run.account, to } });
+  write(detail);
+}
+
+/**
+ * The writes of a resume before its driver starts: the job reload, the folder claim, the cleared control files and, with
+ * `--account`, the switch. With `--account` they run under the run lock: a driver that started since resume's first check (a
+ * plain resume in the gap the store read leaves) would keep its steps on the old account and its limit wait, so the lock
+ * refuses and nothing is written, the owner's pause and stop files included.
+ * @throws {RunBusy} with the pause command when the lock is held.
+ */
+function prepareResume(paths, { flags, switchTo, write }) {
+  if (switchTo !== undefined) {
+    try {
+      acquireLock(paths);
+    } catch (error) {
+      if (error instanceof RunBusy) throw new RunBusy(pauseFirst(paths.runId, switchTo));
+      throw error;
+    }
   }
   try {
-    const now = new Date();
-    writeJson(paths.run, { ...run, account: to, switches: [...(run.switches ?? []), { from: run.account, to, at: now.toISOString() }] });
-    const detail = `account ${run.account} -> ${to}`;
-    recordEvent(paths, { event: 'account-switched', detail, at: now, data: { from: run.account, to } });
-    write(detail);
+    if (flags['reload-job']) reloadJob(paths, flags['reload-job'], write);
+    claimRunFolders(paths, readRunJob(paths));
+    clearControl(paths);
+    if (switchTo !== undefined) switchAccount(paths, switchTo, write);
   } finally {
-    releaseLock(paths);
+    if (switchTo !== undefined) releaseLock(paths);
   }
 }
 
@@ -179,10 +190,7 @@ export async function resumeCommand({ runId, flags, env, root, write }) {
   if (switchTo === undefined) requireCreditsOff(readJson(paths.run).account, env);
   else accountToken(switchTo, { env });
   if (!flags.force) refuseOpenSessions(paths, readRunJob(paths), env);
-  if (flags['reload-job']) reloadJob(paths, flags['reload-job'], write);
-  claimRunFolders(paths, readRunJob(paths));
-  clearControl(paths);
-  if (switchTo !== undefined) switchAccount(paths, switchTo, write);
+  prepareResume(paths, { flags, switchTo, write });
   writeJson(join(paths.dir, 'resume.json'), reply);
   write(`resuming ${runId} (${reply.action}${reply.item ? ` for ${reply.item}` : ''})`);
   const ended = await startDriver(paths, { env, foreground: Boolean(flags.foreground) });
