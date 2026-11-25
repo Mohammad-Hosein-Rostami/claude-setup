@@ -193,11 +193,11 @@ minutes; the skill starts it again with the newest number, so no line is missed.
 ## How parallel works here vs inside Claude Code
 
 Two kinds of parallel work, and they stack:
-- **Inside one boss (Claude Code's own).** One boss starts lex, dev and tess as subagents, up to 6 at once. The boss pays its
-  start-up once; each further subagent is cheap because it reuses the boss's cache: measured about 1.5k new cache tokens and
+- **Inside one boss (Claude Code's own).** One boss starts lex, dev and tess as subagents, at most 3 of each at once (their helpers are
+  not counted). The boss pays its start-up once; each further subagent is cheap because it reuses the boss's cache: measured about 1.5k new cache tokens and
   $0.020 (API-price yardstick) per extra agent, plus about 20k tokens the boss reads per result.
 - **Across bosses (the runner's).** The runner starts up to 3 bosses at once, each a full `claude -p` session with its own team
-  of up to 6. Each boss pays its own start-up: measured 75-76k input-side tokens, 29-38k of them new cache writes, about $0.12
+  of main agents. Each boss pays its own start-up: measured 75-76k input-side tokens, 29-38k of them new cache writes, about $0.12
   yardstick each. The graph itself costs no tokens.
 - What you get for the extra start-ups: each boss restarts on its own after a crash, limit or reboot; one can be paused or taken
   over while the others work; and the work runs as 3 teams instead of 1 (up to 18 agents instead of 6).
