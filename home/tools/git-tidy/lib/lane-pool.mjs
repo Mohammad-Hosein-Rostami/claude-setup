@@ -12,9 +12,10 @@
 //   stale at 120 s). The first step writes the slot's fill file (lane-fill-state.mjs), then locks the folder detached at the target:
 //   a new one by one `worktree add --no-checkout --detach --lock`, a free one locked, then switched and cleaned, a broken one
 //   relocked (the fill empties it). The fill clones the main checkout in (fillFresh), or after a reuse its ignored files except
-//   what the clean kept (fillIgnored). The end step checks the fill file, the lock and HEAD are still this claim's, switches to the
-//   branch (the same commit: no file is written), which is the hand-out, and deletes the fill file. A failed fill leaves the fill
-//   file, so the slot reads broken (here at once, elsewhere when this process ends).
+//   what the clean kept (fillIgnored). The end step checks the fill file, the lock and HEAD are still this claim's, deletes the fill
+//   file, then switches to the branch (the same commit: no file is written), which is the hand-out. A failed fill leaves the fill
+//   file, so the slot reads broken (here at once, elsewhere when this process ends). A crash or a failed switch after the delete
+//   leaves the slot detached and pool-locked with no fill file: busy, never emptied or handed out (a leak; a retry takes another).
 // - The fill file counts only on a detached, pool-locked slot (lane-slots.mjs), so every step that changes a slot's lock or HEAD
 //   writes or deletes it before its first change: a checkout-mode claim deletes it first, as release and land do.
 // - Facts are read again right before each switch, clean and lock (lane-slots.mjs readSlot), never trusted from an earlier read. A
@@ -242,8 +243,13 @@ function endFill(repo, { folder, slot }, { lane, fillFile }) {
   const unchanged = found?.pid === fillFile.pid && found.startedAt === fillFile.startedAt
     && tree?.lockReason === `${LOCK_REASON_PREFIX} ${lane.label}` && tree.branch === null && head === lane.target;
   if (!unchanged) throw new Error(`${folder} changed during its fill (its fill file, lock, branch or HEAD), so it is not handed out`);
-  enterLane(folder, lane); // the same commit: no file is written
+  // first: a fill file left on a handed-out lane makes it read broken once a rebase there detaches HEAD, and a refill would empty it
   deleteFillFile(commonDir, slot);
+  try {
+    enterLane(folder, lane); // the same commit: no file is written
+  } catch (error) {
+    throw new Error(`the switch of ${folder} to ${lane.label} failed: ${error.message}. The folder is not handed out: it stays locked and busy and is never emptied; claim again to get another folder`, { cause: error });
+  }
 }
 
 /** Clone mode: the fill outside the lock, then the end step under it; returns the claim's `fill` field. */
