@@ -3,13 +3,13 @@
 //   It also checks that every machine runs the same pinned Claude Code. It replaces the sync-machines workflow.
 // Usage: node scripts/sync-machines.mjs --repo <abs or ~/path> [--base <branch, default main>] [--tag <tag>] [--targets <name,...>]
 //          [--json]
-//   Run it from the repo folder on the main machine, once per job, after the last land: `node scripts/sync-machines.mjs --repo "$PWD"`
+//   Run it from the repo folder on the main machine after every land: `node scripts/sync-machines.mjs --repo "$PWD"`
 //   syncs the PC (the default target `pc` over `ssh pc`). Targets come from settings/local.json `claudeSetup.syncTargets`.
-// Steps: verify (tag, base branch, no tracked changes, git-tidy; the removed --checks and --row options exit 2), versions (one claude
-//   version, channel and pin on every machine, at or above CLAUDE_FLOOR (2.1.326, in scripts/sync/cli-checks.mjs), on the local.json
-//   pin), then per machine side by side: install on this machine; on a target a git bundle, a fast-forward pull (or a fetched
-//   tag), the shared local values, install, then the version and DISABLE_UPDATES read again. Never pushes; never touches a
-//   project repo.
+// Steps: verify (tag, base branch, no tracked changes; open lanes are not checked; the removed --checks and --row options
+//   exit 2), versions (one claude version, channel and pin on every machine, at or above CLAUDE_FLOOR (2.1.326, in
+//   scripts/sync/cli-checks.mjs), on the local.json pin), then per machine side by side: install on this machine; on a
+//   target a git bundle, a fast-forward pull (or a fetched tag), the shared local values, install, then the version and
+//   DISABLE_UPDATES read again. Never pushes; never touches a project repo.
 // Output: one line per machine, `<machine>: synced sha <40-hex> install <exit>` (or a JSON array with --json): { machine, synced, sha,
 //   installExit, problem }. installExit is install.sh's exit on this machine and the exit of the remote pull-and-install line on a
 //   target; null when the install did not run.
@@ -19,7 +19,7 @@
 //   printed before it runs: perl's alarm (this Mac has no `timeout`), ssh, and the PATH export inside the quotes with the command.
 //   Every ssh and scp call carries SSH_OPTIONS: it never waits for a password or a host-key question, and gives up on a connect after 30 s.
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -96,22 +96,14 @@ function remoteCheckout(repo) {
   return relative === repo ? repo : `$HOME/${relative}`;
 }
 
-/** Where a tool lives: the repo's own copy when it has one (it is the one being synced), else the installed one. */
-function toolPath(repo, name) {
-  const inRepo = join(repo, 'home', 'tools', name);
-  return existsSync(inRepo) ? inRepo : join(homedir(), '.claude', 'tools', name);
-}
-
-/** The verify checks in order; each returns '' when it holds, else why not. */
+/** The verify checks in order; each returns '' when it holds, else why not. Open lanes do not matter: sync needs only a clean base. */
 function verifyChecks({ localRepo, base, tag }) {
   const git = (...args) => exec('git', ['-C', localRepo, ...args]);
-  const node = (script, ...args) => exec('node', [script, ...args]);
   const fromStatus = (result, why) => (result.status === 0 ? '' : `${why}: ${tail(result.out)}`);
   const list = [];
   if (tag) list.push(['tag', async () => fromStatus(await git('rev-parse', '--verify', '--quiet', `refs/tags/${tag}`), `no tag ${tag}`)]);
   list.push(['base branch', async () => { const { out } = await git('branch', '--show-current'); return out.trim() === base ? '' : `on "${out.trim()}", not ${base}`; }]);
   list.push(['tracked changes', async () => { const { out } = await git('status', '--porcelain', '--untracked-files=no'); return out.trim() ? `tracked changes: ${tail(out)}` : ''; }]);
-  list.push(['git-tidy', async () => fromStatus(await node(toolPath(localRepo, 'git-tidy/git-tidy.mjs'), 'check', localRepo, '--base', base), 'git-tidy check found')]);
   return list;
 }
 

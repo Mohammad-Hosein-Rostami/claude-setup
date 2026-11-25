@@ -94,7 +94,7 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   `tell <run> <step> "..."` (reaches a running step at its next tool end) and `events --follow`. Each boss start costs about
   35k new cache tokens, so give one boss many small tasks and use parallel steps only for a few big ones. Details, including
   how this parallel compares with Claude Code's own: `home/tools/long-run/README.md`.
-- To bring your other machines along after the last landing, run the machine sync on the machine you landed on, in the repo
+- To bring your other machines along after every landing, run the machine sync on the machine you landed on, in the repo
   folder, as `docs/setup.md` ("Sync the machines") gives it; it never pushes.
 
 ## What to expect from agents

@@ -49,10 +49,10 @@ want shared into `settings/*.json` and re-run the installer.
 `env.BASH_DEFAULT_TIMEOUT_MS` is `"300000"` (milliseconds, 5 minutes; the CLI default is 120000): a Bash call that runs longer is moved to the background, and the longest test suite takes about 4 minutes. A call can ask for more with its own `timeout` (at most `BASH_MAX_TIMEOUT_MS`, 600000 by default).
 
 ## Sync the machines
-Run on the machine you landed on, in the repo folder, once after the last land (the targets come from the script default and `claudeSetup.syncTargets`):
+Run on the machine you landed on, in the repo folder, after every land, also while other lanes are still open (the targets come from the script default and `claudeSetup.syncTargets`):
 `node scripts/sync-machines.mjs --repo "$PWD"`. Add `--tag <tag>` to move the targets to a phase tag, `--targets <name,...>` to sync only
 some, `--json` for one JSON row per machine (the old `--checks` is refused with exit 2).
-- First it checks the base branch is checked out, no tracked file changed and `git-tidy check` is clean (exit 3 with `verify: <check> failed: <why>`).
+- First it checks the base branch is checked out and no tracked file changed (exit 3 with `verify: <check> failed: <why>`). Open lanes do not stop it.
 - Then every machine must run one Claude Code version and channel, at or above `CLAUDE_FLOOR` in `scripts/sync/cli-checks.mjs`, on the `cliVersion` pin of
   `settings/local.json`. A machine that does not is skipped and its row says why (a target still on an old checkout is checked again after its install).
 - Each target gets a git bundle (`scp`), a fast-forward pull, the shared local values and `scripts/install.sh`. Each machine prints one line,
