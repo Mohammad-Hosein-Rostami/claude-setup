@@ -6,7 +6,7 @@ puts a lane on the base. The rule it enforces: rebase, never merge; no merge com
 worktree are removed once their work is on the base. Node 22 and git 2.40 or newer (`merge-tree --write-tree` and its `--stdin` batch; an older git proves no `content-equal`, so nothing is deleted on it), no dependencies. Git is run
 without a shell, with an explicit folder, and `GIT_DIR`, `GIT_WORK_TREE` and the other variables that pick a repository
 are removed from its environment, so only the folder you give is ever read or changed. Every call has `core.fsmonitor` off (as
-`-c core.fsmonitor=false`, through `GIT_CONFIG_COUNT`), so no hook or watcher daemon the repository names runs, and a
+`-c core.fsmonitor=false`, appended to `GIT_CONFIG_PARAMETERS` so a caller's own `-c` or `GIT_CONFIG_COUNT` cannot switch it back on), so no hook or watcher daemon the repository names runs, and a
 worktree moved back into place is read from disk.
 
 Run: `node ~/.claude/tools/git-tidy/git-tidy.mjs check [dir] [--base <branch>] [--json]`
