@@ -3,15 +3,16 @@
 //   the commit-gate and call-window logs, the session-mode files, the last-seen costs, the ui-proof-gate blocks, the stop-gate
 //   blocks, the agent-budget denials and the MCP discovery verdicts; then (guard-removal plan, 2026-11-25) the removed guards'
 //   stores: the Bash guard's remembered allows, answers and bounces, the agent-start record and writer launches, the suite
-//   queue's state and the guard decision log with its rotation files.
+//   queue's state and the guard decision log with its rotation files; and the removed question popup's stores: its answered marks
+//   and the asking markers.
 // Exports: RETIRED_STATE (paths relative to ~/.claude), removeRetiredState(ctx, record).
 // Invariants (P15): only the paths in RETIRED_STATE are looked at; one is moved only when lstat shows a real folder or file
 //   owned by the user who runs the install (no uid check on Windows, which has none); a link there is never followed or moved,
 //   only named in a WARNING. Nothing is deleted: a store goes into the install backup folder (~/.claude-backup-<stamp>/) through
 //   record.mjs backup(), which names it in the record's `backups`, and the record's `retiredState` names it again (path, backup,
 //   time). A missing path is nothing to do, so a second run changes nothing. --dry-run lists what would move and moves nothing.
-//   A failed move is a WARNING, and the next install tries again. Kept stores (state/question-answered, limits, board,
-//   ui-proof...) and ~/.claude/jobs (Claude Code's own) are not listed.
+//   A failed move is a WARNING, and the next install tries again. Kept stores (limits, board, ui-proof...) and ~/.claude/jobs
+//   (Claude Code's own) are not listed.
 import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { warn } from './context.mjs';
@@ -45,6 +46,9 @@ export const RETIRED_STATE = Object.freeze([
   'logs/guard.1.jsonl.part', // a rotation killed half-way leaves these two temp names
   'logs/guard.jsonl.new',
   'logs/.guard.rotate-lock', // the rotation lock
+  // The question popup's removal (2026-11-25), as the removed code at 457a9bda^ and 8571a747^ names them:
+  'state/question-answered', // the answered-in-the-terminal marks (lib/question-answered.mjs)
+  'state/asking', // the "needs you" asking markers (lib/asking-marker.mjs)
 ]);
 
 const lstatOrNull = (path) => {
