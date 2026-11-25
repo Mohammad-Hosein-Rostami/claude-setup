@@ -5,12 +5,13 @@
 //   without the user's git config, so a test can never read or change the repository the tests run from. HOME is a private empty folder
 //   and no session id is set, so a child process never reads the real session's state (~/.claude/state/<tool>/<id>.json).
 import { spawnSync } from 'node:child_process';
-import { realpathSync, utimesSync, writeFileSync } from 'node:fs';
+import { cpSync, realpathSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { makeTempDir, testTempRoot } from './temp-dir-helpers.mjs';
 import { cleanEnv } from './clean-env.mjs';
+import { fastGitPath } from './fast-git.mjs';
 
 export const CLI = fileURLToPath(new URL('../home/tools/git-tidy/git-tidy.mjs', import.meta.url));
 const TEMP_ROOT = realpathSync(testTempRoot()); // where makeTempDir makes every test folder
@@ -18,8 +19,10 @@ const NO_GIT_CONFIG = { GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' 
 const IDENTITY = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 const PINNED_HOME = makeTempDir('git-tidy-home-');
 const SESSION_ID_VARIABLES = ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID']; // the session-store readers use both
+const WITHOUT_GIT_STATE = Object.fromEntries(Object.entries(cleanEnv()).filter(([name]) => !name.startsWith('GIT_') && !SESSION_ID_VARIABLES.includes(name)));
 export const CLEAN_ENV = {
-  ...Object.fromEntries(Object.entries(cleanEnv()).filter(([name]) => !name.startsWith('GIT_') && !SESSION_ID_VARIABLES.includes(name))),
+  ...WITHOUT_GIT_STATE,
+  ...fastGitPath(WITHOUT_GIT_STATE), // macOS: the real git first instead of the slow xcrun shim (fast-git.mjs)
   ...NO_GIT_CONFIG,
   ...IDENTITY,
   HOME: PINNED_HOME,
@@ -34,15 +37,31 @@ export function git(cwd, ...args) {
   return result.stdout.trim();
 }
 
-/** A new repo on branch `main` with one commit; returns its real path. */
-export function makeRepo() {
-  const dir = join(realpathSync(makeTempDir('git-tidy-')), 'repo');
+/** Builds a new repo on branch `main` with one commit in `dir`. */
+function buildRepo(dir) {
   const parent = join(dir, '..');
   git(parent, 'init', '-q', '-b', 'main', dir);
   git(dir, 'config', 'user.name', 't');
   git(dir, 'config', 'user.email', 't@t');
   git(dir, 'config', 'commit.gpgsign', 'false');
   commit(dir, 'base.txt');
+}
+
+let firstRepo; // built once per process; every makeRepo is a copy of it
+
+/**
+ * A new repo on branch `main` with one commit; returns its real path. Speed: the repo is built once (seven git processes) and each
+ * call copies it, files and .git alike, so every test still gets a repo of its own. The copy's files are new (their times are now,
+ * as in a repo just built), and a repo holds no path of its own folder, so a copy is the same repo as a fresh build; the one
+ * commit's time is that of the first build, as for two repos built in the same second.
+ */
+export function makeRepo() {
+  if (firstRepo === undefined) {
+    firstRepo = join(realpathSync(makeTempDir('git-tidy-first-')), 'repo');
+    buildRepo(firstRepo);
+  }
+  const dir = join(realpathSync(makeTempDir('git-tidy-')), 'repo');
+  cpSync(firstRepo, dir, { recursive: true });
   return dir;
 }
 
