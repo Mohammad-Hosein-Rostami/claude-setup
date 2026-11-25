@@ -1,7 +1,7 @@
-// Tests for lib/session-store.mjs and lib/session-lock.mjs, the guard store that uses it (guard-bounced: lib/bounce-once.mjs; the folder of the old
-// guard-allowed store, lib/allowed-literals.mjs, is still planted on) and the guard log (lib/guard-log.mjs): a link, FIFO, socket, folder or file planted where a store or the log
-// lives is never followed, never waited on and never cleaned up, and the guard then asks as if nothing were stored. Everything is planted
-// inside a fresh temp folder made here; command strings are only passed to decide() or the hook, nothing is executed.
+// Tests for lib/session-store.mjs and lib/session-lock.mjs: through the store functions on their own and through the git-tidy gate's verdict
+// store (lib/tidy-gate-store.mjs), which takes the lock too. A link, FIFO, socket, folder or file planted where a store lives is never
+// followed, never waited on and never cleaned up, and the caller acts as if nothing were stored. Then the lock itself: a stale lock, a
+// crash midway, two writers at once. Everything is planted inside a fresh temp folder made here.
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -9,39 +9,37 @@ import { syncBuiltinESMExports } from 'node:module';
 import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, linkSync, lstatSync, lutimesSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
-import { fileURLToPath } from 'node:url';
-import { allowedLiteralsDir } from '../home/hooks/lib/allowed-literals.mjs';
-import { adviceOnce, bouncedDir, bounceOnce } from '../home/hooks/lib/bounce-once.mjs';
-import { logDecision } from '../home/hooks/lib/guard-log.mjs';
 import { withSessionLock } from '../home/hooks/lib/session-lock.mjs';
 import { readSessionFile, writeSessionFile } from '../home/hooks/lib/session-store.mjs';
-import { decide } from '../home/hooks/pre-bash-guard.mjs';
-import { hookEnv } from './hook-env.mjs';
+import { cachedVerdict, storeVerdict } from '../home/hooks/lib/tidy-gate-store.mjs';
+import { cleanEnv } from './clean-env.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
-const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
 const posix = { skip: process.platform === 'win32' }; // links need extra rights on Windows, and it has no FIFOs or owner ids
-const PROJECT = resolve('/work/proj');
-const VARIABLE_COMMAND = '$CMD --version';
-const ADVICE_COMMAND = 'sed -i s/a/b/ pnpm-lock.yaml';
-const SECRET_COMMAND = `KEY='${['i6IW', 'fakefilekey', '0123'].join('')}' ./fetch-figma.sh`;
 const EIGHT_DAYS_AGO = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
-const HOOK_TIMEOUT_MS = 20_000; // far above a normal run (about 0.2 s): reaching it means the hook hung
+const CHILD_TIMEOUT_MS = 20_000; // far above a normal run (about 0.2 s): reaching it means the child hung
+const DIRECT_TEXT = '{"direct": true}';
+const GATE_REPO = { top: '/work/proj', fingerprint: 'fp-1' };
+const GATE_VERDICT = { findings: [] };
 
 const tempDir = (prefix) => makeTempDir(prefix);
-function privateEnv() {
+const privateEnv = () => {
   const home = tempDir('store-home-');
-  return { HOME: home, USERPROFILE: home, CLAUDE_GUARD_LOG: join(home, 'guard.jsonl') };
-}
+  return { HOME: home, USERPROFILE: home };
+};
+const directDir = (env) => join(env.HOME, '.claude', 'state', 'session-store-test');
+const gateDir = (env) => join(env.HOME, '.claude', 'state', 'git-tidy-gate'); // tidy-gate-store.mjs keeps it private
 
-// The bounce store through its public functions (the old guard-allowed store has no reader or writer left). use(env) makes one request
-// and returns true when the store worked: a bounce or an advice was stored.
+// Two ways to use a store, through public functions. use(env) makes one request and returns true when the store worked: the text was written
+// and read back, or the verdict stored under the lock and read back.
 const STORES = [
-  ['guard-bounced', bouncedDir, (env) => bounceOnce(decide(VARIABLE_COMMAND, { cwd: PROJECT }), { command: VARIABLE_COMMAND, cwd: PROJECT, input: { session_id: 'sess-1' } }, env) !== undefined],
-  // advice shares the bounce store: it worked when the first send was denied (an unusable store lets the command run instead)
-  ['guard-bounced (advice)', bouncedDir, (env) => adviceOnce(decide(ADVICE_COMMAND, { cwd: PROJECT }).advice, { command: ADVICE_COMMAND, cwd: PROJECT, input: { session_id: 'sess-1' } }, env) !== ''],
+  ['session-store alone (no lock)', directDir, (env) => writeSessionFile(directDir(env), 'sess-1', DIRECT_TEXT) && readSessionFile(directDir(env), 'sess-1', 100) === DIRECT_TEXT],
+  ['git-tidy gate verdicts (lock and store)', gateDir, (env) => {
+    storeVerdict(env, 'sess-1', GATE_REPO, GATE_VERDICT);
+    return cachedVerdict(env, 'sess-1', GATE_REPO)?.findings?.length === 0;
+  }],
 ];
 
 const makeOld = (path) => utimesSync(path, EIGHT_DAYS_AGO, EIGHT_DAYS_AGO);
@@ -67,7 +65,7 @@ function oldFilesFolder() {
   return dir;
 }
 
-test('a store folder that is a link (to a folder of old files named like store files) is not used: no bounce, nothing remembered, the target untouched', posix, () => {
+test('a store folder that is a link (to a folder of old files named like store files) is not used: nothing is stored, the target untouched', posix, () => {
   for (const [name, dirOf, use] of STORES) {
     const env = privateEnv();
     const target = oldFilesFolder();
@@ -75,7 +73,7 @@ test('a store folder that is a link (to a folder of old files named like store f
     const targetMode = statSync(target).mode;
     mkdirSync(dirname(dirOf(env)), { recursive: true });
     symlinkSync(target, dirOf(env));
-    for (const send of [1, 2, 3]) assert.equal(use(env), false, `${name}, send ${send}`);
+    for (const request of [1, 2, 3]) assert.equal(use(env), false, `${name}, request ${request}`);
     assert.deepEqual(snapshot(target), before, `${name}: every file in the target is still there, unchanged`);
     assert.equal(statSync(target).mode, targetMode, `${name}: the target's mode is unchanged`);
   }
@@ -106,7 +104,7 @@ test('a session file that is a link, a dangling link or a folder is not used, an
       const env = privateEnv();
       mkdirSync(dirOf(env), { recursive: true, mode: 0o700 });
       const unchanged = plant(join(dirOf(env), 'sess-1.json'));
-      for (const send of [1, 2]) assert.equal(use(env), false, `${store}, ${name}, send ${send}`);
+      for (const request of [1, 2]) assert.equal(use(env), false, `${store}, ${name}, request ${request}`);
       assert.ok(unchanged(), `${store}, ${name}: left as it was`);
     }
   }
@@ -132,7 +130,7 @@ test('a session file of another owner (a hard link to a root-owned file) is not 
     const file = join(dirOf(env), 'sess-1.json');
     if (!linkRootOwnedFile(file)) return t.skip('no root-owned file can be hard-linked here (Linux protected_hardlinks, or root)');
     const before = lstatSync(file);
-    for (const send of [1, 2]) assert.equal(use(env), false, `${store}, send ${send}`);
+    for (const request of [1, 2]) assert.equal(use(env), false, `${store}, request ${request}`);
     assert.deepEqual([lstatSync(file).ino, lstatSync(file).uid], [before.ino, before.uid], `${store}: the link is left in place`);
   }
 });
@@ -153,19 +151,19 @@ test('a socket at the session file is not used either', posix, async () => {
   }
 });
 
-test('a store folder that is a file, or that this user cannot write, is not used on any send', posix, () => {
+test('a store folder that is a file, or that this user cannot write, is not used on any request', posix, () => {
   const permissionsApply = process.getuid() !== 0; // root writes anyway
   for (const [name, dirOf, use] of STORES) {
     const asFile = privateEnv();
     mkdirSync(dirname(dirOf(asFile)), { recursive: true });
     writeFileSync(dirOf(asFile), 'not a folder');
-    for (const send of [1, 2]) assert.equal(use(asFile), false, `${name}: a file, send ${send}`);
+    for (const request of [1, 2]) assert.equal(use(asFile), false, `${name}: a file, request ${request}`);
     assert.equal(readFileSync(dirOf(asFile), 'utf8'), 'not a folder');
     const readOnly = privateEnv();
     mkdirSync(dirname(dirOf(readOnly)), { recursive: true });
     mkdirSync(dirOf(readOnly), { mode: 0o500 }); // recursive would make the parents 0500 too
     try {
-      if (permissionsApply) for (const send of [1, 2]) assert.equal(use(readOnly), false, `${name}: read-only, send ${send}`);
+      if (permissionsApply) for (const request of [1, 2]) assert.equal(use(readOnly), false, `${name}: read-only, request ${request}`);
       assert.equal(statSync(dirOf(readOnly)).mode & 0o777, 0o500, `${name}: an existing folder keeps its mode`);
     } finally {
       chmodSync(dirOf(readOnly), 0o700);
@@ -218,44 +216,42 @@ test('readSessionFile and writeSessionFile: null before the first write, a bad i
   if (process.platform !== 'win32') assert.deepEqual([statSync(dir).mode & 0o777, statSync(join(dir, 'sess-1.json')).mode & 0o777], [0o700, 0o600]);
 });
 
-/** Runs the guard hook once with this HOME and log; returns how long it took and what it answered. */
-function runHook(home, command, log = join(home, 'guard.jsonl')) {
-  const env = hookEnv({ HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: PROJECT, CLAUDE_GUARD_LOG: log });
-  const input = JSON.stringify({ cwd: PROJECT, session_id: 'sess-1', tool_input: { command } });
+// A child process runs the calls: a store that waited on a FIFO would hang here, and only the child's timeout may then stop it.
+const FIFO_CHILD_SCRIPT = `
+import { readSessionFile, writeSessionFile } from ${JSON.stringify(new URL('../home/hooks/lib/session-store.mjs', import.meta.url).href)};
+import { cachedVerdict, storeVerdict } from ${JSON.stringify(new URL('../home/hooks/lib/tidy-gate-store.mjs', import.meta.url).href)};
+const [directDir, repo, verdict] = process.argv.slice(1).map((json) => JSON.parse(json));
+const env = { HOME: process.env.HOME, USERPROFILE: process.env.HOME };
+const wrote = writeSessionFile(directDir, 'sess-1', 'text');
+const read = readSessionFile(directDir, 'sess-1', 100) ?? 'unusable';
+storeVerdict(env, 'sess-1', repo, verdict);
+console.log(JSON.stringify({ wrote, read, cached: cachedVerdict(env, 'sess-1', repo) ?? null }));
+`;
+
+function runStoreChild(home) {
+  const args = ['--input-type=module', '-e', FIFO_CHILD_SCRIPT, ...[directDir({ HOME: home }), GATE_REPO, GATE_VERDICT].map((value) => JSON.stringify(value))];
+  const env = cleanEnv({ HOME: home, USERPROFILE: home, TMPDIR: home });
   const started = Date.now();
-  const result = spawnSync(process.execPath, [GUARD], { input, encoding: 'utf8', env, timeout: HOOK_TIMEOUT_MS });
-  assert.equal(result.error, undefined, 'the hook returned in time');
+  const result = spawnSync(process.execPath, args, { encoding: 'utf8', env, timeout: CHILD_TIMEOUT_MS });
+  assert.equal(result.error, undefined, 'the child returned in time');
   assert.equal(result.status, 0, result.stderr);
-  return { ms: Date.now() - started, decision: result.stdout === '' ? 'allow' : JSON.parse(result.stdout).hookSpecificOutput.permissionDecision };
+  return { ms: Date.now() - started, ...JSON.parse(result.stdout) };
 }
 
-test('a FIFO at both session files or at the guard log never makes the hook wait: it answers at once', posix, () => {
+test('a FIFO at a session file or at the lock never makes a store wait: it answers at once, nothing stored, the FIFO stays', posix, () => {
   const home = privateEnv().HOME;
-  for (const dirOf of [bouncedDir, allowedLiteralsDir]) {
-    mkdirSync(dirOf({ HOME: home }), { recursive: true, mode: 0o700 });
-    mkfifo(join(dirOf({ HOME: home }), 'sess-1.json'));
+  const env = { HOME: home };
+  for (const dir of [directDir(env), gateDir(env)]) {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    mkfifo(join(dir, 'sess-1.json'));
   }
-  // a literal secret alone runs since owner G1; next to a variable command word the bounce store is needed, and unusable it asks
-  assert.equal(runHook(home, SECRET_COMMAND).decision, 'allow', 'G1: the secret alone runs, whatever the stores');
-  assert.equal(runHook(home, `${SECRET_COMMAND}; $CMD --version`).decision, 'ask', 'both stores unusable: today\'s ask');
-  const advice = runHook(home, ADVICE_COMMAND);
-  assert.equal(advice.decision, 'allow', 'advice with an unusable store: the command runs, no deny that repeats, no owner');
-  assert.ok(advice.ms < HOOK_TIMEOUT_MS / 4, `advice answered at once (${advice.ms} ms)`);
-  const logHome = privateEnv().HOME;
-  mkfifo(join(logHome, 'guard.jsonl'));
-  assert.equal(runHook(logHome, VARIABLE_COMMAND).decision, 'deny', 'the bounce works; only the log line is skipped');
-  assert.equal(runHook(logHome, VARIABLE_COMMAND).decision, 'ask');
-  assert.ok(lstatSync(join(logHome, 'guard.jsonl')).isFIFO());
-});
-
-test('a link at the guard log is not followed: its target keeps its text and mode', posix, () => {
-  const victim = join(tempDir('log-outside-'), 'victim.txt');
-  writeFileSync(victim, 'keep', { mode: 0o644 });
-  chmodSync(victim, 0o644);
-  const log = join(tempDir('log-'), 'guard.jsonl');
-  symlinkSync(victim, log);
-  logDecision({ hook: 'h', tool: 'Bash', decision: 'ask', outcome: 'no-gui', reason: 'r', command: 'ls' }, { CLAUDE_GUARD_LOG: log });
-  assert.deepEqual([readFileSync(victim, 'utf8'), statSync(victim).mode & 0o777], ['keep', 0o644]);
+  mkfifo(join(gateDir(env), 'sess-1.lock')); // the lock's own name: taken, never read through, never waited on
+  const result = runStoreChild(home);
+  assert.deepEqual([result.wrote, result.read, result.cached], [false, 'unusable', null]);
+  assert.ok(result.ms < CHILD_TIMEOUT_MS / 4, `answered at once (${result.ms} ms)`);
+  for (const path of [join(directDir(env), 'sess-1.json'), join(gateDir(env), 'sess-1.json'), join(gateDir(env), 'sess-1.lock')]) {
+    assert.ok(lstatSync(path).isFIFO(), `${path} is still a FIFO`);
+  }
 });
 
 // Audit of 768f9aa (M1, M3): a slow holder's lock was stolen after 0.5 s and its release then deleted the next holder's lock, so
@@ -465,4 +461,69 @@ test('a link planted at the .break name is never followed: the store is unusable
   symlinkSync(victim, join(dir, BREAKER_NAME));
   assert.equal(withSessionLock(dir, 'sess-1', () => 'ran'), undefined);
   assert.equal(readFileSync(victim, 'utf8'), 'keep');
+});
+
+// Two writers at once and a crash midway, through the store itself: each writer reads the session file, adds one and writes it back inside
+// the lock. Without the lock two writers read the same number and one of the two changes is lost.
+const COUNTER_WRITERS = 4;
+const COUNTER_ROUNDS = 25;
+const COUNTER_START_DELAY_MS = 400; // node start-up of the writer processes: all of them begin their rounds together
+const SESSION_STORE_URL = new URL('../home/hooks/lib/session-store.mjs', import.meta.url).href;
+const COUNTER_SCRIPT = `
+import { readSessionFile, writeSessionFile } from ${JSON.stringify(SESSION_STORE_URL)};
+import { withSessionLock } from ${JSON.stringify(SESSION_LOCK_URL)};
+const [dir, startAt, rounds] = process.argv.slice(1);
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, Number(startAt) - Date.now()));
+let added = 0;
+for (let round = 0; round < Number(rounds); round++) {
+  added += withSessionLock(dir, 'sess-1', () => {
+    const now = Number(readSessionFile(dir, 'sess-1', 100) ?? 0);
+    return writeSessionFile(dir, 'sess-1', String(now + 1)) ? 1 : 0;
+  }) ?? 0;
+}
+console.log(added);
+`;
+
+test('writers that each add one to a session file at the same moment never lose a change', posix, async () => {
+  const dir = join(tempDir('lock-counter-'), 'store');
+  const startAt = Date.now() + COUNTER_START_DELAY_MS;
+  const args = ['--input-type=module', '-e', COUNTER_SCRIPT, dir, String(startAt), String(COUNTER_ROUNDS)];
+  const added = await Promise.all(Array.from({ length: COUNTER_WRITERS }, () => new Promise((done, fail) => {
+    const child = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'inherit'], env: cleanEnv({}) });
+    let out = '';
+    child.stdout.on('data', (chunk) => { out += chunk; });
+    child.on('error', fail);
+    child.on('close', (code) => (code === 0 ? done(Number(out)) : fail(new Error(`writer exited ${code}`))));
+  })));
+  const total = added.reduce((sum, count) => sum + count, 0);
+  assert.equal(readSessionFile(dir, 'sess-1', 100), String(total), 'the file holds exactly the changes that were stored');
+  assert.ok(total >= (COUNTER_WRITERS * COUNTER_ROUNDS) / 2, `most turns got the lock (${total} of ${COUNTER_WRITERS * COUNTER_ROUNDS})`);
+  assert.deepEqual(readdirSync(dir), ['sess-1.json'], 'no lock or temp file is left');
+});
+
+// The child takes the lock, then is killed (SIGKILL) at the moment its write would rename the temp file over the session file.
+const CRASH_SCRIPT = `
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import { writeSessionFile } from ${JSON.stringify(SESSION_STORE_URL)};
+import { withSessionLock } from ${JSON.stringify(SESSION_LOCK_URL)};
+const dir = process.argv[1];
+fs.renameSync = () => process.kill(process.pid, 'SIGKILL'); // the crash, after the temp file is written and before the rename
+syncBuiltinESMExports();
+withSessionLock(dir, 'sess-1', () => writeSessionFile(dir, 'sess-1', 'half-done'));
+`;
+
+test('a writer killed between its temp file and the rename leaves the old file whole; the next caller takes over the stale lock and writes', posix, async () => {
+  const dir = join(tempDir('lock-crash-'), 'store');
+  assert.equal(writeSessionFile(dir, 'sess-1', 'before'), true);
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', CRASH_SCRIPT, dir], { env: cleanEnv({}), timeout: CHILD_TIMEOUT_MS });
+  assert.equal(child.signal, 'SIGKILL', `the child crashed at the rename (status ${child.status}, ${child.stderr})`);
+  const left = readdirSync(dir).sort();
+  assert.equal(left.length, 3, `session file, the dead holder's lock and the temp file: ${left}`);
+  assert.deepEqual(left.filter((name) => !name.endsWith('.tmp')), ['sess-1.json', 'sess-1.lock']);
+  assert.equal(readSessionFile(dir, 'sess-1', 100), 'before', 'a reader sees the old whole file, never the half-written one');
+  // the dead holder's lock is stale once it is 0.5 s old: this call waits for that inside withSessionLock (its own bounded wait)
+  assert.equal(withSessionLock(dir, 'sess-1', () => writeSessionFile(dir, 'sess-1', 'after')), true, 'the lock was taken over');
+  assert.equal(readSessionFile(dir, 'sess-1', 100), 'after');
+  assert.deepEqual(readdirSync(dir).filter((name) => !name.endsWith('.tmp')), ['sess-1.json'], 'the dead holder\'s lock is gone');
 });
