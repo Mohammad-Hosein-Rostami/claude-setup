@@ -3,17 +3,17 @@
 //   (`gc.pruneExpire`, 2 weeks by default).
 // Exports: recordDeletion, checkDeletionLog, LOG_FILE.
 // Invariants: one JSON object per line, appended (`{"deleted": {branch, sha, reason, at}}`); a record after a torn last line
-//   (no newline) starts a line of its own. The log is opened only as a regular file: never through a symbolic link (it would
-//   write outside .git), never blocking (a FIFO in its place); anything else in its place is refused with a UsageError that
-//   names the path, so prune refuses the apply. Nothing reads the log to decide anything: it is a restore record for people.
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, writeSync } from 'node:fs';
+//   (no newline) starts a line of its own. The log is opened only as a regular file (hooks/lib/plain-file.mjs openPlainFile:
+//   checked by fstat on the open descriptor): never through a symbolic link (it would write outside .git), never blocking (a
+//   FIFO in its place); anything else in its place is refused with a UsageError that names the path, so prune refuses the apply.
+//   Nothing reads the log to decide anything: it is a restore record for people.
+import { closeSync, constants, fstatSync, lstatSync, readSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
+import { NOT_PLAIN_FILE, openPlainFile } from '../../../hooks/lib/plain-file.mjs';
 import { UsageError, gitText } from './git.mjs';
 
 export const LOG_FILE = 'cs-tidy-log.jsonl';
-const NO_FOLLOW = constants.O_NOFOLLOW ?? 0; // not defined on Windows: the lstat check below stands in
-const NO_BLOCK = constants.O_NONBLOCK ?? 0;
-const APPEND_FLAGS = constants.O_RDWR | constants.O_APPEND | constants.O_CREAT | NO_FOLLOW | NO_BLOCK;
+const APPEND_FLAGS = constants.O_RDWR | constants.O_APPEND | constants.O_CREAT;
 const OWNER_ONLY = 0o600;
 const NEWLINE = 0x0a;
 
@@ -27,16 +27,13 @@ function logPath(dir) {
 // Opens the log for appending, creating it; throws, naming the path, for anything but a regular file.
 function openLog(path) {
   const unsafe = (why) => new UsageError(`the deletion log ${path} ${why}; move it away to delete branches again`);
+  // The lstat names a link plainly, and is the only link check where O_NOFOLLOW is missing (Windows).
   if (lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink()) throw unsafe('is a symbolic link');
-  let fd;
   try {
-    fd = openSync(path, APPEND_FLAGS, OWNER_ONLY);
+    return openPlainFile(path, APPEND_FLAGS, OWNER_ONLY).fd;
   } catch (error) {
-    throw unsafe(`cannot be opened (${error.code ?? error.message})`);
+    throw unsafe(error.code === NOT_PLAIN_FILE ? 'is not a regular file' : `cannot be opened (${error.code ?? error.message})`);
   }
-  if (fstatSync(fd).isFile()) return fd;
-  closeSync(fd);
-  throw unsafe('is not a regular file');
 }
 
 // True when the open log `fd` is empty or ends with a newline, so the next record starts a line of its own.

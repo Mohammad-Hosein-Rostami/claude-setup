@@ -7,18 +7,24 @@
 //   gets no second copy.
 // - Only a plain file (or a missing one, then made with mode 0644) is written: a link at info/ or info/exclude, or anything but a
 //   plain file at info/exclude, is never followed or written, and the outcome is `failed`. The path is built from the common dir
-//   (git gives it with links resolved), never from `--git-path`, which resolves a link below it too. lstat checks refuse them up
-//   front, and O_NOFOLLOW (where the system has it) closes the gap between that check and the open for info/exclude itself.
+//   (git gives it with links resolved), never from `--git-path`, which resolves a link below it too. lstat checks refuse a link
+//   up front (so nothing is made through one); the open (hooks/lib/plain-file.mjs openPlainFile: O_NOFOLLOW where the system has
+//   it, fstat of the open descriptor) refuses a link or non-plain file swapped in at info/exclude after that check; and before a
+//   byte is written, info/ must still be no link and the open file the very one at info/exclude (same device and inode), so a
+//   link swapped in at info/ for the open is never written through.
 // - Never throws: every failure is the `failed` outcome, and the claim goes on.
-import { closeSync, constants as fsConstants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs';
+import { closeSync, constants as fsConstants, lstatSync, mkdirSync, readFileSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { openPlainFile } from '../../../hooks/lib/plain-file.mjs';
 import { gitText, runGit } from './git.mjs';
 
 export const POOL_EXCLUDE_LINE = '/.claude/worktrees/';
 const POOL_PATH = '.claude/worktrees/'; // the pool folder as check-ignore reads it, relative to the main worktree
 const NOT_IGNORED = 1; // `git check-ignore -q` exits 0 when a rule ignores the path, 1 when none does
-const NO_FOLLOW = fsConstants.O_NOFOLLOW ?? 0;
+const APPEND_FLAGS = fsConstants.O_RDWR | fsConstants.O_APPEND | fsConstants.O_CREAT;
 const EXCLUDE_MODE = 0o644;
+
+const isLink = (path) => lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink() === true;
 
 /** True when git ignores the pool folder in `mainDir`; throws when git cannot tell. */
 function isPoolIgnored(mainDir) {
@@ -30,19 +36,22 @@ function isPoolIgnored(mainDir) {
 
 /**
  * Appends `line` to the plain file at `path` (made with its folder when missing) unless a line there already equals it.
- * @throws {Error} when `path` or its folder is a link, or `path` is anything but a plain file: nothing is written, and the
- *   message says why
+ * @throws {Error} when `path` or its folder is a link (also one swapped in while the file was opened), or `path` is anything but
+ *   a plain file: nothing is written, and the message says why
  */
 function appendLineOnce(path, line) {
   const folder = dirname(path);
-  const linked = [folder, path].find((part) => lstatSync(part, { throwIfNoEntry: false })?.isSymbolicLink());
+  const linked = [folder, path].find(isLink);
   if (linked !== undefined) throw new Error(`not added to ${path}: ${linked} is a link, never followed`);
-  const found = lstatSync(path, { throwIfNoEntry: false });
-  if (found !== undefined && !found.isFile()) throw new Error(`not added to ${path}: it is not a plain file`);
   mkdirSync(folder, { recursive: true });
-  const fd = openSync(path, fsConstants.O_RDWR | fsConstants.O_APPEND | fsConstants.O_CREAT | NO_FOLLOW, EXCLUDE_MODE);
+  const { fd, stat } = openPlainFile(path, APPEND_FLAGS, EXCLUDE_MODE);
   try {
-    if (!fstatSync(fd).isFile()) throw new Error(`not added to ${path}: it is not a plain file`);
+    // Node has no openat, so a link swapped in at info/ just before the open sends it elsewhere: write only when info/ is still no
+    // link and the open file is the one at the path now (a file found through a link has another inode).
+    const atPath = lstatSync(path, { throwIfNoEntry: false });
+    if (isLink(folder) || atPath?.dev !== stat.dev || atPath?.ino !== stat.ino) {
+      throw new Error(`not added to ${path}: ${folder} or the file changed while it was opened, never written through`);
+    }
     const text = readFileSync(fd, 'utf8');
     if (text.split(/\r?\n/).includes(line)) return;
     writeSync(fd, `${text === '' || text.endsWith('\n') ? '' : '\n'}${line}\n`);

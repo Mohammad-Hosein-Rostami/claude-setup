@@ -1,5 +1,7 @@
 // Opens for a file whose path someone else may have planted: a session transcript, a hook's state or log file, a tool's record.
-// Exports: readPlainFile(path, maxBytes) -> string (throws);
+// Exports: openPlainFile(path, flags, mode) -> {fd, stat} (throws), the one open the others build on, for a caller with its own
+//   flags (a lock made with O_EXCL, a log read before it is appended);
+//   readPlainFile(path, maxBytes) -> string (throws);
 //   readPlainFileWith(path, read) -> what read returns (throws), for a caller that picks its own range from the size;
 //   appendPlainFile(path, text, {mode, maxBytes}) -> boolean; NOT_PLAIN_FILE.
 // A hook must answer before its timeout, so no open here waits and none follows a link: the file is opened with O_NONBLOCK and O_NOFOLLOW,
@@ -13,7 +15,6 @@
 import { closeSync, constants, fchmodSync, fstatSync, openSync, readSync, writeFileSync } from 'node:fs';
 
 const SAFE_FLAGS = (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0);
-const READ_FLAGS = constants.O_RDONLY | SAFE_FLAGS;
 const APPEND_FLAGS = constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | SAFE_FLAGS;
 const OWNER_ONLY_MODE = 0o600;
 
@@ -21,6 +22,31 @@ const OWNER_ONLY_MODE = 0o600;
 export const NOT_PLAIN_FILE = 'ENOTPLAIN';
 
 const notPlain = (path, why) => Object.assign(new Error(`${path}: ${why}`), { code: NOT_PLAIN_FILE });
+
+/**
+ * Opens a path without waiting and without following a link at its last part, and keeps it open only when fstat says regular file.
+ * Why: the check runs on the opened file, never on the path, so a FIFO or link swapped in between a check and the open is still
+ * refused. Without O_NOFOLLOW (Windows) a link is followed, and this fstat check is all that is left.
+ * @param {string} path the file
+ * @param {number} flags the access flags (`constants.O_RDONLY`, or a write mode with O_APPEND, O_CREAT, O_EXCL ...); O_NONBLOCK and
+ *   O_NOFOLLOW are added
+ * @param {number} [mode] the mode of a file that O_CREAT makes (owner only by default)
+ * @returns {{fd: number, stat: import('node:fs').Stats}} the open fd, which the caller closes, and its fstat
+ * @throws {Error} the open error (`ENOENT` when missing, `ELOOP` for a link, `EEXIST` with O_EXCL, `ENXIO` for a FIFO nobody reads
+ *   ...), or one with code NOT_PLAIN_FILE for a FIFO, device or folder (the fd is closed then)
+ */
+export function openPlainFile(path, flags, mode = OWNER_ONLY_MODE) {
+  const fd = openSync(path, flags | SAFE_FLAGS, mode);
+  let stat;
+  try {
+    stat = fstatSync(fd);
+    if (!stat.isFile()) throw notPlain(path, 'not a regular file');
+  } catch (error) {
+    closeSync(fd);
+    throw error;
+  }
+  return { fd, stat };
+}
 
 /**
  * Opens a path for reading without waiting or following a link, and gives its fd and size to `read` when fstat says regular file.
@@ -32,10 +58,8 @@ const notPlain = (path, why) => Object.assign(new Error(`${path}: ${why}`), { co
  * @throws {Error} the open error (`ENOENT` when missing, `ELOOP` for a link), or one with code NOT_PLAIN_FILE for a FIFO, device or folder
  */
 export function readPlainFileWith(path, read) {
-  const fd = openSync(path, READ_FLAGS);
+  const { fd, stat } = openPlainFile(path, constants.O_RDONLY);
   try {
-    const stat = fstatSync(fd);
-    if (!stat.isFile()) throw notPlain(path, 'not a regular file');
     return read(fd, stat.size);
   } finally {
     closeSync(fd);

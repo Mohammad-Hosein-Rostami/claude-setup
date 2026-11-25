@@ -4,7 +4,8 @@
 // Invariants:
 // - One lock file per repository, `<git common dir>/cs-lane-pool.lock` (shared by every worktree of the repo), made with O_EXCL and
 //   O_NOFOLLOW, 0600, holding `<pid> <32 random hex> <label>`: the holder text is unique, and release removes the file only while it
-//   still holds that text, so a holder never removes another's lock.
+//   still holds that text, so a holder never removes another's lock. Every open of it goes through hooks/lib/plain-file.mjs
+//   openPlainFile (no link followed, no wait, a plain file by fstat of the open descriptor).
 // - A lock is stale only when its pid is dead or the file is over STALE_POOL_LOCK_MS old (a live pid on an older lock is a reused pid
 //   or a hung holder). One breaker at a time removes a stale lock: it first creates `<lock>.break-<inode>-<mtime>` with O_EXCL, looks
 //   again and unlinks the lock only if it is still the very file it judged (same inode and mtime), so a fresh lock someone else took
@@ -13,8 +14,9 @@
 // - A link, FIFO or folder at the lock path is never followed or waited on: the call fails at once (Error), never treated as free.
 // - The caller waits at most `waitMs` for a live holder, then PoolBusy (the CLI exits 4); it never waits forever.
 import { randomBytes } from 'node:crypto';
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, constants, lstatSync, readSync, unlinkSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
+import { NOT_PLAIN_FILE, openPlainFile } from '../../../hooks/lib/plain-file.mjs';
 
 export const POOL_LOCK_NAME = 'cs-lane-pool.lock';
 export const STALE_POOL_LOCK_MS = 120_000; // a claim (worktree add, switch, clean, lock) takes seconds; installs run after the lock
@@ -23,10 +25,7 @@ const RETRY_PAUSE_MS = 50;
 const TOKEN_BYTES = 16;
 const MAX_LOCK_TEXT_BYTES = 512;
 const MAX_LABEL_CHARS = 200;
-const NO_FOLLOW = constants.O_NOFOLLOW ?? 0; // not defined on Windows
-const NO_BLOCK = constants.O_NONBLOCK ?? 0;
-const CREATE_FLAGS = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NO_FOLLOW | NO_BLOCK;
-const READ_FLAGS = constants.O_RDONLY | NO_FOLLOW | NO_BLOCK;
+const CREATE_FLAGS = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL;
 const PRIVATE_FILE = 0o600;
 const HOLDER_PID = /^(\d{1,10}) [0-9a-f]{32}(?: |$)/;
 const PAUSE = new Int32Array(new SharedArrayBuffer(4)); // Atomics.wait on it is a synchronous sleep
@@ -38,7 +37,7 @@ export class PoolBusy extends Error {}
 function createLock(path, text) {
   let fd;
   try {
-    fd = openSync(path, CREATE_FLAGS, PRIVATE_FILE);
+    ({ fd } = openPlainFile(path, CREATE_FLAGS, PRIVATE_FILE));
   } catch (error) {
     if (error.code === 'EEXIST') return false;
     throw error;
@@ -53,19 +52,19 @@ function createLock(path, text) {
 
 /** The lock as `{ text, ino, mtimeMs }`, or null when it is gone; a non-regular file at the path throws. */
 function readLock(path) {
-  let fd;
+  let opened;
   try {
-    fd = openSync(path, READ_FLAGS);
+    opened = openPlainFile(path, constants.O_RDONLY);
   } catch (error) {
     if (error.code === 'ENOENT') return null;
-    throw new Error(`pool lock ${path} cannot be opened (${error.code}): remove it by hand if no claim runs`);
+    const why = error.code === NOT_PLAIN_FILE ? 'is not a plain file' : `cannot be opened (${error.code})`;
+    throw new Error(`pool lock ${path} ${why}: remove it by hand if no claim runs`);
   }
+  const { fd, stat } = opened;
   try {
-    const stats = fstatSync(fd);
-    if (!stats.isFile()) throw new Error(`pool lock ${path} is not a plain file: remove it by hand if no claim runs`);
-    const buffer = Buffer.alloc(Math.min(stats.size, MAX_LOCK_TEXT_BYTES));
+    const buffer = Buffer.alloc(Math.min(stat.size, MAX_LOCK_TEXT_BYTES));
     const read = readSync(fd, buffer, 0, buffer.length, 0);
-    return { text: buffer.toString('utf8', 0, read), ino: stats.ino, mtimeMs: stats.mtimeMs };
+    return { text: buffer.toString('utf8', 0, read), ino: stat.ino, mtimeMs: stat.mtimeMs };
   } finally {
     closeSync(fd);
   }
