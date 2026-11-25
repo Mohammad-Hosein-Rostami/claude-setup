@@ -37,7 +37,7 @@ export function startAccount(env = process.env) {
  */
 export function requireCreditsOff(name, env = process.env, registry = readRegistry(env)) {
   const entry = registry.accounts[name];
-  if (!entry) throw new AccountRefusal(`account ${name} is gone from the store (or was never added): add it with claude-as ${name}, or pick another account for a new run`);
+  if (!entry) throw new AccountRefusal(`account ${name} is gone from the store (or was never added): add it with claude-as ${name}, or use another stored account (a run moves to it with resume --account <name>)`);
   if (entry.creditsOff !== true) throw new AccountRefusal(`record that usage credits are off for this account first: claude-account credits-off ${name}`);
 }
 
