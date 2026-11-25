@@ -23,9 +23,9 @@
 //   the base or merging it would change nothing, and only after it is written to the deletion log. A clean-up that fails (a
 //   deletion log that is not a regular file) is printed on stderr and removes nothing more; the landing stands and exits 0.
 import { realpathSync, statSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { UsageError, gitFlag, gitText, runGit } from '../git-tidy/lib/git.mjs';
-import { nestedRepositoryWhy } from '../git-tidy/lib/lane-slots.mjs';
+import { nestedRepositoryPaths, nestedRepositoryWhy } from '../git-tidy/lib/lane-slots.mjs';
 import { listWorktrees } from '../git-tidy/lib/repo.mjs';
 import { LandRefusal, firstLine, refuseUnclean } from './refusal.mjs';
 import { MAX_TIMEOUT_SECONDS } from './run-test.mjs';
@@ -129,16 +129,25 @@ function fastForward({ dir, base }, branch, { baseSha, tip }) {
   if (result.status !== 0) throw new LandRefusal(`git merge --ff-only of ${branch} (${tip}) into ${base} failed (${firstLine(result.stderr)}); nothing landed, land again`);
 }
 
+// Refuses the clean-up of a landed lane whose worktree holds a git repository inside an ignored folder: `git worktree remove`
+// would delete it with commits that may be its only copy. The advice names the repository and never says to delete anything.
+function refuseNestedRepository({ base }, branch, worktree, tip) {
+  const nested = nestedRepositoryWhy(worktree.path);
+  if (nested === null) return;
+  const repositories = nestedRepositoryPaths(worktree.path).map((path) => join(worktree.path, path));
+  const named = repositories.length > 0 ? repositories.join(', ') : nested;
+  throw new LandRefusal(`${branch} landed on ${base} at ${tip}; its worktree ${worktree.path} is kept because ${named} may hold the only copy of its commits (a git repository inside an ignored folder): move it out of the worktree, then run land ${branch} again`);
+}
+
 /**
  * Removes the lane's worktree (unlocked first) and deletes its branch; returns one line per step. A git repository inside an
- * ignored folder of the worktree stops it first: `git worktree remove` would delete it, with commits that may be its only copy.
+ * ignored folder of the worktree stops it first (refuseNestedRepository).
  */
 function removeLane({ dir, base }, branch, worktree, tip) {
+  if (worktree !== null) refuseNestedRepository({ base }, branch, worktree, tip);
   const done = [];
   try {
     if (worktree !== null) {
-      const nested = nestedRepositoryWhy(worktree.path);
-      if (nested !== null) throw new Error(`its worktree ${worktree.path} is kept: ${nested}`);
       if (worktree.locked) gitText(dir, ['worktree', 'unlock', worktree.path]);
       gitText(dir, ['worktree', 'remove', worktree.path]);
       done.push(`removed worktree ${worktree.path}`);
@@ -146,7 +155,7 @@ function removeLane({ dir, base }, branch, worktree, tip) {
     gitText(dir, ['branch', '-d', branch]);
     done.push(`deleted branch ${branch}`);
   } catch (error) {
-    throw new LandRefusal(`${branch} landed on ${base} at ${tip}, but the clean-up stopped: ${error.message}; remove the rest by hand`);
+    throw new LandRefusal(`${branch} landed on ${base} at ${tip}, but the clean-up stopped: ${error.message}; deal with that, then run land ${branch} again`);
   }
   return done;
 }

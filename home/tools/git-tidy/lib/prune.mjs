@@ -9,7 +9,7 @@
 //   are read again from git; a plan (no apply) trusts the candidates it was just given. Anything not proven is kept, with
 //   the reason. Order: stale entries, worktrees, branches (a branch is free once its worktree is gone). Every branch is
 //   written to the deletion log (deletion-log.mjs) before it is deleted; one that cannot be written is kept, and an apply
-//   whose log is unsafe removes nothing. With `onlyOnBase` (land's sweep) copies are kept: their work is not on the base.
+//   whose log is unsafe removes nothing. With `onlyOnBase` (land's sweep) copies are kept (their work is not on the base) and stale entries only listed.
 //   An apply pins the base to one commit once the candidates are found (pinned-base.mjs) and stops, keeping the rest, when
 //   the base branch moves: a branch delete verifies it in the same update-ref transaction, other removals check it first.
 import { branchState, isMerged } from './branches.mjs';
@@ -242,9 +242,9 @@ export function refuseUnsafeApply(repo) {
  * Plans (apply false) or performs (apply true) the removal of stale and merged worktrees and merged branches. `leftovers` are
  * the candidates (from findLeftovers); each is re-checked right before it is acted on. `includeRecent` (true, or the lane
  * names it applies to) lifts only the "used in the last 60 minutes" rule, never for a lane with no commit of its own yet
- * (isNotStarted). `onlyOnBase` (land's sweep) keeps every copy (superseded-copy, agent-leftover not on the base) with the
- * reason. An apply pins the base (pinBase) and stops, keeping the rest, once the base moves. Returns items `{ action, kind,
- * subject, detail }`: `remove`/`keep` for a plan, `removed`/`deleted`/`kept`/`failed` for an apply. Throws UsageError when
+ * (isNotStarted). `onlyOnBase` (land's sweep) keeps every copy (superseded-copy, agent-leftover not on the base) and every
+ * stale worktree entry, with the reason. An apply pins the base (pinBase) and stops, keeping the rest, once the base moves.
+ * Returns items `{ action, kind, subject, detail }`: `remove`/`keep` for a plan, `removed`/`deleted`/`kept`/`failed` for an apply. Throws UsageError when
  * apply meets an unfinished operation, an ambiguous base or a deletion log that is not safe to write.
  */
 export function pruneRepo(unpinned, { apply, includeRecent = false, onlyOnBase = false, leftovers = findLeftovers(unpinned) }) {
@@ -261,7 +261,7 @@ export function pruneRepo(unpinned, { apply, includeRecent = false, onlyOnBase =
   const ctx = makeContext(repo, { apply, includeRecent }, leftovers, copies);
   const copyBranches = copies.map((copy) => ({ name: copy.name, short: copy.tip.slice(0, 7) }));
   const copyWorktrees = listWorktrees(repo).filter((tree) => !tree.main && !tree.missing && ctx.copies.has(tree.branch)).map(({ path, branch }) => ({ path, branch }));
-  const items = pruneStale(ctx, leftovers.staleWorktrees, gone);
+  const items = pruneStale(ctx, leftovers.staleWorktrees, gone, { removes: !onlyOnBase }); // land's sweep only lists them
   if (onlyOnBase) items.push(...allCopies.map((copy) => item('keep', copy.kind, copy.name, notOnBaseReason(repo, copy))));
   for (const candidate of [...leftovers.mergedWorktrees, ...copyWorktrees]) items.push(pruneWorktree(ctx, candidate, gone));
   for (const candidate of [...leftovers.mergedBranches, ...copyBranches]) items.push(pruneBranch(ctx, candidate, gone));
