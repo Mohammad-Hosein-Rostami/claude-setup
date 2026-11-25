@@ -1,4 +1,4 @@
-// The per-user hook temp root that the Bash counters of agent-budget.mjs and the agent records of writer-agents.mjs live in.
+// The per-user hook temp root that the post-edit hook's notice markers (lib/team-switch.mjs noticeOnce) live in.
 // Exports: tempRoot(), checkedTempRoot().
 // The root: `<os.tmpdir()>/claude-post-edit` when the temp folder is private to this user (owned by the uid, no group or other write bit:
 // macOS's per-user TMPDIR, a test's own temp folder; Windows always, where %TEMP% is per user), else `claude-post-edit-<uid>` (Linux's
@@ -6,12 +6,11 @@
 // checkedTempRoot() checks it before every use (POSIX): made 0700 when missing, opened without following a link or waiting, and kept only
 // when it is a folder owned by this uid with no group or other write bit. One with group or other read or search bits only (0755, what
 // earlier versions made) is tightened to 0700: nobody else could write it, so it holds nothing another user put there. One others may
-// write is refused, not repaired. Refused: nothing is kept there and one guard-log line per process says so (`temp-root-refused`).
+// write is refused, not repaired. Refused: nothing is kept there and one stderr line per process says so.
 // Invariants: every write fails silently (a hook must never block a tool call because the temp dir is unwritable).
 import { closeSync, constants, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { logDecision } from './guard-log.mjs';
 
 const ROOT_NAME = 'claude-post-edit';
 const ROOT_MODE = 0o700;
@@ -69,8 +68,8 @@ function rootProblem(root) {
 const refusedRoots = new Set();
 
 /**
- * The temp root after its check (module header): the path to use, or null when it is refused. A refusal writes one guard-log line per
- * process and root; the root path, last in it so the log's 200-character cut takes only the path, comes from the environment.
+ * The temp root after its check (module header): the path to use, or null when it is refused. A refusal writes one warning line to
+ * stderr per process and root, naming the root.
  * @returns {string | null}
  */
 export function checkedTempRoot() {
@@ -84,8 +83,7 @@ export function checkedTempRoot() {
   if (why === null) return root;
   if (!refusedRoots.has(root)) {
     refusedRoots.add(root);
-    const reason = `hook temp folder refused, ${why}: no edit log, counter or Bash-write record is kept there; remove it if it is yours: ${root}`;
-    logDecision({ hook: 'edit-log', tool: 'temp-root', decision: 'skip', outcome: 'temp-root-refused', reason, command: '' });
+    process.stderr.write(`edit-log: hook temp folder refused, ${why}: nothing is kept there; remove it if it is yours: ${root}\n`);
   }
   return null;
 }
