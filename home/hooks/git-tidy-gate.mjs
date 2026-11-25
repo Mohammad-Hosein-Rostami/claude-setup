@@ -1,6 +1,6 @@
 // SessionStart only (plan 2026-11-24: "git-tidy check at session start only"): names the lanes of the session's repo that are not
-// yet landed (lib/tidy-gate-notes.mjs unlandedText), so a new or resumed session sees leftover work at once. It never blocks; the
-// pre-bash guard keeps refusing merge commits and update-ref, and `land` (home/tools/land) lands a lane.
+// yet landed (lib/tidy-gate-notes.mjs unlandedText), so a new or resumed session sees leftover work at once. It never blocks;
+// `land` (home/tools/land) lands a lane.
 // Exports: contextFor(input, env, deps) -> Promise<string> (the SessionStart additionalContext, '' for none).
 //   deps (tests): runCheck(top, timeoutMs, env), checkTimeoutMs, now (ms, for the cache age).
 //   Env: GIT_TIDY_GATE_CHECK_TIMEOUT_MS overrides CHECK_TIMEOUT_MS (a loaded machine, the test suite).

@@ -1,6 +1,5 @@
 # Line endings that must survive a Windows checkout (core.autocrlf=true): Git Bash scripts need LF.
 *.sh            text eol=lf
 *.jq            text eol=lf
-.githooks/*     text eol=lf
 # docs/catalog.md uses git's normal text merge on purpose: a union merge let a rebase bring back rows another lane had
 # deleted, silently. Two lanes that edit the same catalog lines now get a conflict to resolve by hand.
