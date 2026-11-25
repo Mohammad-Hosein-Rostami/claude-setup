@@ -9,7 +9,8 @@
 // The Keychain is asked once (`security show-keychain-info`: no item and no token is read), before the account checks, so a
 // locked one is named even when no account is named (CLAUDE_ACCOUNT unset, no default); the login call is then skipped.
 // That one call is ended after KEYCHAIN_PROBE_TIMEOUT_MS: a locked login Keychain may wait on an unlock window, and doctor
-// reports no answer as locked instead of waiting the store's 20 s.
+// reports no answer as locked instead of waiting the store's 20 s (CLAUDE_DOCTOR_KEYCHAIN_PROBE_TIMEOUT_MS sets a shorter
+// bound for tests).
 // Usage: node scripts/doctor-accounts.mjs <claude-dir> <repo> <project>
 // Output: one line per finding, `ok    <text>`, `WARN  <text>` or `FAIL  <text>`; doctor.sh prints them and sets its exit.
 // Exports: main (argv, env, {store, run}: a test gives a store and a `security` runner of its own), START_UP_MARK, shellStartUpFile (the start-up rule install.sh follows; for the doctor tests),
@@ -28,6 +29,7 @@ import { spawnSync } from 'node:child_process';
 import { runSecurity } from '../home/tools/account/lib/keychain-store.mjs';
 import { looksLikeToken } from '../home/tools/account/lib/names.mjs';
 import { openStore } from '../home/tools/account/lib/store.mjs';
+import { msFromEnv } from '../home/tools/long-run/lib/env-ms.mjs';
 
 /** The comment that ends the start-up line install.sh and install.ps1 write; the line is found by it. */
 export const START_UP_MARK = '# claude-setup: claude-as';
@@ -37,8 +39,8 @@ const LINES_SHOWN = 5; // line numbers named per file; the rest are counted
 const LOCKED_TEXT = 'the Keychain is locked'; // the store's message for security exit 36 (keychain-store.mjs)
 const SECURITY_EXIT_LOCKED = 36; // keychain-store.mjs EXIT_LOCKED: "User interaction is not allowed" (an ssh session)
 const KEYCHAIN_PROBE = 'show-keychain-info'; // the default keychain's settings: needs it unlocked, reads no item
-/** How long doctor waits for its one Keychain call; an open Keychain answers in well under a second (technical default). */
-export const KEYCHAIN_PROBE_TIMEOUT_MS = 3000;
+/** How long doctor waits for its one Keychain call; an open Keychain answers in well under a second (technical default), or the knob's positive ms (tests). */
+export const KEYCHAIN_PROBE_TIMEOUT_MS = msFromEnv('CLAUDE_DOCTOR_KEYCHAIN_PROBE_TIMEOUT_MS', 3000);
 const FORCED_MODEL = 'CLAUDE_CODE_SUBAGENT_MODEL_FORCE';
 const FABLE = /fable/i;
 const TOKEN_SHAPED = /sk-ant-[A-Za-z0-9_-]*/g;

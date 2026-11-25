@@ -22,6 +22,7 @@ The modules of `long-run.mjs`. The tool's own README has the commands, the job f
 | `view.mjs` | the run status word, `status` lines and `--json`, `summary.md` |
 | `watch.mjs` | readable log lines: `log --tail` and `watch` |
 | `notify.mjs` | desktop notes and the ntfy phone push |
+| `env-ms.mjs` | timeout knobs: a wait read from a `CLAUDE_<TOOL>_<CONSTANT>` variable (positive ms), else its default; also used by `scripts/doctor-accounts.mjs` |
 | `awake.mjs` | keep the machine from idle sleep while a driver lives |
 | `os-schedule.mjs` | launchd agents and scheduled tasks: autostart after login, timed starts |
 | `cli-common.mjs` | what the commands share: error kinds (one per exit code), opening a run, folder claims, starting the driver |

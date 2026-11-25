@@ -1,6 +1,7 @@
 // Purpose: the driver of one run (`long-run drive <run>`, usually detached): takes the run lock, beats, keeps the machine awake,
-//   reads the control files every 2 s, runs the graph from where it stopped (new, resumed, answered or re-run), and records how it
-//   ended (held, done, abandoned, paused, stopped) with events, the summary and a note to the owner.
+//   reads the control files every 2 s (CLAUDE_LONG_RUN_CONTROL_POLL_MS, env-ms.mjs), runs the graph from where it stopped (new,
+//   resumed, answered or re-run), and records how it ended (held, done, abandoned, paused, stopped) with events, the summary and
+//   a note to the owner.
 // Exports: CONTROL_POLL_MS, BEAT_MS, STOP_SIGNALS, NativeModuleError, assertInstallStamp, assertNativeModule, makeSemaphore,
 //   drive.
 // Invariants: one driver per run (run-store lock); driver.json is written only here; a run-level pause or stop ends every child
@@ -25,9 +26,10 @@ import { buildGraph, graphConfig, holdEventOf, openHold } from './graph.mjs';
 import { startAwake } from './awake.mjs';
 import { notify } from './notify.mjs';
 import { formatWhen, writeSummary } from './view.mjs';
+import { msFromEnv } from './env-ms.mjs';
 
-/** The driver reads the control files this often (spec 7.8). */
-export const CONTROL_POLL_MS = 2 * 1000;
+/** The driver reads the control files this often (spec 7.8): 2 s, or the knob's positive ms (tests). */
+export const CONTROL_POLL_MS = msFromEnv('CLAUDE_LONG_RUN_CONTROL_POLL_MS', 2 * 1000);
 /** The heartbeat in driver.json (a beat older than 120 s means the driver is gone). */
 export const BEAT_MS = 30 * 1000;
 /** The signals that pause the run: every boss is ended cleanly, then the driver exits (a SIGKILL no handler sees: `status` warns). */

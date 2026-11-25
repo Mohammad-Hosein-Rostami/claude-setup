@@ -13,9 +13,13 @@
 //   there. A pid is ended only while it still has the process group it had when it was seen (a reused pid has another), and
 //   the caller's own pid is never in a tree it reads.
 import { spawnSync } from 'node:child_process';
+import { msFromEnv } from './env-ms.mjs';
 
 /** How long a tree gets between SIGTERM and SIGKILL: time for a test runner or a shell to clean up, short enough for a stop. */
 export const TERM_GRACE_MS = 3 * 1000;
+// The grace sweepDescendants gives a boss's leftovers: TERM_GRACE_MS, or the knob's positive ms (tests; `land` and `suite`
+// never sweep, so their grace stays TERM_GRACE_MS).
+const SWEEP_GRACE_MS = msFromEnv('CLAUDE_LONG_RUN_SWEEP_GRACE_MS', TERM_GRACE_MS);
 // How often a tree that got SIGTERM is checked for whether it is gone.
 const POLL_MS = 100;
 // Signal 0 delivers nothing: it only asks whether the target still exists.
@@ -128,10 +132,10 @@ function signalEach(pids, signal) {
 /**
  * Ends the processes of `seen` that still run with the same process group: SIGTERM, then SIGKILL after `graceMs`.
  * @param {Map<number, number>} seen pid -> pgid, from listDescendants.
- * @param {{platform?: string, runner?: Function, graceMs?: number}} options
+ * @param {{platform?: string, runner?: Function, graceMs?: number}} options `graceMs` defaults to SWEEP_GRACE_MS.
  * @returns {Promise<number[]>} the pids that were still running.
  */
-export async function sweepDescendants(seen, { platform = process.platform, runner = spawnSync, graceMs = TERM_GRACE_MS } = {}) {
+export async function sweepDescendants(seen, { platform = process.platform, runner = spawnSync, graceMs = SWEEP_GRACE_MS } = {}) {
   if (platform === 'win32' || seen.size === 0) return [];
   const survivors = survivorsOf(seen, runner);
   signalEach(survivors, 'SIGTERM');
