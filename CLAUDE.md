@@ -12,10 +12,14 @@ live in every running session at once. A broken hook or tool there breaks every 
 - Tests: `node --test tests/*.test.mjs` (never bare `node --test`); ui-check's own tests: `npm run test:ui-check`
   (`npm run test:all` runs both). No test runs by itself; `land` runs one only with `--test`. Run the whole suite by hand
   (or ask `tess`): `node --test tests/*.test.mjs`.
-- Before each commit, check the staged changes and the message by hand: `gitleaks git --staged --redact --verbose` and
-  `node scripts/share-check.mjs --staged`; write the message to a file, run
-  `node scripts/share-check.mjs --commit-msg <file>`, then `git commit -F <file> -- <paths>`. A hit stops the commit.
-- Commit only your own paths: `git commit -m "<conventional message>" -- <paths>`. Never `--no-verify`.
+- Before each commit, stage first, then check by hand what is staged: `git add -- <paths>` (only your own paths;
+  `git diff --cached --name-only` lists them), `gitleaks git --staged --redact --verbose` and
+  `node scripts/share-check.mjs --staged`; write the message to a file and run
+  `node scripts/share-check.mjs --commit-msg <file>`. Then commit only what is staged: `git commit -F <file>`, with no
+  paths and no `-a` (`git commit -- <paths>` commits the working-tree files, not the checked index, so an unstaged secret
+  gets past the checks; in this repo that holds over the `-- <paths>` form in the agent files). A change made after the
+  checks is staged and checked again. A hit stops the commit.
+- Commit only your own paths, staged as above, with a Conventional Commits message. Never `--no-verify`.
 - `~/.claude/settings.json` is a merged copy: change `settings/base.json` (or an OS file) and re-merge with
   `scripts/install.sh`.
 - Never push unless the owner says so.

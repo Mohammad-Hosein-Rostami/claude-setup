@@ -31,8 +31,10 @@ To check free disk space, run `node ~/.claude/tools/disk-free/disk-free.mjs chec
 
 After the first install, fill your deny list: `personal/share-deny.txt` (git-ignored, in your own `personal/`) starts as an empty
 template. Put one private word or phrase per line in it (your name, your employer, clients, project and machine names). Before each
-commit, run `node scripts/share-check.mjs --staged` on the staged files and `node scripts/share-check.mjs --commit-msg <file>`
-on the message (`CLAUDE.md` has the steps); a hit stops the commit. While the list is empty or holds only comments,
+commit, stage your paths first, run `node scripts/share-check.mjs --staged` on the staged files and
+`node scripts/share-check.mjs --commit-msg <file>` on the message, then commit only what is staged (`git commit -F <file>`,
+no paths: `git commit -- <paths>` would commit the unchecked working-tree files; `CLAUDE.md` has the steps); a hit stops
+the commit. While the list is empty or holds only comments,
 share-check prints `not run`. A list missing beside an existing `personal/` is an error that prints the `cp` line that
 restores it from `personal.example/share-deny.txt`. Each person keeps their own list;
 `node scripts/share-check.mjs` checks the tracked files against it.

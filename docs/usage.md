@@ -1,11 +1,12 @@
 # Editing the setup
 
 ## Workflow
-Edit in `~/.claude/...` or in `home/...` (the same files, via symlinks) -> `git add` -> check the staged changes and the
-message by hand (`gitleaks git --staged --redact --verbose`, `node scripts/share-check.mjs --staged`, and
-`node scripts/share-check.mjs --commit-msg <file>` on the message in a file; `CLAUDE.md` has the steps) -> `git commit`
-(Conventional Commits). Never `git push` unless the owner says so. On another machine: `git pull`, then `scripts/install.sh`
-only if `settings/`, `plugins/` or a tool's dependencies changed. When something looks off, ask `tess` for a setup check.
+Edit in `~/.claude/...` or in `home/...` (the same files, via symlinks) -> `git add -- <paths>` -> check the staged changes
+and the message by hand (`gitleaks git --staged --redact --verbose`, `node scripts/share-check.mjs --staged`, and
+`node scripts/share-check.mjs --commit-msg <file>` on the message in a file; `CLAUDE.md` has the steps) ->
+`git commit -F <file>` with no paths, so only the checked, staged content is committed (Conventional Commits). Never
+`git push` unless the owner says so. On another machine: `git pull`, then `scripts/install.sh` only if `settings/`,
+`plugins/` or a tool's dependencies changed. When something looks off, ask `tess` for a setup check.
 
 Keep every file valid at each commit: the files are live in every Claude session on this machine.
 
