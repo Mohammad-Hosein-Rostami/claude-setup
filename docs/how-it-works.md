@@ -15,13 +15,12 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 | `home/agents/` | The agents (lex, dev, tess, max and their helpers), one file each, with their model, effort and preloaded skills. |
 | `home/project-notes/` | Shared notes, one file per project; personal notes live in `personal/project-notes/`, which `~/.claude/project-notes` links to. |
 | `personal/` | Your own layer, git-ignored and its own git repo, made by the installer from `personal.example/`: `CLAUDE.md` (your rules), `project-notes/`, `share-deny.txt`. |
-| `home/hooks/` | Node scripts Claude Code runs on events (before a Bash command, after an edit, at session start, ...). |
+| `home/hooks/` | Node scripts Claude Code runs on events (after an edit, at session start, when a question waits, ...). |
 | `home/tools/` | Command-line tools with their own README (`ui-check`, `ui-coverage`, `land`, ...). |
 | `settings/` | `base.json` plus one file per OS. They are merged into `~/.claude/settings.json`. |
 | `plugins/` | The list of plugins to install. |
 | `tools/` | System programs to install (`Brewfile`, `windows-tools.ps1`); not the same as `home/tools/`. |
-| `.githooks/` | The commit hooks: gitleaks and your private words (`scripts/share-check.mjs`) on the staged changes, `node --check` of each staged hook file, and the private words in the commit message. It only runs after `scripts/install.sh` sets `core.hooksPath`. |
-| `scripts/` | `install.sh`, `install.ps1` and `doctor.sh` (its check groups are in `scripts/doctor/`). |
+| `scripts/` | `install.sh` and `install.ps1` (they call `install.mjs`), `share-check.mjs`, `sync-machines.mjs` and `lane-new.sh`. |
 | `tests/` | The test suite (`node:test`), run by hand. |
 | `docs/` | The documents for people. Start with `catalog.md` for a list of everything. |
 
@@ -31,17 +30,15 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 2. Claude reads `home/CLAUDE.md`, your `personal/CLAUDE.md` and the rules whose paths match the files it works on.
 3. The boss hands the work to `lex` (plan), `dev` (build), `tess` (tests, reviews and test writing) or, rarely, `max` (the ship
    agent: it prepares a release or deploy and stops), at most 3 of each at once. Each agent file lists its model, tools,
-   preloaded skills and the helpers it may start. Only the boss starts lex, dev, tess and max (the guard denies it from any other
-   agent): an agent that needs one asks the boss with a `needs:` line.
-4. Before each Bash command, `pre-bash-guard.mjs` checks it. Risky commands (push, `rm -rf`, prod-host writes) open a dialog. When a
-   rewrite would remove the question (a `$VAR` command word, `rm`/`push` inside `$(...)` or a heredoc, a word or arithmetic known
-   only at run time), the first send is sent back to Claude with the fix instead; the same command sent again opens the dialog.
-   A literal secret in a command (a test password) asks nothing; the log names its kind (owner decision R22-G1).
+   preloaded skills and the helpers it may start. Only the boss starts lex, dev, tess and max (no other agent does): an agent that
+   needs one asks the boss with a `needs:` line.
+4. Agents have full access: commands run with no permission prompt, and no hook checks a command first. A question for you opens
+   a popup (`question-popup.mjs`); with no answer in 2 minutes it takes the recommended option.
 5. After each edit, `post-edit.mjs` runs the project's formatter.
 6. Tests, type check, lint and reviews run by the "Quality checks" table in `home/CLAUDE.md`: dev's report names the change's
    risk (`node ~/.claude/tools/risk/risk.mjs`), a risky change waits for `tess` before it lands, other code changes get one
    background `tess` run at the end of the job, docs and text only get none, and what you ask for runs at once. dev and its
-   helpers run no tests; tess hands the runs to `tess-run` (full suites, installs and builds through the `suite run` queue, a
+   helpers run no tests; tess hands the runs to `tess-run` (full suites, installs and builds run directly, a
    full suite once per tree), edge cases to `tess-edge`, the simplicity review to `tess-simple`, a review to `tess-review` and
    missing tests to `tess-write`, and keeps the verdict. No check runs by itself when an agent stops; no hook calls the risk
    command.
@@ -83,19 +80,9 @@ own rules) and `docs/usage.md`.
 ## Turn a hook off by hand
 
 - One hook, until you re-run the installer: open `~/.claude/settings.json`, find the `command` that names the script
-  (for example `pre-bash-guard.mjs`) and delete that entry from its `hooks` list.
+  (for example `post-edit.mjs`) and delete that entry from its `hooks` list.
 - One hook, for good: delete the same entry from `settings/base.json` and run `scripts/install.sh`.
 - Some hooks have a switch: `CLAUDE_POST_EDIT_SKIP=format` (or `all`) skips the formatter.
-
-## Read the guard log
-
-Every question the Bash guard asked, and the answer, is one JSON line in `~/.claude/logs/guard.jsonl`
-(`CLAUDE_GUARD_LOG` changes the path). Show the last lines with `tail -n 20 ~/.claude/logs/guard.jsonl`. The outcomes are
-allow, deny, timeout, bounce (sent back once for a rewrite; the line names the classes in `class` and holds the reason and the
-masked command, as an ask line does), secret (a literal secret ran unasked; the line names its kind in `reason` and holds no
-command), no-gui and dialog-failed; lines written before owner decision R22-G1 may also say remembered (a secret allowed earlier in
-the session). The log never stores secrets. What the guard asks about is in
-`docs/troubleshooting.md`.
 
 ## Run the tests
 
@@ -105,9 +92,8 @@ From the repo root:
 
 Never run bare `node --test`. The `ui-check` tool has its own tests: `npm run test:ui-check` (`npm run test:all` runs both).
 
-No test runs by itself: the pre-commit hook and a push run none, and `land` runs one only with `--test` or when the lane and
-the base changed the same files; the boss sends changes to `tess` by the "Quality checks"
-table in `home/CLAUDE.md`. Run the whole suite, or one file
+No test runs by itself: a commit and a push run none, and `land` runs one only with `--test`; the boss sends changes to
+`tess` by the "Quality checks" table in `home/CLAUDE.md`. Run the whole suite, or one file
 (`node --test tests/principles.test.mjs`), when you want to know that everything still works, or ask `tess` to.
 
 ## Install on another machine
@@ -118,4 +104,4 @@ table in `home/CLAUDE.md`. Run the whole suite, or one file
 
 On Windows use `powershell -ExecutionPolicy Bypass -File scripts\install.ps1`. Existing files are moved to
 `~/.claude-backup-<stamp>/`, never deleted. Put machine-only settings in `settings/local.json` (copy
-`settings/local.json.example`). Check the result with `scripts/doctor.sh`. Full steps: `docs/setup.md`.
+`settings/local.json.example`). To check the result, ask `tess` for a setup check. Full steps: `docs/setup.md`.

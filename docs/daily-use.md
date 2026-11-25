@@ -24,9 +24,9 @@ Keep extra usage off in claude.ai so nothing can bill credits.
     root cause), `dev-docs` (the docs and user-facing text, written while the code is built), `dev-run` (installs, long logs,
     returned as a short summary) and `lex-scout`.
   - `tess` runs the quality checks in the background, by the table under "Quality checks" in `home/CLAUDE.md`: a risky change
-    (security, data, money, concurrency, gate such as the setup's guards, large) waits for tess before it lands; other code changes get
+    (security, data, money, concurrency, gate such as the setup's own hooks, large) waits for tess before it lands; other code changes get
     one background check at the end of the job; docs and text only get none; and anything you ask for runs at once. tess (Opus)
-    plans and judges; its helpers do the work: `tess-run` (the runs, the full suite through the `suite` queue), `tess-edge`
+    plans and judges; its helpers do the work: `tess-run` (the runs, the full suite once per tree), `tess-edge`
     (edge cases), `tess-simple` (needless complexity), `tess-review` (reviews the code against lex's spec) and `tess-write`
     (writes the missing tests in its own worktree, one per area; tess then proves each one can fail).
   - `max` (the ship agent; Opus, high) starts rarely: when you call it, or after a job's last land when lex's plan names a
@@ -39,8 +39,8 @@ Keep extra usage off in claude.ai so nothing can bill credits.
 - Helpers are not counted. Two lanes or helpers never change the same file at once. Technical choices are made and stated in one line; your decisions are asked.
 - Landing is one script call, not an agent: the `land` script (`home/tools/land`) rebases the branch, fast-forwards it with
   `git merge --ff-only` and removes the landed branch and worktree. `--test "<command>"` runs a test on the rebased tip first.
-  A test is needed only when the base and the lane changed the same files: `land` lists them and runs `--test`, else the lane's
-  `npm test` script, else refuses; a rebase conflict is reported first. A machine sync, where your setup has one, brings your
+  Run the full suite that way when the base and the lane changed the same files; without `--test`, `land` lands after the
+  rebase. A rebase conflict is reported first. A machine sync, where your setup has one, brings your
   other machines along (`docs/setup.md`, "Sync the machines").
 - UI work is checked as closely as the change needs, by the check plan (`node ~/.claude/tools/ui-proof/ui-proof.mjs plan`, rules
   in `home/standards/ui-checks.md`): nobody labels the work; the request, the diff and the screens it reaches decide. A docs page,
@@ -50,8 +50,8 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   look change on a screen with a Figma frame, takes the full pixel-perfect path, unchanged: `figma-pixel-perfect`, `ui-check run`
   rounds until every state passes, then the `pixel-qa` final gate on the tree that lands (pixel). `ui-quality-pass` runs before
   done at every depth but none (under same as a review that lists `follow-up:` lines).
-- The guards stay on: the Bash guard, gitleaks, your private words and `node --check` of hook files at commit, and the `git-tidy`
-  check at session start.
+- Agents have full access: commands run with no permission prompt, and the rules stay as instructions. The `git-tidy` check
+  at session start names the lanes that are not landed yet.
 - While agents run you can keep talking to the boss: it answers and asks without stopping the agents. A command that may run
   over 3 minutes goes to the background with its `timeout` set (at most 2 h).
 - The final answer says what changed and what was not run. No recap of the process.
@@ -61,13 +61,13 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   plain words, what it blocks, 2-4 options with the recommended one first, and a preview when the choice is a layout.
 - The boss asks them as popups in one batch and sends your answers back to the agent.
 - A question with no answer in time: a small, reversible choice takes the recommended option; a big or deleting one waits for
-  you. Permission prompts are not questions: every one (any tool, risky ones included) goes ahead as Allow after 2 minutes
-  unless you deny it (below), but while any `max` runs, an outward one (push, publish, deploy) runs only on your click.
+  you. Agents have full access, so there are no permission prompts to answer; `max` still runs an outward step (push,
+  publish, deploy) only on an `owner-command:` line.
 
 ## Long or unattended runs
 - Run long or unattended sessions in a plain terminal app (or tmux), not an editor's built-in terminal: closing or
   reloading the editor window ends every session in it. Resume with `claude --model <m> --effort <e> -c`.
-- A question (AskUserQuestion) gets one timed dialog per question, one after the other (hook `permission-timed-allow.mjs`; the
+- A question (AskUserQuestion) gets one timed dialog per question, one after the other (hook `question-popup.mjs`; the
   dialog shows the question, its options with the recommended one first and what happens with no answer), each with its own
   wait: with no answer in 2 minutes (`CLAUDE_QUESTION_TIMEOUT_S`, 120 s; from 5 questions on less, 114 s for 5, so all popups
   end before the terminal question auto-continues after 10 minutes) or on "Use recommended" it takes that question's
@@ -79,24 +79,9 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   With no GUI (ssh, no display) the terminal question stays and auto-continues after 10 minutes (`askUserQuestionTimeout`
   "10m"; the CLI also takes one or five minutes, or never), a timer that does not count down while that terminal window is
   focused and starts again after any keypress; it never starts in a background session, in screen reader mode or while the
-  session is connected to Remote Control (those questions wait for an answer). The recommended option is chosen to be safe with nobody there, and each default taken
-  is logged. For a big or deleting change the recommended option is "wait for the owner", so a timeout pauses only that part
-  (skill `ask-owner`).
-- Guard dialogs (`git push`, publish, `rm -rf` outside the project or of a whole folder such as `rm -rf *`, prod-host writes) default to
-  Allow and go ahead after 2 min (`CLAUDE_ASK_TIMEOUT_S`). A literal secret in a command (a test password) asks nothing; the
-  guard log names its kind, never the value, and gitleaks still checks commits (owner decision R22-G1).
-  Every Claude Code permission prompt (any tool, MCP tools, Agent, plan approval, protected files, any mode, background
-  agents and `claude -p`) gets the same dialog and goes ahead after 2 min (`CLAUDE_PERMISSION_TIMEOUT_S`); the dialog
-  shows the guard's reason when the guard asked. Questions get their own dialog (above).
-  Over ssh or with no display there is no dialog: Claude Code's own prompt, or its deny in a `-p` run. A click on Deny blocks
-  for good. A command Claude can rewrite (a `$VAR` command word, `rm`/`push` inside `$(...)` or a heredoc, a literal
-  secret) is first sent back to Claude once with the fix, so no dialog waits; the message also names what will still
-  ask after the rewrite (a push, an `rm` outside the project ...), and sent again unchanged, it gets the dialog. A
-  secret sent back this way shows you no dialog, so Claude names its kind in the final report: rotate it if needed.
-  A quality rule (a hand-edited lockfile, a `git merge` or plain `git pull` that can create a merge commit, a wait by sleeping: a
-  `sleep` loop or one long `sleep`) is advice, not a dialog: Claude gets the fix once (let the package manager write the lockfile;
-  rebase or `--ff-only`; run the long command in the background with a `timeout`), and the same
-  command sent again runs. Every ask and its outcome is in `~/.claude/logs/guard.jsonl`.
+  session is connected to Remote Control (those questions wait for an answer). The recommended option is chosen to be safe
+  with nobody there. For a big or deleting change the recommended option is "wait for the owner", so a timeout pauses only
+  that part (skill `ask-owner`).
 - `tess` always runs in the background and reports to the boss. Only the landing of a risky change waits for its
   `landing: ok`; when it finds a real bug in work that already landed, the boss starts the fix at once and tells you in one line.
 - A job of several long steps that must survive crashes, reboots and usage limits with nobody watching: `long-run`
@@ -134,7 +119,7 @@ History stays one straight line: no merge commits, no branch merged into another
   `git merge --ff-only`), one at a time, which then removes the landed branch and worktree.
 - Ask "clean up the git tree" and the `git-linear-history` skill loads; it backs up first and proves the tree is unchanged.
 - The two commands: `node ~/.claude/tools/git-tidy/git-tidy.mjs check` (what is left to clean) and `... prune --apply`.
-- Pushes and remote branch deletes still ask you.
+- Agents never push unless you ask.
 
 ## Keeping context
 - Auto-compaction runs at a 400000-token window (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`); the status line shows the
@@ -166,15 +151,12 @@ on Opus (`claude --model opus --effort high -c`), not credits.
 
 ## Another machine
 `git pull`, then `scripts/install.sh` (Windows PowerShell:
-`powershell -ExecutionPolicy Bypass -File scripts\install.ps1`). Run `scripts/doctor.sh` to check: it prints one summary line
-(`doctor (<machine>, Claude Code <version>): 1 FAIL, 1 WARN, 38 ok`), then only the lines that need a fix; `--all` prints every line.
+`powershell -ExecutionPolicy Bypass -File scripts\install.ps1`). To check the machine, ask `tess` for a setup check.
 
 On Windows without Developer Mode the installer copies files instead of linking them, so they do not follow later
-edits: re-run the installer after every pull. Not yet tested on Windows: `install.ps1` has not been run there, the
-guard tests have not been run there (`tests/pin-home.mjs` and the warm-exec fakes assume POSIX scripts), and
-`doctor.sh` needs Git Bash and `jq` (there is no PowerShell doctor).
+edits: re-run the installer after every pull. Not yet tested on Windows: `install.ps1` has not been run there, and the
+tests have not been run there (`tests/pin-home.mjs` and the warm-exec fakes assume POSIX scripts).
 
 ## Where things are
 - Reports from agents and audits: `~/Desktop/claude-setup-reports/`.
-- Guard log: `~/.claude/logs/guard.jsonl`.
 - What exists: [catalog.md](catalog.md). Problems: [troubleshooting.md](troubleshooting.md).

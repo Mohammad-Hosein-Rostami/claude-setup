@@ -10,18 +10,19 @@ repo. `settings.json` is generated from `settings/` (it holds machine paths).
 | `home/CLAUDE.md` | Short global rules: language, who does what (boss, lex, dev, tess, max), questions, git, safety |
 | `home/rules`, `home/standards` | One-line rules (path-scoped) and the longer reference behind them |
 | `home/skills`, `home/agents` | Skills and agents (the Opus session is the boss and delegates; `lex` plans, `dev` builds, `tess` checks, reviews and writes tests by risk, `max` rarely prepares a ship; Haiku helpers look up and run commands) |
-| `home/hooks`, `home/statusline.mjs` | Bash guard, post-edit formatter, status line |
+| `home/hooks`, `home/statusline.mjs` | Hooks (post-edit formatter, question popup, session-start notes), status line |
 | `home/tools/ui-check` | Figma baseline pull, visual compare, responsive and column checks |
 | `settings/`, `plugins/` | Settings layers (base, OS, local) and the plugin list |
-| `tests/`, `tools/`, `.githooks` | Repo tests (`node:test`), Brewfile and Windows tool script, commit hooks (gitleaks and your private words in the staged files, `node --check` of hook files; private words in the message) |
-| `scripts/` | `install.mjs` (the one installer; `install/`), `install.sh`, `install.ps1`, `doctor.sh` (+ `doctor/`), `doctor-accounts.mjs`, `lane-new.sh`, `merge-settings.jq` |
+| `tests/`, `tools/` | Repo tests (`node:test`), Brewfile and Windows tool script |
+| `scripts/` | `install.mjs` (the one installer; `install/`), `install.sh`, `install.ps1`, `lane-new.sh`, `merge-settings.jq` |
 
 ## Quick start
 Install on a new machine (macOS or Linux; needs git, Node 22+ and jq), in the folder you keep repos in:
 
     git clone <this repo> claude-setup && cd claude-setup
     scripts/install.sh               # links, start-up line, settings.json (your own kept as the first layer), plugins, tool deps
-    scripts/doctor.sh                # read-only health report (never runs the repo tests)
+
+To check the install, ask `tess` for a setup check.
 
 Update, roll back, remove, sync:
 
@@ -42,9 +43,9 @@ Run tests (the second needs the ui-check deps that `install.sh` installs; `npm r
     npm test                    # node --test tests/*.test.mjs
     npm run test:ui-check       # ui-check's own tests
 
-No test runs by itself: the commit hook and a push run none, and `land` runs one only with `--test` or when the lane and the
-base changed the same files; the boss sends changes to `tess` by the "Quality checks" table in `home/CLAUDE.md`. Run the whole
-suite by hand (or ask `tess`) when you want to know everything still works.
+No test runs by itself: a commit and a push run none, and `land` runs one only with `--test`; the boss sends changes to
+`tess` by the "Quality checks" table in `home/CLAUDE.md`. Run the whole suite by hand (or ask `tess`) when you want to know
+everything still works.
 
 Windows: `powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-Update [-To <tag>]] [-Uninstall]` (not verified on Windows yet). Needs git (Git for Windows).
 Existing targets are moved to
@@ -56,7 +57,7 @@ Pixel-exact Figma work: pull once, build, compare, fix, check responsive:
     node ~/.claude/tools/ui-check/cli.mjs compare --url URL --root SEL --cache DIR --map map.json
 
 ## Docs
-- [How this setup works](docs/how-it-works.md): folders, prompt flow, switching a hook off, reading the guard log; no AI needed
+- [How this setup works](docs/how-it-works.md): folders, prompt flow, switching a hook off; no AI needed
 - [Setup on a new machine](docs/setup.md): install, `local.json`, `FIGMA_TOKEN`, plugins, updating
 - [Editing the setup](docs/usage.md): edit, commit, push, pull; add a skill, agent, rule or tool
 - [Catalog](docs/catalog.md): every skill, agent, rule, standard, hook, tool, plugin and settings key

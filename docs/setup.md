@@ -19,22 +19,22 @@
 Windows (PowerShell): `powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-Update [-To <tag>]] [-Uninstall] [-DryRun] [-NoPlugins] [-NoTools]`.
 Both call `scripts/install.mjs`, the one installer (Node 22+, jq); `scripts/install/README.md` explains the install record, the backups and the first settings layer.
 Symlinks need Developer Mode on Windows; otherwise items are copied (a warning is printed) and do not follow later
-edits. `install.ps1` runs on Windows PowerShell 5.1 and 7 (not verified on Windows yet). On Windows the installer stops without Git Bash; `settings/windows.json` turns the PowerShell tool off (`CLAUDE_CODE_USE_POWERSHELL_TOOL=0`) and every Bash hook matches `Bash|PowerShell`, so a PowerShell command is off or guarded; doctor checks both. `install.ps1 -ClaudeVersion <x.y.z>` installs that Claude Code, runs `claude --version` right after, and puts the old binary back when the version is not the one asked for.
+edits. `install.ps1` runs on Windows PowerShell 5.1 and 7 (not verified on Windows yet). On Windows the installer stops without Git Bash; `settings/windows.json` turns the PowerShell tool off (`CLAUDE_CODE_USE_POWERSHELL_TOOL=0`). `install.ps1 -ClaudeVersion <x.y.z>` installs that Claude Code, runs `claude --version` right after, and puts the old binary back when the version is not the one asked for.
 
 The installer links `home/*` (rules, skills, agents, standards, hooks, tools, statusline.mjs, and `commands` when it has files) into
 `~/.claude`, makes `personal/` from `personal.example/` when it is missing (git-ignored, its own git repo with a first commit),
 links `~/.claude/project-notes` to `personal/project-notes`, and writes `~/.claude/CLAUDE.md` as a marker line plus
 `@<repo>/home/CLAUDE.md` and `@<repo>/personal/CLAUDE.md`, builds `~/.claude/settings.json`, installs `home/tools/ui-check` dependencies (lockfile if present,
-otherwise a plain install), sets `core.hooksPath` to `.githooks`, then installs plugins. Anything replaced is moved
-to `~/.claude-backup-<stamp>/`, never deleted. One install runs at a time: a second one started meanwhile stops with a message. Check the result with `scripts/doctor.sh`
-(`DOCTOR_PROJECT=/path/to/app scripts/doctor.sh` also checks Playwright and Chromium from that project). It also reports free disk space (FAIL below 5 GB, WARN below 15 GB; `DISK_FAIL_FREE_GB` and `DISK_WARN_FREE_GB` move the limits) and names the caches to clear. It never runs the repo's tests (an old `--quick` or `--full` is ignored).
+otherwise a plain install), unsets `core.hooksPath` when an earlier install set it to `.githooks`, then installs plugins. Anything replaced is moved
+to `~/.claude-backup-<stamp>/`, never deleted. One install runs at a time: a second one started meanwhile stops with a message. To check the result, ask `tess` for a setup check.
+To check free disk space, run `node ~/.claude/tools/disk-free/disk-free.mjs check` (FAIL below 5 GB, WARN below 15 GB; `DISK_FAIL_FREE_GB` and `DISK_WARN_FREE_GB` move the limits); it names the caches to clear.
 
 After the first install, fill your deny list: `personal/share-deny.txt` (git-ignored, in your own `personal/`) starts as an empty
-template. Put one private word or phrase per line in it (your name, your employer, clients, project and machine names). At each
-commit `scripts/share-check.mjs` checks the staged files (pre-commit) and the message (commit-msg); a hit blocks the commit.
-While the list is empty or holds only comments, share-check prints `not run` and `doctor.sh` gives one WARN. A list missing
-beside an existing `personal/` blocks every commit and prints the `cp` line that restores it from
-`personal.example/share-deny.txt`; `doctor.sh` FAILs with the same `cp`. Each person keeps their own list;
+template. Put one private word or phrase per line in it (your name, your employer, clients, project and machine names). Before each
+commit, run `node scripts/share-check.mjs --staged` on the staged files and `node scripts/share-check.mjs --commit-msg <file>`
+on the message (`CLAUDE.md` has the steps); a hit stops the commit. While the list is empty or holds only comments,
+share-check prints `not run`. A list missing beside an existing `personal/` is an error that prints the `cp` line that
+restores it from `personal.example/share-deny.txt`. Each person keeps their own list;
 `node scripts/share-check.mjs` checks the tracked files against it.
 
 ## settings and local.json
@@ -45,7 +45,7 @@ machine; copy `settings/local.json.example` to start. Its `claudeSetup` key is f
 `settings.json`: `machine` (this machine's name), `cliVersion` (the phase's pinned Claude Code; set with `DISABLE_UPDATES=1` in
 `env`), `syncTargets` (`[{name, ssh}]`: the machines `scripts/sync-machines.mjs` brings along; none listed means `pc` over `ssh pc`) and `shared`
 (the top-level keys of `local.json` the sync copies to every target; `env` and `claudeSetup` are never copied). Edits made through `/config` land only in the generated file: copy what you
-want shared into `settings/*.json` and re-run the installer. `doctor.sh` reports drift.
+want shared into `settings/*.json` and re-run the installer.
 `env.BASH_DEFAULT_TIMEOUT_MS` is `"300000"` (milliseconds, 5 minutes; the CLI default is 120000): a Bash call that runs longer is moved to the background, and the longest test suite takes about 4 minutes. A call can ask for more with its own `timeout` (at most `BASH_MAX_TIMEOUT_MS`, 600000 by default).
 
 ## Sync the machines
@@ -53,11 +53,11 @@ Run on the machine you landed on, in the repo folder, once after the last land (
 `node scripts/sync-machines.mjs --repo "$PWD"`. Add `--tag <tag>` to move the targets to a phase tag, `--targets <name,...>` to sync only
 some, `--json` for one JSON row per machine (the old `--checks` is refused with exit 2).
 - First it checks the base branch is checked out, no tracked file changed and `git-tidy check` is clean (exit 3 with `verify: <check> failed: <why>`).
-- Then every machine must run one Claude Code version and channel, at or above the floor in `scripts/doctor.sh`, on the `cliVersion` pin of
+- Then every machine must run one Claude Code version and channel, at or above `CLAUDE_FLOOR` in `scripts/sync/cli-checks.mjs`, on the `cliVersion` pin of
   `settings/local.json`. A machine that does not is skipped and its row says why (a target still on an old checkout is checked again after its install).
-- Each target gets a git bundle (`scp`), a fast-forward pull, the shared local values and `scripts/install.sh`; then `scripts/doctor.sh` runs on each machine.
-  Nothing is pushed and no project repo on a target is touched. Every ssh line is printed before it runs.
-- Exit 0: every machine synced and doctor passed; 1: a machine failed (rows printed); 2: bad arguments or a leftover `/tmp/<row>-sync-*.bundle`; 3: verify failed.
+- Each target gets a git bundle (`scp`), a fast-forward pull, the shared local values and `scripts/install.sh`. Each machine prints one line,
+  `<machine>: synced sha <40-hex> install <exit>`. Nothing is pushed and no project repo on a target is touched. Every ssh line is printed before it runs.
+- Exit 0: every machine synced (install exit 0, at the base tip); 1: a machine failed (rows printed); 2: bad arguments or a leftover `/tmp/<row>-sync-*.bundle`; 3: verify failed.
 
 ## FIGMA_TOKEN (for `figma-pull`)
 Create a personal access token in Figma (Settings > Security) with read access to files. Keep it out of the repo,
@@ -86,15 +86,7 @@ restart open sessions (`/exit`, then `claude -c` to continue). Hook scripts run 
 code apply at once.
 
 ## Reading .env files and lockfiles
-Nothing blocks reading them: there are no `.env` or lockfile read rules in `settings/base.json` and `pre-bash-guard` does not inspect readers. Printing or committing a secret is still against the rules in `CLAUDE.md`; a literal secret typed into a Bash command asks nothing (owner decision R22-G1: the guard log names its kind, never the value), and gitleaks still checks every commit.
+Nothing blocks reading them: agents have full access, `settings/base.json` has no read rules, and `~/.ssh`, `~/.aws`, `*.pem` and `.npmrc` can be read too. Printing or committing a secret is still against the rules in `CLAUDE.md`, and the check by hand before a commit (gitleaks) looks for one.
 
-## Guard prompts and production hosts
-`pre-bash-guard` and `artifact-ask` never block for good (the guard only sends a command back once when part of it can be rewritten, see `docs/daily-use.md`). A rule hit shows a native dialog (macOS `osascript`, Windows PowerShell popup with Yes = Allow / No = Deny, Linux `zenity`) with Allow as the default; with no answer in 2 min (`CLAUDE_ASK_TIMEOUT_S`, clamped to 190) it goes ahead, and only a click on Deny denies. Allow and a timeout return no decision (exit 0, logged): the CLI's normal permission flow then still runs, so `permissions.deny` rules apply and the rest of a compound command is not pre-approved (checked on CLI 2.1.323). A timeout only counts when the full time passed; a dialog that was killed, crashed or gave up early, no GUI (ssh, CI, no display) or a failing dialog tool falls back to the CLI's own prompt, which also appears in bypass-permissions mode. The hooks carry `timeout: 200` (seconds) in `settings/base.json`, above the dialog time. Separately, `askUserQuestionTimeout` (`"10m"` in `settings/base.json`; CLI 2.1.323 accepts only `60s`, `5m`, `10m`, `never`) auto-continues an unanswered terminal question after 10 minutes (long enough for four question dialogs of 2 minutes each, which `lib/question-reply.mjs` keeps inside that time).
-What asks: `git push` (not `--dry-run`), `gh release *` (except list, view, download), `gh pr merge`, `npm`/`pnpm`/`yarn` publish, Artifact publish and delete, `ssh`/`scp`/`rsync`/`psql`/`mysql` writes to a production host, `git --no-verify`, `gh repo edit --visibility`, `gh secret set`, `gh workflow run`, a `gh api graphql` mutation, and a `$(...)`/backtick/heredoc/`eval`/`trap` command that also names a dangerous word ("risky word inside shell expansion"). Destructive ones say `DESTRUCTIVE: ...` (force push, remote branch delete, `rm -r` outside the project, disk wipes). Read-only ssh (cat, ls, tail, grep, systemctl status, docker ps/logs) is allowed. psql/mysql on a production host is allowed only for a statement that starts as a read (SELECT, SHOW, EXPLAIN, WITH ... SELECT, `\d`) and has no write-like word (INTO, COPY, DO, CALL, DROP, INSERT, UPDATE, DELETE, `pg_terminate_backend`, `lo_*`, `dblink*`, `setval`, `\!`, ...); the host is found in `-h`, `--host`, URLs, conninfo strings (`-d`, `--dbname`) and `PGHOST`.
-The guard looks at every word of a command, not only the first: `ionice -c3 rm -rf /x`, `caffeinate -i git push`, `$'\x72m' -rf /x` (ANSI-C quoting is decoded), `X=rm; $X -rf /x` and `eval "$cmd"` all ask, with no wrapper list to maintain. Words after `echo`, `grep`, `man`, `git`, `docker run`, `ssh` and package managers are not scanned, so `echo rm -rf /` and `docker run img rm -rf /data` stay silent. Variables are tracked in order, the last assignment wins; `rm -r` of an unknown variable asks, `rm -f "$FILE"` does not.
-A second, character-level parser runs behind the first (a reason only it found ends with "matched in raw text"), so quoting, comments, `$((1<<X))` and `<<EOF` inside quotes cannot hide `git push` or `rm -rf` (also inside `"$(...)"`). Commands that hide what runs always ask: `| bash`, `bash <<EOF`, `sh -s`, a variable or `$(...)` as the command word (`$EDITOR`, `$PAGER` and a variable assigned earlier to one word are fine), `env -S`, `su -c`; `pnpm exec`/`pnpm dlx`/`yarn exec`/`npx` are scanned for what they run, `npm run` is not. Brace expansion in `rm` paths is expanded (`rm -rf {/,x}`); one that cannot be listed asks. Prod SQL: any function call outside a list of plain read functions (`count`, `now`, `current_*` ...) counts as a write, and `PGSERVICE=prod` counts as a host.
-Every ask and its outcome (allow, deny, timeout, no-gui, dialog-failed) is appended without secrets to `~/.claude/logs/guard.jsonl` (`CLAUDE_GUARD_LOG` overrides the path); the file is set to mode 0600 and its directory to 0700 on every write (a shared directory such as `$HOME` or the temp dir is left alone). Masked before logging: `-u user:pass` (curl-like commands), URL passwords (up to the last `@`), `Authorization:`/`X-*-Key:`/`X-*-Token:`/`Cookie:` header values, `--token`/`--api-key`/`--password`/`--secret`/`--client-secret` values, `NAME_TOKEN=`/`*_KEY=`/`*PASS=`/`*SECRET=` assignments, `?api_key=`/`?token=` query values, `redis-cli -a`, `PRIVATE-TOKEN:` headers and `_authToken=`.
-Production hosts: any name containing `prod`, plus the private list `~/.claude/private/prod-hosts` (one name or `*` glob per line; never committed). Copy `settings/prod-hosts.example` to start; `doctor.sh` reports whether the list exists.
-
-Doctor accepted list: `~/.claude/private/doctor-accepted` (or the file `CLAUDE_DOCTOR_ACCEPTED_FILE` names; one id per line, `#` starts a comment; never committed) lists machine facts you have seen and accept, so `doctor.sh` prints them as INFO, which its summary does not count, instead of WARN. Doctor knows the id `apple-terminal-notes` (Apple Terminal shows no desktop notes). Copy `settings/doctor-accepted.example` to start; delete a line you do not accept. Doctor only reads the file; without it every WARN stays a WARN. A list that is a link or not a plain file accepts nothing, and it or an id doctor does not know gives one WARN. The missing production-host list WARN can never be accepted.
-
+## Questions
+A question to you (AskUserQuestion) opens a popup per question and takes the recommended option after 2 minutes (`docs/daily-use.md`, "Long or unattended runs"). Separately, `askUserQuestionTimeout` (`"10m"` in `settings/base.json`; CLI 2.1.323 accepts only `60s`, `5m`, `10m`, `never`) auto-continues an unanswered terminal question after 10 minutes (long enough for four question dialogs of 2 minutes each, which `lib/question-reply.mjs` keeps inside that time).
