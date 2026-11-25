@@ -1,4 +1,4 @@
-// Tests for the status line's rows on busy and idle sessions (spec R18; owner decisions RC14 to RC18 of 2026-11-22): 5 rows when busy
+// Tests for the status line's rows on busy and idle sessions (spec R18; owner decisions RC14 to RC18 of 2026-11-22): 4 rows when busy
 // and 2 when idle, colour by kind, one agents summary row naming the quiet agents, no job, step or estimate rows (plan 2026-11-24);
 // and the lane's F questions: F1 NO_COLOR, TERM=dumb, ASCII mode and a Windows console print the same words with no escape code (and
 // no byte above 0x7E in ASCII); F2 an old board file still draws every row and never a job row; F3 COLUMNS 40 to 120 and LINES 10
@@ -41,16 +41,16 @@ const repoOf = (lanes, main = {}) => ({
   landed: { count: 4, lastMs: NOW - 20 * MIN_MS },
   worktrees: [worktree('main', { path: '/r/main', main: true, ahead: 0, ageMin: 30, upAhead: 0, upBehind: 0, ...main }), ...lanes],
 });
-const boardOf = (fields = {}) => ({ session: 'calm', at: NOW, stale: null, asking: null, agents: [], repo: repoOf([]), repos: [], git: null, ...fields });
+const boardOf = (fields = {}) => ({ session: 'calm', at: NOW, stale: null, agents: [], repo: repoOf([]), repos: [], git: null, ...fields });
 
 const SESSION_INPUT = {
   model: { display_name: 'Opus 5.5' }, effort: { level: 'high' },
   context_window: { context_window_size: 400_000, current_usage: { input_tokens: 99_000 } },
   rate_limits: { five_hour: { used_percentage: 46, resets_at: (NOW + 160 * MIN_MS) / 1000 }, seven_day: { used_percentage: 31, resets_at: (NOW + 4 * 1440 * MIN_MS) / 1000 } },
 };
-const viewOf = (env, fields) => ({ input: SESSION_INPUT, board: null, asking: null, limitsFile: null, account: 'work', env, nowMs: NOW, timeZone: 'UTC', ...fields });
+const viewOf = (env, fields) => ({ input: SESSION_INPUT, board: null, limitsFile: null, account: 'work', env, nowMs: NOW, timeZone: 'UTC', ...fields });
 
-/** Busy: a question waits, 4 agents running (one quiet) and one just done, 3 lanes. */
+/** Busy: 4 agents running (one quiet) and one just done, 3 lanes. */
 function busyView(env) {
   const agents = [
     agent('reviewer', { type: 'reviewer', writer: false, state: 'quiet', quietMin: 6 }), agent('implementer'),
@@ -58,7 +58,7 @@ function busyView(env) {
     agent('done-one', { state: 'done', doneMs: NOW - 2 * MIN_MS }),
   ];
   const lanes = [worktree('remove-modes', { ahead: 7 }), worktree('road-gate', { ahead: 8, changed: 2 }), worktree('sync-remote', {})];
-  return viewOf(env, { board: boardOf({ agents, repo: repoOf(lanes, { upAhead: 44 }) }), asking: { kind: 'question', count: 1, expiresAt: NOW + 160_000 } });
+  return viewOf(env, { board: boardOf({ agents, repo: repoOf(lanes, { upAhead: 44 }) })});
 }
 
 const rowsAt = (view, env, columns, platform) => statusRows(view(env), lookFor(env, columns, platform));
@@ -66,20 +66,21 @@ const rowsAt = (view, env, columns, platform) => statusRows(view(env), lookFor(e
 /** Idle: no agent, main only. */
 const idleView = (env) => viewOf(env, { board: boardOf() });
 
-test('busy with a question: 5 rows at 80, 100 and 120 columns; idle: 2 rows; every row within COLUMNS - 5', () => {
+test('busy: 4 rows at 80, 100 and 120 columns; idle: 2 rows; every row within COLUMNS - 5', () => {
   for (const columns of COLUMNS) {
     const busy = rowsAt(busyView, TERM_256, columns);
     const idle = rowsAt(idleView, TERM_256, columns);
-    assert.deepEqual(busy.map((row) => plain(row).split(' ')[0]), ['?', 'agents', 'git', 'lanes', 'session'], busy.map(plain).join('\n'));
+    assert.deepEqual(busy.map((row) => plain(row).split(' ')[0]), ['agents', 'git', 'lanes', 'session'], busy.map(plain).join('\n'));
     assert.deepEqual(idle.map((row) => plain(row).split(' ')[0]), ['git', 'session']);
     for (const row of [...busy, ...idle]) assert.ok([...plain(row)].length <= columns - CUT_MARGIN, `${columns}: ${plain(row)}`);
   }
 });
 
-test('colour by kind (RC14): idle prints no yellow, red or magenta; busy shows the question in magenta and the quiet agent in yellow', () => {
+test('colour by kind (RC14): idle prints no yellow, red or magenta; busy shows the quiet agent in yellow and nothing in magenta', () => {
   for (const columns of COLUMNS) {
     const busy = sgrCodes(rowsAt(busyView, TERM_256, columns));
-    assert.ok(busy.has('35') && busy.has('33'), 'the question in magenta, the quiet agent in yellow');
+    assert.ok(busy.has('33'), 'the quiet agent in yellow');
+    assert.ok(!busy.has('35'), 'nothing waits on the owner, so no magenta');
     const idle = sgrCodes(rowsAt(idleView, TERM_256, columns));
     assert.deepEqual([...idle].filter((code) => RESERVED_SGR.has(code)), [], `${columns}: idle has nothing to look at`);
     assert.ok(idle.has('38;5;35') && idle.has('38;5;103'), `${columns}: the branch and the session values in their kind colour`);
@@ -92,7 +93,7 @@ test('F1: NO_COLOR and TERM=dumb print no escape code and every state keeps its 
     assert.ok(rows.every((row) => !row.includes(ESC)), env.TERM);
   }
   const wide = rowsAt(busyView, NO_COLOR_ENV, 120).join('\n');
-  for (const word of ['ANSWER NEEDED', '4 running · 1 done', 'reviewer quiet 6 min', 'road-gate']) assert.ok(wide.includes(word), word);
+  for (const word of ['4 running · 1 done', 'reviewer quiet 6 min', 'road-gate']) assert.ok(wide.includes(word), word);
 });
 
 test('the agents row names only the quiet agents and carries no estimate, even from a board an older release wrote', () => {
@@ -128,7 +129,7 @@ test('F1: hostile agent and branch names (escape codes, bidi marks, 300 characte
 });
 
 test('F4: no board, no rate_limits and current_usage null still give 2 rows with `context ?` and `git loading`', () => {
-  const view = { input: { model: { display_name: 'Opus 5.5' }, context_window: { current_usage: null } }, board: null, asking: null, limitsFile: null, account: undefined, env: {}, nowMs: NOW, timeZone: 'UTC' };
+  const view = { input: { model: { display_name: 'Opus 5.5' }, context_window: { current_usage: null } }, board: null, limitsFile: null, account: undefined, env: {}, nowMs: NOW, timeZone: 'UTC' };
   assert.deepEqual(statusRows(view, lookFor(NO_COLOR_ENV, 80)).map(plain), ['git loading', 'session Opus 5.5 · context ? · acct ?']);
 });
 
@@ -157,7 +158,7 @@ test('F1: a Windows console (WT_SESSION, no 256-colour TERM) gets the 16-colour 
 });
 
 test('F3: COLUMNS 40 to 120 and LINES 10 to 24 (and none): every row within COLUMNS - 5, never more rows than the budget 2, 4 or 6', () => {
-  const expected = { 10: 2, 15: 4, 24: 5, '': 5 }; // the budget is 2, 4 or 6; a busy session has 5 rows
+  const expected = { 10: 2, 15: 4, 24: 4, '': 4 }; // the budget is 2, 4 or 6; a busy session has 4 rows
   for (const [lines, rows] of Object.entries(expected)) {
     for (const columns of [40, ...COLUMNS]) {
       const env = { ...TERM_256, LINES: lines };
@@ -167,8 +168,8 @@ test('F3: COLUMNS 40 to 120 and LINES 10 to 24 (and none): every row within COLU
       assert.match(plain(shown.at(-1)), /^session /, 'the session row always');
     }
   }
-  const short = statusRows(busyView({ ...TERM_256, LINES: '15' }), lookFor(TERM_256, 100)).map((row) => plain(row).split(' ')[0]);
-  assert.deepEqual(short, ['?', 'agents', 'git', 'session'], 'kept in order: session, git, alert, agents');
+  const short = statusRows(busyView({ ...TERM_256, LINES: '10' }), lookFor(TERM_256, 100)).map((row) => plain(row).split(' ')[0]);
+  assert.deepEqual(short, ['git', 'session'], 'kept in order: session, git, agents, lanes');
 });
 
 test('F8: the session row draws with no board (statusline.mjs prints it alone when drawing fails)', () => {
@@ -189,6 +190,6 @@ test('F2: an old board file (identity hues, road and trend fields, no active, tr
     road: { name: 'final', step: 2, steps: 4, live: true }, trend: { deltaMin: 70, atMs: NOW } };
   old.board.repo = { ...old.board.repo, check: { verdict: 'block', failed: ['tests'] } };
   const rows = statusRows(old, lookFor(TERM_256, 120)).map(plain);
-  assert.deepEqual(rows.map((row) => row.split(' ')[0]), ['?', 'agents', 'git', 'lanes', 'session'], rows.join('\n'));
+  assert.deepEqual(rows.map((row) => row.split(' ')[0]), ['agents', 'git', 'lanes', 'session'], rows.join('\n'));
   assert.ok(rows.every((row) => row.trim() !== '' && !/error|check|job|step/.test(row)), rows.join('\n'));
 });

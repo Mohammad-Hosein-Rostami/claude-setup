@@ -42,10 +42,9 @@ function hostileBoard({ noMain = false } = {}) {
 function rowsOf(env, columns) {
   return [{}, { noMain: true }].flatMap((variant) => {
     const board = hostileBoard(variant);
-    const asking = { kind: 'question', count: 1, expiresAt: NOW + 2 * 60_000 }; // the alert row takes the room, so git rides on the session row
-    return [null, asking].flatMap((waiting) => LINES.flatMap((lines) => statusRows(
-      { ...viewOf(board, NOW, { ...env, LINES: lines }), account: hostile('acct'), asking: waiting }, lookFor(env, columns),
-    )));
+    return LINES.flatMap((lines) => statusRows(
+      { ...viewOf(board, NOW, { ...env, LINES: lines }), account: hostile('acct') }, lookFor(env, columns),
+    ));
   });
 }
 

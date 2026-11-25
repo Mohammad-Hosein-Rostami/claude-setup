@@ -28,7 +28,7 @@ const worktree = (name, fields) => ({
 /** @returns {object} the screenshot's board: 4 agents, 3 lane worktrees and main, nothing waiting on the owner */
 export function screenshotBoard(nowMs = NOW) {
   return {
-    session: 'fixture', at: nowMs, stale: false, asking: null, repos: [],
+    session: 'fixture', at: nowMs, stale: false, repos: [],
     git: { branch: 'main', ahead: 44, behind: 0, changed: 0 },
     agents: [
       agent(reviewer({ id: 'a1' })),
@@ -62,7 +62,7 @@ export function placedWriterBoard(nowMs = NOW) {
 export function viewOf(board, nowMs = NOW, env = TERM_256) {
   return {
     input: { model: { display_name: 'Opus 5.5' }, effort: { level: 'high' }, context_window: { context_window_size: 400_000, current_usage: { input_tokens: 99_000 } } },
-    board, asking: null, limitsFile: null, account: 'work', env, nowMs, timeZone: 'UTC',
+    board, limitsFile: null, account: 'work', env, nowMs, timeZone: 'UTC',
   };
 }
 

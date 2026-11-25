@@ -46,11 +46,10 @@ const PALETTE_CODES = {
 const PALETTE_ENV = { dark: {}, light: { CLAUDE_STATUS_THEME: '', COLORFGBG: '0;15' }, 16: { TERM: 'xterm', COLORTERM: '' } };
 const RATE_LIMITS = { five_hour: { used_percentage: 40, resets_at: NOW / 1000 + 3600 }, seven_day: { used_percentage: 10, resets_at: NOW / 1000 + 86_400 } };
 
-/** The rows of the screenshot board with a question waiting, on a terminal with this environment, `columns` wide. */
+/** The rows of the screenshot board with rate limits, on a terminal with this environment, `columns` wide. */
 function busyRows(env, columns) {
   const view = viewOf(screenshotBoard(), NOW, env);
   view.input = { ...view.input, rate_limits: RATE_LIMITS };
-  view.asking = { kind: 'question', count: 1, expiresAt: NOW + 160_000 };
   return statusRows(view, lookOf(env, 'darwin', columns - 5));
 }
 
@@ -135,15 +134,14 @@ test('P1 RC14 RC20: one colour per kind on the dark, light (COLORFGBG) and 16-co
   assert.ok(busyRows({ ...TERM_256, CLAUDE_STATUS_THEME: 'light' }, 100).join('').includes('\u001b[38;5;28mmain'), 'CLAUDE_STATUS_THEME=light gives the light palette');
 });
 
-test('the reserved states: to pull and needs rebase yellow, conflicts red, the question magenta', () => {
+test('the reserved states: to pull and needs rebase yellow, conflicts red', () => {
   const board = screenshotBoard();
   board.agents = [];
   board.repo.worktrees = board.repo.worktrees.map((wt) => (wt.main ? { ...wt, upBehind: 1, conflicts: 2, staged: 0, changed: 0 }
     : wt.name === 'remove-modes' ? { ...wt, behind: 5 } : wt));
   const view = viewOf(board, NOW, TERM_256);
-  view.asking = { kind: 'question', count: 1, expiresAt: NOW + 160_000 };
   const text = statusRows(view, lookFor(TERM_256, 160)).join('\n');
-  for (const shown of ['\u001b[33m↓1 to pull', '\u001b[31m2 conflicts', '\u001b[33m ↓5 needs rebase', '\u001b[1m\u001b[35m? ANSWER NEEDED']) {
+  for (const shown of ['\u001b[33m↓1 to pull', '\u001b[31m2 conflicts', '\u001b[33m ↓5 needs rebase']) {
     assert.ok(text.includes(shown), `${JSON.stringify(shown)} in ${JSON.stringify(text)}`);
   }
 });

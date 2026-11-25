@@ -1,18 +1,16 @@
-// Project agent files that set maxTurns or shadow a personal agent are flagged at SessionStart (the project-merge hook's lead note)
-// and by doctor (seen live: a project's own agents capped at 25-60 turns stopped mid-task and needed ~110 continue messages).
+// Project agent files that set maxTurns or shadow a personal agent are flagged at SessionStart (the project-merge hook's lead note;
+// seen live: a project's own agents capped at 25-60 turns stopped mid-task and needed ~110 continue messages).
 // The files are team files: the note never tells the lead to edit them (owner decision R22-Q3).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
-import { rename, symlink, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { symlink, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MAX_AGENT_FILES, NOTE_MAX_CHARS, projectAgentNote } from '../home/hooks/lib/project-agents.mjs';
 import { AGENTS, BOTH_ADVICE, CAP_ADVICE, NOTE_START, POSIX, agent, noteOf, sandbox } from './project-agents-helpers.mjs';
 import { cleanEnv } from './clean-env.mjs';
 
-const DOCTOR = fileURLToPath(new URL('../scripts/doctor.sh', import.meta.url));
 const MERGE_HOOK = fileURLToPath(new URL('../home/hooks/project-merge.mjs', import.meta.url));
 const NOTE_COMMAND = fileURLToPath(new URL('../home/hooks/lib/project-agents.mjs', import.meta.url));
 test('a project agent with maxTurns is named in the note', async () => {
@@ -102,55 +100,7 @@ test('project-merge prints the project-agents note once, for startup and compact
   assert.doesNotMatch(runStartHook(MERGE_HOOK, clean.home, clean.projectDir), /maxTurns|Project agent files/);
 });
 
-const hasJq = spawnSync('jq', ['--version']).status === 0;
-
 const FOUR_DIGITS = 4; // index width in a file name, so that names sort like their numbers
-const runDoctor = (home, projectDir, extraEnv = {}) => spawnSync('bash', [DOCTOR], { encoding: 'utf8', env: cleanEnv({ HOME: home, DOCTOR_PROJECT: projectDir, DOCTOR_ONLY: 'check_project_agents', ...extraEnv }) });
-
-test('doctor warns about a capped project agent (DOCTOR_PROJECT), names the project, and is ok for a clean one', { skip: !hasJq && 'jq not installed' }, async () => {
-  const made = await sandbox({ project: { builder: 'maxTurns: 60\n' } });
-  const capped = runDoctor(made.home, made.projectDir);
-  assert.match(capped.stdout, /^WARN\s+.*Project agent files .*builder\.md \(maxTurns 60\)/m);
-  assert.ok(capped.stdout.startsWith(`WARN  ${realpathSync(made.projectDir)}: Project agent files in .claude/agents `), 'the WARN line says which project it means');
-  assert.equal(capped.status, 0);
-  const cleanMade = await sandbox({ project: { builder: '' } });
-  const clean = runDoctor(cleanMade.home, cleanMade.projectDir);
-  assert.match(clean.stdout, /^ok\s+project agents/m);
-});
-
-// Review 4 of p0-0.1, R4-9: doctor passed the folder as it was spelled, and through a link that showed files a session never sees
-// (Claude Code hands a hook the physical folder). It now checks the physical folder (`pwd -P`) and names that one.
-test('doctor checks the physical folder of a project that is reached through a link', { skip: (!hasJq && 'jq not installed') || (!POSIX && 'making a link needs a privilege on Windows') }, async () => {
-  const made = await sandbox({ project: { builder: 'maxTurns: 60\n' } });
-  const link = join(dirname(made.projectDir), 'proj-link');
-  await symlink(made.projectDir, link);
-  const { stdout, status } = runDoctor(made.home, link);
-  assert.ok(stdout.startsWith(`WARN  ${realpathSync(made.projectDir)}: Project agent files in .claude/agents `), stdout);
-  assert.match(stdout, /builder\.md \(maxTurns 60\)/);
-  assert.equal(status, 0);
-  const missing = runDoctor(made.home, join(made.projectDir, 'not-there')); // a folder that cannot be entered is passed on as given
-  assert.ok(missing.stdout.startsWith(`WARN  ${join(made.projectDir, 'not-there')}: Project agent files in .claude/agents `), missing.stdout);
-});
-
-// Security review p0-0.1, N3: the folder name comes from a repository or an archive; ESC and BEL in it set the window title and colour.
-// Round 2, R2-10: the path is escaped by the hook's own code (shown-name.mjs), not by a bash character class that follows the locale.
-test('doctor prints the project path escaped, without control characters, in every locale', { skip: (!hasJq && 'jq not installed') || (!POSIX && 'control characters in a folder name are POSIX only') }, async () => {
-  const CONTROL_CHARACTER = /[\u0000-\u0009\u000b-\u001f\u007f]/; // every C0 control but the line feed that ends the line, and DEL
-  const ONLY_PLAIN_ASCII_LINES = /^[\x20-\x7e\n]*$/;
-  const C1_CSI = String.fromCharCode(0x9b); // a control character only a UTF-8 locale's [[:cntrl:]] knows
-  const RIGHT_TO_LEFT_OVERRIDE = String.fromCharCode(0x202e);
-  for (const project of [{ builder: '' }, { builder: 'maxTurns: 60\n' }]) {
-    const { home, projectDir } = await sandbox({ project });
-    const hostile = join(dirname(projectDir), `proj\u001b]0;title-set-by-folder\u0007\u001b[31m${C1_CSI}${RIGHT_TO_LEFT_OVERRIDE}RED`);
-    await rename(projectDir, hostile);
-    for (const locale of ['en_US.UTF-8', 'C']) {
-      const { stdout } = runDoctor(home, hostile, { LC_ALL: locale });
-      assert.doesNotMatch(stdout, CONTROL_CHARACTER, locale);
-      assert.match(stdout, ONLY_PLAIN_ASCII_LINES, locale);
-      assert.ok(stdout.includes(`${join(realpathSync(dirname(projectDir)), 'proj\\u001b]0;title-set-by-folder\\u0007\\u001b[31m\\u009b\\u202eRED')}: `), `${locale}: ${stdout}`);
-    }
-  }
-});
 
 // Audit of db40977 (B1, S4): the agent files come from a cloned repository, so they are untrusted. A link to /dev/zero or a FIFO once
 // grew the SessionStart hook to gigabytes or hung it until its timeout killed it, and the start text was lost. The note is now
@@ -255,7 +205,7 @@ test('worst case with plain names: MAX_AGENT_FILES files with 64-char names give
   assert.ok(shown >= 1 && note.length <= NOTE_MAX_CHARS, `note is ${note.length} chars with ${shown} items`);
   assert.equal(note, noteOf({ advice: BOTH_ADVICE, shadowed: ['reviewer'], items: names.slice(0, shown).map((file) => `${AGENTS}${file} ${WORST_REASONS}`), more: MAX_AGENT_FILES - shown }));
   const command = spawnSync(process.execPath, [NOTE_COMMAND, projectDir, personalDir], { encoding: 'utf8' });
-  assert.equal(command.stdout, `${note}\n`, 'doctor.sh runs the file as a command and gets the same capped note');
+  assert.equal(command.stdout, `${note}\n`, 'running the file as a command gives the same capped note');
 });
 
 test('worst case with escaped names: files past MAX_AGENT_FILES give a capped note that never stops inside a \\u escape', { skip: !POSIX && 'control characters in file names are POSIX only' }, async () => {
