@@ -9,12 +9,14 @@
 // - A claim runs under the one pool lock of the repository (pool-lock.mjs), the lock release and reclaim take too, so two sessions
 //   never get one folder.
 // - Clone mode is a claim in two steps under the lock, with the fill between them outside it (it can take minutes; the lock goes
-//   stale at 120 s). The first step writes the slot's fill file (lane-fill-state.mjs), puts the folder detached at the target (a new
-//   one by `worktree add --no-checkout`, a free one switched and cleaned, a broken one detached and emptied) and locks it. The fill
-//   clones the main checkout in (fillFresh), or after a reuse its ignored files except what the clean kept (fillIgnored). The end
-//   step checks the fill file, the lock and HEAD are still this claim's, switches to the branch (the same commit: no file is
-//   written) and deletes the fill file. Until then the folder holds no branch and no one hands it out; a failed fill leaves the fill
-//   file, so the slot reads broken (here at once, elsewhere when this process ends). Checkout mode is the path from before, unchanged.
+//   stale at 120 s). The first step writes the slot's fill file (lane-fill-state.mjs), then locks the folder detached at the target:
+//   a new one by one `worktree add --no-checkout --detach --lock`, a free one locked, then switched and cleaned, a broken one
+//   relocked (the fill empties it). The fill clones the main checkout in (fillFresh), or after a reuse its ignored files except
+//   what the clean kept (fillIgnored). The end step checks the fill file, the lock and HEAD are still this claim's, switches to the
+//   branch (the same commit: no file is written), which is the hand-out, and deletes the fill file. A failed fill leaves the fill
+//   file, so the slot reads broken (here at once, elsewhere when this process ends).
+// - The fill file counts only on a detached, pool-locked slot (lane-slots.mjs), so every step that changes a slot's lock or HEAD
+//   writes or deletes it before its first change: a checkout-mode claim deletes it first, as release and land do.
 // - Facts are read again right before each switch, clean and lock (lane-slots.mjs readSlot), never trusted from an earlier read. A
 //   busy folder (locked, on a branch, untracked or uncommitted files, a commit not on the base, an unfinished operation, a git lock,
 //   not a worktree of this repository) is never switched, cleaned or removed.
@@ -27,13 +29,12 @@
 // - Every claim writes a job-made record (disk-free/lib/job-made.mjs) when a session id is known.
 // - Imports lane-release.mjs, which imports nothing from this file (no import cycle).
 import { gitFlag, gitText, runGit, UsageError } from './git.mjs';
-import { isNotStarted } from './reflog.mjs';
 import { listWorktrees } from './repo.mjs';
 import { withPoolLock } from './pool-lock.mjs';
 import { cloneSupport, FILL_ENV, fillFresh, fillIgnored } from './lane-fill.mjs';
 import { deleteFillFile, emptyForRefill, readFillFile, removeStaleIndexLock, startFillFile } from './lane-fill-state.mjs';
 import { commonDirOf, LOCK_REASON_PREFIX, poolFolderOf, poolSlots, readSlot, SNAPSHOT_LABEL, staleEntryLossWhy } from './lane-slots.mjs';
-import { baseNames, branchTip, deleteReleasedBranch, recordFolder, slotTree } from './lane-release.mjs';
+import { baseNames, branchTip, recordFolder, slotTree } from './lane-release.mjs';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -123,6 +124,7 @@ function lockSlot(repo, folder, label, heldBranch) {
 
 /** Reuses a free slot whose facts were just read again: switch, clean (keeping unchanged dependency folders), lock. */
 function takeFreeSlot(repo, slot, lane) {
+  deleteFillFile(commonDirOf(repo), slot.slot); // a leftover would count again once the slot is detached and locked
   const { keep, kept } = keptDependencies(repo, slot.folder, lane.target);
   enterLane(slot.folder, lane); // a branch switch ends by reading HEAD again, right before the clean
   // one -f: git clean keeps a git repository inside an ignored folder (-ff would delete it with its commits)
@@ -133,6 +135,7 @@ function takeFreeSlot(repo, slot, lane) {
 
 /** Makes the slot folder `lane-<number>` (after removing its stale entry, if any), then switches and locks it. */
 function createSlot(repo, folder, slotName, lane, staleEntry) {
+  deleteFillFile(commonDirOf(repo), slotName); // a leftover would count again once the slot is detached and locked
   if (staleEntry) gitText(repo.dir, ['worktree', 'remove', '--', folder]); // a missing folder: only its entry goes
   gitText(repo.dir, ['worktree', 'add', '--quiet', '--detach', '--', folder, lane.target]);
   enterLane(folder, lane);
@@ -143,42 +146,39 @@ function createSlot(repo, folder, slotName, lane, staleEntry) {
 /** Writes the slot's fill file for the lane: its `branch` field holds the lane's label (a snapshot's `snapshot <8>`). */
 const startFill = (repo, slotName, lane) => startFillFile(commonDirOf(repo), slotName, { branch: lane.label, target: lane.target });
 
-/** Clone mode: reuses a free slot as takeFreeSlot does, but detached at the target; the fill brings its ignored files back. */
+/**
+ * Clone mode: reuses a free slot as takeFreeSlot does, but detached at the target; the fill brings its ignored files back. The lock
+ * comes before the switch and the clean, so a crash between them leaves a broken slot (holding only a free slot's ignored files).
+ */
 function takeFreeSlotToFill(repo, slot, lane) {
   const { keep, kept } = keptDependencies(repo, slot.folder, lane.target);
   const fillFile = startFill(repo, slot.slot, lane);
+  lockSlot(repo, slot.folder, lane.label, null);
   gitText(slot.folder, ['switch', '--quiet', '--detach', lane.target]);
   gitText(slot.folder, ['clean', '-fdxq', ...keep.flatMap((name) => ['-e', name])]); // one -f, as in takeFreeSlot
-  lockSlot(repo, slot.folder, lane.label, null);
   // what the clean kept (the dependency folders, a git repository inside an ignored folder) is never cloned over
   const pending = { lane, fillFile, fill: 'ignored', except: ignoredEntries(slot.folder), notes: [] };
   return { folder: slot.folder, slot: slot.slot, created: false, kept, pending };
 }
 
-/** Clone mode: adds `lane-<number>` as an empty worktree detached at the target (`--no-checkout`), locked, for fillFresh. */
+/** Clone mode: adds `lane-<number>` as an empty worktree detached at the target (`--no-checkout`), locked in the same git call, for fillFresh. */
 function createSlotToFill(repo, folder, slotName, lane, staleEntry) {
   const fillFile = startFill(repo, slotName, lane);
   if (staleEntry) gitText(repo.dir, ['worktree', 'remove', '--', folder]); // a missing folder: only its entry goes
-  gitText(repo.dir, ['worktree', 'add', '--quiet', '--no-checkout', '--detach', '--', folder, lane.target]);
-  lockSlot(repo, folder, lane.label, null);
+  const lock = ['--lock', '--reason', `${LOCK_REASON_PREFIX} ${lane.label}`];
+  gitText(repo.dir, ['worktree', 'add', '--quiet', '--no-checkout', '--detach', ...lock, '--', folder, lane.target]);
   return { folder, slot: slotName, created: true, kept: [], pending: { lane, fillFile, fill: 'fresh', except: [], notes: [] } };
 }
 
 /**
- * Clone mode: takes a broken slot (the claim that filled it is gone and never handed it out). When that claim reached its switch, the
- * slot is detached (the same commit: no file is written) and the branch deleted if it has no commit of its own. The slot gets this
- * claim's fill file and lock; outside the lock it is emptied and filled again (lane-fill-state.mjs emptyForRefill).
+ * Clone mode: takes a broken slot (the claim that filled it is gone and never handed it out: broken means detached and pool-locked).
+ * The slot gets this claim's fill file and lock; outside the lock it is emptied and filled again (lane-fill-state.mjs emptyForRefill).
  */
 function takeBrokenSlot(repo, slot, lane) {
-  const tree = slotTree(repo, slot.folder);
   const fillFile = startFill(repo, slot.slot, lane);
   const notes = [`${slot.slot} was broken (${slot.why}): emptied and filled again`];
   removeStaleIndexLock(slot.folder); // the dead fill may have been killed inside a git command
-  if (tree.branch !== null) {
-    gitText(slot.folder, ['switch', '--quiet', '--detach', gitText(slot.folder, ['rev-parse', '--verify', 'HEAD^{commit}'])]);
-    if (isNotStarted(repo, tree.branch)) notes.push(deleteReleasedBranch(repo, tree.branch));
-  }
-  if (tree.locked) gitText(repo.dir, ['worktree', 'unlock', '--', slot.folder]);
+  gitText(repo.dir, ['worktree', 'unlock', '--', slot.folder]);
   lockSlot(repo, slot.folder, lane.label, null);
   return { folder: slot.folder, slot: slot.slot, created: false, kept: [], pending: { lane, fillFile, fill: 'refill', except: [], notes } };
 }
