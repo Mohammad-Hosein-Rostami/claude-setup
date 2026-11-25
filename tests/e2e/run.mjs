@@ -2,7 +2,10 @@
 // The real-Claude end-to-end runner (plan Lane C and section 9): scenarios E0-E11 drive real `claude -p` sessions of the setup
 // under test in throwaway repos and a temp HOME, then check their transcripts, logs and git state. One line per check:
 // `<scenario> <check> | <expected> | <observed> | PASS|FAIL|NOT RUN`, and `<out>/results.json`. Usage: `--help` (lib/cli.mjs).
-// Exit: 0 every check passed, 1 a check failed or did not run, 2 usage error or no CS_E2E_LIVE=1, 3 stopped at a usage limit.
+// Exit: 0 every check passed, 1 a check failed or did not run, 2 usage error, no CS_E2E_LIVE=1 or not logged in, 3 stopped at
+// a usage limit.
+// Login (lib/login.mjs): before any scenario `claude auth status --json` runs with a child's env and the temp HOME; without a
+// login the run prints one line and exits 2. A claude run refused its login stops the whole run (exit 2, one line).
 // Safety (owner rules): a live run needs CS_E2E_LIVE=1, else nothing is made or started; `--dry-run` prints every setup step
 // and command line and starts nothing; every `claude` argv comes from claudeArgs (an allowed `--model`, never Fable); every
 // child gets childEnv (no API key, no auth token, no base URL); every write is inside the run root; the only remote is a bare
@@ -19,8 +22,10 @@ import { checkLine } from './lib/checks.mjs';
 import { liveAllowed, LIVE_SWITCH, loadScenarios, parseArgs, USAGE, UsageError } from './lib/cli.mjs';
 import { commonLines } from './lib/common.mjs';
 import { makeContext, makeOps, makeRunState } from './lib/context.mjs';
+import { childEnv } from './lib/env.mjs';
 import { buildHome, homePaths } from './lib/home.mjs';
 import { leakSnapshot, realRepoOf } from './lib/leaks.mjs';
+import { LOGIN_LINE, loginPreflight, PREFLIGHT_ARGS } from './lib/login.mjs';
 import { ALLOWED_MODELS, modelOfArgs } from './lib/models.mjs';
 import { ProcessRegistry } from './lib/processes.mjs';
 import { redact } from './lib/redact.mjs';
@@ -31,6 +36,8 @@ import { resetText } from './lib/stream.mjs';
 
 const CHECKOUT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const GATE_REASON = 'E0(e) failed: the nested claude runs are not logged in on the subscription';
+const GATE_ERROR = 'E0 stopped with an error, so its probes say nothing';
+const LOGIN_STOP = 'stopped: a claude run was refused its login (no retry)';
 const stampOf = (date) => date.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 const say = (text) => console.log(redact(text));
 
@@ -61,6 +68,7 @@ async function dryRun(options, scenarios) {
   installShims(ops, { ...files, modeFile: files.dialogModeFile, popupDir: '<fake popup dir>' });
   say(`e2e dry run: nothing is made or started. run root ${root}; HOME ${paths.home}; checkout ${options.setupFrom}`);
   for (const text of homeSteps) say(`home setup: ${text}`);
+  say(`preflight: claude ${PREFLIGHT_ARGS.join(' ')} with the child env and HOME ${paths.home} (skipped in a dry run)`);
   const run = makeRunState({ dry: true, root, setupFrom: options.setupFrom, realHome, realHomeMode: options.realHomeMode, paths,
     childPath: '<run bin>:<quiet tools>:$PATH', ...files, realRepo: realRepoOf(realHome, options.setupFrom), shimDirs: [] });
   const claudeSteps = [];
@@ -89,7 +97,35 @@ async function runScenario(run, scenario) {
     if (ctx.notRun) return { ctx, lines: [notRunLine(scenario.title, ctx.notRun)] };
     return { ctx, lines: [...(await scenario.check(ctx)), ...commonLines(ctx, scenario.minutes)] };
   } catch (error) {
-    return { ctx, lines: [checkLine(`${scenario.title}: ${ctx.phase} ran to its end`, 'no error', error.message, false)] };
+    // `gate`: an E0 that threw proved nothing, so no later scenario runs either (gate is read only for E0)
+    return { ctx, lines: [{ ...checkLine(`${scenario.title}: ${ctx.phase} ran to its end`, 'no error', error.message, false), gate: true, error: true }] };
+  }
+}
+
+/**
+ * Runs the scenarios in order; each is NOT RUN once the run stopped (a login refusal, a usage limit, an interrupt) or E0's
+ * gate failed. @param {{print: Function, records: object[], outDir: string}} out
+ */
+async function runEach(run, scenarios, { print, records, outDir }) {
+  let gate = null;
+  for (const scenario of scenarios) {
+    const skip = run.login ? LOGIN_STOP : run.limit ? 'stopped at the usage limit (no retry)' : run.interrupted ? 'the run was interrupted' : gate
+      ?? (process.platform === 'win32' && scenario.needsShims ? 'needs the POSIX shims (plan section 10)' : null);
+    if (skip) {
+      const line = notRunLine(scenario.title, skip);
+      print(scenario.id, line);
+      records.push(scenarioRecord(scenario, null, [line]));
+      continue;
+    }
+    say(`# ${scenario.id} ${scenario.title}`);
+    const outcome = await runScenario(run, scenario);
+    const { ctx } = outcome;
+    // a login refusal: one line for the scenario instead of a FAIL per check that the refusal broke
+    const lines = run.login ? [checkLine(`${scenario.title}: every claude run is logged in`, 'logged in', `${run.login.name}: ${run.login.text}`, false)] : outcome.lines;
+    for (const line of lines) print(scenario.id, line);
+    if (scenario.id === 'E0' && lines.some((line) => line.gate && statusOf(line) !== 'PASS')) gate = lines.some((line) => line.error) ? GATE_ERROR : GATE_REASON;
+    copyRedacted(ctx.logs, join(outDir, scenario.id, 'logs'));
+    records.push(scenarioRecord(scenario, ctx, lines));
   }
 }
 
@@ -101,7 +137,9 @@ async function liveRun(options, scenarios) {
   const outDir = resolve(options.out ?? join(tmpdir(), `cs-e2e-results-${stampOf(new Date())}`));
   const all = [];
   const records = [];
-  const print = (id, line) => { all.push(line); say(formatLine(id, line)); };
+  let loginMissing = false;
+  // after a failed preflight the run prints only its one line, and a cleanup line only when it failed
+  const print = (id, line) => { all.push(line); if (!loginMissing || statusOf(line) !== 'PASS') say(formatLine(id, line)); };
   const stale = removeStaleRoots();
   const root = makeRunRoot();
   madeRoots.add(root);
@@ -119,37 +157,28 @@ async function liveRun(options, scenarios) {
   const onTerm = () => onSignal('SIGTERM');
   process.on('SIGINT', onInt);
   process.on('SIGTERM', onTerm);
-  say(`e2e live run: root ${root}; results ${outDir}${stale.length ? `; removed ${stale.length} stale root(s)` : ''}`);
-  if (options.realHomeMode) say('e2e: --real-home: the children use the real HOME (owner opt-in)');
   try {
     const ops = makeOps({ dry: false, root, record: () => {} });
     const paths = options.realHomeMode ? homePaths(root, realHome, true) : buildHome(ops, { root, setupFrom: options.setupFrom, realHome });
     if (options.realHomeMode) for (const dir of [paths.longRunState, paths.tmp]) ops.mkdir(dir);
     const quietDir = quietToolsDir();
-    if (process.platform !== 'win32') {
-      popupDir = (await popupMaker())('deny').env.PATH.split(delimiter)[0];
-      installShims(ops, { ...files, modeFile: files.dialogModeFile, popupDir });
-    }
-    const realRepo = realRepoOf(realHome, options.setupFrom);
-    run = makeRunState({ dry: false, root, setupFrom: options.setupFrom, realHome, realHomeMode: options.realHomeMode, paths,
-      childPath: childPath(files.bin, quietDir), ...files, registry, realRepo, shimDirs: [files.bin, quietDir].filter(Boolean) });
-    run.before = leakSnapshot({ realHome, realRepo });
-    let gate = null;
-    for (const scenario of scenarios) {
-      const skip = run.limit ? 'stopped at the usage limit (no retry)' : run.interrupted ? 'the run was interrupted' : gate
-        ?? (process.platform === 'win32' && scenario.needsShims ? 'needs the POSIX shims (plan section 10)' : null);
-      if (skip) {
-        const line = notRunLine(scenario.title, skip);
-        print(scenario.id, line);
-        records.push(scenarioRecord(scenario, null, [line]));
-        continue;
+    const login = loginPreflight({ cwd: root, env: childEnv({ home: paths.home, tmp: paths.tmp, path: childPath(files.bin, quietDir),
+      quietLog: files.quietLog, longRunState: paths.longRunState }) });
+    if (!login.loggedIn) {
+      loginMissing = true;
+      say(LOGIN_LINE);
+    } else {
+      say(`e2e live run: root ${root}; results ${outDir}${stale.length ? `; removed ${stale.length} stale root(s)` : ''}; login ${login.detail}`);
+      if (options.realHomeMode) say('e2e: --real-home: the children use the real HOME (owner opt-in)');
+      if (process.platform !== 'win32') {
+        popupDir = (await popupMaker())('deny').env.PATH.split(delimiter)[0];
+        installShims(ops, { ...files, modeFile: files.dialogModeFile, popupDir });
       }
-      say(`# ${scenario.id} ${scenario.title}`);
-      const { ctx, lines } = await runScenario(run, scenario);
-      for (const line of lines) print(scenario.id, line);
-      if (scenario.id === 'E0' && lines.some((line) => line.gate && statusOf(line) !== 'PASS')) gate = GATE_REASON;
-      copyRedacted(ctx.logs, join(outDir, scenario.id, 'logs'));
-      records.push(scenarioRecord(scenario, ctx, lines));
+      const realRepo = realRepoOf(realHome, options.setupFrom);
+      run = makeRunState({ dry: false, root, setupFrom: options.setupFrom, realHome, realHomeMode: options.realHomeMode, paths,
+        childPath: childPath(files.bin, quietDir), ...files, registry, realRepo, shimDirs: [files.bin, quietDir].filter(Boolean) });
+      run.before = leakSnapshot({ realHome, realRepo });
+      await runEach(run, scenarios, { print, records, outDir });
     }
   } catch (error) {
     print('run', checkLine('the run set up and ran', 'no error', error.message, false));
@@ -169,9 +198,12 @@ async function liveRun(options, scenarios) {
     process.off('SIGTERM', onTerm);
   }
   const limit = run?.limit ?? null;
-  const code = exitCodeOf({ lines: all, limit });
-  writeResults(outDir, { root, setupFrom: options.setupFrom, realHomeMode: options.realHomeMode, limit, exit: code, scenarios: records,
+  const login = loginMissing ? { name: 'preflight', text: LOGIN_LINE } : run?.login ?? null;
+  const code = exitCodeOf({ lines: all, limit, login });
+  writeResults(outDir, { root, setupFrom: options.setupFrom, realHomeMode: options.realHomeMode, limit, login, exit: code, scenarios: records,
     run: all.filter((line) => !records.some((record) => record.lines.includes(line))) });
+  if (loginMissing) return code;
+  if (run?.login) say(`e2e: stopped: ${run.login.scenario} ${run.login.name} was refused its login (${run.login.text}); ${LOGIN_LINE}. Nothing was retried.`);
   if (limit) say(`e2e: stopped at a usage limit (${limit.kind}: ${limit.text}); it resets at ${resetText(limit)}. Nothing was retried.`);
   say(`e2e: ${all.filter((line) => statusOf(line) === 'PASS').length}/${all.length} PASS; exit ${code}; results ${join(outDir, 'results.json')}`);
   return code;

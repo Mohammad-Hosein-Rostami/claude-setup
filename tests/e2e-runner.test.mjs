@@ -1,7 +1,8 @@
 // Tests of the e2e runner's command line (tests/e2e/run.mjs): the skip switch (no CS_E2E_LIVE=1: exit 2, nothing made or
 // started), usage errors (exit 2), the dry run (C-2: exit 0, `--model` on every claude line, Fable only on E4's deny lines), a
-// usage limit (exit 3, the reset time printed, no retry), SIGINT (every process of the run ended), and E7 run for real against
-// land in throwaway repos (exit 0).
+// usage limit (exit 3, the reset time printed, no retry), SIGINT (every process of the run ended), E7 run for real against
+// land in throwaway repos (exit 0), the login preflight (not logged in: one line, exit 2, no scenario), a login refusal (the
+// whole run stops, exit 2), no `--resume` after an error result, and an E0 that throws closing the gate.
 // Safety: a real `claude` never runs. Every runner gets a PATH whose first folder holds a fake `claude`, a temp HOME (with a
 // made-up settings.json and CLAUDE.md) and a temp TMPDIR, so its run root, results and the HOME it copies are all in the case.
 import assert from 'node:assert/strict';
@@ -12,6 +13,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { fakeStack } from './claude-fakes.mjs';
 import { cleanEnv } from './clean-env.mjs';
+import { LOGIN_LINE, PREFLIGHT_ARGS } from './e2e/lib/login.mjs';
 import { RUN_PREFIX } from './e2e/lib/scratch.mjs';
 import { makeTempDir, testTempRoot } from './temp-dir-helpers.mjs';
 
@@ -22,8 +24,11 @@ const SESSION_ID = 'fake-e2e-session-1';
 const TREE_SEEN_MS = 2_500; // past the registry's 1 s tree poll, so the fake's own child has been seen
 const pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
-// Fake `claude` scripts (CommonJS, outside every repo). Each logs its argv and whether an API key reached it, then:
-const LOG_CALL = `const { appendFileSync } = require('node:fs');
+// Fake `claude` scripts (CommonJS, outside every repo). Each answers the runner's login preflight (`auth status`) as logged in,
+// else logs its argv and whether an API key reached it, then:
+const LOGGED_IN = `if (process.argv[2] === 'auth') { console.log(JSON.stringify({ loggedIn: true, authMethod: 'made-up' })); process.exit(0); }
+`;
+const LOG_CALL = `${LOGGED_IN}const { appendFileSync } = require('node:fs');
 appendFileSync(process.env.FAKE_E2E_CLAUDE_LOG, JSON.stringify({ args: process.argv.slice(2), apiKey: 'ANTHROPIC_API_KEY' in process.env }) + '\\n');
 const emit = (event) => console.log(JSON.stringify(event));
 emit({ type: 'system', subtype: 'init', session_id: '${SESSION_ID}', apiKeySource: 'none' });
@@ -38,6 +43,19 @@ const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { d
 child.unref();
 require('node:fs').writeFileSync(process.env.FAKE_E2E_CHILD_PID, String(child.pid));
 setTimeout(() => {}, 60000);
+`;
+
+// answers every -p run with an error result: a login refusal, or an error of another kind
+const REFUSED_CLAUDE = `${LOG_CALL}emit({ type: 'result', is_error: true, result: 'Not logged in · Please run /login' });
+`;
+const ERROR_CLAUDE = `${LOG_CALL}emit({ type: 'result', is_error: true, result: 'API Error: 500 made-up overload' });
+`;
+// says it is not logged in, as \`claude auth status\` does without a login
+const LOGGED_OUT_CLAUDE = LOG_CALL.replace(LOGGED_IN, `if (process.argv[2] === 'auth') { console.log(JSON.stringify({ loggedIn: false })); process.exit(0); }
+`);
+const FAILING_GIT = `#!/usr/bin/env node
+process.stderr.write('fatal: made-up git failure\\n');
+process.exit(128);
 `;
 
 /** A case folder: TMPDIR, a temp HOME with made-up owner files, and a fake claude first on PATH. */
@@ -167,5 +185,66 @@ test('E7 live (land in throwaway repos, no claude): every check passes and the r
   assert.ok(e7.length >= 5, stdout);
   for (const line of e7) assert.match(line, /\| PASS$/, line);
   assert.deepEqual(kase.calls(), []);
+  assert.deepEqual(kase.runRoots(), []);
+});
+
+const minusP = (calls) => calls.filter((one) => one.args[0] === '-p');
+
+test('preflight: without a login (fakeStack claude) the run prints one line, exits 2 and starts no scenario', async () => {
+  const kase = makeCase();
+  const stack = fakeStack();
+  const env = { ...kase.env, PATH: `${stack.bin}${delimiter}${process.env.PATH}`, FAKE_CLAUDE_LOG: stack.env.FAKE_CLAUDE_LOG,
+    FAKE_CLAUDE_MODE: 'ok', ACCOUNT_STATE_DIR: stack.env.ACCOUNT_STATE_DIR };
+  const { code, stdout } = await runRunner(['--only', 'E0,E7', '--out', kase.out], env);
+  assert.equal(code, 2, stdout);
+  assert.equal(stdout, `${LOGIN_LINE}\n`);
+  assert.deepEqual(stack.claudeCalls().map((one) => one.args), [[...PREFLIGHT_ARGS]], 'only the preflight ran: no -p, no --resume');
+  assert.deepEqual(kase.runRoots(), []);
+  const results = JSON.parse(readFileSync(join(kase.out, 'results.json'), 'utf8'));
+  assert.deepEqual([results.exit, results.scenarios.length], [2, 0]);
+});
+
+test('preflight: "loggedIn": false gives the same one line and exit 2; the dry run names the preflight and skips it', async () => {
+  const kase = makeCase(LOGGED_OUT_CLAUDE);
+  const live = await runRunner(['--only', 'E7', '--out', kase.out], kase.env);
+  assert.equal(live.code, 2, live.stdout);
+  assert.equal(live.stdout, `${LOGIN_LINE}\n`);
+  assert.deepEqual(kase.calls(), []);
+  const dry = await runRunner(['--dry-run', '--only', 'E0'], kase.env);
+  assert.equal(dry.code, 0, dry.stdout);
+  assert.match(dry.stdout, /^preflight: claude auth status --json .*\(skipped in a dry run\)$/m);
+  assert.ok(!dry.stdout.includes(LOGIN_LINE));
+});
+
+test('a login refusal stops the whole run: exit 2, one line for E0, later scenarios NOT RUN, no --resume', async () => {
+  const kase = makeCase(REFUSED_CLAUDE);
+  const { code, stdout } = await runRunner(['--only', 'E0,E7', '--out', kase.out], kase.env);
+  assert.equal(code, 2, stdout);
+  assert.deepEqual(minusP(kase.calls()).length, 1, 'the first refused call is the last one');
+  assert.equal(stdout.split('\n').filter((line) => line.startsWith('E0 ')).length, 1, stdout);
+  assert.match(stdout, /^E0 .*: every claude run is logged in \| logged in \| a-background-lex: Not logged in .* \| FAIL$/m);
+  assert.match(stdout, /^E7 .* \| not run: stopped: a claude run was refused its login \(no retry\) \| NOT RUN$/m);
+  assert.match(stdout, /^e2e: stopped: E0 a-background-lex was refused its login .*Nothing was retried\.$/m);
+  assert.deepEqual(kase.runRoots(), []);
+});
+
+test('an error result is not resumed: E0(a) stops after its first run and says so', async () => {
+  const kase = makeCase(ERROR_CLAUDE);
+  const { code, stdout } = await runRunner(['--only', 'E0', '--out', kase.out], kase.env);
+  assert.equal(code, 1, stdout);
+  assert.deepEqual(kase.calls().filter((one) => one.args.includes('--resume')), []);
+  assert.match(stdout, /^E0 \(a\) .* \| one run, stopped: an error result: .* \| FAIL$/m);
+  assert.deepEqual(kase.runRoots(), []);
+});
+
+test('an E0 that throws (its git setup fails) closes the gate: the later scenarios are NOT RUN', async () => {
+  const kase = makeCase();
+  writeFileSync(join(kase.dir, 'bin', 'git'), FAILING_GIT);
+  chmodSync(join(kase.dir, 'bin', 'git'), 0o755);
+  const { code, stdout } = await runRunner(['--only', 'E0,E7', '--out', kase.out], kase.env);
+  assert.equal(code, 1, stdout);
+  assert.match(stdout, /^E0 .*: setup ran to its end \| no error \| e2e: setup step failed: git init .*made-up git failure \| FAIL$/m);
+  assert.match(stdout, /^E7 .* \| not run: E0 stopped with an error, so its probes say nothing \| NOT RUN$/m);
+  assert.deepEqual(minusP(kase.calls()), []);
   assert.deepEqual(kase.runRoots(), []);
 });

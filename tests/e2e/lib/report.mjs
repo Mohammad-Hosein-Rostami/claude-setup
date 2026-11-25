@@ -1,5 +1,5 @@
 // How the runner prints its check lines and writes results.json. Exports: OBSERVED_MAX_CHARS, EXIT, statusOf(line),
-// notRunLine(check, reason), formatLine(scenarioId, line), exitCodeOf({lines, limit}), writeResults(outDir, results).
+// notRunLine(check, reason), formatLine(scenarioId, line), exitCodeOf({lines, limit, login}), writeResults(outDir, results).
 // Line format (plan Lane C): `<scenario> <check> | <expected> | <observed> | PASS|FAIL|NOT RUN`, one per check, redacted.
 // NOT RUN (a scenario that cannot run here: Windows, E9 without --real-home, the E0(e) gate) is never a pass: it counts like a
 // FAIL for the exit code (plan section 10: empty is not clean), and the line says why.
@@ -27,10 +27,13 @@ const cut = (text) => {
 export const formatLine = (scenarioId, line) => redact(`${scenarioId} ${line.check} | ${cut(line.expected)} | ${cut(line.observed)} | ${statusOf(line)}`);
 
 /**
- * @param {{lines: object[], limit: object | null}} run every check line of the run and the usage limit it stopped at
- * @returns {number} 3 at a limit, else 1 when any line is not PASS (or there is none), else 0
+ * @param {{lines: object[], limit: object | null, login?: object | null}} run every check line of the run, the usage limit it
+ *   stopped at and the login refusal it stopped at (the preflight's or a claude run's)
+ * @returns {number} 2 at a login stop (the owner must log in first, like a usage error), else 3 at a limit, else 1 when any
+ *   line is not PASS (or there is none), else 0
  */
-export function exitCodeOf({ lines, limit }) {
+export function exitCodeOf({ lines, limit, login = null }) {
+  if (login) return EXIT.usage;
   if (limit) return EXIT.limit;
   return lines.length > 0 && lines.every((line) => statusOf(line) === 'PASS') ? EXIT.pass : EXIT.fail;
 }

@@ -6,12 +6,14 @@
 // Invariants: a live write, link or copy is refused outside the run root (scratch.mjs assertInside); every claude argv comes from
 // claudeArgs (models.mjs), so no run can start without an allowed `--model`; every child gets childEnv (env.mjs) with the
 // scenario's own names only; each child's timeout is what is left of the scenario's wall-clock budget; once a usage limit is
-// seen (run.limit) or the run is interrupted, no new child starts.
+// seen (run.limit), a run is refused its login (run.login, login.mjs) or the run is interrupted, no new child starts; the
+// `--resume` rounds stop at the first run that ended with an error or no result.
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { LIMITS } from './checks.mjs';
 import { runClaude } from './claude-run.mjs';
 import { childEnv } from './env.mjs';
+import { loginRefusal } from './login.mjs';
 import { dialogCalls } from './logs.mjs';
 import { claudeArgs } from './models.mjs';
 import { assertInside } from './scratch.mjs';
@@ -71,9 +73,14 @@ export function makeOps({ dry, root, record }) {
 export function makeRunState(spec) {
   const controller = new AbortController();
   const run = {
-    ...spec, controller, signal: controller.signal, limit: null, interrupted: false, sessionIds: new Set(), before: null,
+    ...spec, controller, signal: controller.signal, limit: null, login: null, interrupted: false, sessionIds: new Set(), before: null,
     stopAtLimit(limit) {
       if (run.limit === null) run.limit = limit;
+      controller.abort();
+    },
+    /** A claude run was refused its login: every later call would be too, so the whole run stops. */
+    stopAtLogin(refusal) {
+      if (run.login === null) run.login = refusal;
       controller.abort();
     },
     interrupt() {
@@ -142,10 +149,13 @@ export function makeContext(run, scenario) {
         registry: run.registry, signal: run.signal, onLimit: (limit) => run.stopAtLimit(limit) });
       if (session.exit.timedOut) ctx.timedOut = true;
       if (session.sessionId) run.sessionIds.add(session.sessionId);
+      const refusal = loginRefusal(session);
+      if (refusal !== null) run.stopAtLogin({ scenario: ctx.id, name, text: refusal });
       return pushed(session);
     },
     /**
      * A claude run, then `--resume <id> "continue"` rounds while `isDone(session)` is false (plan U2; at most maxResumeRounds).
+     * A run that ended with an error result or none (a crash, a refusal) is not resumed: the loop stops there and says so.
      * @returns {Promise<{session: object, sessions: object[], rounds: number, mode: string, done: boolean}>}
      */
     async claudeUntil(spec, isDone) {
@@ -157,12 +167,15 @@ export function makeContext(run, scenario) {
       }
       let rounds = 0;
       const id = () => session.sessionId ?? sessions[0].sessionId;
-      while (!isDone(session) && rounds < LIMITS.maxResumeRounds && id() && !run.stopped() && !ctx.timedOut) {
+      const failed = () => session.result === null || session.result.is_error === true;
+      while (!isDone(session) && !failed() && rounds < LIMITS.maxResumeRounds && id() && !run.stopped() && !ctx.timedOut) {
         rounds += 1;
         session = await ctx.claude({ ...spec, name: `${spec.name}-resume${rounds}`, prompt: 'continue', resume: id() });
         sessions.push(session);
       }
-      return { session, sessions, rounds, mode: rounds === 0 ? 'one run' : `${rounds} resume round(s)`, done: isDone(session) };
+      const done = isDone(session);
+      const ran = rounds === 0 ? 'one run' : `${rounds} resume round(s)`;
+      return { session, sessions, rounds, mode: !done && failed() ? `${ran}, stopped: ${session.result ? 'an error result' : 'no result'}` : ran, done };
     },
   };
   const pushed = (session) => { ctx.sessions.push(session); return session; };

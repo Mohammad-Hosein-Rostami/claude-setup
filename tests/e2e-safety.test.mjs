@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import { cleanEnv } from './clean-env.mjs';
 import { madeUpToken } from './e2e-fixtures.mjs';
 import { childEnv, LOGIN_ENV, REMOVED_ENV } from './e2e/lib/env.mjs';
+import { loginRefusal } from './e2e/lib/login.mjs';
 import { claudeMdCopy, settingsCopy } from './e2e/lib/home.mjs';
 import { ALLOWED_MODELS, claudeArgs, modelOfArgs } from './e2e/lib/models.mjs';
 import { ProcessRegistry } from './e2e/lib/processes.mjs';
@@ -185,6 +186,14 @@ test('exitCodeOf: 0 only when every line passed; a FAIL, a NOT RUN or no line at
   assert.equal(exitCodeOf({ lines: [PASS_LINE, notRunLine('E9', 'needs --real-home')], limit: null }), EXIT.fail);
   assert.equal(exitCodeOf({ lines: [], limit: null }), EXIT.fail);
   assert.match(formatLine('E9', notRunLine('long-run', 'needs --real-home')), /\| NOT RUN$/);
+});
+
+test('a login stop gives exit 2 before a limit; loginRefusal reads the error result or stderr, never a good result', () => {
+  assert.equal(exitCodeOf({ lines: [PASS_LINE], limit: { kind: 'limit' }, login: { name: 'preflight' } }), EXIT.usage);
+  assert.equal(loginRefusal({ result: { is_error: true, result: 'Not logged in · Please run /login' }, stderrTail: '' }), 'Not logged in · Please run /login');
+  assert.match(loginRefusal({ result: null, stderrTail: 'API Error: 401 authentication_error' }), /401/);
+  assert.equal(loginRefusal({ result: { is_error: true, result: 'API Error: 500' }, stderrTail: '' }), null, 'another error is no login stop');
+  assert.equal(loginRefusal({ result: { is_error: false, result: 'the docs say: not logged in' }, stderrTail: '' }), null, 'a good result is never one');
 });
 
 test('settingsCopy: hook paths move to the temp HOME, the guard switch is dropped, auto-continue at a limit is off', () => {
