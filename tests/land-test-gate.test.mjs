@@ -1,6 +1,6 @@
-// Tests for the test gate of home/tools/land/land.mjs (--test, --test-timeout, run-test.mjs): when the base and the lane both
-// changed a file, the rebased tip must pass a test before the base moves; a failing, hung or racing test leaves the base unmoved
-// and the lane's branch where it was, so the next land asks for the test again.
+// Tests for the test gate of home/tools/land/land.mjs (--test, --test-timeout, run-test.mjs): with --test the rebased tip must pass
+// the test before the base moves; a failing, hung or racing test leaves the base unmoved and the lane's branch where it was.
+// With no --test land tests nothing, whatever files both sides changed (ef222fdd; tests/land-overlap-no-test.test.mjs).
 // Every repository is a throw-away one in the OS temp folder (git-tidy-helpers.mjs: no user git config, private HOME). Each test
 // command is a small node script written next to the repo (outside both checkouts), so it runs the same under sh and cmd.
 import assert from 'node:assert/strict';
@@ -24,13 +24,9 @@ const BASE_MOVED_AGAIN_LINES = ['one', 'two', 'base three', 'four', 'base five']
 // Commands both sh and cmd run as typed.
 const PASS = 'exit 0';
 const FAIL = 'exit 1';
-// npm must not ask the registry whether it is up to date: the tests run without the network.
-const NPM_OFFLINE = { npm_config_update_notifier: 'false', npm_config_fund: 'false', npm_config_audit: 'false' };
 // run-test.mjs shows this many of the last output lines of a failed test.
 const TAIL_LINES = 40;
 const PRINTED_LINES = 60;
-// describeOverlap lists this many files and counts the rest.
-const LISTED_FILES = 20;
 // The hung test's deadline, and how long its killed processes may take to be gone.
 const HANG_TIMEOUT_SECONDS = 1;
 const HANG_EXIT_WITHIN_MS = 8000;
@@ -62,20 +58,16 @@ function commitFiles(dir, files, message) {
   return git(dir, 'rev-parse', 'HEAD');
 }
 
-/** `names` mapped to the same text, for commitFiles. */
-const allWith = (names, content) => Object.fromEntries(names.map((name) => [name, content]));
-
 /**
- * A repo where the base and the lane (own worktree) both changed `files` since the lane branched: the lane edits line 1 of each,
- * then the base edits line 5. `laneFirst` adds lane commits before that (such as a package.json), so the base never touches them.
+ * A repo where the base and the lane (own worktree) both changed SHARED since the lane branched: the lane edits line 1, then the
+ * base edits line 5. The test gate does not depend on that overlap any more; the shape stays so that the rebase has work to do.
  */
-function overlapRepo({ files = [SHARED], laneFirst = {} } = {}) {
+function overlapRepo() {
   const repo = makeRepo();
-  commitFiles(repo, allWith(files, text(BASE_LINES)), 'add the shared files');
+  commitFiles(repo, { [SHARED]: text(BASE_LINES) }, 'add the shared file');
   const worktree = addWorktree(repo, 'lane', LANE);
-  if (Object.keys(laneFirst).length > 0) commitFiles(worktree, laneFirst, 'lane setup');
-  commitFiles(worktree, allWith(files, text(LANE_LINES)), 'lane edits line 1');
-  commitFiles(repo, allWith(files, text(MOVED_BASE_LINES)), 'base edits line 5');
+  commitFiles(worktree, { [SHARED]: text(LANE_LINES) }, 'lane edits line 1');
+  commitFiles(repo, { [SHARED]: text(MOVED_BASE_LINES) }, 'base edits line 5');
   return { repo, worktree };
 }
 
@@ -183,7 +175,7 @@ function assertRebasedOnto(repo, tested, base) {
   assert.notEqual(tested, base);
 }
 
-test('overlapping files with a passing --test land the sha the test saw, after listing the files', () => {
+test('a passing --test lands the sha the test saw', () => {
   const { repo, worktree } = overlapRepo();
   const seen = join(repo, '..', 'seen-head.txt');
   const command = recordHeadCommand(repo, seen);
@@ -192,8 +184,6 @@ test('overlapping files with a passing --test land the sha the test saw, after l
   const tip = git(repo, 'rev-parse', 'main');
   assert.equal(readFileSync(seen, 'utf8'), tip, 'the test ran on the sha that landed');
   assert.deepEqual(outputLines(result.stdout), [
-    `main and ${LANE} both changed 1 file(s) since ${LANE} branched:`,
-    `  ${SHARED}`,
     `testing ${tip} in ${worktree}: ${command}`,
     `test passed on ${tip}`,
     `landed ${LANE} on main at ${tip} (1 commit(s))`,
@@ -208,39 +198,11 @@ test('overlapping files with a passing --test land the sha the test saw, after l
   assert.equal(branchExists(repo, LANE), false);
 });
 
-test('overlapping files with no --test and no package.json are refused with the files and the --test fix; nothing changes', () => {
-  const { repo, worktree } = overlapRepo();
-  const before = heads(repo);
-  const result = land([LANE, '--repo', repo], { cwd: repo });
-  assert.equal(result.status, 1, result.stdout);
-  assert.ok(result.stderr.startsWith(`land: main and ${LANE} both changed 1 file(s) since ${LANE} branched:\n  ${SHARED}\n`), result.stderr);
-  assert.ok(result.stderr.includes('so the rebased tip must pass a test before it lands, and the lane has no package.json test script; nothing changed.'), result.stderr);
-  assert.ok(result.stderr.includes(`node ~/.claude/tools/land/land.mjs ${LANE} --repo ${repo} --test "<test command>"`), result.stderr);
-  assertLaneAsItWas(repo, worktree, before);
-});
-
-test('after an overlap refusal with no test, the next land with no test refuses again: the overlap is still seen', () => {
-  const { repo, worktree } = overlapRepo();
-  const before = heads(repo);
-  const first = land([LANE, '--repo', repo], { cwd: repo });
-  assert.equal(first.status, 1, first.stdout);
-  const again = land([LANE, '--repo', repo], { cwd: repo });
-  assert.equal(again.status, 1, again.stdout);
-  assert.equal(again.stderr, first.stderr, 'the same files and the same fix');
-  assert.ok(again.stderr.includes(`\n  ${SHARED}\n`), again.stderr);
-  assertLaneAsItWas(repo, worktree, before);
-});
-
-test('after a failed --test the next land with no test refuses on the overlap, and one with a passing --test lands', () => {
+test('after a failed --test the lane is as it was, and the next land with a passing --test lands', () => {
   const { repo, worktree } = overlapRepo();
   const before = heads(repo);
   const failed = land([LANE, '--repo', repo, '--test', FAIL], { cwd: repo });
   assert.equal(failed.status, 1, failed.stdout);
-  assertLaneAsItWas(repo, worktree, before);
-
-  const untested = land([LANE, '--repo', repo], { cwd: repo });
-  assert.equal(untested.status, 1, untested.stdout);
-  assert.ok(untested.stderr.startsWith(`land: main and ${LANE} both changed 1 file(s) since ${LANE} branched:\n  ${SHARED}\nso the rebased tip must pass a test`), untested.stderr);
   assertLaneAsItWas(repo, worktree, before);
 
   const passed = land([LANE, '--repo', repo, '--test', PASS], { cwd: repo });
@@ -252,47 +214,7 @@ test('after a failed --test the next land with no test refuses on the overlap, a
   assert.equal(branchExists(repo, LANE), false);
 });
 
-test('overlapping files with no --test run the lane package.json test script: exit 0 lands, exit 1 refuses', () => {
-  const passing = overlapRepo({ laneFirst: { 'package.json': JSON.stringify({ scripts: { test: PASS } }) } });
-  const landed = land([LANE, '--repo', passing.repo], { cwd: passing.repo, env: NPM_OFFLINE });
-  assert.equal(landed.status, 0, landed.stderr);
-  const tip = git(passing.repo, 'rev-parse', 'main');
-  assert.ok(landed.stdout.includes(`testing ${tip} in ${passing.worktree}: npm test\n`), landed.stdout);
-  assert.ok(landed.stdout.includes(`test passed on ${tip}\nlanded ${LANE} on main at ${tip}`), landed.stdout);
-  assert.equal(branchExists(passing.repo, LANE), false);
-
-  const failing = overlapRepo({ laneFirst: { 'package.json': JSON.stringify({ scripts: { test: FAIL } }) } });
-  const before = heads(failing.repo);
-  const refused = land([LANE, '--repo', failing.repo], { cwd: failing.repo, env: NPM_OFFLINE });
-  assert.equal(refused.status, 1, refused.stdout);
-  assert.match(refused.stderr, /^land: the test of [0-9a-f]{40} failed \(exit 1\): npm test\. Nothing landed/);
-  assertRebasedOnto(failing.repo, testedSha(refused.stdout), before[0]);
-  assertLaneAsItWas(failing.repo, failing.worktree, before);
-});
-
-test('a package.json with no test script, an empty one or invalid JSON does not count as a test: refused, nothing changes', () => {
-  const fixLine = `--test "<test command>"`;
-  for (const [label, manifest] of [
-    ['no test script', JSON.stringify({ scripts: { build: PASS } })],
-    ['an empty test script', JSON.stringify({ scripts: { test: '  ' } })],
-  ]) {
-    const { repo, worktree } = overlapRepo({ laneFirst: { 'package.json': manifest } });
-    const before = heads(repo);
-    const result = land([LANE, '--repo', repo], { cwd: repo, env: NPM_OFFLINE });
-    assert.equal(result.status, 1, label);
-    assert.ok(result.stderr.includes('the lane has no package.json test script; nothing changed') && result.stderr.includes(fixLine), `${label}: ${result.stderr}`);
-    assertLaneAsItWas(repo, worktree, before);
-  }
-  const { repo, worktree } = overlapRepo({ laneFirst: { 'package.json': '{ "scripts": ' } });
-  const before = heads(repo);
-  const result = land([LANE, '--repo', repo], { cwd: repo, env: NPM_OFFLINE });
-  assert.equal(result.status, 1);
-  assert.ok(result.stderr.startsWith(`land: cannot read ${join(worktree, 'package.json')} (`), result.stderr);
-  assert.ok(result.stderr.includes('; nothing changed. Name the test with --test "<command>"'), result.stderr);
-  assertLaneAsItWas(repo, worktree, before);
-});
-
-test('a failing --test is refused with its exit code and only its last 40 output lines, after the overlap list', () => {
+test('a failing --test is refused with its exit code and only its last 40 output lines', () => {
   const { repo, worktree } = overlapRepo();
   const before = heads(repo);
   const command = printThenFailCommand(repo);
@@ -308,16 +230,11 @@ test('a failing --test is refused with its exit code and only its last 40 output
   assert.deepEqual(shown.slice(tailStart + 1), expected, 'exactly the last 40 lines, in order');
   assert.equal(shown.includes(printedLine(PRINTED_LINES - TAIL_LINES)), false, 'the line before the last 40 is not shown');
   assert.equal(shown.includes(printedLine(1)), false);
-  // The overlap list is printed even though the test then failed.
-  assert.deepEqual(outputLines(result.stdout), [
-    `main and ${LANE} both changed 1 file(s) since ${LANE} branched:`,
-    `  ${SHARED}`,
-    `testing ${tip} in ${worktree}: ${command}`,
-  ]);
+  assert.deepEqual(outputLines(result.stdout), [`testing ${tip} in ${worktree}: ${command}`]);
   assertLaneAsItWas(repo, worktree, before);
 });
 
-test('with no overlap, no --test lands without testing, a passing --test lands and a failing one is refused', () => {
+test('with a lane that only the base moved past, no --test lands without testing, a passing --test lands and a failing one is refused', () => {
   const plain = laneBehindBase();
   const untested = land([LANE, '--repo', plain.repo], { cwd: plain.repo });
   assert.equal(untested.status, 0, untested.stderr);
@@ -401,7 +318,7 @@ test('a passing test whose background process holds the output from its own proc
   }
 });
 
-/** Lands a no-overlap lane with a --test that leaves a background process of `kind` and exits 0; returns what a test checks. */
+/** Lands a lane that only the base moved past, with a --test that leaves a background process of `kind` and exits 0; returns what a test checks. */
 function landWithBackground(kind) {
   const { repo } = laneBehindBase();
   const pidFile = join(repo, '..', `background-${kind}.pid`);
@@ -494,19 +411,19 @@ test('the longest --test-timeout a timer holds (2147483 s) is accepted, and the 
   assert.deepEqual(outputLines(result.stdout).slice(0, 3), [`testing ${tip} in ${worktree}: ${PASS}`, `test passed on ${tip}`, `landed ${LANE} on main at ${tip} (1 commit(s))`]);
 });
 
-test('overlapping files on a branch with no worktree are refused before anything changes; without overlap it still lands', () => {
-  const { repo, worktree } = overlapRepo();
+test('a --test on a branch with no worktree is refused before anything changes; with no --test it still lands', () => {
+  const { repo, worktree } = laneBehindBase();
   git(repo, 'worktree', 'remove', worktree);
   const before = heads(repo);
-  const result = land([LANE, '--repo', repo], { cwd: repo });
+  const result = land([LANE, '--repo', repo, '--test', PASS], { cwd: repo });
   assert.equal(result.status, 1, result.stdout);
-  assert.ok(result.stderr.includes(`a test must run on the rebased tip, in the lane's worktree, and ${LANE} has none; nothing changed`), result.stderr);
+  assert.ok(result.stderr.includes(`the test must run on the rebased tip, in the lane's worktree, and ${LANE} has none; nothing changed`), result.stderr);
   assert.ok(result.stderr.includes(`git worktree add <folder> ${LANE}`), result.stderr);
   assert.deepEqual(heads(repo), before, 'neither the base nor the lane moved');
   assert.equal(git(repo, 'symbolic-ref', '--short', 'HEAD'), 'main', 'the base checkout is on the base');
   assert.equal(git(repo, 'status', '--porcelain'), '');
 
-  // Regression guard: the same shape with no overlap and no --test lands as before.
+  // Regression guard: the same shape with no --test lands as before.
   const plain = laneBehindBase();
   git(plain.repo, 'worktree', 'remove', plain.worktree);
   const landed = land([LANE, '--repo', plain.repo], { cwd: plain.repo });
@@ -528,57 +445,6 @@ test('a lane with no commit in common with the base is refused before anything c
   assert.ok(result.stderr.startsWith(`land: ${LANE} has no commit in common with main: a rebase would replay`), result.stderr);
   assert.deepEqual(heads(repo), before, 'neither the base nor the lane moved');
   assert.ok(existsSync(worktree));
-});
-
-test('a file the base renamed while the lane edited it counts as overlap', () => {
-  const repo = makeRepo();
-  commitFiles(repo, { 'old.txt': text(BASE_LINES) }, 'add old.txt');
-  const worktree = addWorktree(repo, 'lane', LANE);
-  commitFiles(worktree, { 'old.txt': text(LANE_LINES) }, 'lane edits old.txt');
-  git(repo, 'mv', 'old.txt', 'new.txt');
-  git(repo, 'commit', '-q', '-m', 'base renames old.txt');
-  const before = heads(repo);
-  const result = land([LANE, '--repo', repo], { cwd: repo });
-  assert.equal(result.status, 1, result.stdout);
-  assert.ok(result.stderr.startsWith(`land: main and ${LANE} both changed 1 file(s) since ${LANE} branched:\n  old.txt\nso the rebased tip`), result.stderr);
-  assertLaneAsItWas(repo, worktree, before);
-});
-
-test('a file the lane renamed while the base edited it counts as overlap', () => {
-  const repo = makeRepo();
-  commitFiles(repo, { 'old.txt': text(BASE_LINES) }, 'add old.txt');
-  const worktree = addWorktree(repo, 'lane', LANE);
-  git(worktree, 'mv', 'old.txt', 'new.txt');
-  git(worktree, 'commit', '-q', '-m', 'lane renames old.txt');
-  commitFiles(repo, { 'old.txt': text(MOVED_BASE_LINES) }, 'base edits old.txt');
-  const before = heads(repo);
-  const result = land([LANE, '--repo', repo], { cwd: repo });
-  assert.equal(result.status, 1, result.stdout);
-  assert.ok(result.stderr.startsWith(`land: main and ${LANE} both changed 1 file(s) since ${LANE} branched:\n  old.txt\nso the rebased tip`), result.stderr);
-  assertLaneAsItWas(repo, worktree, before);
-});
-
-test('an overlapping path with spaces is listed as it is', () => {
-  const spaced = 'my file.txt';
-  const { repo } = overlapRepo({ files: [spaced] });
-  const result = land([LANE, '--repo', repo, '--test', PASS], { cwd: repo });
-  assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(outputLines(result.stdout).slice(0, 2), [`main and ${LANE} both changed 1 file(s) since ${LANE} branched:`, `  ${spaced}`]);
-});
-
-test('more than 20 overlapping files list the first 20, sorted, and count the rest', () => {
-  const extra = 3;
-  const names = Array.from({ length: LISTED_FILES + extra }, (_, i) => `f${String(i + 1).padStart(2, '0')}.txt`);
-  const { repo } = overlapRepo({ files: [...names].reverse() });
-  const result = land([LANE, '--repo', repo], { cwd: repo });
-  assert.equal(result.status, 1, result.stdout);
-  const shown = outputLines(result.stderr);
-  assert.deepEqual(shown.slice(0, LISTED_FILES + 2), [
-    `land: main and ${LANE} both changed ${names.length} file(s) since ${LANE} branched:`,
-    ...names.slice(0, LISTED_FILES).map((name) => `  ${name}`),
-    `  ... and ${extra} more`,
-  ]);
-  assert.equal(shown.includes(`  ${names[LISTED_FILES]}`), false, 'the 21st file is counted, not listed');
 });
 
 test('a test that leaves an untracked file in the lane worktree: the tested sha lands, and the clean-up stops at that worktree', () => {
@@ -659,7 +525,7 @@ test('a test that switches the base checkout to another branch is refused: the b
   assertLaneAsItWas(repo, worktree, before);
 });
 
-test('a base that moves after land read the overlap is refused at the fast-forward, and the next land asks for the test again', () => {
+test('a base that moves during the test is refused at the fast-forward, the lane is kept at the tested sha, and the next land with --test lands', () => {
   const { repo, worktree } = overlapRepo();
   const before = heads(repo);
   // A commit on the base in the base checkout while the test runs, as a parallel land would make it; it edits the shared file too.
@@ -683,8 +549,9 @@ test('a base that moves after land read the overlap is refused at the fast-forwa
   assert.equal(git(worktree, 'symbolic-ref', '--short', 'HEAD'), LANE);
   assert.equal(git(worktree, 'status', '--porcelain'), '');
 
-  const again = land([LANE, '--repo', repo], { cwd: repo });
-  assert.equal(again.status, 1, again.stdout);
-  assert.ok(again.stderr.startsWith(`land: main and ${LANE} both changed 1 file(s) since ${LANE} branched:\n  ${SHARED}\n`), again.stderr);
-  assert.equal(git(repo, 'rev-parse', 'main'), movedBase);
+  const again = land([LANE, '--repo', repo, '--test', PASS], { cwd: repo });
+  assert.equal(again.status, 0, again.stderr);
+  const landed = git(repo, 'rev-parse', 'main');
+  assert.equal(testedSha(again.stdout), landed, 'the retry landed the sha it tested');
+  assertRebasedOnto(repo, landed, movedBase);
 });
