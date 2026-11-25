@@ -1,7 +1,7 @@
 // Tests of lib/pool-ignore.mjs and the claim's use of it (lane-pool.mjs claimLane, lane-cli.mjs runClaim): a claim keeps the lane pool
 // `.claude/worktrees/` out of `git status` through the repo's local info/exclude, once, and says so on stderr.
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -150,4 +150,46 @@ test('ignorePool makes a missing info/ folder and a 0644 info/exclude holding th
   assert.deepEqual(ignorePool(repo), { outcome: 'added', path: excludePath(repo) });
   assert.equal(readFileSync(excludePath(repo), 'utf8'), `${POOL_EXCLUDE_LINE}\n`);
   assert.equal(statSync(excludePath(repo)).mode & 0o777, PLAIN_FILE_MODE & ~process.umask());
+});
+
+const infoPath = (repo) => join(repo, '.git', 'info');
+const linkedInfoWhy = (repo) => `not added to ${excludePath(repo)}: ${infoPath(repo)} is a link, never followed`;
+
+/** A repo whose .git/info folder is a link to `outside/info-target`; the target holds an exclude file when `withExclude`. */
+function repoWithLinkedInfo({ withExclude }) {
+  const repo = makeRepo();
+  const outside = realpathSync(makeTempDir('pool-ignore-info-outside-'));
+  const target = join(outside, 'info-target');
+  const bytes = Buffer.from('# outside the repo\r\nkeep-me\n');
+  if (withExclude) {
+    mkdirSync(target);
+    writeFileSync(join(target, 'exclude'), bytes);
+  }
+  rmSync(infoPath(repo), { recursive: true });
+  symlinkSync(target, infoPath(repo));
+  return { repo, outside, target, bytes };
+}
+
+test('ignorePool returns failed and never writes through a .git/info folder that links to an outside folder', POSIX_ONLY, () => {
+  const { repo, target, bytes } = repoWithLinkedInfo({ withExclude: true });
+  assert.deepEqual(ignorePool(repo), { outcome: 'failed', path: excludePath(repo), why: linkedInfoWhy(repo) });
+  assert.deepEqual(readdirSync(target), ['exclude']);
+  assert.deepEqual(readFileSync(join(target, 'exclude')), bytes);
+});
+
+test('ignorePool returns failed and creates nothing at the target of a dangling .git/info link', POSIX_ONLY, () => {
+  const { repo, outside, target } = repoWithLinkedInfo({ withExclude: false });
+  assert.deepEqual(ignorePool(repo), { outcome: 'failed', path: excludePath(repo), why: linkedInfoWhy(repo) });
+  assert.equal(existsSync(target), false);
+  assert.deepEqual(readdirSync(outside), []);
+});
+
+test('a claim in a repo whose .git/info links outside it still succeeds, names the link on the failed line and leaves the outside exclude alone', POSIX_ONLY, () => {
+  const { repo, target, bytes } = repoWithLinkedInfo({ withExclude: true });
+  const result = claim(repo, 'lane/a', head(repo), claimEnv());
+  assert.equal(result.status, 0, result.stderr);
+  const failedLines = result.stderr.split('\n').filter((line) => line.startsWith('git-tidy: lane folders show in git status'));
+  assert.deepEqual(failedLines, [`git-tidy: lane folders show in git status of ${repo} (${linkedInfoWhy(repo)}): land refuses there until git ignores .claude/worktrees/`]);
+  assert.deepEqual(readdirSync(target), ['exclude']);
+  assert.deepEqual(readFileSync(join(target, 'exclude')), bytes);
 });
