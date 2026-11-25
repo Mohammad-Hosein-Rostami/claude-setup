@@ -212,8 +212,8 @@ at the end of a session is `home/hooks/git-tidy-gate.mjs`.
 
 A live lane worktree made by Bash or kept by a workflow is locked (`git worktree lock --reason <lane> <session>`), so prune and
 the in-work check leave it alone; agent worktrees are locked by Claude Code itself while the agent runs. `land` unlocks the
-landed lane's own worktree before its cleanup removes it (no other lock is touched). A lock over a day old is the hint
-`stale-lock?`.
+landed lane's own worktree outside the pool before its cleanup removes it (no other lock is touched); a pool folder is only
+ever unlocked by the detach (below). A lock over a day old is the hint `stale-lock?`.
 
 ## lane (the lane folder pool)
 
@@ -256,8 +256,13 @@ node_modules) stay warm, and no folder is left behind:
   (`RECLAIM_IDLE_MS`; use = its HEAD reflog, HEAD or index changed). When the repository was used in that time (a folder holds a
   branch, or a free one was used), its lowest free folder stays. A folder whose HEAD reflog holds commits found nowhere else
   (prune's rule), or with a git repository inside an ignored folder, is kept. Exit 0, 1 when a removal failed.
-- `land` detaches the landed lane's pool folder at the landed sha right after the fast-forward (and unlocks it), so its cleanup
-  deletes the branch and keeps the folder (`lane folder <path> detached at <sha> (kept for the next lane)`, JSON `detached`).
+- `land` detaches the landed lane's pool folder at the landed sha right after the fast-forward (and unlocks it), under the pool
+  lock and on facts read inside it, so its cleanup deletes the branch and keeps the folder (`lane folder <path> detached at <sha>
+  (kept for the next lane)`, JSON `detached`). A folder it cannot free (its HEAD is not the landed sha, it has tracked changes, or
+  the switch or unlock fails) stays as it is, locked: the line is `lane folder <path> not freed: <why>; deal with that, then free
+  it with: node ~/.claude/tools/git-tidy/git-tidy.mjs lane release --repo <repo> --folder <path>`. When the detach cannot run at
+  all (the pool lock stayed held for 60 s, or a git read failed), nothing is touched and the line is `lane folder detach skipped:
+  <why>`. JSON `detached` is `{ folder, kept, other, why }`.
 
 Free means: a linked worktree of this repository, unlocked, HEAD detached at a commit on the base, no unfinished operation, no
 `index.lock` or `HEAD.lock`, `git status` (untracked files included) empty, no file marked assume-unchanged, and no
