@@ -31,7 +31,7 @@ import { msFromEnv } from './env-ms.mjs';
 
 /** The driver reads the control files this often (spec 7.8): 2 s, or its knob (env-ms.mjs, tests). */
 export const CONTROL_POLL_MS = msFromEnv('CLAUDE_LONG_RUN_CONTROL_POLL_MS', 2 * 1000);
-/** The heartbeat in driver.json (a beat older than 120 s means the driver is gone). */
+/** The heartbeat in driver.json (a beat older than STALE_BEAT_MS no longer shows the driver live; its lock line may, run-store.mjs). */
 export const BEAT_MS = 30 * 1000;
 /** The signals that pause the run: every boss is ended cleanly, then the driver exits (a SIGKILL no handler sees: `status` warns). */
 export const STOP_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'];
@@ -149,7 +149,12 @@ async function endParked(ctx, signal) {
 
 function pollControl(ctx) {
   const signal = ctx.control.runSignal();
-  const recorded = runAccount(ctx.paths); // never throws: this runs in a timer
+  const recorded = runAccount(ctx.paths); // never throws or blocks: this runs in a timer
+  if (recorded === null && !ctx.runFileWarned) {
+    // run.json is no readable regular file (a FIFO, a link, damaged): every step keeps the account it has, said once.
+    ctx.runFileWarned = true;
+    recordEvent(ctx.paths, { event: 'run-file-unreadable', detail: 'run.json is not a readable regular file; the steps keep their account', at: ctx.now() });
+  }
   for (const [unitId, handle] of ctx.live.handles) {
     if (signal !== null) handle.end(signal);
     const unitSignal = ctx.control.unitSignal(unitId);

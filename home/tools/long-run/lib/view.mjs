@@ -8,7 +8,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PRIVATE_FILE_MODE } from '../../account/lib/private-fs.mjs';
 import { units } from './job.mjs';
-import { driverAlive, isPidAlive, readJournal, readJson, readRunJob } from './run-store.mjs';
+import { driverAlive, isPidAlive, readJournal, readJson, readRunFile, readRunJob } from './run-store.mjs';
 import { orphanAlive } from './claude-run.mjs';
 
 /** Every status word of a run (spec 7.9). */
@@ -65,7 +65,7 @@ function sessionOf(paths, unit, journal, driver) {
  */
 export function runView(paths, now = new Date()) {
   const job = readRunJob(paths);
-  const run = readJson(paths.run) ?? {};
+  const run = readRunFile(paths) ?? {}; // never blocks on a FIFO: the driver writes the summary at a pause
   const driver = readJson(paths.driver);
   const alive = driverAlive(paths, now);
   const steps = [];

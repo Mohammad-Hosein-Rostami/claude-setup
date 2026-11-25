@@ -1,23 +1,25 @@
 // Purpose: where a long run keeps its state (spec 7.6) and the small file primitives on it: paths, atomic JSON, the driver lock
 //   and its heartbeat, per-run events, step journals, folder locks (one live run per folder) and the run list.
 // Exports: RunBusy, STALE_BEAT_MS, RUN_ID_PATTERN, stateRoot, runPaths, newRunId, readJson, writeJson, appendJsonLine,
-//   readJsonLines, readRunJob, readJournal, writeJournal, isPidAlive, driverAlive, acquireLock, releaseLock, runAccount, claimFolder,
-//   releaseFolder, listRunIds, ensureRunDirs.
+//   readJsonLines, readRunJob, readJournal, writeJournal, isPidAlive, driverAlive, acquireLock, releaseLock, readRunFile,
+//   runAccount, claimFolder, releaseFolder, listRunIds, ensureRunDirs.
 // Invariants: folders 0700 and files 0600 (account/lib/private-fs.mjs); every JSON file is replaced whole (temp + rename), so a
 //   reader never sees half of one; one holder rule (lockHolder) decides for every caller whether a run is held; the lock line
 //   `<pid> <host> <start>` is created whole with flag "wx" and, when nobody holds the run, broken by one breaker at a time
 //   (disk-free's breakStale) before it is created again; a release removes the lock only while it names this process; the lock
-//   file is read without following a link or waiting on a FIFO, at most 256 bytes. Nothing here holds a token.
+//   file (at most 256 bytes) and run.json (readRunFile) are read without following a link or waiting on a FIFO. Nothing here
+//   holds a token.
 import { createHash } from 'node:crypto';
-import { appendFileSync, closeSync, constants, existsSync, lstatSync, openSync, readdirSync, readFileSync, readSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, lstatSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { PRIVATE_FILE_MODE, ensurePrivateDir, writeFileAtomic } from '../../account/lib/private-fs.mjs';
 import { breakStale } from '../../disk-free/lib/lock-file.mjs';
+import { readRegularFile } from '../../env-names/lib/read-regular-file.mjs';
 import { processStarts } from '../../disk-free/lib/live-sessions.mjs';
 import { folderKey, readFrozenJob } from './job.mjs';
 
-/** A driver whose heartbeat is older than this is gone (it beats every 30 s). */
+/** A beat older than this no longer shows a live driver (it beats every 30 s); the lock line may still (lockHolder). */
 export const STALE_BEAT_MS = 120 * 1000;
 /** A run id: `<job name>-<yyyymmdd-hhmmss>` in local time, `-<n>` added when two start in one second. */
 export const RUN_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}-\d{8}-\d{6}(?:-\d{1,3})?$/;
@@ -127,10 +129,8 @@ const MS_PER_SECOND = 1000;
 // ps lstart has whole seconds, and Linux derives it from boot time and clock ticks, so one process can read a second apart.
 const START_TOLERANCE_MS = 2000;
 const LOCK_READ_MAX_BYTES = 256; // a lock line is about 50 bytes; a bigger file is not a lock
-// `<pid> <host> <start epoch ms>`; main's drivers wrote `<pid> <host>` (no start).
-const LOCK_PATTERN = /^(\d+) (\S+)(?: (\d+))?\n?$/;
-const NO_FOLLOW = constants.O_NOFOLLOW ?? 0; // not defined on Windows
-const NO_BLOCK = constants.O_NONBLOCK ?? 0;
+const LOCK_PATTERN = /^(\d+) (\S+)(?: (\d+))?\n?$/; // `<pid> <host> <start epoch ms>`; main's drivers wrote no start
+const RUN_JSON_MAX_BYTES = 64 * 1024; // run.json is a few hundred bytes; the switches list adds about 80 per switch
 
 function lstatOrNull(path) {
   try {
@@ -141,20 +141,14 @@ function lstatOrNull(path) {
   }
 }
 
-/** The text of the regular file at `path` (at most LOCK_READ_MAX_BYTES), never following a link or waiting on a FIFO; null when gone. */
-function readSmallFile(path) {
-  let fd;
+function readStateFile(path, maxBytes) {
+  // env-names' readRegularFile: no link followed, no FIFO waited on; null when gone, a link, not a regular file or too big.
   try {
-    fd = openSync(path, constants.O_RDONLY | NO_FOLLOW | NO_BLOCK);
+    const read = readRegularFile(path, maxBytes);
+    return 'bytes' in read ? read.bytes.toString('utf8') : null;
   } catch (error) {
     if (error.code === 'ENOENT') return null;
     throw error;
-  }
-  try {
-    const buffer = Buffer.alloc(LOCK_READ_MAX_BYTES);
-    return buffer.toString('utf8', 0, readSync(fd, buffer, 0, buffer.length, 0));
-  } finally {
-    closeSync(fd);
   }
 }
 
@@ -167,8 +161,8 @@ function readLock(lockPath) {
   if (info === null) return null;
   if (!info.isFile()) return { kind: 'other' };
   if (info.size === 0) return { kind: 'empty', mtimeMs: info.mtimeMs };
-  const text = readSmallFile(lockPath);
-  if (text === null) return null;
+  const text = readStateFile(lockPath, LOCK_READ_MAX_BYTES);
+  if (text === null) return { kind: 'other' }; // a link, a FIFO or a file over the cap
   const match = LOCK_PATTERN.exec(text);
   if (match === null) return { kind: 'other' };
   return { kind: 'lock', pid: Number(match[1]), host: match[2], startMs: match[3] === undefined ? null : Number(match[3]) };
@@ -249,12 +243,21 @@ export function releaseLock(paths) {
 }
 
 /**
+ * run.json, or null when it is missing, a link, not a regular file or over RUN_JSON_MAX_BYTES: a live driver reads it in its
+ * timers, so a FIFO must never block it and a link must never point it at another file. @throws on invalid JSON.
+ */
+export function readRunFile(paths) {
+  const text = readStateFile(paths.run, RUN_JSON_MAX_BYTES);
+  return text === null ? null : JSON.parse(text);
+}
+
+/**
  * The account run.json names now (`start` and `resume --account` write it), for a driver that follows a switch.
  * @returns {string | null} null on any read or parse error ("no change"): timers read it, and a timer must never throw.
  */
 export function runAccount(paths) {
   try {
-    const account = readJson(paths.run)?.account;
+    const account = readRunFile(paths)?.account;
     return typeof account === 'string' ? account : null;
   } catch {
     return null; // a run.json being replaced or damaged: the next read tells
