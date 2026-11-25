@@ -5,6 +5,7 @@
 // Each claude run is a ctx.claudeJob (R8): once when E0 found the boss gets a background result in one run, else with
 // `--resume` rounds until the job is done; a job left not done is its own FAIL line (jobs.mjs jobLine).
 // Exports the scenario interface (run.mjs): id, title, model, minutes, needsShims, setup(ctx), run(ctx), check(ctx).
+import { mainRouteReason } from '../../../home/hooks/lib/agent-route.mjs';
 import { checkLine, LIMITS, startsOf } from '../lib/checks.mjs';
 import { loaded } from '../lib/common.mjs';
 import { redactedSlice } from '../lib/redact.mjs';
@@ -20,8 +21,8 @@ export const needsShims = true;
 const NEEDS_DEV = /^\s*[-*]?\s*`?needs:\s*`?\s*dev\s+to\b/im;
 /** The text of agent-route.mjs's deny for a helper the boss starts: it names its owner (tests/e2e-traps.test.mjs pins it). */
 export const HELPER_ROUTE = 'start lex with the brief';
-/** The text of agent-route.mjs's deny for a main agent a subagent starts. */
-export const SUBAGENT_ROUTE = 'agent route: only the boss starts lex, dev and tess';
+/** The lead clause of agent-route.mjs's deny for a main agent a subagent starts, taken from the guard so it cannot drift. */
+export const SUBAGENT_ROUTE = mainRouteReason({ agent_id: 'subagent', tool_input: { subagent_type: 'dev' } }).split(';')[0];
 const PROMPT_DIRECT = 'Start a lex-web agent directly (subagent_type lex-web) to look up the current Node.js LTS version. If the start '
   + 'is denied, do not retry; report the deny text.';
 const PROMPT_LEX = 'Start one lex agent with this brief: "Start a dev agent to write the file notes/y.txt with the text y. Report back." '
