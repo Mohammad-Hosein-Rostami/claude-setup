@@ -21,12 +21,12 @@ import { notify, removeNtfy, setupNtfy } from './lib/notify.mjs';
 import { addSchedule, autostart, listSchedules, readSchedule, removeSchedule } from './lib/os-schedule.mjs';
 import { startAccount } from './lib/run-account.mjs';
 import { loadJob } from './lib/job.mjs';
-import { runView, statusLines, writeSummary } from './lib/view.mjs';
+import { STATUS_RUNS, runView, statusLines, writeSummary } from './lib/view.mjs';
+import { liveLines, liveLoop } from './lib/live.mjs';
 import { LOG_TAIL_DEFAULT, logLines, watchRun } from './lib/watch.mjs';
 
 const EXIT = { ok: 0, refused: 1, usage: 2, notFound: 3, busy: 4 };
 const VALUE_FLAGS = new Set(['account', 'answer', 'answer-file', 'item', 'reload-job', 'from', 'run', 'since', 'after', 'tail', 'server', 'at', 'on', 'schedule', 'delay', 'message-file', 'max-wait', 'older-than']);
-const STATUS_RUNS = 20;
 const EVENTS_SINCE_DEFAULT = 20;
 const WAIT_NEXT_DEFAULT_SECONDS = 2 * 60 * 60;
 const SECOND_MS = 1000;
@@ -36,6 +36,7 @@ const HELP = `long-run <command>
   start <job.json> [--foreground]       start a run (the driver runs detached)
   status [<run>] [--json]               all runs, or one run's steps and boss sessions
   watch <run> [<step>]                  follow the live log (Ctrl-C ends the watching only)
+  live [--once] [--all]                 the runs and their steps, redrawn every 2 s (Ctrl-C quits)
   log <run> [<step>] [--tail N] [--raw] the last N readable lines (default ${LOG_TAIL_DEFAULT}, 0 = all)
   pause | stop <run> [<step>]           end a boss cleanly (pause keeps it ready; stop fails the step)
   takeover <run> <step>                 pause a step and print the lines that open its session by hand
@@ -89,6 +90,17 @@ function untilInterrupt(run) {
   const controller = new AbortController();
   process.once('SIGINT', () => controller.abort());
   return run(controller.signal);
+}
+
+/** `live`: one frame with --once (for a pipe or a look from a chat), else redrawn until Ctrl-C. */
+async function liveCommand({ flags, root, write }) {
+  const all = Boolean(flags.all);
+  if (flags.once) {
+    for (const line of liveLines(root, { all })) write(line);
+    return;
+  }
+  const { stdout } = process;
+  await untilInterrupt((signal) => liveLoop({ root, all, signal, write: (frame) => stdout.write(frame), isTTY: Boolean(stdout.isTTY), columns: stdout.columns }));
 }
 
 async function eventsCommand({ flags, root, write }) {
@@ -151,6 +163,7 @@ const COMMANDS = {
   check: checkCommand,
   start: (context) => (context.flags.schedule ? startScheduled(context) : startCommand(context)),
   status: statusCommand,
+  live: liveCommand,
   watch: (context) => untilInterrupt((signal) => watchRun({ paths: openRun(context.root, context.positional[0]), step: context.positional[1] ?? null, write: context.write, signal })),
   log: ({ positional, flags, root, write }) => {
     for (const line of logLines(openRun(root, positional[0]), { step: positional[1] ?? null, raw: Boolean(flags.raw), tail: intFlag(flags.tail, LOG_TAIL_DEFAULT, 'tail') })) write(line);

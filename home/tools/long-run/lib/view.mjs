@@ -1,7 +1,7 @@
 // Purpose: what the owner (or a controller session) reads about runs: the run status word, short `status` lines (with a warning
 //   for a lost driver's boss that still runs), `--json`, and the summary file `summary.md` (M3, with the worktrees the bosses
 //   made, and the last account switch) rewritten at every hold and at the end.
-// Exports: RUN_STATES, runState, runView, statusLines, writeSummary, formatWhen.
+// Exports: RUN_STATES, STATUS_RUNS, runState, runView, statusLines, writeSummary, formatWhen.
 // Invariants: reads only; one line per run, step or session (spec 19.4); a question text is shown on the owner's own machine
 //   (status, summary) and never leaves it (notify.mjs sends no text); times are shown in local time with Intl, stored as UTC ISO.
 import { writeFileSync } from 'node:fs';
@@ -13,6 +13,8 @@ import { orphanAlive } from './claude-run.mjs';
 
 /** Every status word of a run (spec 7.9). */
 export const RUN_STATES = ['running', 'waiting-limit', 'waiting-retry', 'held', 'paused', 'taken-over', 'done', 'stopped', 'stale', 'abandoned'];
+/** `status` and `live` read at most this many runs, newest first. */
+export const STATUS_RUNS = 20;
 const SETTLED = new Set(['done', 'abandoned', 'stopped']);
 const MS_PER_MINUTE = 60 * 1000;
 const HOLD_WORDS = { paused: 'paused', 'taken-over': 'taken-over' };
@@ -61,7 +63,8 @@ function sessionOf(paths, unit, journal, driver) {
  * @param {Record<string, string>} paths runPaths().
  * @param {Date} now the current time.
  * @returns {object} `{ runId, name, state, account, lastSwitch, steps: [...], sessions: [...], hold, warnings: string[] }`
- *   (`lastSwitch`: run.json's last `{ from, to, at }` of `resume --account`, or null; `warnings`: a stale run's bosses that still run).
+ *   (`lastSwitch`: run.json's last `{ from, to, at }` of `resume --account`, or null; `warnings`: a stale run's bosses that still run;
+ *   each step's `group`: the id of its parallel group, or null).
  */
 export function runView(paths, now = new Date()) {
   const job = readRunJob(paths);
@@ -79,7 +82,7 @@ export function runView(paths, now = new Date()) {
       warnings.push(`boss pid ${journal.pid} of a lost driver is still running (step ${unit.id}); long-run resume ${paths.runId} ends it and continues`);
     }
     steps.push({
-      id: unit.id, kind: unit.kind, status: journal?.final?.status ?? (journal ? (journal.running && alive ? 'running' : 'started') : 'not started'),
+      id: unit.id, kind: unit.kind, group: unit.group?.id ?? null, status: journal?.final?.status ?? (journal ? (journal.running && alive ? 'running' : 'started') : 'not started'),
       starts: journal?.totalStarts ?? 0, attempts: journal?.attempts ?? 0, waitUntil: journal?.waitUntil ?? journal?.nextAttemptAt ?? null,
       question: journal?.final?.question ?? null, reason: journal?.final?.reason ?? null,
     });
