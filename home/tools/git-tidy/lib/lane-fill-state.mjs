@@ -2,11 +2,12 @@
 //   holding `{ pid, branch, target, startedAt }`. A claim writes it in its first step under the pool lock and deletes it in its end
 //   step under the lock again (lane-pool.mjs). While its pid lives the slot is filling; once that pid is gone (or the claim failed in
 //   this process) the slot is broken (lane-slots.mjs readSlot), and the next claim that takes it empties it here and fills it again.
-// Exports: FILL_FOLDER, startFillFile, readFillFile, deleteFillFile, isPidAlive, emptyForRefill.
+// Exports: FILL_FOLDER, startFillFile, readFillFile, deleteFillFile, isPidAlive, removeStaleIndexLock, emptyForRefill.
 // Invariants:
 // - A fill file is written through a fresh temp file (O_EXCL, 0600) renamed over it, so a link at its name is replaced, never followed,
 //   and a reader never sees half a file. It is read only as a plain file of at most MAX_FILL_FILE_BYTES with a checked shape; anything
 //   else throws, and the reader keeps the slot busy.
+// - Of git's own files, a refill removes only the `index.lock` a fill killed mid-git leaves, and only once the fill's pid is gone.
 // - A broken slot is emptied by deleting its entries except its `.git` file (never `git worktree remove --force`, never a reset); its
 //   HEAD then moves to the new target without writing a file: the index becomes the target's tree first (`read-tree`), so
 //   `switch --detach` keeps every entry and only moves HEAD.
@@ -23,6 +24,7 @@ const PRIVATE_FOLDER = 0o700;
 const PRIVATE_FILE = 0o600;
 const TEMP_SUFFIX_BYTES = 8;
 const GIT_FILE = '.git';
+const INDEX_LOCK = 'index.lock';
 
 const fillFilePath = (commonDir, slot) => join(commonDir, FILL_FOLDER, `${slot}.json`);
 
@@ -79,6 +81,16 @@ export function isPidAlive(pid) {
   } catch (error) {
     return error.code === 'EPERM';
   }
+}
+
+/**
+ * Removes the `index.lock` that a fill killed in the middle of a git command leaves in the slot's own git folder.
+ * @param {string} folder a slot folder that lane-slots.mjs readSlot just read as broken (its fill's pid is gone; git takes the folder
+ *   as its own worktree root, so the git folder is the slot's, never the main checkout's)
+ * @throws {Error} when git cannot name the git folder, or the file cannot be deleted
+ */
+export function removeStaleIndexLock(folder) {
+  rmSync(join(gitText(folder, ['rev-parse', '--absolute-git-dir']), INDEX_LOCK), { force: true });
 }
 
 /**

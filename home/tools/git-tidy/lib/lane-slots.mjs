@@ -11,7 +11,7 @@
 //   lock file, `git status` (untracked files included) empty and no file marked assume-unchanged or skip-worktree (status hides
 //   their edits). Ignored files (node_modules, dist/, a local .env) do not make it busy.
 //   A slot with a fill file (lane-fill-state.mjs) is filling while its pid lives, then broken (a claim may empty and fill it again)
-//   when nothing there is someone else's: no foreign lock, no other branch, no git lock file, no git repository in an ignored folder.
+//   when nothing there is someone else's: no foreign lock, no other branch, no HEAD.lock, no git repository in an ignored folder.
 //   Removing a folder (reclaim) or a stale entry (claim) needs more: removalLossWhy and staleEntryLossWhy name what the removal would
 //   destroy (a HEAD reflog holding commits found nowhere else: prune's rule, reflog.mjs; a git repository inside an ignored folder).
 import { existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
@@ -28,6 +28,7 @@ export const LOCK_REASON_PREFIX = 'cs-lane-pool';
 const FOLDED = process.platform === 'win32' || process.platform === 'darwin';
 const SLOT_NAME = new RegExp('^lane-([1-9][0-9]{0,5})$', FOLDED ? 'i' : ''); // `Lane-2` is the same folder on a case-folding disk
 const GIT_LOCK_FILES = ['index.lock', 'HEAD.lock'];
+const REFILL_BLOCKING_LOCKS = ['HEAD.lock']; // a refill removes the index.lock a dead fill left (lane-fill-state.mjs)
 const USE_FILES = [join('logs', 'HEAD'), 'HEAD', 'index']; // what a switch, a commit or an add rewrites in the worktree's admin folder
 const SHORT = 8;
 
@@ -65,11 +66,11 @@ function adminDirOf(path) {
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
-/** Why git's own files in the worktree at `path` forbid a write (its admin folder cannot be read, a git lock file), or null. */
-function gitLockWhy(path) {
+/** Why git's own files in the worktree at `path` forbid a write (its admin folder cannot be read, one of `lockFiles`), or null. */
+function gitLockWhy(path, lockFiles = GIT_LOCK_FILES) {
   const admin = adminDirOf(path);
   if (admin === null) return 'git cannot read it';
-  const gitLock = GIT_LOCK_FILES.find((name) => existsSync(join(admin, name)));
+  const gitLock = lockFiles.find((name) => existsSync(join(admin, name)));
   return gitLock === undefined ? null : `a git lock is held (${gitLock})`;
 }
 
@@ -118,10 +119,7 @@ function isOwnWorktreeRoot(folder) {
   return top.status === 0 && slotKey(top.stdout.trim()) === slotKey(folder);
 }
 
-/**
- * The state the fill file of the present slot `name` gives it: filling while its claim runs, broken once that claim is gone and
- * nothing in the folder is someone else's (see the header), else busy; null when it has no fill file.
- */
+/** The state the fill file of the present slot `name` gives it (filling, broken or busy: see the header); null without one. */
 function fillStateOf(repo, folder, name, tree) {
   let fillFile;
   try {
@@ -136,7 +134,7 @@ function fillStateOf(repo, folder, name, tree) {
   const stopped = `the fill of ${fillFile.branch} by pid ${fillFile.pid} stopped`;
   if (tree.locked && !(tree.lockReason ?? '').startsWith(LOCK_REASON_PREFIX)) return as('busy', `${stopped}, but it is locked by someone else (${tree.lockReason || 'no reason'})`);
   if (tree.branch !== null && tree.branch !== fillFile.branch) return as('busy', `${stopped}, but it holds branch ${tree.branch}`);
-  const kept = gitLockWhy(folder) ?? nestedRepositoryWhy(folder);
+  const kept = gitLockWhy(folder, REFILL_BLOCKING_LOCKS) ?? nestedRepositoryWhy(folder);
   return kept === null ? as('broken', stopped) : as('busy', `${stopped}, but ${kept}`);
 }
 

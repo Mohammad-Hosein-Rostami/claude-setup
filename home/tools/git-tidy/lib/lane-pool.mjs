@@ -31,7 +31,7 @@ import { isNotStarted, reflogOnlyCommits } from './reflog.mjs';
 import { listWorktrees } from './repo.mjs';
 import { withPoolLock } from './pool-lock.mjs';
 import { cloneSupport, FILL_ENV, fillFresh, fillIgnored } from './lane-fill.mjs';
-import { deleteFillFile, emptyForRefill, readFillFile, startFillFile } from './lane-fill-state.mjs';
+import { deleteFillFile, emptyForRefill, readFillFile, removeStaleIndexLock, startFillFile } from './lane-fill-state.mjs';
 import { commonDirOf, contentBusyWhy, isPoolSlot, lastUsedMs, LOCK_REASON_PREFIX, poolFolderOf, poolSlots, readSlot, removalLossWhy, slotKey, staleEntryLossWhy } from './lane-slots.mjs';
 import { recordJobMade } from '../../disk-free/lib/job-made.mjs';
 import { mkdirSync } from 'node:fs';
@@ -184,6 +184,7 @@ function takeBrokenSlot(repo, slot, lane) {
   const tree = slotTree(repo, slot.folder);
   const fillFile = startFillFile(commonDirOf(repo), slot.slot, lane);
   const notes = [`${slot.slot} was broken (${slot.why}): emptied and filled again`];
+  removeStaleIndexLock(slot.folder); // the dead fill may have been killed inside a git command
   if (tree.branch !== null) {
     gitText(slot.folder, ['switch', '--quiet', '--detach', gitText(slot.folder, ['rev-parse', '--verify', 'HEAD^{commit}'])]);
     if (isNotStarted(repo, tree.branch)) notes.push(deleteReleasedBranch(repo, tree.branch));

@@ -289,7 +289,8 @@ volume, HFS+, ext4, Windows) the claim checks out and installs as before, and pr
   at the target, and locks it with `cs-lane-pool <branch>`. The fill runs without the lock. Under the lock again it checks that the
   fill file, the lock and HEAD are still its own, switches to the branch (the same commit, so no file is written) and deletes the
   fill file. A folder whose claim died or failed in between is `broken`: it was never handed out, so the next claim that takes it
-  deletes its branch if it has no commit of its own, empties it except its `.git` file and fills it again.
+  removes an `index.lock` the dead fill left, deletes its branch if it has no commit of its own, empties it except its `.git` file
+  and fills it again. A leftover `HEAD.lock` keeps it busy (remove that by hand).
 - Disk: `du` and Finder count each clone at full size, so they overstate lanes; `df` shows what the disk really holds.
 
 Installs (`lib/lane-prep.mjs`): for each tracked lockfile of the claimed tip, in that lockfile's folder: `package-lock.json` →
