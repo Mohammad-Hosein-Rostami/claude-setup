@@ -1,13 +1,17 @@
 // Purpose: read a repository's lane folder pool: the folders `<main worktree>/.claude/worktrees/lane-<n>` and, for each, whether it is
-//   free for the next lane, busy (with why) or missing (a worktree entry whose folder is gone).
+//   free for the next lane, busy (with why), missing (a worktree entry whose folder is gone), filling (a claim is filling it) or
+//   broken (the claim that filled it is gone).
 // Exports: POOL_FOLDER, LOCK_REASON_PREFIX, poolFolderOf, commonDirOf, slotKey, isPoolSlot, contentBusyWhy, poolSlots, readSlot, lastUsedMs,
 //   removalLossWhy, nestedRepositoryWhy, nestedRepositoryPaths, entryIdOf, staleIndexWhy, staleEntryLossWhy.
 // Invariants: reads only. Every fact comes from git through runGit (no shell, `-z` lists, full shas) or lstat, and a fact that cannot
 //   be read makes the folder busy, never free (fail closed). Slot paths are compared as real paths (realpathSync.native), case-folded on
-//   win32 and darwin. A folder at a slot path that is not a worktree of this repository is busy and is never touched by any caller.
+//   win32 and darwin. A folder at a slot path that is not a worktree of this repository, or where git finds another worktree root (its
+//   `.git` file is missing, so git would act on the main checkout above it), is busy and is never touched by any caller.
 //   Free means: a linked worktree of this repository, unlocked, HEAD detached at a commit on the base, no unfinished operation, no git
 //   lock file, `git status` (untracked files included) empty and no file marked assume-unchanged or skip-worktree (status hides
 //   their edits). Ignored files (node_modules, dist/, a local .env) do not make it busy.
+//   A slot with a fill file (lane-fill-state.mjs) is filling while its pid lives, then broken (a claim may empty and fill it again)
+//   when nothing there is someone else's: no foreign lock, no other branch, no git lock file, no git repository in an ignored folder.
 //   Removing a folder (reclaim) or a stale entry (claim) needs more: removalLossWhy and staleEntryLossWhy name what the removal would
 //   destroy (a HEAD reflog holding commits found nowhere else: prune's rule, reflog.mjs; a git repository inside an ignored folder).
 import { existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
@@ -15,6 +19,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { UsageError, gitText, runGit } from './git.mjs';
 import { reflogOnlyCommits } from './reflog.mjs';
 import { HIDDEN_FILES_WHY, changedFileCount, hiddenFileCount, inProgressOperation, listWorktrees } from './repo.mjs';
+import { isPidAlive, readFillFile } from './lane-fill-state.mjs';
 import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
 
 export const POOL_FOLDER = join('.claude', 'worktrees');
@@ -60,6 +65,14 @@ function adminDirOf(path) {
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
+/** Why git's own files in the worktree at `path` forbid a write (its admin folder cannot be read, a git lock file), or null. */
+function gitLockWhy(path) {
+  const admin = adminDirOf(path);
+  if (admin === null) return 'git cannot read it';
+  const gitLock = GIT_LOCK_FILES.find((name) => existsSync(join(admin, name)));
+  return gitLock === undefined ? null : `a git lock is held (${gitLock})`;
+}
+
 /**
  * What in the worktree at `tree.path` must not be switched away from: a git lock file, an unfinished operation, uncommitted or
  * untracked files, files whose edits git status hides (assume-unchanged, skip-worktree), a HEAD with commits not on the base.
@@ -69,10 +82,8 @@ function adminDirOf(path) {
  * @returns {string|null} the reason, or null when nothing would be lost
  */
 export function contentBusyWhy(repo, tree) {
-  const admin = adminDirOf(tree.path);
-  if (admin === null) return 'git cannot read it';
-  const gitLock = GIT_LOCK_FILES.find((name) => existsSync(join(admin, name)));
-  if (gitLock !== undefined) return `a git lock is held (${gitLock})`;
+  const locked = gitLockWhy(tree.path);
+  if (locked !== null) return locked;
   const operation = inProgressOperation(tree.path);
   if (operation !== null) return `a ${operation} is not finished there`;
   const changed = changedFileCount(tree.path);
@@ -101,22 +112,54 @@ function busyWhy(repo, tree) {
 /** A free slot's why: where its HEAD is. */
 const freeWhy = (path) => `detached at ${(runGit(path, ['rev-parse', '--short', 'HEAD']).stdout.trim() || 'an unknown commit')}`;
 
+/** True when git, run in `folder`, takes the folder itself as its worktree root (with no `.git` file it finds the main checkout). */
+function isOwnWorktreeRoot(folder) {
+  const top = runGit(folder, ['rev-parse', '--show-toplevel']);
+  return top.status === 0 && slotKey(top.stdout.trim()) === slotKey(folder);
+}
+
+/**
+ * The state the fill file of the present slot `name` gives it: filling while its claim runs, broken once that claim is gone and
+ * nothing in the folder is someone else's (see the header), else busy; null when it has no fill file.
+ */
+function fillStateOf(repo, folder, name, tree) {
+  let fillFile;
+  try {
+    fillFile = readFillFile(commonDirOf(repo), name);
+  } catch (error) {
+    return { state: 'busy', why: `${error.message}: remove it by hand if no claim runs`, fillFile: null };
+  }
+  if (fillFile === null) return null;
+  const as = (state, why) => ({ state, why, fillFile });
+  // a claim runs start to end in one synchronous call, so this process's own pid here is a claim of it that failed
+  if (fillFile.pid !== process.pid && isPidAlive(fillFile.pid)) return as('filling', `${fillFile.branch} pid ${fillFile.pid}`);
+  const stopped = `the fill of ${fillFile.branch} by pid ${fillFile.pid} stopped`;
+  if (tree.locked && !(tree.lockReason ?? '').startsWith(LOCK_REASON_PREFIX)) return as('busy', `${stopped}, but it is locked by someone else (${tree.lockReason || 'no reason'})`);
+  if (tree.branch !== null && tree.branch !== fillFile.branch) return as('busy', `${stopped}, but it holds branch ${tree.branch}`);
+  const kept = gitLockWhy(folder) ?? nestedRepositoryWhy(folder);
+  return kept === null ? as('broken', stopped) : as('busy', `${stopped}, but ${kept}`);
+}
+
 /**
  * The state of one slot folder, every fact read now.
  * @param {object} repo openRepo's result
  * @param {string} folder the slot path `<pool>/lane-<n>`
  * @param {object[]} [worktrees] listWorktrees(repo), when the caller has just read it
- * @returns {{ slot: string, number: number, folder: string, state: 'free'|'busy'|'missing', why: string, branch: string|null }}
+ * @returns {{ slot: string, number: number, folder: string, state: 'free'|'busy'|'missing'|'filling'|'broken', why: string,
+ *   branch: string|null, fillFile: object|null }} `fillFile`: lane-fill-state.mjs readFillFile's record, for filling and broken
  */
 export function readSlot(repo, folder, worktrees = listWorktrees(repo)) {
   const number = Number(SLOT_NAME.exec(basename(folder))?.[1]);
   const key = slotKey(folder);
   const tree = worktrees.find((entry) => !entry.main && slotKey(entry.path) === key);
   const stats = lstatSync(folder, { throwIfNoEntry: false });
-  const slot = (state, why) => ({ slot: `lane-${number}`, number, folder, state, why, branch: tree?.branch ?? null });
+  const slot = (state, why, fillFile = null) => ({ slot: `lane-${number}`, number, folder, state, why, branch: tree?.branch ?? null, fillFile });
   if (tree === undefined) return slot('busy', stats === undefined ? 'no folder and no worktree' : 'not a worktree of this repository: never touched');
   if (tree.missing || stats === undefined) return tree.locked ? slot('busy', 'its folder is gone, but its entry is locked') : slot('missing', 'its folder is gone (a stale worktree entry)');
   if (!stats.isDirectory()) return slot('busy', 'not a plain folder (a link or a file): never touched');
+  if (!isOwnWorktreeRoot(folder)) return slot('busy', 'git finds another worktree root there (its .git file is missing): never touched');
+  const filled = fillStateOf(repo, folder, `lane-${number}`, tree);
+  if (filled !== null) return slot(filled.state, filled.why, filled.fillFile);
   const why = busyWhy(repo, tree);
   return why === null ? slot('free', freeWhy(folder)) : slot('busy', why);
 }
