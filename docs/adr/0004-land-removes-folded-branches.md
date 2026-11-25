@@ -59,9 +59,11 @@ comparison needs nothing switched off.
   disk, hold no edit, and do not count, so a clean sparse checkout lands.
 - A worktree with a git repository inside an ignored folder (`git clean -ffdx -n` lists it, `-fdx -n` does not) is kept:
   its commits may be the only copy. Untracked files and ignored files outside the rebuildable folders keep it too.
-- A stale worktree entry (its folder is gone) is removed one at a time with `git worktree remove`, never `git worktree
-  prune`. It stays when its HEAD reflog holds commits found nowhere else; when no branch holds its HEAD, that commit first
-  becomes the branch `stale-head/<entry id>`, named under `left:`, so it stays reachable.
+- The sweep never removes a stale worktree entry (its folder is gone or was moved): it lists each one under `left:` with
+  what it holds (reflog commits found nowhere else, staged content in its index) or that a person decides. Its folder may
+  only have moved, and its index may hold the only copy of staged work. The standalone `git-tidy prune --apply` removes one
+  at a time with `git worktree remove`, never `git worktree prune`, keeps one that holds such work, and first keeps a HEAD
+  no branch holds as the branch `stale-head/<entry id>`.
 
 - The sweep holds the rule everywhere: older copies and agent leftover branches whose work is on another branch, not on the
   base, are kept and named under `left:` (prune's `onlyOnBase`). The standalone `git-tidy prune --apply` a person runs by

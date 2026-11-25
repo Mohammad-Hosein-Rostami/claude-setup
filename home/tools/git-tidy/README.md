@@ -75,7 +75,8 @@ Principle: it removes only what is provably on the base AND leaves no only-copy 
 and prints why. With `--apply`, in this order, each fact read again from git right before it is acted on:
 
 1. Stale entries (a worktree whose folder is gone), each with `git worktree remove -- <path>` on its own, never `git worktree
-   prune`. One is kept when it is locked or its HEAD reflog holds commits found nowhere else. When no branch holds its HEAD,
+   prune`. One is kept when it is locked, its HEAD reflog holds commits found nowhere else, or its index differs from its HEAD
+   (staged content; the folder may only have moved). Land's sweep removes none: it lists each one under `left:`. When no branch holds its HEAD,
    that commit first becomes the branch `stale-head/<entry id>` (created, never moved), so it stays reachable:
    `removed stale-worktree <path> folder missing; its HEAD <sha> is kept as branch stale-head/<id>`.
 2. Each merged worktree is kept (`kept ...: <reason>`) when any of these holds, else `git worktree remove` (never `--force`):
@@ -217,7 +218,7 @@ node_modules) stay warm, and no folder is left behind:
   `package-lock.json`, `bun.lock`, `bun.lockb`, `package.json` differ between the folder's old HEAD and the new tip (`.venv` the
   same for `uv.lock`, `poetry.lock`, `Pipfile.lock`, `requirements*.txt`, `pyproject.toml`), and locks the worktree with
   `cs-lane-pool <branch>`. When every folder is busy it adds the lowest unused `lane-<n>` (no cap); a stale entry whose folder is
-  gone is removed and made again, unless its HEAD is off the base or its reflog holds commits found nowhere else (then it stays
+  gone is removed and made again, unless its HEAD is off the base, its reflog holds commits found nowhere else or its index holds staged changes (then it stays
   and a new number is used). Then it installs what the tip needs (`lib/lane-prep.mjs`, below). Output: `lane: <folder>`,
   `kept: node_modules` or `kept: none`, `installed: <command> in <folder>, ...` or `installed: none`. Exit 0 ready, 1 an install
   failed (`lane not ready: ...`, the worktree, `to finish:` and `to release:` lines on stderr; the folder stays claimed and is not

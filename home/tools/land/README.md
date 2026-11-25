@@ -49,7 +49,8 @@ Steps, in order; nothing changes until every check has passed:
    compares it with the moved base.
 6. Clean-up: a locked worktree is unlocked, then removed with `git worktree remove` (ignored files in it, such as notes or
    `node_modules`, go with it); the branch is deleted with `git branch -d`. A git repository inside an ignored folder of the
-   worktree stops the clean-up first (the landing stands, exit 1): its commits may be the only copy.
+   worktree stops the clean-up first (the landing stands, exit 1): its commits may be the only copy. The message names the
+   repository; move it out of the worktree, then run `land <branch>` again, which finishes the clean-up.
 7. Sweep (`sweep.mjs`): git-tidy's `prune --apply` over the whole repository, with all its safety checks
    (`../git-tidy/README.md`, "prune"), held to the one rule: only branches whose content is on the base go ("Folded
    branches" below), each with its clean worktree. Older copies and agent leftover branches whose work is on another branch,
@@ -63,8 +64,8 @@ Steps, in order; nothing changes until every check has passed:
    anything: one stderr line, exit 0. Then `left:` names every branch still there: `in <B> (lands with it)` (all its commits
    are in the live branch B: a stacked lane, a folded test branch), `kept: <reason>`, `on <base> (<state>), not removed`
    (merged, but the sweep was skipped), `idle <h> h, ahead <n>` (no commit for 2 hours or more) or `active, ahead <n>`, then
-   each stale worktree entry the sweep kept (`<path> (stale worktree entry): kept: <reason>`); a stale entry's HEAD that no
-   branch held is kept as the branch `stale-head/<entry id>`, listed like any branch; at most 20 lines, then `+N more`.
+   each stale worktree entry (`<path> (stale worktree entry): kept: <reason>`): the sweep never removes one, since its folder
+   may only have moved; `git-tidy prune --apply` removes it once nothing is lost. At most 20 lines, then `+N more`.
 
 Output on success, one line per step:
 
