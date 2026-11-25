@@ -1,4 +1,4 @@
-// Tests for home/agents/*.md: exactly the seventeen agents of the lex/dev/tess setup, each with frontmatter whose name matches its
+// Tests for home/agents/*.md: exactly the twenty-one agents of the lex/dev/tess setup, each with frontmatter whose name matches its
 // file, the model and effort pins, the preloaded skills of the plan, the Agent tool
 // for the agents that start helpers, the browser servers only where the plan puts them, tess in the background, and no text
 // about the removed job machinery.
@@ -54,6 +54,10 @@ const PLAN = {
   'tess-edge': { model: SONNET, effort: 'high', skills: [] },
   // owner decisions: dev-docs writes a job's docs on Sonnet, high; max ships on Opus, high
 // final-pass plan, lane A (T1-T3): an agent preloads only the skills every run of it needs; the rest load on demand
+  // the read-only Codex second-opinion helpers of lex, dev and tess (8ceedaca)
+  'lex-codex': { model: HAIKU, effort: 'high', skills: [] },
+  'dev-codex': { model: HAIKU, effort: 'high', skills: [] },
+  'tess-codex': { model: HAIKU, effort: 'high', skills: [] },
   'dev-docs': { model: SONNET, effort: 'high', skills: ['docs-writing'] },
   max: { model: OPUS, effort: 'high', skills: ['ship-readiness'] },
 };
@@ -62,7 +66,7 @@ const HELPER_STARTERS = ['lex', 'dev', 'dev-part', 'dev-ui', 'dev-pixel', 'dev-d
 const BROWSER_AGENTS = ['dev-ui', 'dev-pixel', 'pixel-qa'];
 const REMOVED_MACHINERY = /done-check|road\.mjs|status\.mjs|estimate|recall|ask\.mjs|ASK_QUEUE|land-lane|watch\.mjs|lead-rules|lead\.md/;
 
-test('home/agents holds exactly the seventeen agents, each named like its file, with a description', () => {
+test('home/agents holds exactly the twenty-one agents, each named like its file, with a description', () => {
   assert.deepEqual(readdirSync(AGENTS_DIR).sort(), NAMES.map((name) => `${name}.md`).sort());
   for (const name of NAMES) {
     assert.ok(agent(name).startsWith('---\n'), `${name}: frontmatter opens the file`);
@@ -126,9 +130,16 @@ test('tess runs in the background; no other agent does', () => {
 
 // omitClaudeMd and autoCompactWindow are documented subagent frontmatter fields (code.claude.com/docs/en/sub-agents.md);
 // the window is a plain integer, since frontmatter reads `200k` as 200.
-test('only lex-scout, lex-web, dev-run, tess-run, dev-part, dev-docs, tess-simple and tess-edge skip CLAUDE.md, and each carries the global rules it needs', () => {
+test('only lex-scout, lex-web, dev-run, tess-run, dev-part, dev-docs, tess-simple, tess-edge and the three codex helpers skip CLAUDE.md, and each carries the global rules it needs', () => {
   const skipping = ['lex-scout', 'lex-web', 'dev-run', 'tess-run', 'dev-part', 'dev-docs', 'tess-simple', 'tess-edge'];
-  for (const name of NAMES) assert.equal(field(name, 'omitClaudeMd') === 'true', skipping.includes(name), name);
+  // the codex helpers return Codex's opinion in Codex's own words, so their language line says so
+  const codexHelpers = ['lex-codex', 'dev-codex', 'tess-codex'];
+  for (const name of NAMES) assert.equal(field(name, 'omitClaudeMd') === 'true', [...skipping, ...codexHelpers].includes(name), name);
+  for (const name of codexHelpers) {
+    const text = agent(name);
+    assert.match(text, /Reply in the language the caller wrote in; Codex's opinion stays in the words Codex wrote\./, name);
+    assert.match(text, /Never print a secret/, name);
+  }
   for (const name of skipping) {
     const text = agent(name);
     assert.match(text, /Reply in the language the caller wrote in\./, name);
@@ -146,7 +157,7 @@ test('dev-run, tess-run, tess and lex-web compact at 200000 tokens; no other age
 });
 
 test('read-only agents cannot write files', () => {
-  for (const name of ['lex-scout', 'lex-web', 'dev-run', 'tess-run', 'tess', 'tess-review', 'tess-simple', 'tess-edge', 'pixel-qa']) {
+  for (const name of ['lex-scout', 'lex-web', 'dev-run', 'tess-run', 'tess', 'tess-review', 'tess-simple', 'tess-edge', 'pixel-qa', 'lex-codex', 'dev-codex', 'tess-codex']) {
     const tools = listed(name, 'tools');
     const denied = listed(name, 'disallowedTools');
     const writes = ['Write', 'Edit'].some((tool) => (tools.length === 0 || tools.includes(tool)) && !denied.includes(tool));
