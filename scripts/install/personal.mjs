@@ -55,7 +55,7 @@ export function checkImportPath(path) {
 }
 
 /**
- * The text of ~/.claude/CLAUDE.md (scripts/doctor.sh builds the same lines).
+ * The text of ~/.claude/CLAUDE.md.
  * @param {{root: string, repo: string}} ctx the run context: root holds the core home/, repo the personal/ folder
  * @param {boolean} withPersonal whether personal/CLAUDE.md exists, so the third line imports it
  * @returns {string} the marker line, the core import and the personal import, each ending in a newline

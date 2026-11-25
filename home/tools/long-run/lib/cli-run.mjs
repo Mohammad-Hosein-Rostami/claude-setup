@@ -51,7 +51,7 @@ function loadChecked(jobPath, env) {
 
 /**
  * `check <job.json>`: validate, resolve account and models, load the SQLite module; prints the plan, spends nothing.
- * `check --deps` (doctor, spec 21): only loads better-sqlite3, opens an in-memory database and imports LangGraph; prints `ok`.
+ * `check --deps` (spec 21): only loads better-sqlite3, opens an in-memory database and imports LangGraph; prints `ok`.
  * @throws {Refusal} with the one-line fix when a dependency does not load.
  */
 export async function checkCommand({ positional, flags, env, write }) {

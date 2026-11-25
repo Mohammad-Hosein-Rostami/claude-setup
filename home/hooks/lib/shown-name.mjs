@@ -1,7 +1,6 @@
 // How a hook note shows a file name or a path that comes from a repository or a transcript (untrusted text).
 // Exports: shownName(file), quotedName(file), shownPath(folder, file), quotedPath(folder, file), escaped(text),
-// escapedEnd(text, maxChars). Run as a command (`node shown-name.mjs <text>`) it prints escaped(text): scripts/doctor.sh shows the
-// project path with it.
+// escapedEnd(text, maxChars). Run as a command (`node shown-name.mjs <text>`) it prints escaped(text).
 // Why: the text sits inside a note the lead reads in the owner's voice, so it must never look like more of that note (security review
 // p0-0.1, S5 and N4: look-alike slashes, invisible letters, tag-like text and a `\"` once reached the note unescaped).
 // Invariants: pure. A name of SAFE_FILE_NAME (A-Z a-z 0-9 _ . -, at most 64 characters, then .md) is shown as it is, and so is a

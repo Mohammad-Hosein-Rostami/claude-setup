@@ -5,14 +5,13 @@
 // is registered (the queued agent-failed note and its Stop entry were removed on 2026-11-24).
 // The note goes out as `terminalSequence` (hooks docs, "Emit terminal notifications": kept on Notification and StopFailure, whose
 // other output is discarded; written only in an interactive session); no other output field is printed.
-// Exports: noteFor(input, env, now) -> text | null, hookOutput(text, env) -> stdout string. `--channel` prints the terminal and the
-// effective channel (doctor's notify line).
+// Exports: noteFor(input, env, now) -> text | null, hookOutput(text, env) -> stdout string.
 // Invariants: prints at most one JSON object and always exits 0, never blocks or changes a turn; a note needs a known event and
 // type, everything else prints nothing; nothing from the hook input reaches the note except the event and type names it matches.
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { readAsking } from './lib/asking-marker.mjs';
-import { effectiveChannel, needsYouText, noteSequence, quotaText, stoppedText, terminalName } from './lib/notify-note.mjs';
+import { effectiveChannel, needsYouText, noteSequence, quotaText, stoppedText } from './lib/notify-note.mjs';
 import { latestSample, readLimits } from './lib/limits-store.mjs';
 
 const MAX_INPUT_BYTES = 1024 * 1024;
@@ -53,10 +52,6 @@ async function readInput() {
 }
 
 async function main() {
-  if (process.argv[2] === '--channel') {
-    console.log(`${terminalName()} ${effectiveChannel()}`);
-    return;
-  }
   try {
     const out = hookOutput(noteFor(await readInput()));
     if (out) process.stdout.write(out);

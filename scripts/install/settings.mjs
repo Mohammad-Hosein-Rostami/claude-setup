@@ -1,8 +1,8 @@
 // Purpose: ~/.claude/settings.json, merged from the layers: the machine's own settings.json from before the first install
 //   (the first layer, on a new machine only), settings/base.json, settings/<os>.json, then the git-ignored settings/local.json.
 // Exports: buildSettings, mergedSettings, settingsLayersLine, isNewMachine.
-// Invariants: the merge is scripts/merge-settings.jq, the same program doctor.sh rebuilds the expected file with; an
-//   unchanged result writes nothing; a changed file is moved to the backup folder before the new one is written.
+// Invariants: the merge is scripts/merge-settings.jq; an unchanged result writes nothing; a changed file is moved to the
+//   backup folder before the new one is written.
 import { existsSync, lstatSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, resolve, dirname } from 'node:path';

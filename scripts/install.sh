@@ -6,8 +6,8 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# The one Node floor (major.minor), the same in install.ps1 and scripts/doctor/checks-machine.sh: the guard's Windows path tests need
-# module.registerHooks, which Node has from 22.15, and doctor FAILs below it.
+# The one Node floor (major.minor), the same in install.ps1: the guard's Windows path tests need module.registerHooks, which
+# Node has from 22.15.
 NODE_FLOOR=22.15
 
 command -v node >/dev/null || { echo "missing required tool: node ${NODE_FLOOR}+ (macOS: brew install node; Linux: your package manager or nvm)" >&2; exit 1; }

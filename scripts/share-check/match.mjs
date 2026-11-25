@@ -14,7 +14,7 @@
 //   with the NULs removed (UTF-16 or UTF-32 ASCII at any alignment) and as UTF-16 LE and BE, so a binary or BOM-less file still hits.
 // - Every pattern is linear: literal letters, `\s+` or a seam between parts and fixed-width look-arounds, so a hostile file cannot stall it.
 
-/** The largest deny list share-check reads (read as a plain file, no link followed); a larger one is refused, and doctor FAILs it. */
+/** The largest deny list share-check reads (read as a plain file, no link followed); a larger one is refused. */
 export const DENY_MAX_BYTES = 1024 * 1024;
 const WORD_CHAR = /[\p{L}\p{N}]/u;
 const IGNORED = /[\p{Cf}\p{Default_Ignorable_Code_Point}]/gu;

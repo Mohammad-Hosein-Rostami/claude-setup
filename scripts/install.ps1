@@ -8,8 +8,8 @@
 param([switch]$Update, [string]$To = '', [switch]$Uninstall, [switch]$DryRun, [switch]$NoPlugins, [switch]$NoTools,
   [string]$ClaudeVersion = '')
 $ErrorActionPreference = 'Stop'
-# The one Node floor (major.minor), the same in install.sh and scripts/doctor/checks-machine.sh: the guard's Windows path tests need
-# module.registerHooks, which Node has from 22.15, and doctor FAILs below it.
+# The one Node floor (major.minor), the same in install.sh: the guard's Windows path tests need module.registerHooks, which
+# Node has from 22.15.
 $NODE_FLOOR = [version]'22.15'
 
 $node = Get-Command node -ErrorAction SilentlyContinue

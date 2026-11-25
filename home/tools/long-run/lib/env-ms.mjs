@@ -1,5 +1,5 @@
-// Purpose: a timeout knob, a wait read from the environment so a test can make it short. Used by driver.mjs, process-tree.mjs
-//   and scripts/doctor-accounts.mjs.
+// Purpose: a timeout knob, a wait read from the environment so a test can make it short. Used by driver.mjs and
+//   process-tree.mjs.
 // Exports: msFromEnv.
 // Invariants: a knob is named `CLAUDE_<TOOL>_<CONSTANT>` (CLAUDE_LONG_RUN_CONTROL_POLL_MS for driver.mjs CONTROL_POLL_MS);
 //   only digits, a whole number of milliseconds from 1 to MAX_TIMER_MS, are taken; anything else gives the default, so an

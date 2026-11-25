@@ -32,7 +32,7 @@ const UNSAFE_KEYCHAIN_PATH = /["\\\n\r]/;
 /**
  * Runs one `security` command, given on stdin.
  * @param {string} line the command line (one line).
- * @param {Function} spawn `spawnSync`, or a stand-in (a test's, or doctor's, which ends the call sooner).
+ * @param {Function} spawn `spawnSync`, or a test's stand-in.
  * @returns {{status: number | null, stdout: string, stderr: string}} `status` null when it did not end in time.
  */
 export function runSecurity(line, spawn = spawnSync) {
