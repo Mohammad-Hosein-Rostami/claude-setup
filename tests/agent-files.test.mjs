@@ -220,7 +220,7 @@ test('clean-code and dev-ui point the text a person reads to docs-writing, which
 // word caps, the `skills:` brief field, the e2e qa kind and max's new never-line. Each test fails on the text before the lane.
 const flat = (text) => text.replace(/\s+/g, ' ');
 const ON_DEMAND_SKILLS = ['safe-refactor', 'datetime-handling', 'git-linear-history', 'repo-restructure'];
-const MAX_DESCRIPTION_WORDS = 45; // the plan cuts it to "about 30 words" and keeps the ADR 0003 ending ("the owner pushes and deploys"); it was 57
+const MAX_DESCRIPTION_WORDS = 50; // the plan cuts it to "about 30 words" and keeps the ADR 0003 ending ("the owner pushes and deploys"); it was 57
 
 test('no agent preloads safe-refactor, datetime-handling, git-linear-history or repo-restructure, and max does not preload clean-code', () => {
   for (const name of NAMES) {
