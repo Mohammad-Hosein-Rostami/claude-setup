@@ -20,7 +20,7 @@ live in every running session at once. A broken hook or tool there breaks every 
 - Never push unless the owner says so.
 - Never set `CLAUDE_CODE_SUBAGENT_MODEL_FORCE`, `CLAUDE_CODE_WORKFLOW_SUBAGENT_MODEL` or `CLAUDE_CODE_EFFORT_LEVEL` (in
   `settings/*.json` or the shell): they override the model and effort every agent file sets.
-- Add or change a skill, agent, tool or hook: update `docs/catalog.md` in the same commit (`node scripts/catalog.mjs write`
-  builds the skill, agent and hook-event parts; `check` exits 1 on drift).
+- `docs/catalog.md` is generated and git-ignored (install writes it; `node scripts/catalog.mjs write` by hand). A skill, agent,
+  tool or hook gets its description in its own file: frontmatter, or the first header line.
 - Work habits for day-to-day use are in `docs/daily-use.md`; the global rules the sessions load are `home/CLAUDE.md`
   (shared), then `personal/CLAUDE.md` (yours).

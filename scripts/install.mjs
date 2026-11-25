@@ -9,7 +9,8 @@
 //                          move, once, the stores of removed parts to the backup folder: scripts/install/retired-state.mjs), make personal/
 //                          from personal.example/ when missing; on the layer's first install move the notes of home/project-notes git does not
 //                          track (or deleted in a pull) into it; link ~/.claude/project-notes to personal/project-notes, write ~/.claude/CLAUDE.md (the marker line and
-//                          @ imports of home/CLAUDE.md and personal/CLAUDE.md; scripts/install/personal.mjs), the claude-as
+//                          @ imports of home/CLAUDE.md and personal/CLAUDE.md; scripts/install/personal.mjs), docs/catalog.md
+//                          (git-ignored, from scripts/catalog.mjs; a problem there is only a warning), the claude-as
 //                          start-up line, settings.json, plugins, tool dependencies; safe to repeat (a second run changes
 //                          nothing). --update is the same run, by name. A repo path an @ import line cannot carry (a space,
 //                          @, #, a quote, a non-ASCII letter) stops it with exit 1 before anything changes. It also unsets git's
@@ -35,9 +36,9 @@
 //   dependencies come after settings, so a failed dependency install cannot leave settings.json stale; one install at a time
 //   (a lock in ~/.claude from loading the record to saving it, also taken by --uninstall until its record is removed; a second run
 //   exits 1 with a message, and a lock whose process still runs is never taken over).
-import { existsSync, mkdirSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { InstallError, makeContext, note, parseArgs, samePath, warn } from './install/context.mjs';
 import { ensureDir, loadRecord, lockInstall, saveRecord } from './install/record.mjs';
@@ -51,6 +52,7 @@ import { uninstall } from './install/uninstall.mjs';
 import { requireGitBash } from './install/windows.mjs';
 import { installClaude } from './install/cli.mjs';
 import * as tools from './install/tools.mjs';
+import { buildCatalog } from './catalog.mjs';
 
 /**
  * The items the install makes in ~/.claude: links to home/<name>, except PERSONAL_ITEMS:
@@ -96,6 +98,30 @@ function retireGitHooks(ctx) {
   else warn(`could not unset git core.hooksPath (${why(unset)}); run: git config --unset core.hooksPath`);
 }
 
+/**
+ * Writes docs/catalog.md from the checkout's files (scripts/catalog.mjs): the catalog is git-ignored, so a checkout has it only
+ * after an install. It is always this checkout's, also under --to <tag>, because a person reads it here. A problem the generator
+ * names, or a file it cannot read, is a warning: the catalog is a document, and a broken one must not stop an install.
+ * @param {object} ctx the run context
+ * @returns {void}
+ */
+function writeCatalog(ctx) {
+  if (ctx.dryRun) {
+    console.log('would write docs/catalog.md');
+    return;
+  }
+  const path = join(ctx.repo, 'docs', 'catalog.md');
+  try {
+    const { text, problems } = buildCatalog(ctx.repo);
+    for (const problem of problems) warn(`catalog: ${problem} (fix it, then run: node scripts/catalog.mjs write)`);
+    if (existsSync(path) && readFileSync(path, 'utf8') === text) return;
+    writeFileSync(path, text);
+    note(ctx, 'docs/catalog.md written');
+  } catch (error) {
+    warn(`docs/catalog.md not written: ${error.message}`);
+  }
+}
+
 function install(ctx, record) {
   if (ctx.os === 'windows') requireGitBash(ctx);
   ctx.newMachine = isNewMachine(ctx, record);
@@ -104,6 +130,7 @@ function install(ctx, record) {
   checkImportPath(ctx.root); // a tag worktree lies under HOME, whose path may hold a space: refused before any link moves
   Object.assign(record, { repo: ctx.repo, root: ctx.root, tag: ctx.to ?? null });
   linkHomeItems(ctx, record, LINKS.filter((name) => !PERSONAL_ITEMS.includes(name)));
+  writeCatalog(ctx);
   installPersonal(ctx, record);
   removeRetiredLinks(ctx, record, LINKS);
   removeRetiredState(ctx, record);
