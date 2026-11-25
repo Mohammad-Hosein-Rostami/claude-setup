@@ -41,4 +41,4 @@ OS files: `settings/macos.json` (Notification hook plays a sound), `settings/win
 `settings/linux.json` (empty).
 
 `settings/local.json` (gitignored, per machine): see `local.json.example` (`skipDangerousModePermissionPrompt`); its `hooks`
-are appended to the shared ones (e.g. the PC's Android incubator hook).
+are appended to the shared ones (for example a hook that only one machine needs).
