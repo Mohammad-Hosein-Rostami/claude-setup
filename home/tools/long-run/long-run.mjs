@@ -100,7 +100,7 @@ async function liveCommand({ flags, root, write }) {
     return;
   }
   const { stdout } = process;
-  await untilInterrupt((signal) => liveLoop({ root, all, signal, write: (frame) => stdout.write(frame), isTTY: Boolean(stdout.isTTY), columns: stdout.columns }));
+  await untilInterrupt((signal) => liveLoop({ root, all, signal, write: (frame) => stdout.write(frame), isTTY: Boolean(stdout.isTTY), columns: () => stdout.columns }));
 }
 
 async function eventsCommand({ flags, root, write }) {

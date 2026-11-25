@@ -4,6 +4,7 @@
 // Invariants: reads only, through runView() (the files the runs already write); each frame reads the runs again, so a run that
 //   starts, ends or switches account between frames shows in the next one; every line is cleaned of control characters and
 //   token-shaped text; a session id is cut to SESSION_ID_CHARS; a run whose files cannot be read is one `unreadable` line.
+import { setTimeout as delay } from 'node:timers/promises';
 import { scrub } from './claude-run.mjs';
 import { listRunIds, runPaths } from './run-store.mjs';
 import { STATUS_RUNS, formatWhen, runView } from './view.mjs';
@@ -82,16 +83,23 @@ export function liveLines(root, { now = new Date(), all = false } = {}) {
 
 /**
  * Draws liveLines every LIVE_REFRESH_MS until `signal` aborts; Ctrl-C ends only the view, never a run.
- * @param {{root: string, write: (frame: string) => void, signal: AbortSignal, all?: boolean, isTTY?: boolean, columns?: number,
- *   now?: () => Date, sleep?: (ms: number) => Promise<void>}} options `write` takes a whole frame, so a redraw does not flicker;
- *   on a TTY each frame clears the screen first and each line is cut to `columns - 1` (no wrap); off a TTY the frames scroll,
- *   a blank line apart.
+ * @param {{root: string, write: (frame: string) => void, signal: AbortSignal, all?: boolean, isTTY?: boolean,
+ *   columns?: () => number, now?: () => Date, sleep?: (ms: number) => Promise<void>}} options `write` takes a whole frame, so a
+ *   redraw does not flicker; on a TTY each frame clears the screen first and each line is cut to `columns() - 1`, read per frame
+ *   so a narrowed window does not wrap; off a TTY the frames scroll, a blank line apart. The default `sleep` ends at once when
+ *   `signal` aborts, so Ctrl-C quits without waiting for the next frame.
  * @returns {Promise<void>}
  */
-export async function liveLoop({ root, write, signal, all = false, isTTY = false, columns = 0, now = () => new Date(), sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }) }) {
+export async function liveLoop({ root, write, signal, all = false, isTTY = false, columns = () => 0, now = () => new Date(), sleep = (ms) => delay(ms, undefined, { signal }).catch(endsOnAbort) }) {
   while (!signal.aborted) {
     const lines = liveLines(root, { now: now(), all });
-    write(isTTY ? `${CLEAR_SCREEN}${lines.map((line) => line.slice(0, columns - 1)).join('\n')}\n` : `${lines.join('\n')}\n\n`);
+    const width = columns() - 1;
+    write(isTTY ? `${CLEAR_SCREEN}${lines.map((line) => line.slice(0, width)).join('\n')}\n` : `${lines.join('\n')}\n\n`);
     await sleep(LIVE_REFRESH_MS);
   }
+}
+
+/** An aborted wait is the normal end of the view; any other error is not. */
+function endsOnAbort(error) {
+  if (error.name !== 'AbortError') throw error;
 }
