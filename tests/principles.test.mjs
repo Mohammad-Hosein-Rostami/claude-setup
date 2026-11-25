@@ -141,9 +141,9 @@ test('home/CLAUDE.md: long-command line says over 3 min, with a timeout, keep wo
 
 const listDir = (path) => readdirSync(fileURLToPath(new URL(`../${path}`, import.meta.url)));
 const SUITE_SLOTS = 1; // the owner's default for the machine-wide suite queue (home/tools/suite DEFAULT_CONFIG)
-// The files of the no-Fable gate itself (agent-model-guard.mjs and its libs, agent-budget.mjs and the reasons lib both name, with their
+// The files of the no-Fable gate itself (agent-model-guard.mjs and its libs, settings-env.mjs among them, agent-budget.mjs and the reasons lib both name, with their
 // READMEs): the only hook text that names Fable.
-const FABLE_GATE_FILES = ['README.md', 'agent-budget.mjs', 'agent-model-guard.mjs', 'lib/README.md', 'lib/agent-model-gates.mjs', 'lib/agent-pins.mjs', 'lib/fable-model-reasons.mjs'];
+const FABLE_GATE_FILES = ['README.md', 'agent-budget.mjs', 'agent-model-guard.mjs', 'lib/README.md', 'lib/agent-model-gates.mjs', 'lib/agent-pins.mjs', 'lib/fable-model-reasons.mjs', 'lib/settings-env.mjs'];
 
 test('home/CLAUDE.md names the owner\'s cap of 3 lex, 3 dev, 3 tess and 3 max (the guard\'s cap) and the 1-slot suite run queue', () => {
   const claude = flat(read('home/CLAUDE.md'));
