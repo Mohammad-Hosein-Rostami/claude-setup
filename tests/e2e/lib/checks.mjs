@@ -1,5 +1,5 @@
 // The transcript checks of the e2e scenarios and every threshold they use. Exports: LIMITS, checkLine, backgroundShellsLeft,
-// longSleeps, testRunnerCommands, fableModels, reportWords, bossFileCalls, unmetNeeds, startsOf, everyAgent.
+// longSleeps, testRunnerCommands, fableModels, reportWords, bossFileCalls, unmetNeeds, startsOf, completedAt, everyAgent.
 // Each check reads parsed transcript lines (transcripts.mjs) and returns what it found, so a scenario turns it into a check line
 // `{check, expected, observed, pass}` with checkLine. Plan section 7 M7 and section 9 E1 define what counts.
 // Invariants: pure, no file access; an empty transcript gives "nothing found", and the scenario then also checks that the
@@ -124,6 +124,22 @@ export function bossFileCalls(lines, repoDirs) {
 /** @returns {{type: string, prompt: string, model: string | null, agentId: string | null, denied: boolean, denyText: string,
  * atMs: number | null}[]} the Agent calls of one transcript */
 export const startsOf = (lines) => agentStarts(toolCalls(lines));
+
+/**
+ * When each background task or agent ended with `completed`, by its task-notification (E2: a later start must follow these).
+ * @param {object[]} lines one transcript
+ * @returns {Map<string, number | null>} task id -> the time of its first completed notice
+ */
+export function completedAt(lines) {
+  const ends = new Map();
+  for (const { text, atMs } of userTexts(lines)) {
+    for (const notice of text.match(NOTICE) ?? []) {
+      if (NOTICE_DONE.exec(notice)?.[1] !== 'completed') continue;
+      for (const [, id] of notice.matchAll(NOTICE_ID)) if (!ends.has(id.trim())) ends.set(id.trim(), atMs);
+    }
+  }
+  return ends;
+}
 
 /** @returns {{id: string, type: string, lines: object[]}[]} the boss (type `boss`) and every subagent of a session */
 export const everyAgent = (session) => [{ id: session.id, type: 'boss', lines: session.lines }, ...session.agents];

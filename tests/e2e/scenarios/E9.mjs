@@ -27,6 +27,8 @@ const POLL_MS = 5_000;
 const WAIT_TIMEOUT_MS = 600_000;
 const ORDER = ['run-started', 'step-started', ['driver-lost', 'run-stopped'], 'resumed', 'step-done', 'run-done'];
 const SEEN = /\bseen\b/i;
+// the word lex alone: not the lex inside lex-web or lex-scout (review round 2, R3)
+const LEX_WORD = /(?<![\w-])lex(?![\w-])/;
 const NEEDS_REAL_HOME = 'long-run reads its token from the account store, which refuses a temp HOME: run with --real-home (owner opt-in)';
 const pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 const namesIn = (dir) => { try { return readdirSync(dir); } catch { return []; } };
@@ -79,7 +81,7 @@ export function check(ctx) {
     checkLine('the lex transcript appeared before the driver was killed', 'seen', ctx.notes.lexSeen ? 'seen' : 'not seen', ctx.notes.lexSeen === true),
     checkLine('events in order', ORDER.map((step) => [step].flat().join('/')).join(', '), order.ok ? order.seen.join(', ') : `missing ${order.missing}; seen ${order.seen.join(', ') || 'none'}`, order.ok),
     checkLine('the resume note names the unfinished lex', 'a RESUME-STATE note that names lex', notes.length === 0 ? 'no RESUME-STATE note' : `${notes.length} note(s)`,
-      notes.some(({ text }) => /\blex\b/.test(text))),
+      notes.some(({ text }) => LEX_WORD.test(text))),
     checkLine('seen appears once', '1 lex reply seen', `${lexReplies.length}`, lexReplies.length === 1),
     checkLine('no Fable model in the job sessions', 'none', [...new Set(sessions.flatMap((session) => fableModels(session)))].join(', ') || 'none',
       sessions.length > 0 && sessions.every((session) => fableModels(session).length === 0)),

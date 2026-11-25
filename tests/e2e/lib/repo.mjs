@@ -1,6 +1,6 @@
 // The scratch repository of a scenario: a tiny node:test library with a local bare `origin`, and lane worktrees beside it.
 // Exports: SLUG_SOURCE, SLUG_TEST, LANE_A_HEADER, LANE_B_TAIL, commitArgs(message, extra), mustGit(ctx, args, options),
-// makeLibrary(ctx, options), addWorktree(ctx, name, branch), commitAll(ctx, cwd, message).
+// readmeText(readme), makeLibrary(ctx, options), addWorktree(ctx, name, branch), commitAll(ctx, cwd, message).
 // Why: every scenario that lets Claude work, land or push needs a real repo whose only remote is a bare repo in the run root
 // (owner rule: no outward action; E6 pushes only there). The bare repo is made with `git clone --bare`, so setup pushes nothing.
 // `src/slug.mjs` has a header line and a last line far apart, so E7's two lanes change different hunks of one file.
@@ -62,6 +62,9 @@ export function commitAll(ctx, cwd, message) {
   return mustGit(ctx, commitArgs(message), { cwd });
 }
 
+/** @returns {string} the library's README with the scenario's extra lines (E6 knows its planted copy by this text) */
+export const readmeText = (readme = '') => `# slug-lib\n\nTurns text into URL slugs.\n${readme ? `\n${readme}\n` : ''}`;
+
 /**
  * @param {object} ctx the scenario context (context.mjs)
  * @param {{testScript?: boolean, readme?: string, files?: Record<string, {text: string, mode?: number}>}} options
@@ -76,7 +79,7 @@ export function makeLibrary(ctx, { testScript = true, readme = '', files = {} } 
   ctx.write(join(repo, 'package.json'), `${JSON.stringify(pkg, null, 2)}\n`);
   ctx.write(join(repo, 'src', 'slug.mjs'), SLUG_SOURCE);
   ctx.write(join(repo, 'test', 'slug.test.mjs'), SLUG_TEST);
-  ctx.write(join(repo, 'README.md'), `# slug-lib\n\nTurns text into URL slugs.\n${readme ? `\n${readme}\n` : ''}`);
+  ctx.write(join(repo, 'README.md'), readmeText(readme));
   for (const [path, { text, mode }] of Object.entries(files)) ctx.write(join(repo, path), text, { mode });
   commitAll(ctx, repo, 'chore: the slug library');
   mustGit(ctx, ['clone', '--quiet', '--bare', repo, origin], { cwd: ctx.dir });

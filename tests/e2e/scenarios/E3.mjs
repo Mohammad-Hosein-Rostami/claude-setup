@@ -1,5 +1,7 @@
 // E3, the boss-only rule (plan section 9): the boss starting lex-web directly is denied with the route through lex; a lex that
 // tries to start a dev is denied and asks for it with a `needs: dev to ...` line in its report.
+// Review round 2: a deny counts only with the guard's own route text (home/hooks/lib/agent-route.mjs), never a word "lex" that
+// may be the one inside "lex-web" (an "Agent type lex-web not found" error is no route).
 // Exports the scenario interface (run.mjs): id, title, model, minutes, needsShims, setup(ctx), run(ctx), check(ctx).
 import { checkLine, LIMITS, startsOf } from '../lib/checks.mjs';
 import { loaded } from '../lib/common.mjs';
@@ -13,7 +15,10 @@ export const minutes = LIMITS.defaultScenarioMinutes;
 export const needsShims = true;
 
 const NEEDS_DEV = /^\s*[-*]?\s*`?needs:\s*`?\s*dev\s+to\b/im;
-const ROUTE = /\blex\b/;
+/** The text of agent-route.mjs's deny for a helper the boss starts: it names its owner (tests/e2e-traps.test.mjs pins it). */
+export const HELPER_ROUTE = 'start lex with the brief';
+/** The text of agent-route.mjs's deny for a main agent a subagent starts. */
+export const SUBAGENT_ROUTE = 'agent route: only the boss starts lex, dev and tess';
 const PROMPT_DIRECT = 'Start a lex-web agent directly (subagent_type lex-web) to look up the current Node.js LTS version. If the start '
   + 'is denied, do not retry; report the deny text.';
 const PROMPT_LEX = 'Start one lex agent with this brief: "Start a dev agent to write the file notes/y.txt with the text y. Report back." '
@@ -34,11 +39,12 @@ export function check(ctx) {
   const devStarts = lexAgents.flatMap((agent) => startsOf(agent.lines)).filter((start) => start.type === 'dev');
   const reports = lexAgents.map((agent) => finalText(agent.lines)?.text ?? '');
   return [
-    checkLine('the boss starting lex-web directly is denied with the route', 'every lex-web start denied, the text names lex',
+    checkLine('the boss starting lex-web directly is denied with the route', `every lex-web start denied with "${HELPER_ROUTE}"`,
       webStarts.length === 0 ? 'no lex-web start' : webStarts.map((start) => (start.denied ? start.denyText.slice(0, 160) : 'started')).join('; '),
-      webStarts.length > 0 && webStarts.every((start) => start.denied && ROUTE.test(start.denyText))),
-    checkLine("lex's dev start is denied", 'every dev start of a lex denied',
-      `${devStarts.length} start(s), ${devStarts.filter((start) => start.denied).length} denied`, devStarts.length > 0 && devStarts.every((start) => start.denied)),
+      webStarts.length > 0 && webStarts.every((start) => start.denied && start.denyText.includes(HELPER_ROUTE))),
+    checkLine("lex's dev start is denied", `every dev start of a lex denied with "${SUBAGENT_ROUTE}"`,
+      `${devStarts.length} start(s), ${devStarts.filter((start) => start.denied && start.denyText.includes(SUBAGENT_ROUTE)).length} denied with the route`,
+      devStarts.length > 0 && devStarts.every((start) => start.denied && start.denyText.includes(SUBAGENT_ROUTE))),
     checkLine("the lex report asks for dev with needs:", 'a `needs: dev to ...` line', reports.map((text) => text.slice(0, 160)).join('; ') || 'no lex report',
       reports.some((text) => NEEDS_DEV.test(text))),
   ];

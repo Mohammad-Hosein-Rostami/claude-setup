@@ -1,7 +1,10 @@
 // E4, the Fable gate (plan section 9): a lex start that names the Fable model, then the run-time alias "best", and a second
 // session whose opus alias is remapped to a Fable id are each denied; no subagent transcript names a Fable model.
 // The deny cases below are the only places a scenario names that model (owner rule; the dry run marks their lines).
+// Review round 2: a deny counts only when its text holds the gate's own rule (FABLE_RULE), so a crashed guard that denies
+// everything is a FAIL here, not a pass.
 // Exports the scenario interface (run.mjs): id, title, model, minutes, needsShims, setup(ctx), run(ctx), check(ctx).
+import { FABLE_RULE } from '../../../home/hooks/lib/fable-model-reasons.mjs';
 import { checkLine, LIMITS, startsOf } from '../lib/checks.mjs';
 import { loaded } from '../lib/common.mjs';
 import { makeLibrary } from '../lib/repo.mjs';
@@ -29,16 +32,18 @@ export async function run(ctx) {
 }
 
 const lexStarts = (ctx, session) => (session ? startsOf(loaded(ctx, session).lines).filter((start) => start.type === 'lex') : []);
-const shown = (starts) => (starts.length === 0 ? 'no start' : starts.map((start) => `${start.model ?? 'pinned'}: ${start.denied ? 'denied' : 'started'}`).join(', '));
+const gated = (start) => start.denied && start.denyText.includes(FABLE_RULE);
+const shown = (starts) => (starts.length === 0 ? 'no start'
+  : starts.map((start) => `${start.model ?? 'pinned'}: ${gated(start) ? 'denied by the gate' : start.denied ? `denied: ${start.denyText.slice(0, 80)}` : 'started'}`).join(', '));
 
 export function check(ctx) {
   const named = lexStarts(ctx, ctx.notes.models);
   const byModel = DENY_MODELS.map((name) => named.filter((start) => start.model === name));
   const remapped = lexStarts(ctx, ctx.notes.remap);
   return [
-    ...DENY_MODELS.map((name, index) => checkLine(`a lex start with model "${name}" is denied`, 'at least 1 start, every one denied',
-      shown(byModel[index]), byModel[index].length > 0 && byModel[index].every((start) => start.denied))),
-    checkLine('a lex start with the opus alias remapped is denied', 'at least 1 start, every one denied', shown(remapped),
-      remapped.length > 0 && remapped.every((start) => start.denied)),
+    ...DENY_MODELS.map((name, index) => checkLine(`a lex start with model "${name}" is denied`, 'at least 1 start, every one denied by the Fable gate',
+      shown(byModel[index]), byModel[index].length > 0 && byModel[index].every(gated))),
+    checkLine('a lex start with the opus alias remapped is denied', 'at least 1 start, every one denied by the Fable gate', shown(remapped),
+      remapped.length > 0 && remapped.every(gated)),
   ];
 }
