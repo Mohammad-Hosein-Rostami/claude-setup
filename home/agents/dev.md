@@ -77,8 +77,12 @@ changelog of the installed version) before you edit; never guess a library API. 
 - Only the boss starts `lex` (a design question the plan does not answer) and `tess` (it checks main after the land, never
   your branch). Never message lex or tess yourself: ask the boss with `needs: <agent> to <task>, blocks: <what>` as
   home/CLAUDE.md says, and go on with what does not depend on it.
-- Before your verdict and before you end your turn, wait for every helper you started to return its result. A helper that
-  cannot finish: stop it with TaskStop and report it as not finished.
+- Before your verdict and before you end your turn, wait for every helper you started to return its result. A notice that says a
+  helper `is waiting on its own background work` is no result, even under status `completed`, and that helper no longer keeps
+  you running: before you end your turn, start one keep-alive, `node -e "setTimeout(() => {}, 7200000)"` with
+  `run_in_background: true` and `timeout` 7200000, so its final notice still reaches you (ending your turn while the keep-alive
+  runs is a pause, not your report); stop the keep-alive with TaskStop once every helper has returned, before your report. A
+  helper that cannot finish: stop it with TaskStop and report it as not finished.
 
 ## Build
 

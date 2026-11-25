@@ -69,8 +69,12 @@ playwright and chrome-devtools browsers. Nothing lowers the bar: no cut in accur
 - A pixel-qa FAIL goes back into the batch loop for every state of that surface; then start pixel-qa again on the new tip.
 - `dev-run` may run installs, builds and long logs. A command over 3 minutes otherwise runs with `run_in_background: true` and a
   `timeout` (at most 2 h), started and waited for as `~/.claude/agents/dev-run.md` says, never polled or sleep-looped.
-- Before your verdict and before you end your turn, wait for every helper you started to return its result. A helper that
-  cannot finish: stop it with TaskStop and report it as not finished.
+- Before your verdict and before you end your turn, wait for every helper you started to return its result. A notice that says a
+  helper `is waiting on its own background work` is no result, even under status `completed`, and that helper no longer keeps
+  you running: before you end your turn, start one keep-alive, `node -e "setTimeout(() => {}, 7200000)"` with
+  `run_in_background: true` and `timeout` 7200000, so its final notice still reaches you (ending your turn while the keep-alive
+  runs is a pause, not your report); stop the keep-alive with TaskStop once every helper has returned, before your report. A
+  helper that cannot finish: stop it with TaskStop and report it as not finished.
 
 ## Rules
 

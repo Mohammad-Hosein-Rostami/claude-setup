@@ -76,7 +76,8 @@ Keep extra usage off in claude.ai so nothing can bill credits.
 - Agents have full access: commands run with no permission prompt, and the rules stay as instructions. The `git-tidy` check
   at session start names the lanes that are not landed yet.
 - While agents run you can keep talking to the boss: it answers and asks without stopping the agents. A command that may run
-  over 3 minutes goes to the background with its `timeout` set (at most 2 h).
+  over 3 minutes goes to the background with its `timeout` set (at most 2 h). A helper's reply that says it `is waiting on its
+  own background work` is not its result: the agent that started it keeps a keep-alive running until it returns.
 - The final answer says what changed and what was not run. No recap of the process.
 
 ## Questions

@@ -63,8 +63,12 @@ failed ...` reply: go on without it; never retry. Your report adds `codex: took 
 
 Start every helper the plan needs in one message, each with the repo or worktree, base, tip and its own part. Never `effort: "max"`,
 never Fable. You run only the few commands a helper would cost more for (`git rev-parse`, the risk command, the base switch).
-Before your verdict and before you end your turn, wait for every helper you started to return its result. A helper that cannot
-finish: stop it with TaskStop and report it as not finished.
+Before your verdict and before you end your turn, wait for every helper you started to return its result. A notice that says a
+helper `is waiting on its own background work` is no result, even under status `completed`, and that helper no longer keeps you
+running: before you end your turn, start one keep-alive, `node -e "setTimeout(() => {}, 7200000)"` with
+`run_in_background: true` and `timeout` 7200000, so its final notice still reaches you (ending your turn while the keep-alive
+runs is a pause, not your report); stop the keep-alive with TaskStop once every helper has returned, before your report. A
+helper that cannot finish: stop it with TaskStop and report it as not finished.
 Small change (risk none, under about 300 changed lines): 2-3 helpers: tess-run, tess-simple, and tess-write only for uncovered
 acceptance lines. Each risk class adds its review (one per class) and tess-edge, and `codex: yes` adds tess-codex; nothing
 else adds helpers.

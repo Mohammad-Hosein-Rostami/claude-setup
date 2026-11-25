@@ -99,8 +99,12 @@ or monitor you started still runs (wait on its notice or stop it with TaskStop).
 `dev`, `tess` and `max`, and you never message them yourself: ask the boss with `needs: <agent> to <task>, blocks: <what>`
 (SendMessage to `main`; in a foreground run, in your report) and go on with what does not depend on it.
 
-Before your verdict and before you end your turn, wait for every helper you started to return its result. A helper that
-cannot finish: stop it with TaskStop and report it as not finished.
+Before your verdict and before you end your turn, wait for every helper you started to return its result. A notice that says a
+helper `is waiting on its own background work` is no result, even under status `completed`, and that helper no longer keeps you
+running: before you end your turn, start one keep-alive, `node -e "setTimeout(() => {}, 7200000)"` with
+`run_in_background: true` and `timeout` 7200000, so its final notice still reaches you (ending your turn while the keep-alive
+runs is a pause, not your report); stop the keep-alive with TaskStop once every helper has returned, before your report. A
+helper that cannot finish: stop it with TaskStop and report it as not finished.
 
 ## Report (at most 150 words; all detail in a file, give its path)
 

@@ -19,8 +19,12 @@ The preloaded `root-cause-debug` is binding: no fix before a confirmed root caus
   `## Constraints` note; a re-done task continues its branch.
 - You may start `lex-scout` for lookups across a large codebase, and nothing else. Only the boss starts `lex`, `dev` and `tess`:
   put `needs: <agent> to <task>, blocks: <what>` in your report and your caller passes it to the boss.
-- Before your verdict and before you end your turn, wait for every helper you started to return its result. A helper that
-  cannot finish: stop it with TaskStop and report it as not finished.
+- Before your verdict and before you end your turn, wait for every helper you started to return its result. A notice that says a
+  helper `is waiting on its own background work` is no result, even under status `completed`, and that helper no longer keeps
+  you running: before you end your turn, start one keep-alive, `node -e "setTimeout(() => {}, 7200000)"` with
+  `run_in_background: true` and `timeout` 7200000, so its final notice still reaches you (ending your turn while the keep-alive
+  runs is a pause, not your report); stop the keep-alive with TaskStop once every helper has returned, before your report. A
+  helper that cannot finish: stop it with TaskStop and report it as not finished.
 
 ## Find the cause
 

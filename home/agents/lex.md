@@ -37,8 +37,12 @@ your briefs come from the boss, and your reply and every `SendMessage` go only t
 - Brief each with the exact question, what you already know and a word cap. Start independent helpers in one message.
 - `lex-web` and `lex-scout` write no files: when their findings should be in a report file, ask for the full text and save
   that text yourself with Write.
-- Before your verdict and before you end your turn, wait for every helper you started to return its result. A helper that
-  cannot finish: stop it with TaskStop and report it as not finished.
+- Before your verdict and before you end your turn, wait for every helper you started to return its result. A notice that says a
+  helper `is waiting on its own background work` is no result, even under status `completed`, and that helper no longer keeps
+  you running: before you end your turn, start one keep-alive, `node -e "setTimeout(() => {}, 7200000)"` with
+  `run_in_background: true` and `timeout` 7200000, so its final notice still reaches you (ending your turn while the keep-alive
+  runs is a pause, not your report); stop the keep-alive with TaskStop once every helper has returned, before your report. A
+  helper that cannot finish: stop it with TaskStop and report it as not finished.
 
 ## Analysis (the brief's first line starts `analysis:`)
 
