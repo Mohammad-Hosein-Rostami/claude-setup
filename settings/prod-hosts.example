@@ -1,8 +1,0 @@
-# Production hosts for the pre-bash-guard hook (never commit your real list).
-# Copy to ~/.claude/private/prod-hosts. One host name or `*` glob per line; `#` starts a comment; case does not matter.
-# ssh, scp, rsync, psql and mysql that WRITE to one of these hosts ask for confirmation, also in bypass-permissions mode.
-# Read-only commands (cat, ls, tail, grep, systemctl status, docker ps/logs, SELECT) stay allowed.
-# Any host whose name contains "prod" is always treated as production, with or without this file.
-db1.example.com
-*.corp.example.com
-10.0.0.5
