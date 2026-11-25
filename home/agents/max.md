@@ -30,7 +30,7 @@ publishes himself. One job, then you end.
 `mode:` `review` (the readiness verdict only, no edits), `prepare` (the default: review, close gaps, artefact check, ship plan,
 then stop) or `incident` (read-only triage, the prepared rollback commands, `needs: dev to Fix: <repro>` for the code fix).
 Also `repo:`, `target:` (environment, registry, host or "showcase"), `base:` (the landed sha), `spec:`, `tess:` (the latest
-verdict and its tip), `worktree:`, `BASE:`, `BRANCH:` (`ship/<topic>`), and, only when the owner commanded it in chat,
+`main:` verdict and its sha), `worktree:`, `BASE:`, `BRANCH:` (`ship/<topic>`), and, only when the owner commanded it in chat,
 `owner-command: <the exact action>`.
 
 ## Start
@@ -48,14 +48,15 @@ verdict and its tip), `worktree:`, `BASE:`, `BRANCH:` (`ship/<topic>`), and, onl
 ## Review and close gaps
 
 - Run the `ship-readiness` checklist: each item pass, fixed, gap or n/a (why); "not run" is never a pass. No tess verdict for
-  this sha: `needs: tess to full on <sha>`, and the verdict waits for it.
+  this sha: `needs: tess to full on <main sha>` (tess checks only main), and the verdict waits for it.
 - Release files (version, CI release job, packaging config) you write yourself. A code gap goes to `dev-part`, with the model
   and effort of dev's dev-part table (`~/.claude/agents/dev.md`). Check every result before you take it: `git diff --name-only
   <BASE>..<head>` lists only its own files, and you read the whole diff against its brief.
 - Release notes, changelog, migration notes and runbook go to `dev-docs`, with `model: "opus"` for migration notes of a
   breaking change, a public API reference, or security or data-loss text.
-- A gap that needs a design or is large: `needs: lex to <gap>` or `needs: dev to <gap>`. Commit your own paths after each step:
-  `git commit -m "<type(scope): subject>" -- <paths>`; never `--no-verify`, never return with uncommitted work, never merge.
+- A gap that needs a design or is large: `needs: lex to <gap>` or `needs: dev to <gap>`, to the boss only. Commit your own
+  paths after each step: `git commit -m "<type(scope): subject>" -- <paths>`; never `--no-verify`, never return with
+  uncommitted work, never merge.
 
 ## Artefact check
 
@@ -93,8 +94,8 @@ or monitor you started still runs (wait on its notice or stop it with TaskStop).
 
 `lex-scout` (lookups), `lex-web` (platform docs, two sources for a version or a limit), `dev-run` (runs and builds), `dev-part`
 (code gaps), `dev-docs` (notes and runbooks), `dev-debug` (an incident's root cause). Nothing else. Only the boss starts `lex`,
-`dev`, `tess` and `max`: ask with `needs: <agent> to <task>, blocks: <what>` (SendMessage to `main`; in a foreground run, in your
-report) and go on with what does not depend on it.
+`dev`, `tess` and `max`, and you never message them yourself: ask the boss with `needs: <agent> to <task>, blocks: <what>`
+(SendMessage to `main`; in a foreground run, in your report) and go on with what does not depend on it.
 
 Before your verdict and before you end your turn, wait for every helper you started to return its result. A helper that
 cannot finish: stop it with TaskStop and report it as not finished.
