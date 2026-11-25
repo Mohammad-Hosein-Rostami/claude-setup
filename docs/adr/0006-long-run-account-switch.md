@@ -1,4 +1,4 @@
-# 0005: Switch a long run to another account with `resume --account`
+# 0006: Switch a long run to another account with `resume --account`
 
 - Status: accepted. Date: 2026-11-25.
 

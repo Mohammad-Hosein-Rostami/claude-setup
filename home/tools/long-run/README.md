@@ -117,7 +117,8 @@ you started") and must end with one line `STEP-RESULT: done`, `STEP-RESULT: bloc
     job.json                              the frozen job, the sha256 of the original, runnerVersion
     run.json                              account, startedBy (terminal | session | schedule), createdAt
     checkpoints.sqlite                    LangGraph checkpoints (thread_id = run id)
-    driver.json, driver.lock, driver.log  the driver: pid, host, heartbeat (30 s), status, waits, holds
+    driver.json, driver.lock, driver.log  the driver: pid, host, heartbeat (30 s), status, waits, holds; the lock line is
+                                          `<pid> <host> <start>` (the driver's process start)
     control/                              PAUSE, STOP, <id>.pause, <id>.stop, <id>.takeover, <id>.<time>-<n>-<uuid>.tell (one per message)
     steps/<id>.json, steps/.rerun-<n>/    one journal per step or item; journals a rerun set aside
     logs/<id>.<start>.jsonl, .stderr.log  each start's stream, token-shaped text scrubbed, cut at 50 MB
@@ -127,7 +128,10 @@ you started") and must end with one line `STEP-RESULT: done`, `STEP-RESULT: bloc
 ~/.config/claude-setup/long-run.json      the ntfy server and topic (0600)
 ```
 
-A run whose driver pid is gone or whose heartbeat is over 120 s old is `stale`; `resume` (or autostart) continues it. A child a
+A run is held by a live driver while its heartbeat is under 120 s old, or while its lock names a live process on this
+machine that `ps` shows started when the lock says (a driver that is starting, or one just woken from a sleep, whatever
+its heartbeat), or, where `ps` cannot tell, one that started under 120 s ago. Otherwise it is `stale`; `resume` (or
+autostart) continues it, and the old lock is removed by one resume at a time. See `docs/adr/0007-long-run-run-lock.md`. A child a
 dead driver left running is ended first, and only when its command line holds the step's session id. A session with no
 transcript (the driver died before the boss started, or Claude Code's 30-day cleanup removed it) is started fresh, and the
 journal says so. Nothing prunes finished runs by itself: `long-run prune` does, when you run it.
@@ -174,8 +178,9 @@ When a run stops (a pause, a stop, a reboot, a crash or a killed driver) while a
   --account <name>`. It prints `account <old> -> <new>` and records an `account-switched` event; `summary.md` names both
   accounts. Each unfinished step continues its own session on the new account, and a limit wait of the old account ends.
   Done steps keep the old name in their journal. The first start of each step on the new account writes its whole history
-  into that account's prompt cache once. A running or limit-waiting run is refused with exit 4, and so is a run whose lock
-  names any live process (a crashed run whose pid was reused: run a plain `long-run resume <run>` first, then switch).
+  into that account's prompt cache once. A running or limit-waiting run is refused with exit 4. A held, paused, stopped or
+  taken-over run needs no pause. A live driver that started before the switch was written follows it at its next start: a
+  waiting step ends its wait, and a running boss ends at its next safe point and continues on the new account.
 - After a reboot, unfinished runs continue by themselves (autostart on); paused and stopped runs wait for you.
 
 ## How you control runs from a Claude session
@@ -260,7 +265,9 @@ for a Node in use, C replaces only `lib/graph.mjs`.
 - A scheduled start missed during sleep: macOS relies on launchd running it at wake; Windows misses it.
 - A resume on another account (`resume --account`) was tried on two personal subscriptions on Opus 5.5 only, not on a Team or
   Enterprise organization. Sonnet 5.5 and Haiku 5.5 runs lose their earlier thinking after a switch: the API drops it, with
-  no error (the visible conversation stays). See `docs/adr/0005-long-run-account-switch.md`.
+  no error (the visible conversation stays). See `docs/adr/0006-long-run-account-switch.md`.
+- Windows (owner's choice): there is no process start-time check, so after a sleep of more than 90 s, a resume in the first
+  ~30 s after waking could start a second driver beside the woken one (main's behaviour); the account stays correct.
 
 ## Notes for maintainers
 
