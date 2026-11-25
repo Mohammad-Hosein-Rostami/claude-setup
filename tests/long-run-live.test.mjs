@@ -182,8 +182,12 @@ test('liveLoop with the default sleep returns at once when the signal aborts dur
   createRun(box, jobOf(box, 'ctrl-c'));
   const controller = new AbortController();
   const frames = [];
+  const write = (frame) => {
+    frames.push(frame);
+    if (frames.length > FRAME_CAP) throw new Error('liveLoop kept drawing after abort()');
+  };
   const started = performance.now();
-  const done = liveLoop({ root: box.root, write: (frame) => frames.push(frame), signal: controller.signal }); // draws frame one, then waits LIVE_REFRESH_MS
+  const done = liveLoop({ root: box.root, write, signal: controller.signal }); // draws frame one, then waits LIVE_REFRESH_MS
   controller.abort();
   await done;
   const waitedMs = performance.now() - started;
