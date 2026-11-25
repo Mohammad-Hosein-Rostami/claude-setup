@@ -1,15 +1,27 @@
 // Purpose: the one start-up line that gives every new terminal the `claude-as` function (spec-accounts.md "Start-up line"):
 //   zsh or bash source home/shell/claude-as.sh, PowerShell dot-sources home/shell/claude-as.ps1. The line holds no token and
 //   no account name.
-// Exports: addStartupLines, removeLine.
+// Exports: addStartupLines, removeLine, START_UP_MARK, shellStartUpFile.
 // Invariants: the line is found again by its mark (START_UP_MARK), so a second run, or a machine where an earlier install added
 //   it, never gets a second one (the installer takes the existing line over); a marked line for another path is left as it is
-//   and named, never rewritten. The rc file follows scripts/doctor-accounts.mjs shellStartUpFile, which doctor checks.
+//   and named, never rewritten. The rc file is the login shell's (shellStartUpFile).
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { START_UP_MARK, shellStartUpFile } from '../doctor-accounts.mjs';
+import { basename, dirname, join } from 'node:path';
 import { act, note, warn } from './context.mjs';
 import { ensureDir, remember } from './record.mjs';
+
+/** The comment that ends the start-up line install.sh and install.ps1 write; the line is found by it. */
+export const START_UP_MARK = '# claude-setup: claude-as';
+
+const homeOf = (env) => env.HOME || env.USERPROFILE || '';
+
+/** The rc file install.sh writes the line to for this login shell, or null for a shell it does not write (fish, none). */
+export function shellStartUpFile(env) {
+  const shell = basename(env.SHELL || '');
+  if (shell === 'zsh') return join(env.ZDOTDIR || homeOf(env), '.zshrc');
+  if (shell === 'bash') return join(homeOf(env), '.bashrc');
+  return null;
+}
 
 const shLine = (snippet) => `if [ -f '${snippet}' ]; then . '${snippet}'; fi ${START_UP_MARK}`;
 const psLine = (snippet) => `if (Test-Path -LiteralPath '${snippet}') { . '${snippet}' } ${START_UP_MARK}`;
