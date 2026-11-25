@@ -24,8 +24,8 @@
 // - The land ledger gets one line per landing, written only after the fast-forward. A base that moved always gets its line. A
 //   base that did not move gets none when the ledger already has a line for the branch at a sha the base holds: that is a
 //   re-run after a clean-up stop, also when other lanes moved the base before it. Otherwise (a lane with no new commit) it gets
-//   a line with 0 commits, so a reader sees the lane as landed. A line that cannot be written, or a ledger that cannot be read
-//   for that check, is one stderr warning each, and the landing goes on and exits 0.
+//   a line with 0 commits, so a reader sees the lane as landed. A line that cannot be written, or a ledger that cannot be
+//   checked, is one stderr warning each, and the landing goes on and exits 0.
 // - The clean-up after the landing runs `git-tidy prune --apply` over the repository: a branch goes only when its tip is on
 //   the base or merging it would change nothing, and only after it is written to the deletion log. A clean-up that fails (a
 //   deletion log that is not a regular file) is printed on stderr and removes nothing more; the landing stands and exits 0.
@@ -189,20 +189,20 @@ function removeLane({ dir, base }, branch, worktree, tip) {
 /**
  * Whether the ledger already holds this landing, so its line would count it twice: the base did not move (`baseSha` is `tip`)
  * and a line for `branch` has a landed sha the base holds. A base that moved is a new landing and is never skipped, even on a
- * second base checkout of the same repository (the ledger is one file per repository). A ledger that cannot be read counts as
- * no line, with a warning on stderr, so the line is written (and appendLandEntry warns when that fails too).
+ * second base checkout of the same repository (the ledger is one file per repository). A check that fails (a ledger that
+ * cannot be read, git that cannot run) counts as no line, with a warning on stderr: the lane has landed by then, so the line
+ * is written (appendLandEntry warns when that fails too) and the clean-up goes on.
  */
 function isLandedBefore(dir, branch, { baseSha, tip }) {
   if (baseSha !== tip) return false;
-  let entries;
   try {
-    ({ entries } = readLandEntries(dir));
+    // any status but 0 (a sha this clone does not have, a git error) is not held: a doubt writes the line
+    const isHeld = ({ to }) => runGit(dir, ['merge-base', '--is-ancestor', to, tip]).status === 0;
+    return readLandEntries(dir).entries.some((entry) => entry.branch === branch && isHeld(entry));
   } catch (error) {
-    console.error(`land: the ledger could not be read (${firstLine(error.message)}); the line of ${branch} is written without checking for an earlier one`);
+    console.error(`land: the ledger could not be checked (${firstLine(error.message)}); the line of ${branch} is written without checking for an earlier one`);
     return false;
   }
-  // runGit, not gitFlag: a line whose sha this clone does not have is simply not held, never a failed land
-  return entries.some((entry) => entry.branch === branch && runGit(dir, ['merge-base', '--is-ancestor', entry.to, tip]).status === 0);
 }
 
 /**
@@ -229,8 +229,9 @@ async function land({ branch, repo, test, testTimeoutSeconds }) {
   const tip = test === null
     ? rebaseLane(checkout, branch, worktree, baseSha)
     : await testRebasedTip(checkout, branch, worktree, { baseSha, command: test, timeoutSeconds: testTimeoutSeconds });
-  fastForward(checkout, branch, { baseSha, tip });
+  // counted before the fast-forward: a git failure after it would leave a landing with no ledger line
   const count = gitText(checkout.dir, ['rev-list', '--count', `${baseSha}..${tip}`]);
+  fastForward(checkout, branch, { baseSha, tip });
   console.log(`landed ${branch} on ${checkout.base} at ${tip} (${count} commit(s))`);
   const entry = { at: new Date().toISOString(), repo: checkout.dir, branch, from: baseSha, to: tip, commits: Number(count) };
   const ledgerWarning = isLandedBefore(checkout.dir, branch, { baseSha, tip }) ? null : appendLandEntry(checkout.dir, entry);
