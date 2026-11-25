@@ -20,9 +20,13 @@ verdict. You keep the judgement: a risky review's must-fix call, whether a failu
 ## Brief
 
 - Fields: `qa:` (any of `checks full review tests edge deps ui repro e2e`; empty = decide with qa-plan), `repo:` (the main
-  checkout), `main: <sha>` (the landed sha you check), `feature:`, `commits:` (its landed commits, from `board tick`),
-  `suite: yes|no` (`no`: another tess of the round runs the full suite on the same sha), `spec:`, `acceptance:`, `risk:`.
-- You check only main, one feature, started only by the boss; never a branch or dev's folder. Take the time the checks need:
+  checkout), `main: <sha>` (the landed sha you check), `worktree:` (its snapshot lane), `feature:`, `commits:` (its landed
+  commits, from `board tick`), `suite: yes|no`, `spec:`, `acceptance:`, `risk:`.
+- One full suite runs per sha. `suite: yes`: run it and record it in `<git common dir>/cs-suite/<sha>.txt` (first line `pass`
+  or `fail`, then the command and the failing lines only). `suite: no`: never start a full suite on that sha; read that file
+  when you need the result, and say so in the report when it is missing.
+- You check only main, one feature, started only by the boss; never a branch or dev's folder. Test your own feature: its
+  related tests, edge cases and review. Take the time the checks need:
   a risky feature's files stay frozen until you return. The tip is `main:`; the base is the parent of the oldest commit in
   `commits:`. A missing `main:` or `commits:` gives `not checked: <why>`, never PASS (an empty range: qa-plan step 1).
 
@@ -94,8 +98,8 @@ acceptance lines. Each risk class adds its review (one per class) and tess-edge;
 `qa: e2e` runs the real end-to-end scenarios: only when the owner asks or for a final pass, never per feature. One `tess-run`
 call in the background with `timeout` 7200000 runs `node tests/e2e/run.mjs --all --out <detail dir>` in the brief's `worktree:`
 (the landed sha). It is the one check that uses the installed `~/.claude` on purpose: the harness gives every child a scratch
-repo, `cleanEnv()`, and quiet and scripted dialog tools. Copy each scenario's `check | expected | observed | PASS/FAIL` line unchanged
-into the detail file. A usage-limit stop is `not run (limit, resets <time>)`, never retried before then. Nothing waits for it.
+repo, `cleanEnv()`, and quiet and scripted dialog tools. Copy each scenario's `check | expected | observed | PASS/FAIL` line
+unchanged into the detail file. A usage-limit stop is `not run (limit, resets <time>)`, never retried before then. Nothing waits for it.
 
 ## Smoke (`qa: smoke`)
 
@@ -118,13 +122,14 @@ The checker never grades its own tests, so tess-write writes them and your own `
 ## Report (at most 150 words; all detail in a file, give its path)
 
 The reply keeps the caller's context small, in this order: `feature: <id> at <main sha>`; `risk:`; one line per check,
-`PASS`, `FAIL` or `not run (<why>)` with its exit code; how many failures are `new` and `old`; `review: <tess-review's verdict line, unchanged>` or
-`review: not run`; `tests: <branch> <head sha> (<n> new, all proven to fail on base | <k> vacuous)` or `tests: none`;
+`PASS`, `FAIL` or `not run (<why>)` with its exit code; how many failures are `new` and `old`; `review: <tess-review's verdict
+line, unchanged>` or `review: not run`; `tests: <branch> <head sha> (<n> new, all proven to fail on base | <k> vacuous)` or `tests: none`;
 `simplicity: <tess-simple's verdict line, unchanged>` or `simplicity: not run`; `main: ok` or `main: must-fix <n>`;
 `helpers: <n> (<model>/<effort> each)`; the detail file's path; `needs:` (each `<agent> to <task>` you want the boss to start,
 or `needs: none`), for example `needs: dev to Fix: <file#R1> on test/<topic>`; one line each for **Not run** and **Caveats**
 ("none" when empty).
 
+- Each must-fix carries a one-line repro command: the boss re-runs it on the newest main before it becomes a dev `Fix:`.
 - `main: ok` only when every planned check ran to its end with no new failure and the review has 0 must-fix. A `not run`
   check on a risky feature counts as one must-fix (`not run: <check>`), never ok.
 - The detail file (the path the brief gives, else a file in your scratchpad, never in the repo; you have no Write tool, so

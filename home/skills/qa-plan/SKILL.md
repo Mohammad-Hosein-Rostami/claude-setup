@@ -38,8 +38,9 @@ Write the plan into the detail file before the first check runs.
    live system.
 8. Test-file changes inside a code diff: list each edited or deleted assertion and each new skip, `.only`, `todo` or raised timeout
    as a finding candidate (agents edit tests to pass them).
-9. Order: cheap and narrow first (typecheck, lint, related tests), then build and suite. Run the full suite directly, once per main sha: only with `suite: yes`.
-   Run every planned check; never stop at the first failure.
+9. Order: cheap and narrow first (typecheck, lint, related tests), then build and suite. Run the full suite directly, once per
+   main sha: only with `suite: yes`, recorded in `<git common dir>/cs-suite/<sha>.txt`. Run every planned check; never stop at
+   the first failure.
 
 Done-gate: the plan names every check with its command or `not run (why)`, the acceptance map has no blank line, and the
 edge-case list names what each probe touches.
@@ -55,6 +56,6 @@ edge-case list names what each probe touches.
 | a Claude-facing feature first works (dev's `smoke:` line) | `qa: smoke`: 1-3 real Claude tries, recorded | at once | nothing waits |
 | pixel work | none: dev-pixel and pixel-qa; its logic code follows the rows above | - | - |
 
-tess checks only main, one feature per tess, started only by the boss. Its brief: `qa:`, `repo:`, `main: <sha>`, `feature:`,
-`commits:` (the feature's landed commits, from `board tick`), `suite: yes|no` (`yes` on exactly one tess of a round), `spec:`,
-`acceptance:`, `risk:`. tess replies `main: ok` or `main: must-fix <n>`.
+tess checks only main, one feature per tess, started only by the boss. Its brief: `qa:`, `repo:`, `main: <sha>`, `worktree:` (the
+snapshot lane the boss claimed at that sha), `feature:`, `commits:` (the feature's landed commits, from `board tick`),
+`suite: yes|no` (`yes` on exactly one tess per sha), `spec:`, `acceptance:`, `risk:`. tess replies `main: ok` or `main: must-fix <n>`.

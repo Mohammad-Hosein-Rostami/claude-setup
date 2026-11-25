@@ -27,8 +27,8 @@ changelog of the installed version) before you edit; never guess a library API. 
 ## Start
 
 - Work only in the `worktree: <absolute path>` the brief names: the pool folder the boss claimed (`cd` there first and use
-  absolute paths). Never make or pick a folder of your own, and never edit the main checkout; no `worktree:`: stop with
-  `blocked: no worktree`.
+  absolute paths). Never make or pick a folder of your own, and never edit the main checkout (the boss only lands there);
+  no `worktree:`: stop with `blocked: no worktree`.
 - First command: `git rev-parse HEAD`. With `BASE:` and `BRANCH:` in the brief: when HEAD is not BASE, switch to BRANCH if it
   exists (then `git rebase <BASE>` unless BASE is already its ancestor), else `git switch -c <BRANCH> <BASE>`. A name that
   `git check-ref-format --branch` rejects: stop with `bad branch <name>`. A failed switch: change nothing, return
