@@ -158,7 +158,7 @@ test('the writers work in their own worktree and commit without a merge commit',
   for (const name of ['dev', 'dev-part', 'dev-docs', 'dev-ui', 'dev-pixel', 'dev-debug', 'tess-write', 'max']) {
     // dev works in the pool folder the boss claimed and names it as the brief's `worktree:`; the others say their own worktree.
     assert.match(agent(name), name === 'dev' ? /Work only in the `worktree: <absolute path>` the brief names/ : /own worktree/, name);
-    assert.match(agent(name), /never `--no-verify`/i, name);
+    assert.match(flat(agent(name)), /never `--no-verify`/i, name);
     assert.match(flat(agent(name)), /never return with uncommitted work/i, name);
   }
 });
