@@ -27,8 +27,9 @@ Steps, in order; nothing changes until every check has passed:
    marked assume-unchanged, or skip-worktree and on disk (git status does not show edits there; a clean sparse checkout
    passes); the branch exists and is not the base; when
    the branch has a worktree, that worktree is clean in the same way and is not the main worktree.
-2. Rebase onto the base's sha, read once: with no test, in the lane's worktree, or, for a branch with no worktree, in the
-   base checkout (which is switched back to the base after). With a test, in the lane's worktree on a detached HEAD, so the branch stays where it was.
+2. Rebase onto the base's sha, read once; a lane with no commit in common with the base is refused. With no test, in the
+   lane's worktree, or, for a branch with no worktree, in the base checkout (which is switched back to the base after). With a
+   test, in the lane's worktree on a detached HEAD, so the branch stays where it was.
    A rebase that stops (a conflict) is aborted, so the lane is left as it was: rebase it by hand, then land again.
 3. Test, only when `--test` is given (`test-gate.mjs`, `run-test.mjs`); a branch with no worktree to run it in is refused.
    The command runs in the lane's worktree at the rebased tip. It fails on a non-zero exit, a

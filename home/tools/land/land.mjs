@@ -8,7 +8,8 @@
 // Exports: none (a CLI). Exit codes: 0 landed, 1 refused or stopped (the message says why and what to do), 2 usage error.
 // Invariants:
 // - Nothing changes before every check passed: an unknown branch, a dirty or half-merged base checkout or lane worktree, or a
-//   lane checked out in the main worktree is refused with the reason.
+//   lane checked out in the main worktree is refused with the reason; so is a lane with no commit in common with the base,
+//   which a rebase would replay whole onto it.
 // - With no --test the lane is rebased and lands, whatever files both sides changed. With --test the rebased tip must pass it
 //   first, and the lane's branch moves only once it passed (test-gate.mjs); only a base that moves in the last step leaves the
 //   lane at the tested sha.
@@ -99,6 +100,12 @@ function findLane({ dir, base }, branch) {
   return worktree;
 }
 
+/** Refuses a lane with no commit in common with the base: a rebase would replay all its history onto the base. */
+function refuseUnrelated({ dir, base }, branch, baseSha) {
+  if (runGit(dir, ['merge-base', baseSha, `${HEADS}${branch}`]).status === 0) return;
+  throw new LandRefusal(`${branch} has no commit in common with ${base}, so land cannot tell which files both changed; rebase it onto ${base} by hand, then land again`);
+}
+
 /**
  * Rebases the lane onto `baseSha`, in its own worktree, or in the base checkout (switched back to the base after) when it has
  * none. Used when no test runs. A rebase that stops is aborted, so the lane is left as it was. Returns the lane's full tip sha.
@@ -178,6 +185,7 @@ async function land({ branch, repo, test, testTimeoutSeconds }) {
   const worktree = findLane(checkout, branch);
   if (worktree !== null) refuseUnclean(`the worktree of ${branch}`, worktree.path);
   const baseSha = gitText(checkout.dir, ['rev-parse', '--verify', `${HEADS}${checkout.base}^{commit}`]);
+  refuseUnrelated(checkout, branch, baseSha);
   const tip = test === null
     ? rebaseLane(checkout, branch, worktree, baseSha)
     : await testRebasedTip(checkout, branch, worktree, { baseSha, command: test, timeoutSeconds: testTimeoutSeconds });
