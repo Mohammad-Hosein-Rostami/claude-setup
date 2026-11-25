@@ -31,18 +31,25 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 3. The boss hands the work to `lex` (plan), `dev` (build), `tess` (tests, reviews and test writing) or, rarely, `max` (the ship
    agent: it prepares a release or deploy and stops), at most 3 of each at once. Each agent file lists its model, tools,
    preloaded skills and the helpers it may start. Only the boss starts lex, dev, tess and max (no other agent does): an agent that
-   needs one asks the boss with a `needs:` line.
-4. Agents have full access: commands run with no permission prompt, and no hook checks a command first. A dangerous `rm` runs
+   needs one asks the boss with a `needs:` line. lex works only for the boss, so a `needs: lex` always goes to the boss.
+4. The boss works in rounds. lex's plan comes with `<plan>.pieces.json`: small pieces, each with its feature, its files and
+   the pieces it must wait for. After every agent report and every land the boss runs `board tick`
+   (`node ~/.claude/tools/board/board.mjs tick --repo <main checkout> --plan <pieces.json>`). For each piece that can start,
+   while fewer than 3 dev run, it claims a folder from the lane pool (`git-tidy lane claim`) and gives it to dev; no agent
+   makes its own folder. When dev reports, the boss lands the piece with the `land` script, one at a time, and ticks again to
+   check main. Each land frees a slot, which the boss fills at once.
+5. Agents have full access: commands run with no permission prompt, and no hook checks a command first. A dangerous `rm` runs
    without a prompt too, because the installer sets `CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1` in the shell start-up
    files (restart Claude Code from a new terminal to pick it up). A question for you is Claude Code's own terminal question;
    left unanswered it auto-continues after 5 minutes and Claude takes the recommended option.
-5. After each edit, `post-edit.mjs` runs the project's formatter.
-6. Tests, type check, lint and reviews run by the table "Which tess work a change gets" in the `qa-plan` skill (`home/CLAUDE.md`,
-   "Quality checks", sums it up): dev's report names the change's
-   risk (`node ~/.claude/tools/risk/risk.mjs`), a risky change waits for `tess` before it lands, other code changes get one
-   background `tess` run at the end of the job, docs and text only get none, and what you ask for runs at once. dev and its
-   helpers run no tests; tess hands the runs to `tess-run` (full suites, installs and builds run directly, a
-   full suite once per tree), edge cases to `tess-edge`, the simplicity review to `tess-simple`, a review to `tess-review` and
+6. After each edit, `post-edit.mjs` runs the project's formatter.
+7. Tests, type check, lint and reviews run on main, one feature at a time, by the table "Which tess work a change gets" in the
+   `qa-plan` skill (`home/CLAUDE.md`, "Quality checks", sums it up): dev's report names the change's risk
+   (`node ~/.claude/tools/risk/risk.mjs`). A risky change lands, then gets `tess` on main at once, and no new piece touches its
+   files until tess returns; other code changes get `tess` when 3 features have landed unchecked or the job's last piece has
+   landed; docs and text only get none; and what you ask for runs at once. tess checks in its own pool lane at main's commit
+   and answers `main: ok` or `main: must-fix <n>`; a must-fix becomes a new piece. dev and its helpers run no tests; tess
+   hands the runs to `tess-run` (full suites, installs and builds run directly, a full suite once per tree), edge cases to `tess-edge`, the simplicity review to `tess-simple`, a review to `tess-review` and
    missing tests to `tess-write`, and keeps the verdict. No check runs by itself when an agent stops; no hook calls the risk
    command.
 
@@ -95,7 +102,8 @@ in `home/tools/board/README.md`, which also holds the row layout, the colours an
 | A workflow | `home/skills/<name>/SKILL.md` (its frontmatter `description` is its catalog row) | none |
 | A permission or hook wiring | `settings/base.json` (or the OS file) | run `scripts/install.sh` to rebuild `~/.claude/settings.json` |
 
-Edit in a git worktree, not the main checkout: the files are live in every session. Land by rebasing onto main and fast-forwarding (`git merge --ff-only`), through the `land` script (`--test "<command>"` tests the rebased tip first). Details: `CLAUDE.md` (this repo's
+Edit in a git worktree (a pool lane from `git-tidy lane claim`, or `scripts/lane-new.sh <name>`), not the main checkout: the
+files are live in every session. Land by rebasing onto main and fast-forwarding (`git merge --ff-only`), through the `land` script (`--test "<command>"` tests the rebased tip first). Details: `CLAUDE.md` (this repo's
 own rules) and `docs/usage.md`.
 
 ## Turn a hook off by hand
