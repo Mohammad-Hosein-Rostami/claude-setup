@@ -19,14 +19,13 @@ the brief come first; these lines hold for everyone.
 - At most 3 lex, 3 dev, 3 tess and 3 max run at once; their helpers are not counted. Two lanes or helpers never change
   the same file at once: each names its files; overlapping work runs in turn.
 - Long unattended jobs use the `long-run` skill; the main session starts one only when the owner asks in chat.
-- The final answer says what changed and what was not run.
-  A command the owner must run is given with the machine and the folder it runs in.
+- The final answer says what changed and what was not run. A command the owner must run is given with the machine and the folder it runs in.
 
 ## Quality checks (tess)
 - dev's report carries `risk:` (the `risk` command); lex's plan names `risk:` and `qa:` per task. The boss routes on the higher
   of the two; `risk: unknown` counts as risky. tess always runs in the background.
-- Tests and checks are tess's; dev and its helpers only build. Full suites, installs and builds go through the
-  `suite run` queue (1 slot), a full suite once per tree (`--cache`).
+- Tests and checks are tess's; dev and its helpers only build (dev-debug runs its repro). Full suites, installs and
+  builds go through the `suite run` queue, a full suite once per tree (`--cache`).
 
 | Change | tess work (`qa:`) | When | Landing |
 |---|---|---|---|
@@ -46,8 +45,8 @@ the brief come first; these lines hold for everyone.
   words, what it blocks, 2-4 options with the recommended one first, and a preview when the choice is a layout.
 - The boss asks them in one batch; each question gets its own popup and its own 2-minute wait. Answers go back by SendMessage
   to the same agent by its id, so it keeps its work; write the open agent ids into a handoff note before a restart.
-- An unanswered `questions:` block: a small, reversible choice takes the recommended option; a big
-  or deleting one waits for the owner.
+- An unanswered `questions:` block: a small, reversible choice takes the recommended option; a big or
+  deleting one waits.
 - Permission prompts (any tool, risky ones too) go ahead as Allow after 2 minutes unless denied;
   while any `max` runs, an outward one needs a click.
 - Owner decisions: scope, money, irreversible actions, credentials, product facts the repo lacks, real trade-offs. A technical
