@@ -183,3 +183,58 @@ test('a knob of 2^31 ms or more keeps the default (timer overflow)', async () =>
     assert.equal(controlPoll, DEFAULT_CONTROL_POLL_MS, `CONTROL_POLL_MS with ${overflowing}`);
   }
 });
+
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
+/** Reads msFromEnv with `value` in the test-only variable, so a failing case names the value. */
+async function msFromEnvWith(value) {
+  const { msFromEnv } = await import(ENV_MS_URL);
+  try {
+    process.env[KNOB_FOR_MSFROMENV] = value;
+    return msFromEnv(KNOB_FOR_MSFROMENV, FALLBACK);
+  } finally {
+    delete process.env[KNOB_FOR_MSFROMENV];
+  }
+}
+
+test('msFromEnv returns the fallback for an exponent such as 1e3, which Number() would read as 1000', async () => {
+  assert.equal(await msFromEnvWith('1e3'), FALLBACK, 'value "1e3"');
+});
+
+test('msFromEnv returns the fallback for a hex number such as 0x10, which Number() would read as 16', async () => {
+  assert.equal(await msFromEnvWith('0x10'), FALLBACK, 'value "0x10"');
+});
+
+test('msFromEnv returns the fallback for a plus sign such as +5, which Number() would read as 5', async () => {
+  assert.equal(await msFromEnvWith('+5'), FALLBACK, 'value "+5"');
+});
+
+test('msFromEnv returns the fallback for a number with a space around it, which Number() would read as 250', async () => {
+  for (const spaced of [' 250 ', '250 ', ' 250']) {
+    assert.equal(await msFromEnvWith(spaced), FALLBACK, `value ${JSON.stringify(spaced)}`);
+  }
+});
+
+test('msFromEnv returns the fallback for 0 (regression)', async () => {
+  assert.equal(await msFromEnvWith('0'), FALLBACK, 'value "0"');
+});
+
+test('msFromEnv returns the fallback for 2^31 ms, one over the longest timer', async () => {
+  assert.equal(await msFromEnvWith(String(MAX_TIMER_MS + 1)), FALLBACK, `value "${MAX_TIMER_MS + 1}"`);
+});
+
+test('msFromEnv returns the fallback for a value too large for a finite number', async () => {
+  // '9' x 400 is digits only but Number() gives Infinity; 1e300 is finite but is not digits only.
+  for (const huge of ['9'.repeat(400), '1e300']) {
+    assert.equal(await msFromEnvWith(huge), FALLBACK, `value of ${huge.length} characters starting ${JSON.stringify(huge.slice(0, 5))}`);
+  }
+});
+
+test('msFromEnv returns 2^31-1 ms, the longest timer, as it is', async () => {
+  assert.equal(await msFromEnvWith(String(MAX_TIMER_MS)), MAX_TIMER_MS);
+});
+
+test('a control poll knob of 1e3 keeps CONTROL_POLL_MS at its production value', async () => {
+  const { CONTROL_POLL_MS } = await readWaits({ [CONTROL_POLL_KNOB]: '1e3' });
+  assert.equal(CONTROL_POLL_MS, DEFAULT_CONTROL_POLL_MS);
+});
