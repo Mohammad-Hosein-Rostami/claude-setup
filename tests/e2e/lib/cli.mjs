@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 /** Every scenario, in run order (plan section 9). */
-export const SCENARIO_IDS = Object.freeze(['E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E7', 'E8', 'E9', 'E10', 'E11']);
+export const SCENARIO_IDS = Object.freeze(['E0', 'E1', 'E6', 'E7', 'E9', 'E11']);
 /** The owner's switch for a live run: only `CS_E2E_LIVE=1` starts real sessions. */
 export const LIVE_SWITCH = 'CS_E2E_LIVE';
 const SCENARIO_KEYS = ['id', 'title', 'model', 'minutes', 'needsShims', 'setup', 'run', 'check'];

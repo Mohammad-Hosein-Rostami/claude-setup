@@ -2,16 +2,15 @@
 // SCENARIO_MAY_SET, BG_WAIT_CEILING_MS, useLogin(token), childEnv({home, tmp, path, quietLog, longRunState, extra}).
 // Why: a child must run on the logged-in subscription, never on an API key (an `ANTHROPIC_API_KEY` in the env is
 // always used and billed as API, plan section 5), and never with a switch of the session that started the runner (cleanEnv drops
-// every CLAUDE_* and CLAUDECODE). A scenario adds only what it tests (E5's CLAUDE_GUARD_ASK=allow, E4's model remap).
+// every CLAUDE_* and CLAUDECODE). A scenario adds only what it tests.
 // The login: under the temp HOME a child finds no stored login (the owner's one live E0 run: "Not logged in" in every call), so
 // the subscription token of the terminal the runner was started in (`claude-as <account>` sets CLAUDE_CODE_OAUTH_TOKEN) is passed
 // on, by that one name: from the runner's own env, else the token the runner read once from the claude-account store
 // (stored-login.mjs, handed over by useLogin); never set by a scenario, never in argv or a file, never printed (redact.mjs masks
 // its value).
 // Invariants: every billing variable is removed after the scenario's own names are added, except one alias-target variable a
-// scenario sets on purpose (E4's second session); a scenario can never set an API key, an auth token or a base URL (throws);
-// the GUI markers that make the guard skip its dialog (SSH_*, CI, NODE_TEST_CONTEXT) are removed, so the scripted dialog is
-// reached (plan section 6: never CI=1); CLAUDE_CONFIG_DIR is never set (it changes the keychain service name).
+// scenario may set on purpose; a scenario can never set an API key, an auth token or a base URL (throws);
+// the GUI markers (SSH_*, CI, NODE_TEST_CONTEXT) are removed (plan section 6: never CI=1); CLAUDE_CONFIG_DIR is never set (it changes the keychain service name).
 import { BILLING_ENV } from '../../../home/tools/account/lib/claude-child.mjs';
 import { cleanEnv, QUIET_TOOLS_LOG_ENV } from '../../clean-env.mjs';
 import { registerSecret } from './redact.mjs';
@@ -20,7 +19,7 @@ import { registerSecret } from './redact.mjs';
 export const REMOVED_ENV = Object.freeze(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL']);
 const ALIAS_TARGET = /^ANTHROPIC_DEFAULT_(?:(?:OPUS|SONNET|HAIKU)_)?MODEL$/; // every ANTHROPIC_DEFAULT_*_MODEL: removed unless set below
 const NO_GUI_MARKERS = ['SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY', 'CI', 'NODE_TEST_CONTEXT'];
-/** The only billing-shaped names a scenario may add: one alias target, to prove the guard denies the remap (E4). */
+/** The only billing-shaped names a scenario may add: one alias target. */
 export const SCENARIO_MAY_SET = ALIAS_TARGET;
 /** Background subagents of a `-p` run are waited for this long (plan U3; E0d proves the name and the effect). */
 export const BG_WAIT_CEILING_MS = 2 * 60 * 60 * 1000;

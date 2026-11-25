@@ -1,4 +1,4 @@
-// What a live run keeps after its root is removed: the scenario logs, the transcripts and the guard log, redacted, in the out
+// What a live run keeps after its root is removed: the scenario logs, the transcripts, redacted, in the out
 // folder, and one plain record per scenario for results.json. Exports: DROPPED_KEYS, plain(value), copyRedacted(from, to),
 // keepTranscripts(projectsDir, root, to, realHomeMode), scenarioRecord(scenario, ctx, lines).
 // Why: the run root (temp HOME, repos, transcripts) is removed at the end, but a FAIL must stay readable afterwards; and nothing

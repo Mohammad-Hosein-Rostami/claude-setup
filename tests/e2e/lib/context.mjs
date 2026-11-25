@@ -18,7 +18,6 @@ import { runClaude } from './claude-run.mjs';
 import { childEnv } from './env.mjs';
 import { ANSWER_MODES, jobDone } from './jobs.mjs';
 import { loginRefusal } from './login.mjs';
-import { dialogCalls } from './logs.mjs';
 import { claudeArgs } from './models.mjs';
 import { assertInside } from './scratch.mjs';
 import { runDetached, runQuick } from './spawn.mjs';
@@ -70,7 +69,7 @@ export function makeOps({ dry, root, record }) {
 
 /**
  * @param {{dry: boolean, root: string, setupFrom: string, realHome: string, realHomeMode: boolean, paths: object, realPaths?: object,
- *   childPath?: string, quietLog?: string, dialogLog?: string, dialogModeFile?: string,
+ *   childPath?: string, quietLog?: string,
  *   registry?: import('./processes.mjs').ProcessRegistry}} spec
  * @returns {object} the run's shared state: these fields, plus the stop switch, the limit seen, every session id of the run and
  *   E0's answer mode (null until E0 ran; jobs.mjs answerModeOf)
@@ -131,11 +130,6 @@ export function makeContext(run, scenario) {
       return runQuick(command, args, { cwd, env: ctx.env(extra), timeoutMs: Math.min(timeoutMs ?? Infinity, ctx.remainingMs()), input });
     },
     git: (args, options = {}) => ctx.exec('git', args, options),
-    /** The scripted dialog's next answer (allow | deny | timeout) for every child started after this. */
-    dialog(mode) {
-      ctx.write(run.dialogModeFile ?? join(run.root, 'dialog-mode'), mode, { label: `scripted dialog: ${mode}` });
-    },
-    dialogCount: () => (run.dry ? 0 : dialogCalls(run.dialogLog).length),
     /** A long child (land, suite, long-run) started now; `done` settles when it ends. */
     background(name, command, args, { cwd = ctx.repo, extra = {} } = {}) {
       ctx.record(`${commandLine(command, args, { cwd, env: extra })}  &`);
@@ -148,7 +142,7 @@ export function makeContext(run, scenario) {
         registry: run.registry, signal: run.signal, onSpawn: (spawned) => { pid = spawned; } });
       return { done, outFile, errFile, pid: () => pid };
     },
-    /** One `claude -p` (see the header); `note` marks the printed line (E4's deny cases). */
+    /** One `claude -p` (see the header); `note` marks the printed line. */
     async claude({ name, prompt, model, cwd = ctx.repo, extra = {}, resume = null, note = '' }) {
       const args = claudeArgs({ prompt, model, resume });
       ctx.record(`${note ? `[${note}] ` : ''}${commandLine('claude', args, { cwd, env: extra })}`, { claudeArgs: args });

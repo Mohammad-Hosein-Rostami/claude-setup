@@ -1,7 +1,7 @@
 // When a scenario's claude job is done, and how E0 decides the way later jobs run (review round 2, R8). Exports: ANSWER_MODES,
 // answerModeOf(notesA), backgroundStarts(lines), jobDone(projectsDir, session), jobLine(jobs).
 // Why: E0(a) probes whether a `claude -p` boss gets a background agent's result in the same run. When it did not (E0 needed
-// `--resume` rounds), a later scenario whose boss starts background agents (E2, E3, E5, E6) would be judged on a run that
+// `--resume` rounds), a later scenario whose boss starts background agents (E6) would be judged on a run that
 // ended before its agents did. So the run keeps E0's answer mode: `direct` (one run was enough) runs each job once; `resume`
 // (E0 needed rounds, was not done or did not run) runs it with claudeUntil until jobDone. A job left not done is a FAIL line of
 // its own, which names the mode, so a missing result is never read as the scenario's own failure.

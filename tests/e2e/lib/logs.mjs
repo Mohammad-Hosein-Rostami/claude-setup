@@ -1,27 +1,8 @@
-// Reads the logs a scenario's checks judge by, besides transcripts. Exports: guardLines(file), guardOutcomes(lines, sessionIds),
-// dialogCalls(file), toolLogCalls(file), eventsInOrder(events, expected).
-// Sources: the guard's decision log (`<home>/.claude/logs/guard.jsonl`, hooks/lib/guard-log.mjs: one JSON line per ask with ts,
-// hook, tool, decision, outcome, reason, command, cwd, session); the scripted dialog's argv log (shims.mjs: one line per call of the
-// dialog tool; a desktop note goes through the same tool, so only dialog calls count); the quiet tools' log (`<tool> <args>`, one
-// line per call, clean-env.mjs and shims.mjs); long-run's per-run `events.jsonl` ({t, event, step, detail}).
+// Reads the logs a scenario's checks judge by, besides transcripts. Exports: toolLogCalls(file), eventsInOrder(events, expected).
+// Sources: the quiet tools' log (`<tool> <args>`, one line per call, clean-env.mjs and shims.mjs); long-run's per-run `events.jsonl`
+// ({t, event, step, detail}).
 // Invariants: a missing log is an empty one (a check that needs a line then FAILs); nothing here throws.
 import { readFileSync } from 'node:fs';
-import { readJsonl } from './transcripts.mjs';
-
-const DIALOG_CALL = /display dialog|--question|MessageBox/; // osascript, zenity and PowerShell dialogs; a note is none of these
-
-/** @returns {object[]} the guard log's decision lines */
-export const guardLines = (file) => readJsonl(file);
-
-/**
- * @param {object[]} lines guard log lines
- * @param {Iterable<string>} sessionIds the sessions of interest
- * @returns {object[]} the lines of those sessions, in order
- */
-export function guardOutcomes(lines, sessionIds) {
-  const ids = new Set(sessionIds);
-  return lines.filter((line) => ids.has(line.session));
-}
 
 const linesOf = (file) => {
   try {
@@ -30,9 +11,6 @@ const linesOf = (file) => {
     return [];
   }
 };
-
-/** @returns {string[]} the calls of the scripted dialog that opened a dialog (notes left out) */
-export const dialogCalls = (file) => linesOf(file).filter((line) => DIALOG_CALL.test(line));
 
 /** @returns {{tool: string, args: string}[]} the calls a shim or quiet tool logged */
 export const toolLogCalls = (file) => linesOf(file).map((line) => {

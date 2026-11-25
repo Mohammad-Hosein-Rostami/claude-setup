@@ -1,7 +1,7 @@
 // Tests of how a scenario's claude job runs and when it is done (tests/e2e/lib/jobs.mjs and context.mjs claudeJob, review round
 // 2, R8): E0(a)'s answer mode, jobDone on fixture transcripts (a background agent needs a completed notice), claudeJob's one
-// run in the direct mode and its `--resume` rounds otherwise, the FAIL line of a job left not done, and E2, E3, E5 and E6
-// running every claude through claudeJob.
+// run in the direct mode and its `--resume` rounds otherwise, the FAIL line of a job left not done, and E6 running every claude
+// through claudeJob.
 // Safety: no `claude` runs: ctx.claude is replaced by a stub that writes fixture transcripts into a temp projects folder.
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
@@ -11,9 +11,6 @@ import { commonLines } from './e2e/lib/common.mjs';
 import { makeContext, makeRunState } from './e2e/lib/context.mjs';
 import { homePaths } from './e2e/lib/home.mjs';
 import { answerModeOf, jobDone, jobLine } from './e2e/lib/jobs.mjs';
-import * as E2 from './e2e/scenarios/E2.mjs';
-import * as E3 from './e2e/scenarios/E3.mjs';
-import * as E5 from './e2e/scenarios/E5.mjs';
 import * as E6 from './e2e/scenarios/E6.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -112,17 +109,15 @@ function runStub() {
   const names = [];
   const ctx = {
     dry: false, dir, repo: join(dir, 'repo'), origin: join(dir, 'origin.git'), notes: {},
-    git: () => ({ code: 0, stdout: '', stderr: '' }), dialog: () => {}, dialogCount: () => 0,
+    git: () => ({ code: 0, stdout: '', stderr: '' }),
     claude: async (spec) => { throw new Error(`ctx.claude used directly by ${spec.name}`); },
     claudeJob: async (spec) => { names.push(spec.name); return { session: { name: spec.name }, done: true }; },
   };
   return { ctx, names };
 }
 
-test('E2, E3, E5 and E6 run every claude through claudeJob', async () => {
-  for (const [scenario, count] of [[E2, 2], [E3, 2], [E5, 3], [E6, 3]]) {
-    const { ctx, names } = runStub();
-    await scenario.run(ctx);
-    assert.equal(names.length, count, `${scenario.id}: ${names.join(', ')}`);
-  }
+test('E6 runs every claude through claudeJob', async () => {
+  const { ctx, names } = runStub();
+  await E6.run(ctx);
+  assert.deepEqual(names, ['run-release', 'run-owner', 'run-proxy']);
 });

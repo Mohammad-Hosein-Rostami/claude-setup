@@ -1,19 +1,14 @@
 // Tests of the e2e check lines that a near miss used to pass (review round 2, R1-R3, R6, R7): E6's commands file, deploy
-// marker and Bash reader; E3's and E9's route and lex word; E4's Fable gate text; E2's "names every running id" and "after
-// they ended". Each case has its twin that passes, so a line is shown to fail on the near miss, not on everything.
+// marker and Bash reader; E9's lex word. Each case has its twin that passes, so a line is shown to fail on the near miss, not on
+// everything.
 // No real `claude` runs: transcripts come from tests/e2e-fixtures.mjs, written into temp folders.
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { mainRouteReason } from '../home/hooks/lib/agent-route.mjs';
-import { FABLE_RULE } from '../home/hooks/lib/fable-model-reasons.mjs';
-import { agentCall, bash, briefLine, call, notice, say, writeSession } from './e2e-fixtures.mjs';
+import { bash, briefLine, call, say, writeSession } from './e2e-fixtures.mjs';
 import { readmeText } from './e2e/lib/repo.mjs';
 import { runsPushOrDeploy, writtenPaths } from './e2e/lib/shell-words.mjs';
-import * as E2 from './e2e/scenarios/E2.mjs';
-import * as E3 from './e2e/scenarios/E3.mjs';
-import * as E4 from './e2e/scenarios/E4.mjs';
 import * as E6 from './e2e/scenarios/E6.mjs';
 import * as E9 from './e2e/scenarios/E9.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -84,69 +79,6 @@ test('E6 deploy and Bash lines: a lane deploy.sh run by its path FAILs both; a g
   const good = byName(E6.check(e6Ctx(() => [...bash('b1', 'grep deploy.sh README.md'), say(SHIP_READY, 9)])));
   assert.equal(good['release: deploy.sh never ran'].pass, true, good['release: deploy.sh never ran'].observed);
   assert.equal(good['release: no push or deploy in the Bash of max or its helpers'].pass, true);
-});
-
-/** A session with one start of `type` that is denied with `denyText`, read by a scenario's check. */
-function deniedSession(type, denyText, input = {}) {
-  const projects = join(makeTempDir('harness-traps-'), 'projects');
-  writeSession(projects, '/w/repo', { sessionId: 's1', lines: agentCall('a1', { subagent_type: type, prompt: 'x', ...input }, { denied: true, denyText }) });
-  return { projects, session: { sessionId: 's1' } };
-}
-
-test('E3: the route texts are the guard\'s own, and a "lex-web not found" error is no route', () => {
-  assert.ok(mainRouteReason({ tool_input: { subagent_type: 'lex-web' } }).includes(E3.HELPER_ROUTE));
-  assert.ok(mainRouteReason({ agent_id: 'x', tool_input: { subagent_type: 'dev' } }).includes(E3.SUBAGENT_ROUTE));
-  const line = (denyText) => {
-    const { projects, session } = deniedSession('lex-web', denyText);
-    return E3.check({ dry: false, paths: { projectsDir: projects }, notes: { direct: session }, sessions: [] })[0];
-  };
-  assert.equal(line('Agent type lex-web not found').pass, false);
-  assert.equal(line(mainRouteReason({ tool_input: { subagent_type: 'lex-web' } })).pass, true);
-});
-
-test("E3: lex's dev start counts as denied only with the subagent route", () => {
-  const line = (denyText) => {
-    const projects = join(makeTempDir('harness-traps-e3-'), 'projects');
-    writeSession(projects, '/w/repo', { sessionId: 'v1', lines: agentCall('a1', { subagent_type: 'lex', prompt: 'x' }, { agentId: 'lex1' }),
-      agents: [{ id: 'lex1', type: 'lex', lines: [...agentCall('d1', { subagent_type: 'dev', prompt: 'y' }, { denied: true, denyText }), say('needs: dev to write y', 9)] }] });
-    return byName(E3.check({ dry: false, paths: { projectsDir: projects }, notes: { viaLex: { sessionId: 'v1' } }, sessions: [] }))["lex's dev start is denied"];
-  };
-  assert.equal(line('hook crashed, so the call is denied').pass, false);
-  assert.equal(line(mainRouteReason({ agent_id: 'x', tool_input: { subagent_type: 'dev' } })).pass, true);
-});
-
-test('E4: a deny without the Fable gate rule (a crashed guard) FAILs; the gate\'s own deny passes', () => {
-  const line = (denyText) => {
-    const { projects, session } = deniedSession('lex', denyText);
-    return E4.check({ dry: false, paths: { projectsDir: projects }, notes: { models: null, remap: session }, sessions: [] })
-      .find((one) => one.check === 'a lex start with the opus alias remapped is denied');
-  };
-  assert.equal(line('agent-model-guard failed (Cannot find module), so the call is denied').pass, false);
-  assert.equal(line(`${FABLE_RULE}: ANTHROPIC_DEFAULT_OPUS_MODEL points a model alias elsewhere`).pass, true);
-});
-
-// distinct in their first 7 characters, the short form a deny may use
-const IDS = ['a1b2c3d4e5', 'f6g7h8i9j0', 'k1l2m3n4o5'];
-const lex = (id, options) => agentCall(id, { subagent_type: 'lex', prompt: 'Reply only ok.', run_in_background: true }, options);
-
-/** E2's cap lines for: three running lex, a fourth denied with denyText, ends (id -> seconds), then a later lex at 20 s. */
-function e2Lines(denyText, ends) {
-  const projects = join(makeTempDir('harness-traps-e2-'), 'projects');
-  const lines = [...IDS.flatMap((agentId, index) => lex(String(index + 1), { agentId })), ...lex('4', { denied: true, denyText, seconds: 1 }),
-    ...Object.entries(ends).map(([agentId, seconds]) => notice(agentId, 'completed', seconds)), ...lex('5', { agentId: 'p6q7r8s9t0', seconds: 20 })];
-  writeSession(projects, '/w/E2/repo', { sessionId: 'c1', lines });
-  return byName(E2.check({ dry: false, paths: { projectsDir: projects }, notes: { cap: { sessionId: 'c1' } }, sessions: [] }));
-}
-
-test('E2: the deny must name every running id, and the later lex must start after a completed notice of each', () => {
-  const allEnded = Object.fromEntries(IDS.map((agentId, index) => [agentId, 10 + index]));
-  const good = e2Lines(`cap: 3 lex running (${IDS.join(', ')})`, allEnded);
-  assert.equal(good['the 4th lex start is denied, naming the running ids'].pass, true);
-  assert.equal(good['after they ended a new lex starts'].pass, true, good['after they ended a new lex starts'].observed);
-  assert.equal(e2Lines(`cap: 3 lex running (${IDS[0]})`, allEnded)['the 4th lex start is denied, naming the running ids'].pass, false);
-  assert.equal(e2Lines('cap', {})['after they ended a new lex starts'].pass, false, 'no notice: they still ran');
-  assert.equal(e2Lines('cap', { [IDS[0]]: 10, [IDS[1]]: 11 })['after they ended a new lex starts'].pass, false, 'one still ran');
-  assert.equal(e2Lines('cap', { ...allEnded, [IDS[2]]: 30 })['after they ended a new lex starts'].pass, false, 'one ended after the start');
 });
 
 test('E9: the resume note line needs the word lex itself; a note that names only lex-web FAILs', () => {

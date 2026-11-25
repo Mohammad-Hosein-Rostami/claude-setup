@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The real-Claude end-to-end runner (plan Lane C and section 9): scenarios E0-E11 drive real `claude -p` sessions of the setup
+// The real-Claude end-to-end runner (plan Lane C and section 9): scenarios E0, E1, E6, E7, E9 and E11 drive real `claude -p` sessions of the setup
 // under test in throwaway repos and a temp HOME, then check their transcripts, logs and git state. One line per check:
 // `<scenario> <check> | <expected> | <observed> | PASS|FAIL|NOT RUN`, and `<out>/results.json`. Usage: `--help` (lib/cli.mjs).
 // Exit: 0 every check passed, 1 a check failed or did not run, 2 usage error, no CS_E2E_LIVE=1 or not logged in, 3 stopped at
@@ -17,10 +17,10 @@
 // `needsRealHome`); the others keep the temp HOME, and the dry run prints each scenario's HOME. E0(a) sets the answer mode
 // the later jobs run in (lib/jobs.mjs, R8): once, or with `--resume` rounds until done.
 import { homedir, tmpdir } from 'node:os';
-import { delimiter, dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { quietToolsDir } from '../clean-env.mjs';
-import { removeTempDir, testTempRoot } from '../temp-dir-helpers.mjs';
+import { testTempRoot } from '../temp-dir-helpers.mjs';
 import { copyRedacted, keepTranscripts, scenarioRecord } from './lib/artifacts.mjs';
 import { checkLine } from './lib/checks.mjs';
 import { liveAllowed, LIVE_SWITCH, loadScenarios, parseArgs, USAGE, UsageError } from './lib/cli.mjs';
@@ -47,21 +47,8 @@ const LOGIN_STOP = 'stopped: a claude run was refused its login (no retry)';
 const stampOf = (date) => date.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 const say = (text) => console.log(redact(text));
 
-/**
- * fake-dialog-tool.mjs loads pin-home.mjs, which sets this process's HOME to a fixed test folder; it is loaded only here, after
- * the real HOME was read, and HOME is put back, so the real HOME is still known (E10, E11, the settings copy).
- * @returns {Promise<typeof import('../fake-dialog-tool.mjs').fakePopup>}
- */
-async function popupMaker() {
-  const kept = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
-  const { fakePopup } = await import('../fake-dialog-tool.mjs');
-  for (const [name, value] of Object.entries(kept)) if (value === undefined) delete process.env[name]; else process.env[name] = value;
-  return fakePopup;
-}
-
-/** The run's fixed files: shims, their logs and the dialog's answer. */
-const runFiles = (root) => ({ bin: join(root, 'bin'), quietLog: join(root, 'quiet-tools.log'), dialogLog: join(root, 'dialog.log'),
-  dialogModeFile: join(root, 'dialog-mode') });
+/** The run's fixed files: the shims and their log. */
+const runFiles = (root) => ({ bin: join(root, 'bin'), quietLog: join(root, 'quiet-tools.log') });
 
 /** Prints the home, the shims and every scenario's setup and run steps; starts nothing. @returns {number} the exit code */
 async function dryRun(options, scenarios) {
@@ -72,7 +59,7 @@ async function dryRun(options, scenarios) {
   const ops = makeOps({ dry: true, root, record: (text) => homeSteps.push(text) });
   const paths = buildHome(ops, { root, setupFrom: options.setupFrom, realHome });
   const realPaths = options.realHomeMode ? homePaths(root, realHome, true) : null;
-  installShims(ops, { ...files, modeFile: files.dialogModeFile, popupDir: '<fake popup dir>' });
+  installShims(ops, files);
   say(`e2e dry run: nothing is made or started. run root ${root}; HOME ${paths.home}${realPaths ? ` (the real HOME ${realPaths.home} only for a scenario that needs it)` : ''}; checkout ${options.setupFrom}`);
   for (const text of homeSteps) say(`home setup: ${text}`);
   say(`preflight: claude ${PREFLIGHT_ARGS.join(' ')} with the child env and HOME ${paths.home} (skipped in a dry run)`);
@@ -166,7 +153,6 @@ async function liveRun(options, scenarios) {
   madeRoots.add(root);
   const files = runFiles(root);
   let run = null;
-  let popupDir = null;
   let signals = 0;
   const onSignal = (name) => {
     signals += 1;
@@ -191,10 +177,7 @@ async function liveRun(options, scenarios) {
     } else {
       say(`e2e live run: root ${root}; results ${outDir}${stale.length ? `; removed ${stale.length} stale root(s)` : ''}; ${found.line}, ${login.detail}`);
       if (realPaths) say(`e2e: --real-home: only a scenario that needs it (E9) uses the real HOME ${realPaths.home} (owner opt-in); the rest keep the temp HOME`);
-      if (process.platform !== 'win32') {
-        popupDir = (await popupMaker())('deny').env.PATH.split(delimiter)[0];
-        installShims(ops, { ...files, modeFile: files.dialogModeFile, popupDir });
-      }
+      installShims(ops, files);
       const realRepo = realRepoOf(realHome, options.setupFrom);
       run = makeRunState({ dry: false, root, setupFrom: options.setupFrom, realHome, realHomeMode: options.realHomeMode, paths, realPaths,
         childPath: childPath(files.bin, quietDir), ...files, registry, realRepo, shimDirs: [files.bin, quietDir].filter(Boolean) });
@@ -216,7 +199,6 @@ async function liveRun(options, scenarios) {
         removeProjectFolders(run.realPaths.projectsDir, root);
       }
     }
-    if (popupDir) removeTempDir(popupDir);
     const removal = removeRunRoot(root, madeRoots);
     print('run', checkLine('the run root was removed', 'removed', removal.reason, removal.removed));
     process.off('SIGINT', onInt);

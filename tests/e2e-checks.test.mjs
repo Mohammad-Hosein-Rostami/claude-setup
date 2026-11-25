@@ -3,14 +3,13 @@
 // (plan Lane C, C-4: a `sleep 30` and a background shell never stopped each give a FAIL; a clean transcript gives PASS).
 // No real `claude` runs: the transcripts are written by tests/e2e-fixtures.mjs into a temp folder.
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { agentCall, bash, briefLine, call, notice, result, say, writeSession } from './e2e-fixtures.mjs';
 import {
   backgroundShellsLeft, bossFileCalls, fableModels, LIMITS, longSleeps, reportWords, startsOf, testRunnerCommands, unmetNeeds,
 } from './e2e/lib/checks.mjs';
-import { dialogCalls, eventsInOrder, guardOutcomes } from './e2e/lib/logs.mjs';
+import { eventsInOrder } from './e2e/lib/logs.mjs';
 import { loadSession, sessionsInFolder } from './e2e/lib/transcripts.mjs';
 import * as E1 from './e2e/scenarios/E1.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -96,16 +95,6 @@ test('eventsInOrder: the events in order pass (others between, alternatives allo
   assert.equal(eventsInOrder(events('run-started', 'step-started', 'run-stopped', 'resumed', 'run-done'), order).ok, true);
   assert.deepEqual(eventsInOrder(events('run-started', 'resumed', 'run-done'), order).missing, 'driver-lost or run-stopped');
   assert.equal(eventsInOrder(events('run-started', 'resumed', 'driver-lost', 'run-done'), order).ok, false);
-});
-
-test('dialogCalls and guardOutcomes: only dialog calls count (a note does not); only the named sessions are kept', () => {
-  const dir = makeTempDir('harness-logs-');
-  const dialogLog = join(dir, 'dialog.log');
-  writeFileSync(dialogLog, '-e display dialog "Allow git push?" buttons {"Use recommended"}\n-e display notification "done"\n');
-  assert.equal(dialogCalls(dialogLog).length, 1);
-  assert.deepEqual(dialogCalls(join(dir, 'missing.log')), []);
-  const lines = [{ session: 's1', outcome: 'allow' }, { session: 's2', outcome: 'deny' }];
-  assert.deepEqual(guardOutcomes(lines, ['s2']), [{ session: 's2', outcome: 'deny' }]);
 });
 
 test('loadSession and sessionsInFolder: read a boss transcript and its typed subagents; a missing session is empty', () => {

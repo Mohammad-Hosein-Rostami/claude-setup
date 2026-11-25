@@ -15,9 +15,8 @@ export const LIMITS = Object.freeze({
   maxTestRunnerCommands: 0, // in dev and dev-part Bash: tests are tess's (E1)
   maxBossFileCalls: 0, // boss Read/Edit/Write/Grep/Glob on repo files (E1, M3)
   maxResumeRounds: 20, // `--resume <id> "continue"` rounds when a run ends before its job (U2)
-  mainAgentCap: 3, // lex, dev, tess running at once per type (E2)
+  mainAgentCap: 3, // lex, dev, tess running at once per type
   e0dMinAgentMinutes: 12, // E0d: the wait ceiling must hold an agent at least this long
-  e8MinWallSeconds: 40, // E8: two 20 s suites in one slot take at least this long
   defaultScenarioMinutes: 40, // wall-clock timeout of one scenario
   e1ScenarioMinutes: 120,
 });
@@ -90,7 +89,7 @@ export function fableModels(session, result = null) {
     for (const line of lines) if (line.type === 'assistant' && typeof line.message?.model === 'string') names.push(line.message.model);
     for (const call of toolCalls(lines)) {
       if (call.name !== 'Agent' && call.name !== 'Task') continue;
-      // only a start that ran counts: a denied `model: "fable"` (E4) is the guard working, not a Fable run
+      // only a start that ran counts: a denied `model: "fable"` is a refused start, not a Fable run
       if (call.result?.isError !== true && typeof call.input.model === 'string') names.push(call.input.model);
       if (typeof call.result?.meta?.resolvedModel === 'string') names.push(call.result.meta.resolvedModel);
     }

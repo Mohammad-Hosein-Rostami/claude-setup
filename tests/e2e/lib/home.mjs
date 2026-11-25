@@ -35,7 +35,7 @@ export const CREDENTIAL_KEYS = Object.freeze(['apiKeyHelper', 'awsAuthRefresh', 
  * @param {string} root the run root
  * @param {string} realHome the owner's HOME
  * @param {boolean} realHomeMode `--real-home`: the children use the real HOME (the owner's opt-in fallback)
- * @returns {{home: string, claudeDir: string, logsDir: string, stateDir: string, projectsDir: string, guardLog: string,
+ * @returns {{home: string, claudeDir: string, logsDir: string, stateDir: string, projectsDir: string,
  *   longRunState: string, tmp: string}}
  */
 export function homePaths(root, realHome, realHomeMode = false) {
@@ -43,7 +43,7 @@ export function homePaths(root, realHome, realHomeMode = false) {
   const claudeDir = join(home, '.claude');
   return {
     home, claudeDir, logsDir: join(claudeDir, 'logs'), stateDir: join(claudeDir, 'state'), projectsDir: join(claudeDir, 'projects'),
-    guardLog: join(claudeDir, 'logs', 'guard.jsonl'), longRunState: join(root, 'long-run-state'), tmp: join(root, 'tmp'),
+    longRunState: join(root, 'long-run-state'), tmp: join(root, 'tmp'),
   };
 }
 
