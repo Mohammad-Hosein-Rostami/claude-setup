@@ -5,11 +5,13 @@
 // Invariants:
 // - Runs under the pool lock (lane-pool.mjs claimLane), so two claims never append the line twice; a file that already holds the line
 //   gets no second copy.
-// - The file is opened O_APPEND|O_CREAT|O_NOFOLLOW, mode 0644: a link at its path is never followed (where the system has no
-//   O_NOFOLLOW, an lstat check stands in).
+// - Only a plain file (or a missing one, then made with mode 0644) is written: a link or anything else at info/exclude is never
+//   followed or written, and the outcome is `failed`. The path is built from the common dir, never from `--git-path`, which
+//   resolves a link at info/exclude to its target. An lstat check refuses it up front, and O_NOFOLLOW (where the system has it)
+//   closes the gap between that check and the open.
 // - Never throws: every failure is the `failed` outcome, and the claim goes on.
 import { closeSync, constants as fsConstants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { gitText, runGit } from './git.mjs';
 
 export const POOL_EXCLUDE_LINE = '/.claude/worktrees/';
@@ -26,13 +28,18 @@ function isPoolIgnored(mainDir) {
   throw new Error(`git check-ignore failed: ${checked.stderr.split('\n')[0]}`);
 }
 
-/** Appends `line` to the plain file at `path` (made with its folder when missing) unless a line there already equals it. */
+/**
+ * Appends `line` to the plain file at `path` (made with its folder when missing) unless a line there already equals it.
+ * @throws {Error} when `path` is a link or anything but a plain file: nothing is written, and the message says why
+ */
 function appendLineOnce(path, line) {
   mkdirSync(dirname(path), { recursive: true });
-  if (NO_FOLLOW === 0 && lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error(`${path} is a link: not followed`);
+  const found = lstatSync(path, { throwIfNoEntry: false });
+  if (found?.isSymbolicLink()) throw new Error(`not added to ${path}: it is a link, never followed`);
+  if (found !== undefined && !found.isFile()) throw new Error(`not added to ${path}: it is not a plain file`);
   const fd = openSync(path, fsConstants.O_RDWR | fsConstants.O_APPEND | fsConstants.O_CREAT | NO_FOLLOW, EXCLUDE_MODE);
   try {
-    if (!fstatSync(fd).isFile()) throw new Error(`${path} is not a plain file`);
+    if (!fstatSync(fd).isFile()) throw new Error(`not added to ${path}: it is not a plain file`);
     const text = readFileSync(fd, 'utf8');
     if (text.split(/\r?\n/).includes(line)) return;
     writeSync(fd, `${text === '' || text.endsWith('\n') ? '' : '\n'}${line}\n`);
@@ -51,7 +58,7 @@ export function ignorePool(mainDir) {
   let path = null;
   try {
     if (isPoolIgnored(mainDir)) return { outcome: 'already', path };
-    path = gitText(mainDir, ['rev-parse', '--path-format=absolute', '--git-path', 'info/exclude']);
+    path = join(gitText(mainDir, ['rev-parse', '--path-format=absolute', '--git-common-dir']), 'info', 'exclude');
     appendLineOnce(path, POOL_EXCLUDE_LINE);
     return isPoolIgnored(mainDir) ? { outcome: 'added', path } : { outcome: 'failed', path, why: '.gitignore re-includes it' };
   } catch (error) {
