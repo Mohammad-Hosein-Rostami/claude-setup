@@ -2,9 +2,9 @@
 // status line (spec-p5 `r9-board`, spec-tui "Data and speed"). A detached refresh
 // writes it, one at a time, at most every LIVE_EVERY_MS while an agent is live and every IDLE_EVERY_MS when idle; a refresh
 // over BUDGET_MS keeps the old data and marks the board stale (the agent cursors and git cache it read are kept all the same).
-// Exports: boardDir(env), readBoard(session, env), buildBoard(source, deps), collectBoard(source, deps) -> { board,
+// Exports: boardDir(env), readBoard(session, env), collectBoard(source, deps) -> { board,
 // cache }, refreshBoard(source, deps) -> boolean, claimBoardRefresh(session, deps) -> boolean, startBoardRefresh(session, deps) ->
-// boolean, findTranscript(session, projectsDir); MAX_BOARD_BYTES.
+// boolean, findTranscript(session, projectsDir).
 // File: ~/.claude/state/board/<session>.json = { session, at, stale, refreshStartedAt,
 // agents: [agents.mjs entries plus repo (its repository's name), wt, branch, unplaced (repos.mjs placeAgents)], repo: git-state.mjs repo plus { name }
 // (repos.mjs) and { tip, landed } (repo-stats.mjs) | null, repos: the other used repositories (same shape without the stats), git: { branch, ahead, behind, changed } | null }
@@ -35,7 +35,7 @@ import { repoStats } from './repo-stats.mjs';
 import { placeAgents, sessionRepos } from './repos.mjs';
 import { REMOTE_PATH } from './trusted-repos.mjs';
 
-export const MAX_BOARD_BYTES = 48 * 1024;
+const MAX_BOARD_BYTES = 48 * 1024;
 const MAX_CACHE_BYTES = 512 * 1024;
 const LIVE_EVERY_MS = 5_000; // the settings' refreshInterval: agent rows and a question's countdown move every 5 s
 const IDLE_EVERY_MS = 60_000;
@@ -142,9 +142,6 @@ export function collectBoard({ session, transcriptPath, cwd }, { env = process.e
   return { board: fitted(board), cache: { cursors: found.cursors, git: git.cache, stats: stats.cache, lead, used } };
 }
 
-/** @returns {object} the board of a session now (no write; see collectBoard) */
-export const buildBoard = (source, deps = {}) => collectBoard(source, deps).board;
-
 const isLive = (board) => board?.agents?.some((agent) => agent.state !== 'done') ?? false;
 
 /** True when a refresh is due: none yet, the last one older than its interval, and none in flight. */
@@ -177,7 +174,7 @@ const LOCK_STALE_MS = 20_000; // a refresh runs under 5 s; one this old was kill
 
 /**
  * One refresh of the session's board, when due: claims it, builds it, writes it; over BUDGET_MS the old data stays, marked stale.
- * @param {{ session: string, transcriptPath: string | null, cwd: string }} source see buildBoard
+ * @param {{ session: string, transcriptPath: string | null, cwd: string }} source see collectBoard
  * @param {{ env?: object, now?: () => number, force?: boolean }} [deps] force skips the interval (not the claim)
  * @returns {boolean} true when a board was written
  */

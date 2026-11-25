@@ -26,7 +26,7 @@ const FORMAT_SCRIPT = 'format'; // takes the edited file after `--`
 const FORMAT_TOOL = ['prettier', '--write']; // per-file fallback for a broad format script
 const BROAD_SCRIPT = /(^|\s)\.\/?(\s|$)|\*|\brun-many\b|\bnx\b|\bturbo\b|\blerna\b/;
 /** Env var that opts the format run out: "all" or "format". */
-export const SKIP_ENV = 'CLAUDE_POST_EDIT_SKIP'; // the shell or a project's .claude/settings.local.json env; a team file's value is ignored
+const SKIP_ENV = 'CLAUDE_POST_EDIT_SKIP'; // the shell or a project's .claude/settings.local.json env; a team file's value is ignored
 
 export { diagnostics, isSamePath } from './lib/diagnostics.mjs';
 export { formatterCall, TRUST_ENV, trustedFormat } from './lib/format-trust.mjs';
@@ -34,7 +34,7 @@ export { formatterCall, TRUST_ENV, trustedFormat } from './lib/format-trust.mjs'
 export const isCodeFile = (file) => CODE_FILE.test(file);
 
 /** Nearest directory at or above `file` that holds a package.json, or null. */
-export function findPackageDir(file) {
+function findPackageDir(file) {
   for (let dir = dirname(file); ; dir = dirname(dir)) {
     if (existsSync(join(dir, 'package.json'))) return dir;
     if (dirname(dir) === dir) return null;
@@ -42,7 +42,7 @@ export function findPackageDir(file) {
 }
 
 /** `pnpm`, `yarn` or `npm`, from the nearest lockfile at or above `dir`. */
-export function packageManager(dir) {
+function packageManager(dir) {
   for (let d = dir; ; d = dirname(d)) {
     if (existsSync(join(d, 'pnpm-lock.yaml'))) return 'pnpm';
     if (existsSync(join(d, 'yarn.lock'))) return 'yarn';
@@ -62,7 +62,7 @@ export const skipFilter = (skip = '') => {
 const formatScriptOf = (scripts) => (typeof scripts?.[FORMAT_SCRIPT] === 'string' ? scripts[FORMAT_SCRIPT] : null);
 
 /** True when the project's `format` script would run only with trust: it exists, is not broad and is no known formatter call. Pure. */
-export function needsTrust(scripts) {
+function needsTrust(scripts) {
   const script = formatScriptOf(scripts);
   return script !== null && !isBroadScript(script) && formatterCall(script) === null;
 }
@@ -99,7 +99,7 @@ export function plannedChecks(scripts, file, findTool = () => null, trusted = fa
 }
 
 /** Finder for the nearest node_modules/.bin/<tool> walking up from `dir` (a monorepo hoists binaries to the root); returns null when absent. */
-export function toolFinder(dir) {
+function toolFinder(dir) {
   const exe = process.platform === 'win32' ? '.cmd' : '';
   return (tool) => {
     for (let d = dir; ; d = dirname(d)) {
@@ -208,7 +208,7 @@ export async function runStages(checks, ctx) {
 }
 
 /** The CLAUDE_POST_EDIT_SKIP value the hook may act on, and the warning when a team file's value was ignored (lib/team-switch.mjs). */
-export const trustedSkip = (env = process.env, cwd = undefined) => trustedSwitch(env, SKIP_ENV, switchDirs(env, cwd));
+const trustedSkip = (env = process.env, cwd = undefined) => trustedSwitch(env, SKIP_ENV, switchDirs(env, cwd));
 
 /**
  * Runs the format check for `file`.
