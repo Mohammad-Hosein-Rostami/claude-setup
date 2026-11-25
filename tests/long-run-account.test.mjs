@@ -1,6 +1,6 @@
 // Tests of the account a run spends and of its secrets (spec 7.5, 15; acceptance 9, 10): the selected account is recorded and
-// reused on every resume, unusable accounts are refused with the fix named, Fable is refused, and no token or ntfy topic reaches
-// the state folder, a usage row or an argument.
+// kept on every resume until `resume --account` switches it, unusable accounts are refused with the fix named, Fable is refused,
+// and no token or ntfy topic reaches the state folder, a usage row or an argument.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
