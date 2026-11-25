@@ -63,8 +63,8 @@ Every event of every run is one numbered line in `~/.claude/state/long-run/event
 - Report each event line to the owner in one line: what happened, which step, and the time a wait ends.
 
 Events: `run-started`, `step-started`, `step-done`, `step-failed`, `waiting-limit until <time>`, `waiting-retry until <time>`,
-`needs-owner`, `blocked`, `paused`, `taken-over`, `told`, `resumed`, `run-done`, `run-stopped`, `run-abandoned`,
-`driver-lost` (the runner process died: offer `LR resume <run>`).
+`needs-owner`, `blocked`, `paused`, `taken-over`, `told`, `resumed`, `account-switched` (`account <old> -> <new>`),
+`run-done`, `run-stopped`, `run-abandoned`, `driver-lost` (the runner process died: offer `LR resume <run>`).
 
 ## The owner's words and the command
 
@@ -77,6 +77,7 @@ Events: `run-started`, `step-started`, `step-done`, `step-failed`, `waiting-limi
 | continue | `LR resume <run>` |
 | try step X again / skip it / give up | `LR resume <run> --retry` / `--skip` / `--abandon` |
 | re-run from step X | `LR rerun <run> --from <step>` |
+| switch the run to account X | see "Switch the account" below |
 | tell step X to ... | `LR tell <run> <step> "<message>"` (long text: write it to a file, then `--message-file <f>`) |
 | let me take over step X | `LR takeover <run> <step>`; give the owner the lines it prints, verbatim, to paste in a terminal |
 | I am done with step X | `LR resume <run>` (the step is checked as usual) |
@@ -89,6 +90,19 @@ Events: `run-started`, `step-started`, `step-done`, `step-failed`, `waiting-limi
 `tell` reaches a running step at its next safe point (the end of its current tool use, at most about 2 minutes), then the same
 session continues with the message. On a waiting, held or paused step it is sent with the next resume. On a done step it is
 refused: offer `rerun --from <step>`.
+
+## Switch the account
+
+A run spends the account it started on until the owner switches it. When the owner asks to switch it to account X:
+
+1. If `LR status <run>` says `running`, `waiting-limit` or `waiting-retry`, run `LR pause <run>` and check `LR status <run>`
+   until it says `paused` (about 20 seconds). A held, paused, stopped or taken-over run needs no pause.
+2. Run `LR resume <run> --account X` (add `--answer`, `--retry` or `--skip` when a held step needs one). It prints
+   `account <old> -> X`. Tell the owner that line, and the `account-switched` event when it comes.
+
+Each unfinished step continues its own session on X, and a limit wait of the old account ends. A refusal (X is not stored,
+its usage credits are not recorded off, or the store has no token for it) prints one line with the fix: tell the owner that
+line as is. Only the owner runs `claude-account` and `claude-as`.
 
 ## When a run stopped while its boss had agents working
 
