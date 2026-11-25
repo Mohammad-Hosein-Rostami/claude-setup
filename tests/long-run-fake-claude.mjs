@@ -2,7 +2,8 @@
 // Exports: FAKE_CLAUDE_SOURCE, installFakeClaude(bin) -> path.
 // Script: $FAKE_LR_DIR/script.json maps a step id (LONG_RUN_STEP) to a list of modes, one per call (the last repeats; no entry:
 // `done`). Modes: done, say:<text>, echo (replies with the last line of its stdin), blocked, needs-owner, no-verdict, crash, limit,
-// weekly-limit, auth, max-turns, no-conversation, leak, sleep:<ms>, hang, deaf (ignores SIGINT and SIGTERM), tool:<ms> (a tool call
+// weekly-limit, auth, max-turns, no-conversation, leak, sleep:<ms>, sleep-then:<ms>:<verdict> (like sleep, but ends with a `done`,
+// `blocked` or `needs-owner` result, so a verdict that comes late can be tested), hang, deaf (ignores SIGINT and SIGTERM), tool:<ms> (a tool call
 // and its result, then `done` after <ms>), agent:<id> (starts a background agent <id> as Claude Code 2.1.330 streams it, starts a
 // grandchild in a process group of its own, like a subagent's Bash, writes its pid to $FAKE_LR_DIR/grandchild-<step>.pid, then
 // hangs; the grandchild outlives this fake unless someone ends it), agent-done:<id> (the same agent, finished, then `done`, no
@@ -72,6 +73,15 @@ if (name === 'leak') {
   finish(0);
 }
 if (name === 'sleep') { await sleep(Number(value)); result('Slept.\\nSTEP-RESULT: done'); finish(0); }
+if (name === 'sleep-then') {
+  const [ms, verdict] = [value.slice(0, value.indexOf(':')), value.slice(value.indexOf(':') + 1)];
+  const verdicts = { done: 'Slept.\\nSTEP-RESULT: done', blocked: 'Stuck.\\nSTEP-RESULT: blocked: the API key is missing',
+    'needs-owner': 'Half done.\\nSTEP-RESULT: needs-owner: Which colour should the button be?' };
+  if (!(verdict in verdicts)) { process.stderr.write('unknown verdict ' + verdict + '\\n'); finish(2); }
+  await sleep(Number(ms));
+  result(verdicts[verdict]);
+  finish(0);
+}
 if (name === 'tool') {
   out({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] } });
   await sleep(Number(value));
