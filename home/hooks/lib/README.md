@@ -21,7 +21,7 @@ Notes and per-session state:
 - `plain-file.mjs`: the one safe open (no waiting, no link followed, regular files only, no append to a hard-linked file, a size cap) for the session transcript and the other files the hooks and tools read or append.
 
 Other hooks:
-- `diagnostics.mjs`: used by `post-edit.mjs` (parses a failed format run into `file:line RULE-ID message` lines). `format-trust.mjs`: used by `post-edit.mjs` (whether a project's `format` script may run: `CLAUDE_POST_EDIT_TRUST_FORMAT=1` for the project, else only one plain call of a known formatter, as its binary). `edit-log.mjs`: the per-user hook temp root (`tempRoot`, `checkedTempRoot`) that `team-switch.mjs` keeps its notice markers in.
+- `diagnostics.mjs`: used by `post-edit.mjs` (parses a failed format run into `file:line RULE-ID message` lines). `format-trust.mjs`: used by `post-edit.mjs` (whether a project's `format` script may run: `CLAUDE_POST_EDIT_TRUST_FORMAT=1` for the project, else only one plain call of a known formatter, as its binary). `hook-temp-root.mjs`: the per-user hook temp root (`tempRoot`, `checkedTempRoot`) that `team-switch.mjs` keeps its notice markers in.
 - `gated-folder.mjs`: the folder a hook looks at (the session's own worktree, never a folder it only cd'd into) and the hardened git calls that read it, the discovery ones time-bound; used by `git-tidy-gate.mjs` and `project-merge.mjs` (also `namesFilterProgram`, `readHead`).
 - `new-file-size.mjs`: the size limit for new files (5 MB) and `namesPath`, the brief test that lets a named file through; used by `git-tidy land`.
 - `tidy-check-child.mjs`, `tidy-gate-notes.mjs`: for `git-tidy-gate.mjs`: the `git-tidy check` child and its slim verdict, and the session-start text naming the unlanded lanes.

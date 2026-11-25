@@ -10,12 +10,12 @@
 // Invariants: the project files are read through teamSetEnv only (bounded reads, no link followed, never waits). A team or local
 //   file that cannot be read fails closed: the switch is ignored and the check runs. No project folder (none known, or only the home
 //   folder, whose `.claude/settings.json` is the user's own) -> the switch is honoured as before. Nothing is written to a project;
-//   noticeOnce leaves one empty marker per session and switch under the checked per-user hook temp root (lib/edit-log.mjs: a folder
+//   noticeOnce leaves one empty marker per session and switch under the checked per-user hook temp root (lib/hook-temp-root.mjs: a folder
 //   another user could plant is refused; disk-clean's hook-state rule removes idle markers; a rollback ignores them).
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
-import { checkedTempRoot } from './edit-log.mjs';
+import { checkedTempRoot } from './hook-temp-root.mjs';
 import { envName, teamSetEnv } from './project-setup-scan.mjs';
 import { escaped } from './shown-name.mjs';
 

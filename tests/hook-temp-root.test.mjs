@@ -1,4 +1,4 @@
-// Tests for the hook temp root of home/hooks/lib/edit-log.mjs (tempRoot, checkedTempRoot) and its user lib/team-switch.mjs (noticeOnce keeps its
+// Tests for the hook temp root of home/hooks/lib/hook-temp-root.mjs (tempRoot, checkedTempRoot) and its user lib/team-switch.mjs (noticeOnce keeps its
 // per-session markers under the checked root). The root is per user and checked before every use: a real folder of this uid with no group or
 // other bits; one with read bits only is tightened to 0700; anything else is refused, nothing is kept there and one stderr line says so per
 // process. Each test points TMPDIR at a fresh folder of its own and puts it back after; the stderr lines are caught at the process's write.
@@ -9,13 +9,13 @@ import { chmodSync, mkdirSync, readdirSync, statSync, symlinkSync, writeFileSync
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { checkedTempRoot, tempRoot } from '../home/hooks/lib/edit-log.mjs';
+import { checkedTempRoot, tempRoot } from '../home/hooks/lib/hook-temp-root.mjs';
 import { noticeOnce } from '../home/hooks/lib/team-switch.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 import { cleanEnv } from './clean-env.mjs';
 
 const POSIX_ONLY = process.platform === 'win32' ? 'owner and mode bits are POSIX only (Windows: phase 7)' : false;
-const EDIT_LOG_MODULE = pathToFileURL(fileURLToPath(new URL('../home/hooks/lib/edit-log.mjs', import.meta.url))).href;
+const EDIT_LOG_MODULE = pathToFileURL(fileURLToPath(new URL('../home/hooks/lib/hook-temp-root.mjs', import.meta.url))).href;
 const KILL_AFTER_MS = 30000; // only so an open that waits ends the run; the assertion reads the answer, never the time
 const NAME = 'claude-post-edit';
 const ENV_KEYS = ['TMPDIR', 'TEMP', 'TMP'];

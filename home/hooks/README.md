@@ -45,7 +45,7 @@ A hook reads a path that comes from its input, a session transcript or a state f
 
 ## lib/
 
-Helpers: `diagnostics.mjs` (a failed format run to `file:line RULE-ID message`) serves `post-edit.mjs`; `edit-log.mjs` (the per-user hook temp root) serves `team-switch.mjs`; `writer-agents.mjs` (which agent types write files) serves the board (`tools/board/lib/agents.mjs`) and `gated-folder.mjs`. Shared by the stores:
+Helpers: `diagnostics.mjs` (a failed format run to `file:line RULE-ID message`) serves `post-edit.mjs`; `hook-temp-root.mjs` (the per-user hook temp root) serves `team-switch.mjs`; `writer-agents.mjs` (which agent types write files) serves the board (`tools/board/lib/agents.mjs`) and `gated-folder.mjs`. Shared by the stores:
 
 - `session-store.mjs` - small per-session store files (the board files and others): lstat-checked, never through a link, never waiting on a FIFO, cleanup of its own old files only.
 - `session-lock.mjs` - `withSessionLock`, built on `session-store.mjs`: a lock file (`<pid> <token>`, removed only by its holder, taken over only from a gone pid after 0.5 s or from anyone after 5 s, one waiter at a time, behind a `<lock>.break` file that others treat as a busy lock; it is read again under that file and renamed aside only while it is still the stale one, else linked back; in a rare double release-and-take the moved lock can still be lost) lets hooks recording at the same moment take turns. A caller waits up to 1 s; one that must not wait (the status line's limit sample) passes `waitMs: 0` and tries once.
