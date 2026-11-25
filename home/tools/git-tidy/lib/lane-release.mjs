@@ -32,7 +32,7 @@ export const RECLAIM_IDLE_MS = 24 * 60 * 60 * 1000; // fixes-spec revision 2 (U8
 const HEADS = 'refs/heads/';
 const MS_PER_HOUR = 60 * 60 * 1000;
 const SESSION_VARIABLES = ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID'];
-const RELEASE_COMMAND = 'node ~/.claude/tools/git-tidy/git-tidy.mjs lane release';
+const RELEASE_COMMAND = 'node ~/.claude/tools/git-tidy/git-tidy.mjs lane release'; // ~ unquoted: the shell expands it
 
 /** The base branch and every other base candidate that exists here (main, master, develop): none of them is ever a lane. */
 export const baseNames = (repo) => new Set([repo.base, ...repo.knownBases]);
@@ -101,12 +101,15 @@ export function releaseLane(repo, folder) {
 /** git's first non-empty message line (a local copy: git-tidy imports nothing from home/tools/land). */
 const firstLine = (text) => text.split(/[\r\n]+/).find((line) => line.trim() !== '')?.trim() ?? '';
 
+/** A word a POSIX shell reads back as itself (lane-cli.mjs has the same), so a pasted step works for a path with a space or quote. */
+const shellWord = (text) => (/^[\w./:@%+=,-]+$/.test(text) ? text : `'${text.replaceAll("'", "'\\''")}'`);
+
 /** The result for a pool slot land could not free: it stays as it is (locked), and `why` ends with the `lane release` step. */
 const keptSlot = (repo, folder, why) => ({
   folder: null,
   kept: folder,
   other: null,
-  why: `${why}; deal with that, then free it with: ${RELEASE_COMMAND} --repo ${repo.dir} --folder ${folder}`,
+  why: `${why}; deal with that, then free it with: ${RELEASE_COMMAND} --repo ${shellWord(repo.dir)} --folder ${shellWord(folder)}`,
 });
 
 // Every fact is read here, under the pool lock, so no claim, release or reclaim can change the slot between the read and the act.
