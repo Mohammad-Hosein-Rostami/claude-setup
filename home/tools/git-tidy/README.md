@@ -227,16 +227,24 @@ node_modules) stay warm, and no folder is left behind:
   same for `uv.lock`, `poetry.lock`, `Pipfile.lock`, `requirements*.txt`, `pyproject.toml`), and locks the worktree with
   `cs-lane-pool <branch>`. When every folder is busy it adds the lowest unused `lane-<n>` (no cap); a stale entry whose folder is
   gone is removed and made again, unless its HEAD is off the base, its reflog holds commits found nowhere else or its index holds staged changes (then it stays
-  and a new number is used). Then it installs what the tip needs (`lib/lane-prep.mjs`, below). Output: `lane: <folder>`,
-  `kept: node_modules` or `kept: none`, `installed: <command> in <folder>, ...` or `installed: none`. Exit 0 ready, 1 an install
+  and a new number is used). Where the main checkout can be cloned, the folder is filled by clones instead of a checkout (Fill by
+  clone, below). Then it installs what the tip needs (`lib/lane-prep.mjs`, below). Output: `lane: <folder>`,
+  `kept: node_modules` or `kept: none`, `installed: <command> in <folder>, ...` or `installed: none` (`<command> in <folder> (from
+  the deps cache)` when the deps cache gave the folder its `node_modules`), then `fill: clone <seconds> s, <n> entries, repaired <n>`
+  or `fill: checkout (<why>)`. Each fill warning is a `git-tidy: fill warning: ...` line on stderr. Exit 0 ready, 1 an install
   failed (`lane not ready: ...`, the worktree, `to finish:` and `to release:` lines on stderr; the folder stays claimed and is not
   handed out), 2 usage (a short or unknown sha, a branch name `git check-ref-format --branch` refuses or that starts with `-` or
-  `refs/`, a base branch (the base, main, master or develop: never a lane), a branch already checked out in another folder: named), 4 the pool lock stayed held by another live claim for 60 s,
-  14 a git command failed. `--json` prints `{ folder, slot, created, kept, branch, base, record, ready, installs }`.
-- `lane list --repo <abs> [--json]`: one line per folder, `lane-<n> free|busy|missing <why>`.
+  `refs/`, a base branch (the base, main, master or develop: never a lane), a branch already checked out in another folder or being filled there: named), 4 the pool lock stayed held by another live claim for 60 s,
+  14 a git command or the fill failed (the folder is not handed out). `--json` prints
+  `{ folder, slot, created, kept, branch, base, fill, record, ready, installs }`, with `fill` as
+  `{ mode, entries, seconds, repaired, warnings, why }` (`mode` is `clone` or `checkout`; `why` says why).
+- `lane list --repo <abs> [--json]`: one line per folder, `lane-<n> free|busy|missing|filling|broken <why>`: `filling <branch>
+  pid <n>` while a claim fills it, `broken the fill of <branch> by pid <n> stopped` when that claim died or its fill failed. In
+  `--json` each slot also has `fillFile` (the fill file's `{ pid, branch, target, startedAt }`, or null).
 - `lane release --repo <abs> --folder <abs> [--json]`: frees a folder whose branch is landed and whose tree is clean: detach,
   remove its `cs-lane-pool` lock, delete the branch (prune's compare-and-delete; kept when its reflog holds commits found nowhere
-  else). Exit 0 released, 3 refused with why (not a pool folder, a base branch, someone else's lock, unfinished work, not landed).
+  else). Exit 0 released, 3 refused with why (not a pool folder, a claim is filling it, a base branch, someone else's lock,
+  unfinished work, not landed).
 - `lane reclaim --repo <abs> [--json]`: removes, with `git worktree remove` (never `--force`), each free folder unused for 24 hours
   (`RECLAIM_IDLE_MS`; use = its HEAD reflog, HEAD or index changed). When the repository was used in that time (a folder holds a
   branch, or a free one was used), its lowest free folder stays. A folder whose HEAD reflog holds commits found nowhere else
@@ -254,7 +262,35 @@ Folder paths are compared as real paths, case-folded on Windows and macOS.
 
 The pool lock is `<git common dir>/cs-lane-pool.lock` (one per repository, `<pid> <random> <what>` inside). It is stale only when
 its pid is gone or it is over 120 s old; one breaker at a time removes a stale lock and never one that changed since it looked.
-Installs run after the lock is released.
+The fill and the installs run after the lock is released.
+
+### Fill by clone
+
+Where the main checkout's files can be cloned into the pool folder, a claim fills the lane folder with clones (`lib/lane-fill.mjs`).
+A clone shares its source's disk blocks until one of the two files changes, so a lane costs about the files it changes. Cloning
+works on macOS when the main checkout and the pool folder are on one APFS volume (`/bin/cp -c`, one clone per file), and on Linux
+when `cp --reflink=always` works there (btrfs, XFS with reflink, a probe with one tracked file decides). Everywhere else (another
+volume, HFS+, ext4, Windows) the claim checks out and installs as before, and prints `fill: checkout (<why>)`.
+`GIT_TIDY_LANE_FILL=checkout` turns cloning (and the deps cache) off.
+
+- Cloned: every entry of the main checkout, tracked or not, ignored files too: `node_modules`, build output, `.husky/_` and local
+  secret files such as `.env`. `lane reclaim` deletes them with the folder (`git worktree remove` deletes ignored files too).
+- Never cloned: `.git`, `.claude/worktrees` and the other worktrees inside the main checkout, every folder that holds `.git` (a
+  nested repository, a submodule) or `pyvenv.cfg` (a Python venv, whose scripts name the main checkout), and `HANDOFF*.md` at the root.
+- Then the index is built from the target (`git read-tree`, `git update-index --refresh`), and a repair covers a dirty main checkout
+  or a `land` that moved main during the fill: tracked files that differ are restored, untracked files that are not ignored are
+  removed (`git clean -fdq`, no `-x`). If `git status --porcelain` is not empty then, the claim fails (exit 14).
+- A reused folder is switched and cleaned as above (it stays detached until the end step), then gets the main checkout's ignored
+  files back, except what the clean kept.
+- Fill warnings: an absolute link that points into the main checkout (a write through it changes main), and an entry `cp` could not
+  clone.
+- The steps: under the pool lock the claim writes the fill file `<git common dir>/cs-lane-fill/lane-<n>.json`
+  (`{ pid, branch, target, startedAt }`), adds the folder with `git worktree add --no-checkout` (or switches a free one) detached
+  at the target, and locks it with `cs-lane-pool <branch>`. The fill runs without the lock. Under the lock again it checks that the
+  fill file, the lock and HEAD are still its own, switches to the branch (the same commit, so no file is written) and deletes the
+  fill file. A folder whose claim died or failed in between is `broken`: it was never handed out, so the next claim that takes it
+  deletes its branch if it has no commit of its own, empties it except its `.git` file and fills it again.
+- Disk: `du` and Finder count each clone at full size, so they overstate lanes; `df` shows what the disk really holds.
 
 Installs (`lib/lane-prep.mjs`): for each tracked lockfile of the claimed tip, in that lockfile's folder: `package-lock.json` →
 `npm ci`, `pnpm-lock.yaml` → `pnpm install --frozen-lockfile`, `yarn.lock` → `yarn install --immutable` (one per folder, in that
@@ -262,6 +298,13 @@ order). The command comes from the lockfile's name only, runs as argv with no sh
 PATH folder outside the lane folder (on Windows the package manager's JavaScript entry beside its `.cmd` runs under node). A
 folder whose `node_modules/.cs-lane-prep.json` names the same lockfile sha256 is skipped. The lockfile's own lifecycle scripts run
 as the package manager runs them in any checkout.
+
+Deps cache (`lib/lane-deps.mjs`), only where cloning works (it follows `GIT_TIDY_LANE_FILL`): when a folder's marker does not match
+its lockfile, the claim first clones `node_modules` from `<git common dir>/cs-lane-deps/<key>/node_modules` (outcome `cloned`, no
+install runs); without that entry it installs, then saves the result there. The key is a sha256 of the lockfile's folder, name and
+sha256, the Node ABI, the platform and the CPU type. An entry is written once (a temp folder renamed into place) and removed after
+7 days unused; the main checkout's `node_modules` is never written. `rm -rf <git common dir>/cs-lane-deps` is always safe: the next
+claim only installs again.
 
 Each claim records the folder as made, and each reclaim removal as gone, in the job-made record
 (`tools/disk-free/lib/job-made.mjs`, under the session id of `CLAUDE_CODE_SESSION_ID`); with no session id a stderr line says the
@@ -271,4 +314,5 @@ record was not written, so the job-leftover sweep leaves that folder alone.
 branch at the base with no commit of its own (`isNotStarted`) in a locked linked worktree as `not started: <branch> in <path> ...`
 instead of `merged-branch` and `merged-worktree`. An unlocked fresh worktree stays a finding.
 
-Uninstall: the pool folders are plain detached worktrees; `git worktree remove <folder>` or `lane reclaim` removes them.
+Uninstall: the pool folders are plain detached worktrees; `git worktree remove <folder>` or `lane reclaim` removes them. The
+`cs-lane-fill` and `cs-lane-deps` folders in the git common dir can be deleted when no claim runs.

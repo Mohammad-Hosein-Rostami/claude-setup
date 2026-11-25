@@ -2,8 +2,9 @@
 //   print text lines or one JSON object, return the exit code.
 // Exports: LANE_USAGE, runLaneCommand.
 // Exit codes: claim 0 claimed and ready, 1 claimed but an install failed (the "lane not ready" lines; the folder is not handed out),
-//   2 usage (bad sha, a branch that fails check-ref-format, a branch checked out in another folder: named), 4 the pool lock stayed held
-//   by another live claim, 14 a git command failed. list 0. release 0 detached, 3 refused (why). reclaim 0, 1 a removal failed.
+//   2 usage (bad sha, a branch that fails check-ref-format, a branch checked out or being filled in another folder: named), 4 the pool
+//   lock stayed held by another live claim, 14 a git command or the clone fill failed (the folder is not handed out). list 0.
+//   release 0 detached, 3 refused (why). reclaim 0, 1 a removal failed.
 //   Every command: 2 usage, 4 pool lock busy, 14 git failed.
 // Invariants: --repo and --folder are absolute paths; only lane-pool.mjs writes; a job-made record that could not be written is one stderr
 //   line (the folder is then not swept by the job-leftover sweep, the safe side).
@@ -23,6 +24,7 @@ const NEEDS = Object.freeze({ claim: ['repo', 'branch', 'base'], list: ['repo'],
 const FLAGS = Object.freeze({ '--repo': 'repo', '--branch': 'branch', '--base': 'base', '--folder': 'folder' });
 const ABSOLUTE_PATH = /^(\/|[A-Za-z]:[\\/])/;
 const WRITTEN_RECORDS = new Set(['recorded', 'filled']);
+const DONE_OUTCOMES = new Set(['installed', 'cloned']); // prepareLane outcomes that put node_modules in place now
 const CLI = fileURLToPath(new URL('../git-tidy.mjs', import.meta.url));
 
 function parseLaneArgs([command, ...rest]) {
@@ -61,18 +63,26 @@ function notReadyLines(repoDir, claimed, failed) {
   ];
 }
 
+/** The `fill:` line: what the clone fill did, or why the folder was checked out instead. */
+const fillLine = (fill) => (fill.mode === 'checkout' ? `fill: checkout (${fill.why})`
+  : `fill: ${fill.mode} ${fill.seconds.toFixed(1)} s, ${fill.entries} entries, repaired ${fill.repaired}`);
+
+/** An install for the `installed:` line; one whose node_modules came from the deps cache (lane-deps.mjs) says so. */
+const installedText = (install) => `${install.command} in ${install.dir}${install.outcome === 'cloned' ? ' (from the deps cache)' : ''}`;
+
 function runClaim(repo, options) {
   const claimed = claimLane(repo, { branch: options.branch, base: options.base });
   warnRecord(claimed.record);
+  claimed.fill.warnings.forEach((warning) => console.error(`git-tidy: fill warning: ${warning}`));
   const prep = prepareLane(claimed.folder);
   const failed = prep.installs.find((install) => install.outcome === 'failed');
-  const installed = prep.installs.filter((install) => install.outcome === 'installed').map((install) => `${install.command} in ${install.dir}`);
+  const installed = prep.installs.filter((install) => DONE_OUTCOMES.has(install.outcome)).map(installedText);
   if (options.json) console.log(JSON.stringify({ ...claimed, ready: prep.ready, installs: prep.installs }, null, 2));
   if (failed !== undefined) {
     console.error(notReadyLines(options.repo, claimed, failed).join('\n'));
     return EXIT.notReady;
   }
-  if (!options.json) console.log([`lane: ${claimed.folder}`, `kept: ${claimed.kept.length > 0 ? claimed.kept.join(', ') : 'none'}`, `installed: ${installed.length > 0 ? installed.join(', ') : 'none'}`].join('\n'));
+  if (!options.json) console.log([`lane: ${claimed.folder}`, `kept: ${claimed.kept.length > 0 ? claimed.kept.join(', ') : 'none'}`, `installed: ${installed.length > 0 ? installed.join(', ') : 'none'}`, fillLine(claimed.fill)].join('\n'));
   return EXIT.ok;
 }
 
