@@ -10,8 +10,8 @@
 //   Free means: a linked worktree of this repository, unlocked, HEAD detached at a commit on the base, no unfinished operation, no git
 //   lock file, `git status` (untracked files included) empty and no file marked assume-unchanged or skip-worktree (status hides
 //   their edits). Ignored files (node_modules, dist/, a local .env) do not make it busy.
-//   A slot with a fill file (lane-fill-state.mjs) is filling while its pid lives, then broken (a claim may empty and fill it again)
-//   when nothing there is someone else's: no foreign lock, no other branch, no HEAD.lock, no git repository in an ignored folder.
+//   A fill file (lane-fill-state.mjs) counts only on a detached slot locked `cs-lane-pool …` (a clone claim's, before the switch that
+//   hands it out): filling while its pid lives, then broken (refilled) unless a HEAD.lock or an ignored folder's git repository is there.
 //   Removing a folder (reclaim) or a stale entry (claim) needs more: removalLossWhy and staleEntryLossWhy name what the removal would
 //   destroy (a HEAD reflog holding commits found nowhere else: prune's rule, reflog.mjs; a git repository inside an ignored folder).
 import { existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
@@ -121,8 +121,10 @@ function isOwnWorktreeRoot(folder) {
   return top.status === 0 && slotKey(top.stdout.trim()) === slotKey(folder);
 }
 
-/** The state the fill file of the present slot `name` gives it (filling, broken or busy: see the header); null without one. */
+/** The state the fill file of the present slot `name` gives it (filling, broken or busy: see the header); null when none counts. */
 function fillStateOf(repo, folder, name, tree) {
+  // on a branch the switch was the hand-out, and any other lock is someone else's: a leftover fill file there never empties the slot
+  if (tree.branch !== null || !tree.locked || !(tree.lockReason ?? '').startsWith(LOCK_REASON_PREFIX)) return null;
   let fillFile;
   try {
     fillFile = readFillFile(commonDirOf(repo), name);
@@ -134,8 +136,6 @@ function fillStateOf(repo, folder, name, tree) {
   // a claim runs start to end in one synchronous call, so this process's own pid here is a claim of it that failed
   if (fillFile.pid !== process.pid && isPidAlive(fillFile.pid)) return as('filling', `${fillFile.branch} pid ${fillFile.pid}`);
   const stopped = `the fill of ${fillFile.branch} by pid ${fillFile.pid} stopped`;
-  if (tree.locked && !(tree.lockReason ?? '').startsWith(LOCK_REASON_PREFIX)) return as('busy', `${stopped}, but it is locked by someone else (${tree.lockReason || 'no reason'})`);
-  if (tree.branch !== null && tree.branch !== fillFile.branch) return as('busy', `${stopped}, but it holds branch ${tree.branch}`);
   const kept = gitLockWhy(folder, REFILL_BLOCKING_LOCKS) ?? nestedRepositoryWhy(folder);
   return kept === null ? as('broken', stopped) : as('busy', `${stopped}, but ${kept}`);
 }
