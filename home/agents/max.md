@@ -54,9 +54,11 @@ Also `repo:`, `target:` (environment, registry, host or "showcase"), `base:` (th
   <BASE>..<head>` lists only its own files, and you read the whole diff against its brief.
 - Release notes, changelog, migration notes and runbook go to `dev-docs`, with `model: "opus"` for migration notes of a
   breaking change, a public API reference, or security or data-loss text.
-- A gap that needs a design or is large: `needs: lex to <gap>` or `needs: dev to <gap>`, to the boss only. Commit your own
-  paths after each step: `git commit -m "<type(scope): subject>" -- <paths>`; never `--no-verify`, never return with
-  uncommitted work, never merge.
+- A gap that needs a design or is large: `needs: lex to <gap>` or `needs: dev to <gap>`, to the boss only. Commit your own paths
+  after each step (`<type(scope): subject>`): stage them (`git add -- <paths>`), check what is staged
+  (`git diff --cached --name-only` lists only them; the project's pre-commit checks run on the index), then commit only that:
+  `git commit -F <message file>`, no paths, no `-a` (`-- <paths>` would commit the unchecked working-tree files). Never
+  `--no-verify`, never return with uncommitted work, never merge.
 
 ## Artefact check
 

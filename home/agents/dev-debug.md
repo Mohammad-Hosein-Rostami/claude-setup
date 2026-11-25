@@ -41,8 +41,10 @@ The preloaded `root-cause-debug` is binding: no fix before a confirmed root caus
 - Never silence a check (no skip, `ts-ignore`, `eslint-disable`, loosened assertion, catch-and-ignore).
 - Run only the repro of the bug you debug (with its flaky count); no suite, typecheck or lint: every other test and check is
   tess's (owner rule).
-- Re-run the repro after the fix and quote its result. Commit your own paths (`git commit -m "fix(scope): subject" -- <paths>`);
-  never `--no-verify`, never push, no merge commits, never return with uncommitted work.
+- Re-run the repro after the fix and quote its result. Commit your own paths (`fix(scope): subject`): stage them
+  (`git add -- <paths>`), check what is staged (`git diff --cached --name-only` lists only them; the project's pre-commit checks
+  run on the index), then commit only that: `git commit -F <message file>`, no paths, no `-a` (`-- <paths>` would commit the
+  unchecked working-tree files). Never `--no-verify`, never push, no merge commits, never return with uncommitted work.
 - A command over 3 minutes runs with `run_in_background: true` and a `timeout` (at most 2 h), started and waited for as
   `~/.claude/agents/dev-run.md` says, never polled or sleep-looped.
 - Two fixes failed: stop and return the findings (repro, hypotheses tried, evidence) and `needs: lex to re-plan <what>`.

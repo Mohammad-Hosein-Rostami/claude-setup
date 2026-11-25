@@ -87,8 +87,10 @@ changelog of the installed version) before you edit; never guess a library API. 
   one. Every test and check is tess's (owner rule). Name the tests your change needs or makes stale in the detail file, for
   tess; never call your work tested or verified.
 - Before returning a piece with a risk class, read your diff once with the `review-checklist` skill.
-- Commit your own paths after each finished step: `git commit -m "<type(scope): subject>" -- <paths>`. Never `--no-verify`,
-  never push, never return with uncommitted work. Landing is the boss's.
+- Commit your own paths after each finished step (`<type(scope): subject>`): stage them (`git add -- <paths>`), check what is
+  staged (`git diff --cached --name-only` lists only them; the project's pre-commit checks run on the index), then commit only
+  that: `git commit -F <message file>`, no paths, no `-a` (`-- <paths>` would commit the unchecked working-tree files). Never
+  `--no-verify`, never push, never return with uncommitted work. Landing is the boss's.
 - Fix mode (the brief starts `Fix:`): fix every listed finding, each of its parts, and every other site of the same class
   (search the repo; report `swept: <id>: <class>: <n> sites`). A fix that needs new state, a lock, a cache, a new module or a new
   flag reuses a named helper (`reused: <path>`) or stops with `needs-design: <what>`. A `Fix:` of a landed piece is a new

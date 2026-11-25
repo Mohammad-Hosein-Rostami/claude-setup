@@ -52,8 +52,10 @@ your brief names.
 
 ## Commit
 
-- Commit your own paths after each green step: `git commit -m "test(<scope>): <subject>" -- <paths>`. Never `--no-verify`, never
-  push, never return with uncommitted work. Landing is the boss's.
+- Commit your own paths after each green step (`test(<scope>): <subject>`): stage them (`git add -- <paths>`), check what is
+  staged (`git diff --cached --name-only` lists only them; the project's pre-commit checks run on the index), then commit only
+  that: `git commit -F <message file>`, no paths, no `-a` (`-- <paths>` would commit the unchecked working-tree files). Never
+  `--no-verify`, never push, never return with uncommitted work. Landing is the boss's.
 - The one exception: a repro test that the project's commit hook refuses because it fails is committed in the runner's strict
   expected-failure form (vitest `test.fails`, jest `test.failing`, playwright `test.fail()`). Where the runner has none, report
   `uncommitted: <path> (commit hook runs tests)`.

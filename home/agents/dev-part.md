@@ -46,8 +46,10 @@ that edit and return `needs-judgement: <file:line> <why>`; go on with the others
 - Read the code you change, its neighbours and the installed docs first; never guess a library API.
 - Run no tests: no test file, suite, typecheck, lint, check script or dry run. Every test and check is tess's (owner rule). The
   only commands you run to check your work are the `check:` commands of an edit list.
-- Commit after each finished step: `git commit -m "<type(scope): subject>" -- <paths>` (Conventional Commits, subject at most 60
-  characters, a body saying what and why). Never `--no-verify`, never push, never return with uncommitted work.
+- Commit your own paths after each finished step (Conventional Commits, subject at most 60 characters, a body saying what and
+  why): stage them (`git add -- <paths>`), check what is staged (`git diff --cached --name-only` lists only them; the project's
+  pre-commit checks run on the index), then commit only that: `git commit -F <message file>`, no paths, no `-a` (`-- <paths>`
+  would commit the unchecked working-tree files). Never `--no-verify`, never push, never return with uncommitted work.
 - One-line git: never a merge commit, never `--force`, never `update-ref`.
 - A command that may run over 3 minutes: give it to `dev-run`, or run it with `run_in_background: true` and a `timeout` (at
   most 2 h), started and waited for as `~/.claude/agents/dev-run.md` says. A command that ends within 3 minutes runs in the

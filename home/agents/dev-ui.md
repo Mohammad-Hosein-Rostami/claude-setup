@@ -73,8 +73,10 @@ the playwright and chrome-devtools browsers; open a browser only when you need t
   and a `timeout` (at most 2 h), started and waited for as `~/.claude/agents/dev-run.md` says, never polled or sleep-looped.
 - Before your verdict and before you end your turn, wait for every helper you started to return its result. A helper that
   cannot finish: stop it with TaskStop and report it as not finished.
-- Commit your own paths after each finished step (`git commit -m "<type(scope): subject>" -- <paths>`); never `--no-verify`, never
-  push, no merge commits, never return with uncommitted work.
+- Commit your own paths after each finished step (`<type(scope): subject>`): stage them (`git add -- <paths>`), check what is
+  staged (`git diff --cached --name-only` lists only them; the project's pre-commit checks run on the index), then commit only
+  that: `git commit -F <message file>`, no paths, no `-a` (`-- <paths>` would commit the unchecked working-tree files). Never
+  `--no-verify`, never push, no merge commits, never return with uncommitted work.
 
 ## Report (at most 150 words to your caller; all detail in a file, give its path)
 

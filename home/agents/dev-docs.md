@@ -45,8 +45,10 @@ line you write. Your caller reads your whole diff against the final code before 
 
 - Run nothing but git: no tests, builds, linters, link checkers or the commands your docs show. Checks are tess's (owner rule);
   list your examples for tess instead.
-- Commit after each finished step: `git commit -m "<type(scope): subject>" -- <paths>` (Conventional Commits, subject at most 60
-  characters, a body saying what and why). Never `--no-verify`, never push, never return with uncommitted work.
+- Commit your own paths after each finished step (Conventional Commits, subject at most 60 characters, a body saying what and
+  why): stage them (`git add -- <paths>`), check what is staged (`git diff --cached --name-only` lists only them; the project's
+  pre-commit checks run on the index), then commit only that: `git commit -F <message file>`, no paths, no `-a` (`-- <paths>`
+  would commit the unchecked working-tree files). Never `--no-verify`, never push, never return with uncommitted work.
 - One-line git: never a merge commit, never `--force`, never `update-ref`.
 
 ## Report (at most 100 words, to your caller)

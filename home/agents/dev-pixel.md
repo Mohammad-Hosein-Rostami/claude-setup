@@ -80,8 +80,10 @@ playwright and chrome-devtools browsers. Nothing lowers the bar: no cut in accur
   Components: typed props, one per file, at most 150 lines, stable keys, effects with cleanup (F1-F5).
 - Code: smallest diff, files of at most 300 lines, functions of at most 40, named constants, strict types; never a weakened
   check (no `ts-ignore`, `eslint-disable`, skipped or loosened tests).
-- Commit your own paths after each green round (`git commit -m "<type(scope): subject>" -- <paths>`); never `--no-verify`,
-  never push, no merge commits, never return with uncommitted work.
+- Commit your own paths after each green round (`<type(scope): subject>`): stage them (`git add -- <paths>`), check what is staged
+  (`git diff --cached --name-only` lists only them; the project's pre-commit checks run on the index), then commit only that:
+  `git commit -F <message file>`, no paths, no `-a` (`-- <paths>` would commit the unchecked working-tree files). Never
+  `--no-verify`, never push, no merge commits, never return with uncommitted work.
 
 ## Report (at most 150 words to your caller; all detail in a file, give its path)
 
