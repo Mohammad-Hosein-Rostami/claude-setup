@@ -5,8 +5,9 @@ live in every running session at once. A broken hook or tool there breaks every 
 
 - Shared text (`home/`, `docs/`, this file) holds no one's private facts (name, machines, accounts, billing, own standing
   rules); those go in `personal/CLAUDE.md` (git-ignored, its own git repo; template in `personal.example/`).
-- Edit hooks and tools in a git worktree (`scripts/lane-new.sh <name>`). To land: rebase onto main, then
-  fast-forward (`git merge --ff-only`), through the `land` script (`home/tools/land`). Parallel agents each use their own
+- Edit hooks and tools in a git worktree: a pool lane (`node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim --repo <abs>
+  --branch lane/<name> --base <main sha>`) or `scripts/lane-new.sh <name>`. To land: rebase onto main, then fast-forward
+  (`git merge --ff-only`), through the `land` script (`home/tools/land`). Parallel agents each use their own
   worktree; never edit the main checkout while others work.
 - Tests: `node --test tests/*.test.mjs` (never bare `node --test`); ui-check's own tests: `npm run test:ui-check`
   (`npm run test:all` runs both). No test runs by itself; `land` runs one only with `--test`. Run the whole suite by hand
