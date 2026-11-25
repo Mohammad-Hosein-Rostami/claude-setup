@@ -6,14 +6,15 @@
 //   be read makes the folder busy, never free (fail closed). Slot paths are compared as real paths (realpathSync.native), case-folded on
 //   win32 and darwin. A folder at a slot path that is not a worktree of this repository is busy and is never touched by any caller.
 //   Free means: a linked worktree of this repository, unlocked, HEAD detached at a commit on the base, no unfinished operation, no git
-//   lock file, `git status` (untracked files included) empty. Ignored files (node_modules, dist/, a local .env) do not make it busy.
+//   lock file, `git status` (untracked files included) empty and no file marked assume-unchanged or skip-worktree (status hides
+//   their edits). Ignored files (node_modules, dist/, a local .env) do not make it busy.
 //   Removing a folder (reclaim) or a stale entry (claim) needs more: removalLossWhy and staleEntryLossWhy name what the removal would
 //   destroy (a HEAD reflog holding commits found nowhere else: prune's rule, reflog.mjs; a git repository inside an ignored folder).
 import { existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { UsageError, gitText, runGit } from './git.mjs';
 import { reflogOnlyCommits } from './reflog.mjs';
-import { changedFileCount, inProgressOperation, listWorktrees } from './repo.mjs';
+import { HIDDEN_FILES_WHY, changedFileCount, hiddenFileCount, inProgressOperation, listWorktrees } from './repo.mjs';
 import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
 
 export const POOL_FOLDER = join('.claude', 'worktrees');
@@ -61,7 +62,8 @@ function adminDirOf(path) {
 
 /**
  * What in the worktree at `tree.path` must not be switched away from: a git lock file, an unfinished operation, uncommitted or
- * untracked files, a HEAD with commits not on the base. Lock and branch are not looked at (release reads them itself).
+ * untracked files, files whose edits git status hides (assume-unchanged, skip-worktree), a HEAD with commits not on the base.
+ * Lock and branch are not looked at (release reads them itself).
  * @param {object} repo openRepo's result
  * @param {{ path: string }} tree the worktree
  * @returns {string|null} the reason, or null when nothing would be lost
@@ -76,6 +78,9 @@ export function contentBusyWhy(repo, tree) {
   const changed = changedFileCount(tree.path);
   if (changed === null) return 'git status failed there';
   if (changed > 0) return `${changed} uncommitted or untracked files`;
+  const hidden = hiddenFileCount(tree.path);
+  if (hidden === null) return 'git cannot list its files';
+  if (hidden > 0) return `${hidden} files ${HIDDEN_FILES_WHY}`;
   const head = runGit(tree.path, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
   if (head.status !== 0) return 'its HEAD cannot be read';
   const sha = head.stdout.trim();

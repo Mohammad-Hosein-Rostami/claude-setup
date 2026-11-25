@@ -1,7 +1,7 @@
 // Purpose: the facts about a repository that `check` and `prune` read: base branch, upstream, worktrees, branches,
 //   a half-finished operation, uncommitted files. Everything here only reads.
 // Exports: openRepo, listWorktrees, listBranches, currentBranch, samePath, contains, inProgressOperation, changedFileCount,
-//   ignoredFiles, minutesSinceUse.
+//   hiddenFileCount, HIDDEN_FILES_WHY, ignoredFiles, minutesSinceUse.
 // Invariants: branches are always addressed by full ref (`refs/heads/<name>`), so a tag with the same name is never
 //   mistaken for a branch; every git call fails closed, a fact that cannot be read is reported as unknown, not as clean.
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
@@ -142,6 +142,23 @@ export function changedFileCount(path) {
   const result = runGit(path, ['status', '--porcelain', '--untracked-files=all', '--ignore-submodules=none']);
   if (result.status !== 0) return null;
   return result.stdout.split('\n').filter((line) => line !== '').length;
+}
+
+// `git ls-files -v` tags an assume-unchanged entry in lowercase and a skip-worktree one with `S` (`s` when both).
+const isHiddenTag = (tag) => tag === 'S' || (tag !== tag.toUpperCase());
+
+/** What the files hiddenFileCount counts are, for a reason or a refusal. */
+export const HIDDEN_FILES_WHY = 'marked assume-unchanged or skip-worktree (git status does not show their edits)';
+
+/**
+ * Number of tracked files in the worktree at `path` marked assume-unchanged or skip-worktree: git status skips them, so an
+ * edit there is invisible to changedFileCount, and removing the worktree (or checking out over it) would lose it. Null when git
+ * cannot say (callers treat null as "has some").
+ */
+export function hiddenFileCount(path) {
+  const result = runGit(path, ['ls-files', '-v', '-z']);
+  if (result.status !== 0) return null;
+  return result.stdout.split('\0').filter((entry) => entry !== '' && isHiddenTag(entry[0])).length;
 }
 
 /**

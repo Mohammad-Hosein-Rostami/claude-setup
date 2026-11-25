@@ -1,14 +1,17 @@
 // Purpose: decide whether a local branch (or any commit) is already on the base, and how many commits it still has that are not.
-// Exports: ancestorBranches, branchState, compareBranch, compareWithBase, contentOnBase, contentProofUnsupported,
-//   withContentState, isLanded, isMerged, mergeChangesNothing, CONTENT_EQUAL.
+// Exports: ancestorBranches, branchState, changesOnBase, compareBranch, compareWithBase, contentOnBase,
+//   contentProofUnsupported, withContentState, isLanded, isMerged, mergeChangesNothing, CONTENT_EQUAL.
 // Invariants: only `ancestor`, `patch-equal` and `content-equal` mean "merged"; anything that cannot be proven is `unmerged`
 //   (fail closed). `content-equal` is the one content proof for every other branch: merging it into the base changes nothing
 //   (`git merge-tree --write-tree` prints the base's own tree), so all its content is on the base already (a squash or a
 //   rewritten fold that landed as it is). History (reflogs, patch ids) never makes a branch merged on its own.
+//   A merge runs the repository's merge drivers and attributes (`merge=ours`, `union`), which can drop the branch's change and
+//   still give the base's tree; so every merge proof also needs changesOnBase, which compares blobs and merges nothing.
 //   `patch-equal` needs two proofs: no non-merge commit has an unequal patch (`git cherry` logic), and merging the branch into
 //   the base must change nothing (`git merge-tree --write-tree` prints the base's own tree). The second one matters because
 //   patch ids ignore whitespace and skip merge commits, so a hand-made change in a merge would go unseen by the first.
-//   One git call per branch (a batch call for all ancestors first), so 300 branches stay fast.
+//   A proof is about the tip commit that was read, never a ref read again later. One git call per branch (a batch call for
+//   all ancestors first), plus two for each branch a merge proves, so 300 branches stay fast.
 import { gitText, runGit } from './git.mjs';
 
 const HEADS = 'refs/heads/';
@@ -35,8 +38,14 @@ export function ancestorBranches(repo, name = null) {
   return found;
 }
 
-// The base's tree is read once per run; if the base moves meanwhile the comparison fails, which keeps the branch (safe).
+// The base's tree is read once per run. A base that moves meanwhile can make a stale tree match, so changesOnBase (which reads
+// the base again) must hold too, and prune pins the base to one commit before it removes anything.
 const baseTrees = new WeakMap();
+// Per repo: Map(tip -> whether mergeChangesNothing holds for it), so branches that share a tip are proven once.
+const mergeProofs = new WeakMap();
+// The second content proof: plumbing diff-tree runs no merge driver, attribute or textconv; the explicit flags keep the
+// user's diff config (renames, ignored submodules) out of it.
+const CHANGED_PATHS = ['diff-tree', '-r', '-z', '--name-only', '--no-renames', '--ignore-submodules=none'];
 
 // The base's tree, '' when git cannot read it (no proof then).
 function baseTreeOf(repo) {
@@ -44,17 +53,45 @@ function baseTreeOf(repo) {
   return baseTrees.get(repo);
 }
 
-// True when merging `ref` into the base would change nothing: exact content, where patch ids ignore whitespace.
-export function mergeChangesNothing(repo, ref) {
-  const merged = runGit(repo.dir, ['merge-tree', '--write-tree', repo.baseRef, ref]);
-  const baseTree = baseTreeOf(repo);
-  return merged.status === 0 && baseTree !== '' && merged.stdout.split('\n')[0].trim() === baseTree;
+// The paths diff-tree lists for `args` (two commits, or `--merge-base` and two commits), or null when git cannot say.
+function changedPaths(repo, args) {
+  const result = runGit(repo.dir, [...CHANGED_PATHS, ...args, '--']);
+  return result.status === 0 ? result.stdout.split('\0').filter((path) => path !== '') : null;
+}
+
+/**
+ * True when every path `commit` changed since its merge base with the base has the same mode and blob on the base as on
+ * `commit`: all the branch's own changes are on the base. It merges nothing, so no merge driver or attribute can make it pass.
+ * No merge base (an orphan branch) or more than one (criss-cross merges) proves nothing; so does a git error.
+ */
+export function changesOnBase(repo, commit) {
+  const changed = changedPaths(repo, ['--merge-base', repo.baseRef, commit]);
+  const differs = changedPaths(repo, [repo.baseRef, commit]);
+  if (changed === null || differs === null) return false;
+  const differing = new Set(differs);
+  return !changed.some((path) => differing.has(path));
+}
+
+/**
+ * True when merging `commit` into the base would change nothing (exact content, where patch ids ignore whitespace) and
+ * changesOnBase holds (no merge driver made the merge pass). Each commit is proven once per repo object.
+ */
+export function mergeChangesNothing(repo, commit) {
+  if (!mergeProofs.has(repo)) mergeProofs.set(repo, new Map());
+  const proofs = mergeProofs.get(repo);
+  if (!proofs.has(commit)) {
+    const merged = runGit(repo.dir, ['merge-tree', '--write-tree', repo.baseRef, commit]);
+    const baseTree = baseTreeOf(repo);
+    const isBaseTree = merged.status === 0 && baseTree !== '' && merged.stdout.split('\n')[0].trim() === baseTree;
+    proofs.set(commit, isBaseTree && changesOnBase(repo, commit));
+  }
+  return proofs.get(commit);
 }
 
 /**
  * The refs of `refs` (full refs or commit hashes) whose merge into the base changes nothing: a clean merge whose tree is the
- * base's own. One `git merge-tree --stdin` call for all of them; when git cannot complete it (a ref that went away, a broken
- * object) no ref is proven (fail closed).
+ * base's own, and changesOnBase holds. One `git merge-tree --stdin` call for all of them, then changesOnBase for each one the
+ * merge proved; when git cannot complete the merges (a ref that went away, a broken object) no ref is proven (fail closed).
  */
 export function contentOnBase(repo, refs) {
   if (refs.length === 0) return new Set();
@@ -70,7 +107,7 @@ export function contentOnBase(repo, refs) {
     at += 2;
     while (at < fields.length && fields[at] !== '') at += 1;
     at += 1;
-    if (clean === '1' && tree === baseTree) proven.add(ref);
+    if (clean === '1' && tree === baseTree && changesOnBase(repo, ref)) proven.add(ref);
   }
   return proven;
 }
@@ -86,10 +123,14 @@ export function contentProofUnsupported(dir) {
   return isNewEnough ? null : `${version || 'an unknown git'} is older than ${MIN_GIT.major}.${MIN_GIT.minor}, which the content proof needs (git merge-tree --stdin)`;
 }
 
-/** `states` (`[{ name, state, ... }]`) with each `unmerged` branch whose content is on the base (contentOnBase) as `content-equal`. */
+/**
+ * `states` (`[{ name, state, tip, ... }]`) with each `unmerged` branch whose tip's content is on the base (contentOnBase) as
+ * `content-equal`. The tip that was read is proven, not the branch read again, so the proof is about the commit a caller deletes.
+ */
 export function withContentState(repo, states) {
-  const onBase = contentOnBase(repo, states.filter(({ state }) => state === 'unmerged').map(({ name }) => `${HEADS}${name}`));
-  return states.map((entry) => (entry.state === 'unmerged' && onBase.has(`${HEADS}${entry.name}`) ? { ...entry, state: CONTENT_EQUAL, ahead: 0 } : entry));
+  const isCandidate = ({ state, tip }) => state === 'unmerged' && tip !== null;
+  const onBase = contentOnBase(repo, states.filter(isCandidate).map(({ tip }) => tip));
+  return states.map((entry) => (isCandidate(entry) && onBase.has(entry.tip) ? { ...entry, state: CONTENT_EQUAL, ahead: 0 } : entry));
 }
 
 // Commits of `ref` the base lacks, newest first, each marked `=` (an equal patch is on the base) or `+`, with parents.
@@ -106,7 +147,7 @@ export function compareWithBase(repo, ref) {
   });
   const tip = commits[0]?.hash ?? null; // topological order: the tip comes before all of its ancestors
   const patchesLanded = commits.length > 0 && commits.filter((commit) => !commit.isMerge).every((commit) => commit.equal);
-  if (patchesLanded && mergeChangesNothing(repo, ref)) return { state: 'patch-equal', tip, ahead: 0 };
+  if (patchesLanded && mergeChangesNothing(repo, tip)) return { state: 'patch-equal', tip, ahead: 0 };
   const unequal = commits.filter((commit) => !commit.isMerge && !commit.equal).length;
   return { state: 'unmerged', tip, ahead: unequal > 0 ? unequal : commits.length };
 }
@@ -131,7 +172,7 @@ export function branchState(repo, name, ancestors = ancestorBranches(repo, name)
   return withContentState(repo, [{ ...compareBranch(repo, name, ancestors), name }])[0];
 }
 
-/** True when `commit` (any hash) is on the base, or merging it into the base changes nothing (its content is all there). */
+/** True when `commit` (any hash) is on the base, or its content is all there (contentOnBase). */
 export function isLanded(repo, commit) {
   if (runGit(repo.dir, ['merge-base', '--is-ancestor', commit, repo.baseRef]).status === 0) return true;
   return contentOnBase(repo, [commit]).has(commit);
