@@ -1,12 +1,13 @@
-// Purpose: the lane folder pool of a repository. `claimLane` hands a lane the lowest free folder `<main>/.claude/worktrees/lane-<n>`
-//   (its caches stay warm, since the path is the same), or adds the lowest unused lane-<n> when every folder is busy (no cap);
-//   `releaseLane` frees a folder whose lane landed; land calls `detachLandedSlot` after its fast-forward; `reclaimLanes` removes folders
-//   idle for RECLAIM_IDLE_MS. Where the main checkout can be cloned (lane-fill.mjs cloneSupport), a claim fills the folder by cloning it.
-//   A snapshot claim is a lane with no branch: it stays detached at its commit, locked as `cs-lane-pool snapshot <8>`, until release.
-// Exports: RECLAIM_IDLE_MS, KEPT_DEPENDENCY_FOLDERS, claimLane, releaseLane, detachLandedSlot, reclaimLanes (and, from lane-slots.mjs,
-//   POOL_FOLDER, poolSlots).
+// Purpose: the claim of the lane folder pool of a repository. `claimLane` hands a lane the lowest free folder
+//   `<main>/.claude/worktrees/lane-<n>` (its caches stay warm, since the path is the same), or adds the lowest unused lane-<n> when
+//   every folder is busy (no cap). Where the main checkout can be cloned (lane-fill.mjs cloneSupport), a claim fills the folder by
+//   cloning it. A snapshot claim is a lane with no branch: it stays detached at its commit, locked as `cs-lane-pool snapshot <8>`,
+//   until release. Release, land's `detachLandedSlot` and reclaim are in lane-release.mjs.
+// Exports: KEPT_DEPENDENCY_FOLDERS, claimLane (and, from lane-slots.mjs, POOL_FOLDER, poolSlots; from lane-release.mjs, RECLAIM_IDLE_MS,
+//   releaseLane, detachLandedSlot, reclaimLanes, so their callers import them from here).
 // Invariants:
-// - Claim, release and reclaim run under the one pool lock of the repository (pool-lock.mjs), so two sessions never get one folder.
+// - A claim runs under the one pool lock of the repository (pool-lock.mjs), the lock release and reclaim take too, so two sessions
+//   never get one folder.
 // - Clone mode is a claim in two steps under the lock, with the fill between them outside it (it can take minutes; the lock goes
 //   stale at 120 s). The first step writes the slot's fill file (lane-fill-state.mjs), puts the folder detached at the target (a new
 //   one by `worktree add --no-checkout`, a free one switched and cleaned, a broken one detached and emptied) and locks it. The fill
@@ -14,33 +15,31 @@
 //   step checks the fill file, the lock and HEAD are still this claim's, switches to the branch (the same commit: no file is
 //   written) and deletes the fill file. Until then the folder holds no branch and no one hands it out; a failed fill leaves the fill
 //   file, so the slot reads broken (here at once, elsewhere when this process ends). Checkout mode is the path from before, unchanged.
-// - Facts are read again right before each switch, clean, lock, detach and removal (lane-slots.mjs readSlot), never trusted from an
-//   earlier read. A busy folder (locked, on a branch, untracked or uncommitted files, a commit not on the base, an unfinished operation,
-//   a git lock, not a worktree of this repository) is never switched, cleaned or removed.
-// - What a claim adds (the worktree, its `cs-lane-pool <branch>` lock, the branch) land or release removes: land detaches the folder and
-//   prune deletes the landed branch; release detaches, unlocks and deletes a landed branch. The folder stays a plain detached worktree
-//   that `git-tidy prune` keeps and `reclaimLanes` (or `git worktree remove`) removes. No `--force` and no reset anywhere.
+// - Facts are read again right before each switch, clean and lock (lane-slots.mjs readSlot), never trusted from an earlier read. A
+//   busy folder (locked, on a branch, untracked or uncommitted files, a commit not on the base, an unfinished operation, a git lock,
+//   not a worktree of this repository) is never switched, cleaned or removed.
+// - What a claim adds (the worktree, its `cs-lane-pool <branch>` lock, the branch) land or release removes (lane-release.mjs). No
+//   `--force` and no reset anywhere.
 // - A branch name passes `git check-ref-format --branch` unchanged, does not start with `-` or `refs/` and is no base branch (the base,
-//   main, master, develop), before anything is written; release never detaches or deletes a base branch.
-// - The clean is `git clean -fdx` (one -f): a git repository inside an ignored folder stays. Reclaim removes a folder only when its HEAD
-//   reflog holds no commit found nowhere else (prune's rule) and no ignored folder holds a git repository; a stale entry is removed
-//   only when its HEAD is on the base and its reflog holds nothing found nowhere else (lane-slots.mjs removalLossWhy, staleEntryLossWhy).
-// - Every claim and every removal by reclaim writes a job-made record (disk-free/lib/job-made.mjs) when a session id is known.
+//   main, master, develop), before anything is written.
+// - The clean is `git clean -fdx` (one -f): a git repository inside an ignored folder stays. A stale entry is removed only when its
+//   HEAD is on the base and its reflog holds nothing found nowhere else (lane-slots.mjs staleEntryLossWhy).
+// - Every claim writes a job-made record (disk-free/lib/job-made.mjs) when a session id is known.
+// - Imports lane-release.mjs, which imports nothing from this file (no import cycle).
 import { gitFlag, gitText, runGit, UsageError } from './git.mjs';
-import { deleteBranch } from './prune.mjs';
-import { isNotStarted, reflogOnlyCommits } from './reflog.mjs';
+import { isNotStarted } from './reflog.mjs';
 import { listWorktrees } from './repo.mjs';
 import { withPoolLock } from './pool-lock.mjs';
 import { cloneSupport, FILL_ENV, fillFresh, fillIgnored } from './lane-fill.mjs';
 import { deleteFillFile, emptyForRefill, readFillFile, removeStaleIndexLock, startFillFile } from './lane-fill-state.mjs';
-import { commonDirOf, contentBusyWhy, isPoolSlot, lastUsedMs, LOCK_REASON_PREFIX, poolFolderOf, poolSlots, readSlot, removalLossWhy, slotKey, SNAPSHOT_LABEL, staleEntryLossWhy } from './lane-slots.mjs';
-import { recordJobMade } from '../../disk-free/lib/job-made.mjs';
+import { commonDirOf, LOCK_REASON_PREFIX, poolFolderOf, poolSlots, readSlot, SNAPSHOT_LABEL, staleEntryLossWhy } from './lane-slots.mjs';
+import { baseNames, branchTip, deleteReleasedBranch, recordFolder, slotTree } from './lane-release.mjs';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 export { POOL_FOLDER, poolSlots } from './lane-slots.mjs';
+export { detachLandedSlot, RECLAIM_IDLE_MS, reclaimLanes, releaseLane } from './lane-release.mjs';
 
-export const RECLAIM_IDLE_MS = 24 * 60 * 60 * 1000; // fixes-spec revision 2 (U8): a folder unused for a day is reclaimed
 /** Dependency folders a claim keeps (git clean -e) when none of their lockfiles differ between the folder's old HEAD and the new tip. */
 export const KEPT_DEPENDENCY_FOLDERS = Object.freeze([
   Object.freeze({ folder: 'node_modules', lockfiles: Object.freeze(['pnpm-lock.yaml', 'yarn.lock', 'package-lock.json', 'bun.lock', 'bun.lockb', 'package.json']) }),
@@ -48,8 +47,6 @@ export const KEPT_DEPENDENCY_FOLDERS = Object.freeze([
 ]);
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const HEADS = 'refs/heads/';
-const MS_PER_HOUR = 60 * 60 * 1000;
-const SESSION_VARIABLES = ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID'];
 const CLONE_MODE = 'clone'; // cloneSupport's mode when the main checkout can be cloned into the pool
 const SHORT_SHA = 8;
 
@@ -67,26 +64,9 @@ function checkBase(repo, base) {
   if (runGit(repo.dir, ['cat-file', '-e', `${base}^{commit}`]).status !== 0) throw new UsageError(`--base ${base} is not a commit in this repository`);
 }
 
-/** The base branch and every other base candidate that exists here (main, master, develop): none of them is ever a lane. */
-const baseNames = (repo) => new Set([repo.base, ...repo.knownBases]);
-
 /** Refuses the base branch as a lane: its commits would go to the base and release would delete it. */
 function refuseBaseBranch(repo, branch) {
   if (baseNames(repo).has(branch)) throw new UsageError(`${branch} is a base branch of this repository, never a lane: claim a lane branch of its own (feat/..., fix/...)`);
-}
-
-const branchTip = (repo, branch) => {
-  const read = runGit(repo.dir, ['rev-parse', '--verify', '--quiet', `${HEADS}${branch}`]);
-  return read.status === 0 ? read.stdout.trim() : null;
-};
-
-/** The session id the job-made record is filed under, or null. */
-const sessionOf = (env) => SESSION_VARIABLES.map((name) => env[name]).find((value) => typeof value === 'string' && value !== '') ?? null;
-
-/** Records a made or gone lane folder; returns the record's outcome ('recorded', 'refused' with no session id, ...). */
-function recordFolder(env, folder, op, by) {
-  const session = sessionOf(env);
-  return session === null ? 'no session id' : recordJobMade(env, session, { kind: 'lane-folder', key: folder, by, op });
 }
 
 /** `[{ folder, same }]`: per kept kind, whether its lockfiles are equal between the two commits (`git diff --quiet`). */
@@ -133,8 +113,6 @@ function enterLane(folder, lane) {
   if (lane.branch === null) gitText(folder, ['switch', '--quiet', '--detach', lane.target]);
   else switchTo(folder, lane.branch, lane.base, lane.exists);
 }
-
-const slotTree = (repo, folder) => listWorktrees(repo).find((entry) => !entry.main && slotKey(entry.path) === slotKey(folder));
 
 /** Locks the slot as `cs-lane-pool <label>` after checking it is unlocked and holds `heldBranch` (null: detached). */
 function lockSlot(repo, folder, label, heldBranch) {
@@ -302,114 +280,4 @@ export function claimLane(repo, { branch = null, base, env = process.env, snapsh
   const { pending, ...claimed } = withPoolLock(commonDirOf(repo), `claim ${label}`, () => claimUnderLock(repo, { branch, base, label }, cloning));
   const fill = cloning ? fillAndEnd(repo, claimed, pending, support.why) : checkoutFill(support);
   return { ...claimed, branch, base, snapshot, fill, record: recordFolder(env, claimed.folder, 'made', 'git-tidy lane claim') };
-}
-
-/** Why the lane in `tree` may not be released (unfinished work, branch not landed), or null. */
-function releaseRefusal(repo, tree) {
-  if (tree.branch !== null && baseNames(repo).has(tree.branch)) return `it holds the base branch ${tree.branch}, which is never a lane (never released or deleted)`;
-  if (tree.locked && !(tree.lockReason ?? '').startsWith(LOCK_REASON_PREFIX)) return `locked by someone else (${tree.lockReason || 'no reason'})`;
-  if (tree.branch === null && !tree.detached) return 'its HEAD is neither a branch nor detached';
-  const why = contentBusyWhy(repo, tree); // HEAD is the branch tip: "commits not on the base" is "not landed"
-  return why === null ? null : `${tree.branch === null ? '' : `branch ${tree.branch}: `}${why}`;
-}
-
-/** Deletes the released lane's branch when nothing would be lost (prune's compare-and-delete and reflog rule). */
-function deleteReleasedBranch(repo, branch) {
-  const lost = reflogOnlyCommits(repo, [{ cwd: repo.dir, ref: `${HEADS}${branch}` }], branch);
-  if (lost.unreadable || lost.truncated || lost.count > 0) return `branch ${branch} kept: its reflog holds commits found nowhere else`;
-  const deleted = deleteBranch(repo, branch, branchTip(repo, branch));
-  return deleted.action === 'deleted' ? `branch ${branch} deleted (${deleted.detail})` : `branch ${branch} kept: ${deleted.detail}`;
-}
-
-function releaseUnderLock(repo, folder) {
-  const tree = slotTree(repo, folder);
-  if (tree === undefined || tree.missing) return { released: false, why: 'not a present worktree of this repository' };
-  if (readSlot(repo, folder).state === 'filling') return { released: false, why: 'a claim is filling it: release it after that claim ends' };
-  const refusal = releaseRefusal(repo, tree);
-  if (refusal !== null) return { released: false, why: refusal };
-  if (tree.branch !== null) gitText(tree.path, ['switch', '--quiet', '--detach', gitText(tree.path, ['rev-parse', '--verify', 'HEAD^{commit}'])]);
-  if (tree.locked) gitText(repo.dir, ['worktree', 'unlock', '--', tree.path]);
-  const branchLine = tree.branch === null ? null : deleteReleasedBranch(repo, tree.branch);
-  return { released: true, why: tree.branch === null ? 'already detached' : 'detached', branch: branchLine };
-}
-
-/**
- * Frees the pool folder `folder`: detaches it, removes its claim lock and deletes its landed branch.
- * @param {object} repo openRepo's result
- * @param {string} folder the slot folder
- * @returns {{ released: boolean, why: string, branch?: string|null }} refused (released false) when it is not a pool folder of this
- *   repository, a claim is filling it, someone else's lock holds it, it has unfinished work, or its branch is not landed on the base
- */
-export function releaseLane(repo, folder) {
-  if (!isPoolSlot(repo, folder)) return { released: false, why: `not a lane folder of this repository (${poolFolderOf(repo)}/lane-<n>)` };
-  return withPoolLock(commonDirOf(repo), `release ${folder}`, () => releaseUnderLock(repo, folder));
-}
-
-/**
- * After land's fast-forward: the pool folder holding `branch` is unlocked and detached at `landedSha`, so prune deletes the branch and
- * keeps the folder for the next lane. A folder that is not a pool slot, or no longer exactly at the landed sha with clean tracked files,
- * is left to prune as before.
- * @param {object} repo openRepo's result (opened in the base folder)
- * @param {string} branch the landed lane
- * @param {string} landedSha the full sha that landed
- * @returns {{ folder: string|null, why?: string }} never throws: the base already moved, so a failure is reported, not raised
- */
-export function detachLandedSlot(repo, branch, landedSha) {
-  try {
-    const worktrees = listWorktrees(repo);
-    const tree = worktrees.find((entry) => !entry.main && !entry.missing && entry.branch === branch);
-    if (tree === undefined || !isPoolSlot(repo, tree.path, worktrees)) return { folder: null };
-    const head = gitText(tree.path, ['rev-parse', '--verify', 'HEAD^{commit}']);
-    if (head !== landedSha) return { folder: null, why: `${tree.path} is at ${head}, not at the landed ${landedSha}` };
-    const tracked = gitText(tree.path, ['status', '--porcelain', '--untracked-files=no', '--ignore-submodules=none']);
-    if (tracked !== '') return { folder: null, why: `${tree.path} has tracked changes` };
-    if (tree.locked) gitText(repo.dir, ['worktree', 'unlock', '--', tree.path]);
-    gitText(tree.path, ['switch', '--quiet', '--detach', landedSha]);
-    return { folder: tree.path };
-  } catch (error) {
-    return { folder: null, why: error.message };
-  }
-}
-
-/** One reclaim decision for a free slot: remove when idle and not the kept lowest one, else keep with why. */
-function reclaimVerdict(slot, keepNumber, now, idleMs) {
-  if (slot.number === keepNumber) return `the lowest free folder of a repository used in the last ${idleMs / MS_PER_HOUR} h`;
-  if (slot.lastUsed === null) return 'its last use cannot be read';
-  const idle = now - slot.lastUsed;
-  return idle < idleMs ? `used ${Math.floor(idle / MS_PER_HOUR)} h ago` : null;
-}
-
-function removeSlot(repo, slot, env) {
-  const fresh = readSlot(repo, slot.folder);
-  if (fresh.state !== 'free') return { slot: slot.slot, folder: slot.folder, action: 'kept', why: fresh.why };
-  const loss = removalLossWhy(repo, slot.folder); // read right before the removal: what `git worktree remove` would destroy
-  if (loss !== null) return { slot: slot.slot, folder: slot.folder, action: 'kept', why: loss };
-  const removed = runGit(repo.dir, ['worktree', 'remove', '--', slot.folder]);
-  if (removed.status !== 0) return { slot: slot.slot, folder: slot.folder, action: 'failed', why: removed.stderr.split('\n')[0] };
-  return { slot: slot.slot, folder: slot.folder, action: 'removed', why: `idle, landed, clean`, record: recordFolder(env, slot.folder, 'gone', 'git-tidy lane reclaim') };
-}
-
-function reclaimUnderLock(repo, { now, idleMs, env }) {
-  const slots = poolSlots(repo).map((slot) => ({ ...slot, lastUsed: slot.state === 'free' ? lastUsedMs(slot.folder) : null }));
-  const recent = (slot) => slot.lastUsed === null || now - slot.lastUsed < idleMs;
-  // used: a lane in flight (a folder holding a branch) or a free folder used within idleMs (a busy folder's admin files may not be its own)
-  const repoUsed = slots.some((slot) => slot.branch !== null || (slot.state === 'free' && recent(slot)));
-  const free = slots.filter((slot) => slot.state === 'free');
-  const keepNumber = repoUsed && free.length > 0 ? free[0].number : null;
-  return slots.map((slot) => {
-    if (slot.state !== 'free') return { slot: slot.slot, folder: slot.folder, action: 'kept', why: `${slot.state}: ${slot.why}` };
-    const why = reclaimVerdict(slot, keepNumber, now, idleMs);
-    return why === null ? removeSlot(repo, slot, env) : { slot: slot.slot, folder: slot.folder, action: 'kept', why };
-  });
-}
-
-/**
- * Removes the pool folders that are free (detached, clean, landed, unlocked) and idle for `idleMs`, with `git worktree remove` (never
- * --force); when the repository was used in that time (a busy folder, or a free one used), its lowest free folder stays.
- * @param {object} repo openRepo's result
- * @param {{ now?: number, idleMs?: number, env?: NodeJS.ProcessEnv }} [options]
- * @returns {Array<{ slot: string, folder: string, action: 'removed'|'kept'|'failed', why: string, record?: string }>}
- */
-export function reclaimLanes(repo, { now = Date.now(), idleMs = RECLAIM_IDLE_MS, env = process.env } = {}) {
-  return withPoolLock(commonDirOf(repo), 'reclaim', () => reclaimUnderLock(repo, { now, idleMs, env }));
 }

@@ -22,7 +22,8 @@ The parts of the `git-tidy` tool. `../git-tidy.mjs` is the command; see `../READ
 | `report.mjs` | text and JSON output, the exit codes of `prune` and `land` |
 | `ui-plan-check.mjs` | `land`'s UI step: the check plan of the rebased diff and its proof (`ui-proof check --plan`), the row pointer it proved |
 | `lane-slots.mjs` | read the lane folder pool: each `lane-<n>` folder and whether it is free, busy (why), missing, filling or broken |
-| `lane-pool.mjs` | `lane claim` (in clone mode two steps under the pool lock, the fill between them), `release`, `reclaim` and land's `detachLandedSlot` |
+| `lane-pool.mjs` | `lane claim` (in clone mode two steps under the pool lock, the fill between them); re-exports lane-release.mjs, so callers import release, reclaim and `detachLandedSlot` from here |
+| `lane-release.mjs` | `lane release`, `lane reclaim` and land's `detachLandedSlot`, plus the base names, branch tip and job-made record a claim shares |
 | `lane-fill-state.mjs` | a slot's fill file `cs-lane-fill/lane-<n>.json` in the git common dir (who fills it, for which branch), and emptying a broken slot for its refill |
 | `lane-fill.mjs` | fill a lane folder by clones of the main checkout (`cp -c`, or `cp --reflink=always` on Linux), the skip list, the repair; whether cloning works here (`GIT_TIDY_LANE_FILL=checkout` turns it off) |
 | `pool-lock.mjs` | the one pool lock per repository (stale when its pid is gone or over 120 s old) |
