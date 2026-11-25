@@ -56,6 +56,10 @@ edge-case list names what each probe touches.
 | a Claude-facing feature first works (dev's `smoke:` line) | `qa: smoke`: 1-3 real Claude tries, recorded | at once | nothing waits |
 | pixel work | none: dev-pixel and pixel-qa; its logic code follows the rows above | - | - |
 
-tess checks only main, one feature per tess, started only by the boss. Its brief: `qa:`, `repo:`, `main: <sha>`, `worktree:` (the
-snapshot lane the boss claimed at that sha), `feature:`, `commits:` (the feature's landed commits, from `board tick`),
-`suite: yes|no` (`yes` on exactly one tess per sha), `spec:`, `acceptance:`, `risk:`. tess replies `main: ok` or `main: must-fix <n>`.
+The boss routes on the higher of dev's report `risk:` and lex's plan `risk:` and `qa:` for the feature (`risk: unknown` is
+risky). tess checks only main, one feature per tess, started only by the boss, which claims a snapshot lane per tess at
+main's sha X (`node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim --repo <abs> --snapshot --base <X>`) and runs
+`lane release` after that tess returns. Its brief: `qa:`, `repo:`, `main: <sha>`, `worktree:` (that snapshot lane),
+`feature:`, `commits:` (the feature's landed commits, from `board tick`), `suite: yes|no` (`yes` on exactly one tess per sha;
+the others reuse its result), `spec:`, `acceptance:`, `risk:`. tess replies `main: ok` or `main: must-fix <n>`. The boss
+re-checks a must-fix's repro in a snapshot lane of the newest main before it becomes the next piece.
