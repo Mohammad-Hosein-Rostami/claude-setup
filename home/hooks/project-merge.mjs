@@ -1,3 +1,4 @@
+// Tells the session what the project's own AI setup brings beside ours, plus the project's note; never blocks.
 // Project-merge hook: tells the main session (SessionStart) what the project's own AI setup brings beside ours, and the
 // project's note found by its repo key (layering spec section 3, owner rule R22 and decisions R22-Q3, R22-L4). Main session only
 // (plan 2026-11-24: workers get no note, and inside a subagent it prints nothing).

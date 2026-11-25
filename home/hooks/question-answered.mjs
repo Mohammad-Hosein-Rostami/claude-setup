@@ -1,3 +1,4 @@
+// Clears the asking marker and records that a question was answered, so its open popup closes.
 // PostToolUse and PostToolUseFailure(AskUserQuestion): clears the asking marker (lib/asking-marker.mjs) and records that a question was answered, so the PermissionRequest hook (question-popup.mjs) closes
 // the popups still open for it. Claude Code runs the terminal question and that hook side by side and tells the hook nothing when the
 // owner answers in the terminal; PostToolUse fires once the tool has run, whoever answered.

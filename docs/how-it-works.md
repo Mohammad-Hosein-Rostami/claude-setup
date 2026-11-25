@@ -63,6 +63,19 @@ Evidence only raises the plan: a brief line `UI-PLAN: <depth>` can make it stric
 a stricter path. `ui-proof check --plan` checks the proof of a plan; there are no waivers. Old problems on both sides are
 printed as `follow-up:` lines; new ones fail the check.
 
+## Status line
+
+`home/statusline.mjs` prints the status line, and `home/tools/board/lib/render.mjs` draws its rows. Every row has an example
+in `home/tools/board/README.md`, which also holds the row layout, the colours and the refresh. Besides that:
+
+- There are no job, now, step or estimate rows and no `/where` tree (plan 2026-11-24).
+- Colour goes by kind (RC14): branch names green, bars and their counts cyan, durations and clocks blue, session values
+  grey-violet.
+- The cells are ASCII under `CLAUDE_STATUS_ASCII=1`, `TERM=dumb`, the old Windows console or a non-UTF-8 locale. There is no
+  colour under `NO_COLOR`, `TERM=dumb` or the old Windows console.
+- It reads only cache files: no git and no transcript. What it writes, what it starts and what it prints on an error are in the
+  header of `home/statusline.mjs`.
+
 ## Where each kind of rule lives, and how to change one
 
 | You want to change | Edit | Then |

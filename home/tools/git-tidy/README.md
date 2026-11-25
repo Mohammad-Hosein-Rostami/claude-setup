@@ -1,5 +1,7 @@
 # git-tidy
 
+Keeps git history one straight line: removes merged branches and worktrees, lands lanes by rebase, hands out lane folders.
+
 Checks that a repository's history is one straight line, and finds (and, on request, removes) the branches and worktrees
 whose work is already on the base, older copies of a re-done lane and the leftover branches of workflow agents; `land`
 puts a lane on the base. The rule it enforces: rebase, never merge; no merge commits; a branch and its
@@ -14,6 +16,7 @@ and `node ~/.claude/tools/git-tidy/git-tidy.mjs prune [dir] [--base <branch>] [-
 `land <branch> [dir] [--base <branch>] [--rebase-only] --tip <sha> [--brief <file>] [--json]` and `range <sha> [dir] [--base <branch>] [--landed <sha>] [--json]` are described under "land" below.
 `check` and `prune` print `base: <branch> (from --base | from origin/HEAD | fallback)` first.
 `dir` defaults to the current folder (any folder inside a repository, a linked worktree or a bare repository).
+Used by the `git-linear-history` skill.
 
 The base is `--base`, else the branch `origin/HEAD` points at, else the first that exists of `main`, `master`, `develop`.
 It must be a local branch; when none is found the exit code is 2 and the message names `--base`. `prune --apply` also
@@ -144,6 +147,9 @@ puts a lane on the base as one straight line:
    when the rebase rewrites it (the base moved after it was rebased), nothing lands and it exits 5 (`base-moved`) with the new tip; land again with
    `--tip <new tip>` after checking that tip. A lane that is behind the base therefore lands in two runs: `--rebase-only`, then `--tip <rebased tip>`.
 3. Checks on the rebased tip (there is no test run and no review record):
+   - The base's upstream is fetched first (`lib/upstream.mjs`; a fetch, never a push; 20 s timeout, and when it cannot be reached
+     a WARN line is printed). When the upstream holds commits the base lacks, nothing lands and the exit code is 8
+     (`upstream-moved`, "`git pull --rebase` first"). A landing prints `published N` (JSON `upstream`).
    - A file the lane adds (`<base>..<tip>`, renames counted as adds) over the commit gate's `MAX_NEW_FILE_BYTES` (5 MB, imported from
      `hooks/lib/new-file-size.mjs`) whose path the `--brief <file>` text does not name (the commit gate's `namesPath`) stops it: exit 7
      (`new-file-size`). No `--brief` names no path; a file already on the base never counts.

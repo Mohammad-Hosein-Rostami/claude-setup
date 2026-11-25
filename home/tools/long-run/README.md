@@ -1,5 +1,7 @@
 # long-run
 
+Runs a job file of steps unattended, each as one `claude -p` boss session, and resumes it after a crash, reboot or usage limit.
+
 Runs a long job of steps without anyone watching. Each step (or parallel item) is one `claude -p` main session, the **boss**,
 which runs the usual team (lex, dev, tess) itself; a step never starts max. A small LangGraph.js graph with a SQLite checkpoint
 per run sits around the bosses, so a crash, a reboot, a usage limit, a pause or a takeover continues the **same** session with
@@ -13,9 +15,10 @@ node ~/.claude/tools/long-run/long-run.mjs status             # one line per run
 
 Install: `scripts/install.sh` (macOS, Linux) or `scripts/install.ps1` (Windows) runs `npm ci` here (the tool is in
 `TOOLS_WITH_DEPS` of `scripts/install.mjs`). It stays on npm with `package-lock.json`: `npm ci` runs better-sqlite3's install
-script (a prebuilt binary, no compiler), which pnpm would skip. After a Node upgrade that changes the native ABI the next install
-reinstalls it (the install stamp holds the ABI); until then `check` and `start` refuse with that fix, and `long-run.mjs check --deps`
-tests it.
+script (a prebuilt binary, no compiler), which pnpm would skip. The pinned versions are LangGraph.js 1.7.5 and
+`@langchain/langgraph-checkpoint-sqlite` 1.1.1. After a Node upgrade that changes the native ABI the next install
+reinstalls it (the install stamp holds the ABI); until then `check`, `start` and `check --deps` refuse with that fix, and
+`long-run.mjs check --deps` tests that LangGraph and the SQLite module load on this Node.
 
 ## Commands
 
@@ -33,14 +36,14 @@ running (pause or stop it first) or the folder is used by another live run.
 | `log <run> [<step>] [--tail N] [--raw]` | the last N readable lines (default 20, 0 = all); `--raw` the stream lines |
 | `pause` / `stop <run> [<step>]` | end a boss cleanly; pause keeps it ready, stop fails the step (routed by `next.failed` or held) |
 | `takeover <run> <step>` | pause the step and print the lines that open its session in a terminal |
-| `tell <run> <step> "<message>"` | a message for a step (`--message-file <f>`; at most 8 KB each) |
+| `tell <run> <step> "<message>"` | a message for a running step, delivered at its next safe point (`--message-file <f>`; at most 8 KB each) |
 | `resume <run> [--account <name>] [--answer <t> \| --answer-file <f>] [--item <id>] [--retry \| --skip \| --abandon] [--reload-job <f>] [--force] [--foreground]` | continue a held, paused, stopped, taken-over or stale run; `--account` moves it to another stored account |
 | `resume --stale [--delay <s>]` | resume every run whose driver died (what autostart runs) |
 | `rerun <run> --from <step> [--reload-job <f>]` | run again from an earlier step (fresh sessions; files are not rolled back) |
 | `summary <run>` | print `summary.md` |
 | `prune [--older-than <days>]` | remove the folders (checkpoints, logs, journals) of done and abandoned runs that ended at least that many days ago (default 30); a running, held, paused, stopped or stale run is never removed |
 | `events [--run <id>] [--since <n>] [--follow] [--after <n>] [--wait-next [--max-wait <s>]]` | the numbered event lines |
-| `notify setup [--server <url>] \| test \| off` | phone push through ntfy (desktop notes need no setup; `CLAUDE_LONG_RUN_DESKTOP_NOTES=off` in the environment turns them off, the phone push stays; the tests set it) |
+| `notify setup [--server <url>] \| test \| off` | phone push through ntfy (desktop notes need no setup; `CLAUDE_LONG_RUN_DESKTOP_NOTES=off` in the environment turns them off, the phone push stays; the tests' `cleanEnv` sets it) |
 | `autostart on \| off \| status` | resume stale runs after login (launchd agent / Task Scheduler) |
 | `schedule <job.json> --at HH:MM [--daily \| --on YYYY-MM-DD]`, `schedule list`, `schedule remove <name>` | timed starts |
 
@@ -99,6 +102,11 @@ environment only. Fable is refused anywhere in a job; the default model is `clau
 The loop guards (`maxAttempts`, `maxStarts`, `maxVisits`) stop a step that loops; they are not usage budgets. The step timeout
 (240 minutes unless the job says otherwise) stops a step that is stuck. There is no budget and no wait cap: a job spends what
 its steps need, and a weekly-limit wait can last days.
+
+A failed step retries with backoff until a loop guard stops it. A usage limit makes the step wait until the reset time the limit
+message prints plus 120 s, then continue the same session with `--resume`. A step that ends `blocked` or `needs-owner`, or that
+a loop guard stops, holds the run (a LangGraph `interrupt`) until you continue it with `resume --answer`, `--retry`, `--skip`
+or `--abandon`.
 
 `start` copies the job, with every `promptFile` inlined, to `<run>/job.json`. Later edits of the original do nothing unless
 `resume --reload-job <file>` (or `rerun --reload-job`) is used; that is allowed only when the steps already finished keep their

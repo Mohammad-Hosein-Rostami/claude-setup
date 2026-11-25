@@ -1,5 +1,6 @@
-# Purpose: install, update or remove the Claude Code setup on Windows (PowerShell 5.1+ or 7): find Node and run
-#   scripts/install.mjs, the one installer logic (its header lists the flags). Run it from any folder.
+# Purpose: finds Node 22.15+ and jq, then calls scripts/install.mjs to install, update or remove the setup on Windows.
+#   It runs on PowerShell 5.1+ or 7, from any folder. install.mjs is the one installer logic of the Claude Code setup; its header
+#   lists the flags. It stops when jq is missing, except for -Uninstall, which merges nothing.
 # Usage: powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-Update [-To <tag>]] [-Uninstall] [-DryRun] [-NoPlugins]
 #          [-NoTools] [-ClaudeVersion <x.y.z>]
 # Invariants: holds no install step of its own; it passes the PowerShell profile path ($PROFILE.CurrentUserAllHosts), which only

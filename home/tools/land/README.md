@@ -1,10 +1,12 @@
 # land
 
+Lands one lane on its base branch by rebase and fast-forward, then deletes the lane and every other branch already on the base.
+
 Lands one lane on its base branch with one command and keeps history one straight line: it rebases the lane onto the base,
 optionally tests the rebased tip, fast-forwards the base checkout to it with `git merge --ff-only`, then deletes the lane's
 worktree and branch, then every other branch whose content is all on the base (one content proof, below), and
 ends with a `left:` list of the branches still there and why. It runs no review, and it never pushes. Node 22, git, no
-dependencies.
+dependencies. It replaces `land-lane` (plan 2026-11-24).
 
 ```sh
 node ~/.claude/tools/land/land.mjs <branch> [--repo <path>] [--test <command>] [--test-timeout <seconds>]
@@ -34,9 +36,9 @@ Steps, in order; nothing changes until every check has passed:
 3. Test, only when `--test` is given (`test-gate.mjs`, `run-test.mjs`); a branch with no worktree to run it in is refused.
    The command runs in the lane's worktree at the rebased tip. It fails on a non-zero exit, a
    signal or the deadline. Its whole process group is ended when it ends, at the deadline and on a Ctrl-C of `land`: SIGTERM,
-   then SIGKILL to what is left after 3 s (Windows: `taskkill /T /F`); a process that put itself in a group of its own is out
+   then SIGKILL to what is left after 3 s, or at once on a second Ctrl-C (Windows: `taskkill /T /F`); a process that put itself in a group of its own is out
    of reach. A failure prints its last 40
-   output lines. Refused too: a worktree or branch that moved during the test, tracked files the test changed in the worktree
+   output lines and leaves the base and the lane as they were. Refused too: a worktree or branch that moved during the test, tracked files the test changed in the worktree
    (untracked ones are allowed), and a base checkout edited or switched to another branch meanwhile. Every refusal in this
    step puts the worktree back on the unchanged branch; a pass moves the branch to the tested sha.
 4. Fast-forward: `git merge --ff-only <full sha>` in the base checkout, with the sha the rebase produced (with a test, the sha tested).

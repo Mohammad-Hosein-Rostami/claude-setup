@@ -1,3 +1,4 @@
+// Runs the project's own format script on a code file after it is edited, within the trust rules.
 // PostToolUse(Edit|Write|MultiEdit): run the project's own `format` script on a code file after it changes (C21). Only a
 // script that exists in the nearest package.json runs.
 // Trust (audit H8, lib/format-trust.mjs): a cloned repo's `format` script runs through the package manager only in a project the owner

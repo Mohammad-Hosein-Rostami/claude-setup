@@ -1,5 +1,7 @@
 # account: one Claude login token per account, set for one terminal only
 
+Keeps one Claude login token per account in the system's secure store and sets one account for one terminal with `claude-as`.
+
 You have several Claude accounts and use different ones in different terminals. This tool keeps one long-lived token
 per account (from `claude setup-token`) in the system's secure store, and the shell function `claude-as` sets one of
 them for the terminal you are in. Other terminals are not touched, closing the terminal drops it, and nothing is
@@ -7,11 +9,12 @@ written to a shell start-up file.
 
 ## Use
 
-Source `home/shell/claude-as.sh` from your shell start-up file (zsh or bash; `claude-as.ps1` for PowerShell). Then:
+Source `home/shell/claude-as.sh` from your shell start-up file (zsh or bash; `claude-as.ps1` for PowerShell, not verified).
+It defines two shell functions, `claude-as` and `claude-account`, over one Node CLI, `node ~/.claude/tools/account/account.mjs`. Then:
 
 | command | what it does |
 |---|---|
-| `claude-as work` | this terminal now uses the account `work` |
+| `claude-as work` | this terminal, and only this one, now uses the account `work`: it exports `CLAUDE_CODE_OAUTH_TOKEN` and `CLAUDE_ACCOUNT` |
 | `claude-as work` (a new name) | asks "Paste the token for work" with hidden input, checks it, stores it, uses it. The whole `export CLAUDE_CODE_OAUTH_TOKEN="..."` line is accepted too |
 | `claude-as` | a numbered list to pick from (Enter alone picks nothing) |
 | `claude-as --once` | uses a pasted token here without storing it |
@@ -22,10 +25,16 @@ Source `home/shell/claude-as.sh` from your shell start-up file (zsh or bash; `cl
 | `claude-account default [<name>\|none]` | the account a new terminal starts with (none by default; owner, 2026-11-19: no default); with no name it prints the default. `none` is reserved, never an account name |
 | `claude-account plan <name> pro\|max\|ultra`, `claude-account credits-off <name>` | record your own answers; no token field names the plan (probe ACC-3) |
 
+`claude-account` shows and changes the stored accounts. It prints names only, never a token.
+
 Run `claude-as` yourself in a normal terminal, not through Claude (not with `!`, not in chat): a paste typed there would
 enter a transcript. The function refuses to prompt without a terminal, and the tool refuses to print a token inside a
-Claude session. Two commands print a token, both only to a pipe and never inside a Claude session: `token <name>` and
-`once` (which hands an unsaved paste back to `claude-as --once`).
+Claude session. Two commands print a token, both only to a pipe and never inside a Claude session: `token <name>`
+(`node ~/.claude/tools/account/account.mjs token <name>`) and `once` (which hands an unsaved paste back to
+`claude-as --once`). Both refuse a terminal and a Claude session.
+
+Exit codes of `account.mjs`: 0 done, 1 refused, 2 usage, 3 no such account, 4 wrong place (a Claude session, or a terminal
+where the command must not run).
 
 Adding a name that is stored already says `replaced` (the plan and credits-off answers stay; the added date stays when
 the same token is pasted again). A check that fails for another reason than revoked (a limit, a timeout, no network)
@@ -86,6 +95,9 @@ or a command line, or committing it, is not.
   at all, because a token-less child would spend whatever login is stored in the Keychain, and it writes one `auth` row. A
   `claude-as --once` terminal sets `CLAUDE_ACCOUNT=-`: its hook jobs spend no stored account. After an auth or
   usage-limit error no other account is tried; the setup never switches accounts by itself.
+- **What every `claude` child shares** (`lib/claude-child.mjs`). The billing variables that would move a call off the
+  Claude subscription are removed from the child's environment, the pattern that finds token-shaped text in a child's
+  output is defined there, and on Windows the child is started as `claude.cmd`. `claude-call.mjs` and `long-run` both use it.
 
 ## Limits per account
 

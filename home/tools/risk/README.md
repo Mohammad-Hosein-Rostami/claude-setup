@@ -1,5 +1,7 @@
 # risk
 
+Prints one line naming the risk classes a change falls in (security, data, money, concurrency, gate, large), or `none`.
+
 Says which risk classes a change falls in, so the boss knows whether landing waits for tess: `security` (login, sessions,
 tokens, secrets, permissions, uploads), `data` (migrations, schemas, SQL), `money` (payments, billing, refunds), `concurrency`
 (locks, queues, workers), `gate` (the setup's own hooks, gate tools and steering texts, a project's CI, git hooks and Claude Code
@@ -48,6 +50,9 @@ prints the same `risk: unknown (...)` line as without it.
 - `large` is more than 400 changed lines or more than 15 changed files, both without the left-out files.
 
 ## Tuning the rules
+
+The rules are restored from the removed done-check classifier. The `gate` class covers, among others, the setup's gate tools,
+CI workflows, husky hooks and the `.claude` settings and hooks.
 
 The classes live in `risk-rules.json` (version 2: `leftOut`, `keep`, `classes.<name>.paths` or `.words`, `large.lines`,
 `large.files`; every entry is a regular expression read against the path form above). Edit that file, then make

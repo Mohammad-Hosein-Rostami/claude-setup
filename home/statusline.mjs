@@ -1,8 +1,10 @@
-// Status line (spec R18, owner decisions RC14 to RC20 of 2026-11-22): 2 rows when idle (git and session) and at most 5 when busy
+// Prints the status line: 2 rows when idle, at most 5 when busy, drawn from cache files and never blank.
+// Rows (spec R18, owner decisions RC14 to RC20 of 2026-11-22): 2 rows when idle (git and session) and at most 5 when busy
 // (alert, agents, 1 or 2 git rows, session; 4 from 12 LINES, 2 below), drawn by tools/board/lib/render.mjs and fitted to
 // COLUMNS - 5 (both read on every run); colour by kind (branch, bar, time, session values) with yellow, red and magenta kept for
 // needs a look, a problem and needs you; a light palette when the terminal says it is light or CLAUDE_STATUS_THEME=light. No job,
 // step or estimate rows (plan 2026-11-24). This file only reads and writes; render.mjs holds every rule of what is shown.
+// More: docs/how-it-works.md (section "Status line") and tools/board/README.md (an example of every row).
 // Reads: the status input (stdin JSON), the session's board file (tools/board/lib/refresh.mjs), its asking marker
 // (hooks/lib/asking-marker.mjs: a question waits 2 minutes (RC3), and the alert row must show at once, not after the board's idle
 // refresh every 60 s) and this account's last-seen limits file (hooks/lib/limits-store.mjs).

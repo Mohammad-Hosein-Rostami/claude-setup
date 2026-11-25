@@ -1,5 +1,7 @@
 # env-names
 
+Saves and compares the names of a project's environment variables, never their values, so a restructure shows what went missing.
+
 Compares the environment variables of a project by NAME, never by value. When you move apps, change the build tool or add
 Docker and CI, the env setup breaks silently: a variable the code reads is no longer defined, an env file is dropped, a
 prefix changes. Opening `.env` files to check puts secret values into a chat transcript; this tool gives the same answer
@@ -10,6 +12,7 @@ and `node ~/.claude/tools/env-names/env-names.mjs diff <old-snapshot.json> [dir]
 `dir` defaults to the current folder. Before a restructure run `list --save before.json`; after it run `diff before.json`.
 `--wrapper getEnvVariable` (repeatable) also counts `getEnvVariable('NAME')` as a read. The wrapper list is stored in the
 snapshot and `diff` uses it, so the two scans are comparable; a different `--wrapper` given to `diff` is a usage error.
+Used by the `repo-restructure` skill.
 
 ## The invariant
 

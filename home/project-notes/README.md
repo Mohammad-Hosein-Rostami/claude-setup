@@ -3,6 +3,7 @@
 Notes per project that everyone who uses this setup gets: one file each, `<key>.md`, where the key is the project's remote
 repository name, else its folder name. A note says how the global setup combines with that project's own setup (its
 commands, conventions and facts); the project's own committed files never mention these notes and are never edited for them.
+The policy is "Project AI setups" in `home/CLAUDE.md`.
 
 Shared notes live here, in the core repo. Personal ones live in `personal/project-notes/` (git-ignored, its own repo, made by
 `scripts/install.sh`), which `~/.claude/project-notes` links to; the first install of that layer moves each note here that git does not track (and

@@ -1,5 +1,6 @@
-# Purpose: deep-merge settings files given to `jq -s -f` (base, then <os>, then optional local).
-# Used by: scripts/install/settings.mjs (mergedSettings).
+# Purpose: merges settings files (base, <os>, optional local): deep merge, hooks appended per event, claudeSetup dropped.
+# Input: the settings files given to `jq -s -f`, in this order: base, then <os>, then the optional local one.
+# Used by: scripts/install/settings.mjs (mergedSettings); it is the shared merge of the layers.
 # Invariants: objects merge deeply, later files win; `hooks` lists are appended per event (a plain jq `*` would let
 # local.json's hooks replace base.json's), and permissions.allow/deny/ask/additionalDirectories are de-duplicated unions in file order
 # (so a machine can add rules without restating the shared ones). A null or non-object `permissions` in a later file is

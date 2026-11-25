@@ -1,3 +1,4 @@
+// Shows each AskUserQuestion question as a timed native popup and takes the recommended option when nobody answers.
 // PermissionRequest(AskUserQuestion): the question popup. Claude Code runs this hook beside its own question UI; lib/question-reply.mjs
 // shows one timed popup per question, each with its own CLAUDE_QUESTION_TIMEOUT_S wait (default 120 s), and closes it at once when the
 // owner answers in the terminal (the PostToolUse hook question-answered.mjs leaves the mark) or when Claude Code stops this hook.

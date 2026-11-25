@@ -1,10 +1,14 @@
 # ui-check
 
+Checks a built page against its Figma frames and audits it at many widths and locales for layout, text and direction faults.
+
 Figma-to-browser checks for pixel-exact frames and responsive layouts. Node ESM, no build step.
 Playwright is not a dependency (see "Finding Playwright" below).
 
 Install: `npm ci` in this folder (only package-lock.json exists; Node >= 22); `scripts/install.sh` does it.
+Dependencies: `odiff-bin` and `pngjs`; Playwright comes from the target project.
 Run: `node ~/.claude/tools/ui-check/cli.mjs <command> [flags]`.
+The Figma-to-code workflow that uses this tool is in `docs/figma-pixel-perfect.md`.
 
 Exit codes: `0` pass, `1` check failed, `2` usage or setup error (bad flag, no Playwright/Chromium/odiff,
 no `FIGMA_TOKEN`, unreachable URL or HTTP status >= 400).
@@ -202,9 +206,12 @@ Chromium draws the installed one (probed: a failing `@font-face` named Helvetica
 
 ## Not covered (open)
 
-Mirroring of directional icons in rtl, a child drawn outside its parent's box, and axe-core are not part of this tool. Closed shadow roots and iframes are not entered. `contenteditable` text boxes are not judged for direction. Text in placeholders, `aria-label` and `title` is not read for `untranslated?`. An empty field that is probed gets the browser's "dirty value" flag, so a later change of its `value` ATTRIBUTE from page script no longer shows in it (a reload resets it).
+Mirroring of directional icons in rtl, a child drawn outside its parent's box, and axe-core are not part of this tool. Closed shadow roots and iframes are not entered. `contenteditable` text boxes are not judged for direction. An empty field that is probed gets the browser's "dirty value" flag, so a later change of its `value` ATTRIBUTE from page script no longer shows in it (a reload resets it).
 
 ## Deterministic capture (default, all commands)
+
+Before it measures, a page waits for the network to go idle (at most 5 s, because long-polling and websocket apps never go
+idle) and then for a 1.5 s settle (a single-page app often renders after the load event).
 
 Chromium is launched with `--use-angle=swiftshader --disable-gpu-rasterization` (CPU tile rasterisation: the GPU path
 gave 1-3 level edge noise between runs), and an `[autofocus]` element is focused explicitly before steps and capture
@@ -392,8 +399,8 @@ Classes (default rule, from that harness's `figma-diff` decisions: a difference 
 standing rule: an element not in Figma defaults to "match Figma"): `missing` and `extra` are `fix` (match Figma); a `case` or
 `punctuation` wording is `fix` (use Figma's exact text); a `spelling` or `words` wording is `ask the owner` (copy is a product decision,
 and either side may hold the typo). `--decisions` overrides the default for matching rows; each entry needs a written `reason` of
-15+ characters (the ui-coverage rule) and no owner approval: the report lists every row with its reason, and the owner checks them
-when the work is done. An `owner` field left in an older file is allowed and not read.
+15+ characters (the ui-coverage rule) and no owner approval (owner decision, 2026-11-24): the report lists every row with its
+reason, and the owner checks them when the work is done. An `owner` field left in an older file is allowed and not read.
 
 ```json
 [{ "type": "extra", "build": "Continue registration on another device", "surface": "register", "class": "keep",

@@ -1,5 +1,7 @@
 # ui-coverage
 
+Checks that every surface, state, locale and width of a UI task's coverage matrix is passed or excused with a reason.
+
 Checks the coverage matrix of a UI task: every surface x state x locale x width must be `pass`, or `na` / `deferred`
 with a reason. Done = `check` exits 0. Node 22, no dependencies. Skill: `skills/ui-coverage/SKILL.md`.
 
@@ -12,7 +14,7 @@ Run: `node ~/.claude/tools/ui-coverage/ui-coverage.mjs <command>`
 | `scaffold <matrix> [--out states.json]` | Writes a `ui-check batch --states` skeleton: one entry `{surface, state, locale, widths, url:"", steps:[]}` per surface x state x locale that still has a cell that is not `pass`, `na` or `deferred` (its open widths grouped in `widths`), and `defaults: {}` for you to fill. When the matrix maps a frame to the entry (same surface, state, locale, at one of its open widths) the entry gets `figma: {file, node}` (the first such frame). The names come from the matrix, so batch records match the cells by construction. An existing `--out` keeps all its entries and `defaults` (matched on surface + state + locale) and only gets the missing entries. Default `--out`: `states.json` in the current directory. Exit 1 (nothing written) for a broken matrix, 2 for a bad flag or an unreadable states file. Flow: expand, scaffold, fill `url` and `steps`, `ui-check batch`, check. |
 | `states` | Prints the default states per control class (the single list, `lib/states.mjs`). |
 | `conditions [--project DIR] [--zoom 100 --pixel-ratio 2 --theme light\|dark --data TEXT [--rtl fa,ar] [--schemes light,dark]]` | Records the owner's own viewing conditions once per project (zoom, pixel ratio, theme, data) and what the project has (its rtl locales, its colour schemes) in `~/.claude/state/ui-coverage/conditions/<project>-<hash>.json` (`UI_COVERAGE_STATE_DIR` overrides the folder; the project is the git top-level of `--project`, default the current folder). Without value flags it prints them. `check` demands the project's rtl locales and dark scheme from the matrix (below); `ui-check run` stores the conditions in every record and its ledger. |
-| `check <matrix> [--results F]... [--verbose]` | Validates, merges result records, prints the summary, exits 0 (complete) or 1 (problems). Never writes. Exit 2: bad flag, unreadable or invalid JSON. `--verbose` lists every problem instead of the groups. |
+| `check <matrix> [--results F]... [--verbose]` | Validates, merges result records, prints the summary, exits 0 (complete) or 1 (problems, naming each uncovered or failing cell). Never writes. Exit 2: bad flag, unreadable or invalid JSON. `--verbose` lists every problem instead of the groups. |
 
 ## matrix.json
 ```
@@ -56,8 +58,8 @@ Node ids are compared in the API form: `12-40` (URL form) and `12:40` are one fr
 
 ### Accepting a difference from Figma
 A failing compare is closed only by an `accepted` entry with a written reason, never by the session's own ledger. No owner
-approval is needed during the work: the owner checks every accepted difference and its reason when the work is done, so the
-agent's final report lists each one (the `accepted differences` section below).
+approval is needed during the work (owner decision, 2026-11-24): the owner checks every accepted difference and its reason when
+the work is done, so the agent's final report lists each one (the `accepted differences` section below).
 ```
   accepted:[{ node:"12:40", surface, state, locale,
               findings:[{check:"element", element:"a.extra-link"} | {check:"pixel", maxPercent:0.8}],

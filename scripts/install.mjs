@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-// Purpose: the one installer of the Claude Code setup, on macOS, Linux and Windows. scripts/install.sh and scripts/install.ps1
-//   only find Node and call this file.
+// Purpose: installs, updates and removes the Claude Code setup on macOS, Linux and Windows; it is the one installer.
+//   scripts/install.sh and scripts/install.ps1 only find Node 22.15+ and call this file; install.ps1 also stops when jq is
+//   missing, except for -Uninstall. On Windows this file stops without Git Bash (scripts/install/windows.mjs). What each part of
+//   scripts/install/ does is in scripts/install/README.md.
 // Usage: node scripts/install.mjs [--update [--to <tag>]] [--uninstall] [--dry-run] [--no-plugins] [--no-tools]
 //          [--ps-profile <path>] [--claude-version <x.y.z>]
 //   (no flag) / --update   link home/ into ~/.claude (and remove the links of the retired modes, workflows and lead rule files and
@@ -10,15 +12,22 @@
 //                          @ imports of home/CLAUDE.md and personal/CLAUDE.md; scripts/install/personal.mjs), the claude-as
 //                          start-up line, settings.json, plugins, tool dependencies; safe to repeat (a second run changes
 //                          nothing). --update is the same run, by name. A repo path an @ import line cannot carry (a space,
-//                          @, #, a quote, a non-ASCII letter) stops it with exit 1 before anything changes.
-//   --update --to <tag>    the same, with the links on a worktree of a phase tag (rollback; scripts/install/pin.mjs); a plain
-//                          --update points them back at this checkout.
-//   --claude-version <v>   install Claude Code <v> (the phase pin, 2.1.326 or newer) and prove it answers, else put the old
-//                          binary back (scripts/install/cli.mjs)
+//                          @, #, a quote, a non-ASCII letter) stops it with exit 1 before anything changes. It also unsets git's
+//                          core.hooksPath when that is still the .githooks an earlier install set. settings.json is built from
+//                          the machine's own earlier settings (first layer, new machine only), settings/base.json, <os>.json
+//                          and local.json. Plugins: only those the merged settings turn on, and none is ever uninstalled. Tool
+//                          dependencies: ui-check, env-names and long-run (TOOLS_WITH_DEPS), installed again only when the
+//                          lockfile or the Node ABI changed: the stamp node_modules/.lock-sha256 is <sha256>:<ABI>.
+//   --update --to <tag>    the same, with the links on a detached worktree of a phase tag, ~/.claude-setup-at/<tag> (rollback;
+//                          the checkout does not move; scripts/install/pin.mjs); a plain --update points them back at this
+//                          checkout.
+//   --claude-version <v>   install Claude Code <v> (the phase pin, 2.1.326 or newer), run `claude --version` right after and put
+//                          the old binary back when it is not <v> (scripts/install/cli.mjs)
 //   --dry-run              print each change instead of making it, plus the git hooksPath it would unset and the settings layers it
 //                          would merge; changes nothing (no file, no git config, no lock).
 //   --uninstall            remove what the install record names, move the moved notes back and put the backed-up files back
-//                          (scripts/install/uninstall.mjs); personal/ stays.
+//                          (scripts/install/uninstall.mjs); personal/ stays. It then lists what it left in place: a backup whose
+//                          path exists again, a link or written file you changed, a folder that is not empty.
 // Exports: LINKS, TOOLS_WITH_DEPS, main.
 // Invariants: never deletes a file it did not make: anything replaced goes to ~/.claude-backup-<stamp>/ and is named in the
 //   install record (~/.claude/.claude-setup-install.json, saved even when a step fails); settings are written after the plugin

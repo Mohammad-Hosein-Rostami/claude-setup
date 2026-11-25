@@ -7,17 +7,17 @@ find Node and call it. Its flags are in the header of `install.mjs`.
 |---|---|
 | `context.mjs` | flags, paths, the dry-run switch (`act`), the run log |
 | `record.mjs` | the install record `~/.claude/.claude-setup-install.json`, backups into `~/.claude-backup-<stamp>/`, the install lock |
-| `links.mjs` | `home/*` into `~/.claude`, removal of the retired mode launcher, `modes`, `workflows`, `lead.md` and `lead-rules.md` links (a copy or the owner's own file there goes to the backup folder) |
-| `retired-state.mjs` | the one-time move of the stores the removed parts left in `~/.claude` (recall, ask queue, estimate, done-check, commit-gate, call windows, modes, last-seen, ui-proof-gate, stop-blocks, budget-denied, MCP discovery verdicts) into the backup folder, never a delete: only a real folder or file of the installing user at a known path, each move named in the install record (`backups` and `retiredState`), so `--uninstall` puts it back; a link is never followed, only named; `~/.claude/jobs` is Claude Code's and never listed |
+| `links.mjs` | `home/*` into `~/.claude` (Windows: folders as junctions, and a file link that is not allowed becomes a copy); removal of the links the install record names for the retired session modes (the launcher in `~/.local/bin` or `~/.claude/bin`, the `modes` link, the lead rule files `lead.md` and `lead-rules.md`) and the `workflows` link; a recorded copy, or the owner's own file or folder, at those paths goes to the backup folder (never deleted; the owner's with a WARNING) |
+| `retired-state.mjs` | the one-time move, on every platform, of the stores the removed parts left in `~/.claude` (recall, ask queue, estimate, done-check, commit-gate, call windows, modes, last-seen, ui-proof-gate, stop-blocks, budget-denied, MCP discovery verdicts) into the backup folder, never a delete: only a real folder or file of the installing user at a known path, each move named in the install record (`backups` and `retiredState`), so `--uninstall` puts it back; a link is never followed, only named; `~/.claude/jobs` is Claude Code's and never listed |
 | `personal.mjs` | the personal layer: runs the `personal/` steps, the `~/.claude/project-notes` link, the generated `~/.claude/CLAUDE.md` (and its removal on `--uninstall`) |
 | `personal-folder.mjs` | `<repo>/personal/`: made from `personal.example/` as its own git repo, the owner's notes moved in from `home/project-notes` (and restored from git history when a pull deleted them), moved back on `--uninstall` |
-| `startup.mjs` | the one `claude-as` start-up line (zsh, bash, PowerShell profile) |
-| `settings.mjs` | `settings.json` from the layers, through `scripts/merge-settings.jq` |
-| `tools.mjs` | plugins and tool dependencies |
+| `startup.mjs` | the one `claude-as` start-up line: zsh (`~/.zshrc`) and bash (`~/.bashrc`) source `home/shell/claude-as.sh`, the PowerShell profile dot-sources `home/shell/claude-as.ps1`; an existing marked line is taken over and a second is never added |
+| `settings.mjs` | `settings.json` from the layers, through `scripts/merge-settings.jq`: the machine's own earlier settings (first layer, new machine only), then `settings/base.json`, `<os>.json` and `local.json` |
+| `tools.mjs` | the plugins the merged settings turn on, and the dependencies of `ui-check`, `env-names` and `long-run`; a tool is installed again only when its lockfile or the Node ABI changed: the stamp `node_modules/.lock-sha256` is `<sha256>:<ABI>` |
 | `pin.mjs` | `--update --to <tag>`: a detached worktree of the tag at `~/.claude-setup-at/<tag>` |
-| `uninstall.mjs` | `--uninstall`: undo what the record names, then list what it left in place |
-| `windows.mjs` | Windows only: Git Bash must be there, the user PATH |
-| `cli.mjs` | `--claude-version`: install the pinned Claude Code, prove it answers, else restore the old binary |
+| `uninstall.mjs` | `--uninstall`: undo what the record names and restore the backups from `~/.claude-backup-<stamp>/`, then list what it left in place (a backup whose path exists again, a link or written file you changed, a folder that is not empty) |
+| `windows.mjs` | Windows only: Git Bash must be there (the install stops without it), the user PATH |
+| `cli.mjs` | `--claude-version`: install the pinned Claude Code (2.1.326 or newer), run `claude --version` right after, and restore the old binary when it is not that version |
 | `local-settings.mjs` | `claudeSetup` of `settings/local.json` for the sync: targets, CLI pin, shared values |
 
 How it behaves:

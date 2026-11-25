@@ -1,11 +1,14 @@
 # refs
 
+Reports config entries, Docker and CI paths and doc links that point at paths which do not exist.
+
 Finds config entries that point at paths which do not exist. After a restructure (a folder moved, a build tool
 removed) the typecheck finds broken imports, but nothing finds a stale `tsconfig` alias, a Dockerfile `COPY`, a CI
 `working-directory`, a compose `env_file` or a link in a README. `refs` reads those places, including hidden folders
 such as `.github`, `.cursor` and `.claude` that `rg` skips by default. Node 22, no dependencies.
 
 Run: `node ~/.claude/tools/refs/refs.mjs check [dir] [--json] [--no-hints]` (dir defaults to the current folder).
+Used by the `repo-restructure` skill after every batch.
 
 | Code | Meaning |
 | ---- | ------- |

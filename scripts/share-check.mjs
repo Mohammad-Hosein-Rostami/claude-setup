@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-// Purpose: refuse private words in the shared repo (owner rule R22): the owner's name, home paths, account, machine and work-project
-//   names listed one per line in `personal/share-deny.txt` (git-ignored, the person's own) must not reach tracked core files, their
-//   paths or commit messages.
+// Purpose: refuses private words from the person's own deny list in tracked files, paths, staged files and commit messages.
+//   It keeps private words out of the shared repo (owner rule R22): the owner's name, home paths, account, machine and
+//   work-project names listed one per line in `personal/share-deny.txt` (git-ignored, the person's own) must not reach tracked
+//   core files, their paths or commit messages. The list holds one word or phrase per line, with `#` comments; the installer
+//   copies the empty template from `personal.example/`. You run it by hand before a commit (CLAUDE.md).
 // Usage: node scripts/share-check.mjs [--deny <file>] [--staged | --history | --commit-msg <file>] [<path>...]
 //   (no mode)          the tracked files of the working tree and their paths (only those under <path>... when given)
 //   --staged           the index blobs and paths of the files added or changed in the index (what the next commit holds; pre-commit)
@@ -13,7 +15,8 @@
 //   <deny word>` (a history hit: `share-check: history <word>: ...`); `share-check: skipped <file> (<why>)` for an entry with no content
 //   to read (a submodule, missing in the working tree, not a regular file); one summary line. Exit 1 on a hit, 0 when clean,
 //   0 with `share-check: not run (no deny list at <path>)` when there is no list and no personal/ folder (a clone without the
-//   person's layer), 2 with `share-check: error: <why>` on any failure, a personal/ folder without its list included (with the fix).
+//   person's layer), 0 with `share-check: not run (no words in <path>)` while the list is empty, 2 with `share-check: error: <why>`
+//   on any failure, a personal/ folder without its list included (the message names the template to copy).
 // Exports: DENY_LIST_PATH, readDenyList, main.
 // Invariants:
 // - Trust boundary: the output never holds a line's text or the list; only file names (quoted and escaped when they hold a control

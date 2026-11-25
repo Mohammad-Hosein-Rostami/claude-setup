@@ -1,14 +1,15 @@
 #!/usr/bin/env node
-// Purpose: bring this machine and each sync target to the base tip (or the targets to a phase tag), check that every machine runs
-//   the same pinned Claude Code and install the setup on each. It replaces the sync-machines workflow.
+// Purpose: brings this machine and each sync target to the base tip, or the targets to a phase tag, and installs the setup.
+//   It also checks that every machine runs the same pinned Claude Code. It replaces the sync-machines workflow.
 // Usage: node scripts/sync-machines.mjs --repo <abs or ~/path> [--base <branch, default main>] [--tag <tag>] [--targets <name,...>]
 //          [--json]
 //   Run it from the repo folder on the main machine, once per job, after the last land: `node scripts/sync-machines.mjs --repo "$PWD"`
 //   syncs the PC (the default target `pc` over `ssh pc`). Targets come from settings/local.json `claudeSetup.syncTargets`.
-// Steps: verify (tag, base branch, no tracked changes, git-tidy), versions (one claude version and channel on every machine, at or above
-//   CLAUDE_FLOOR of scripts/sync/cli-checks.mjs, on the local.json pin), then per machine side by side: install on this machine; on a
-//   target a git bundle, a fast-forward pull (or a fetched tag), the shared local values, install, then the version and DISABLE_UPDATES
-//   read again. Never pushes; never touches a project repo.
+// Steps: verify (tag, base branch, no tracked changes, git-tidy; the removed --checks and --row options exit 2), versions (one claude
+//   version, channel and pin on every machine, at or above CLAUDE_FLOOR (2.1.326, in scripts/sync/cli-checks.mjs), on the local.json
+//   pin), then per machine side by side: install on this machine; on a target a git bundle, a fast-forward pull (or a fetched
+//   tag), the shared local values, install, then the version and DISABLE_UPDATES read again. Never pushes; never touches a
+//   project repo.
 // Output: one line per machine, `<machine>: synced sha <40-hex> install <exit>` (or a JSON array with --json): { machine, synced, sha,
 //   installExit, problem }. installExit is install.sh's exit on this machine and the exit of the remote pull-and-install line on a
 //   target; null when the install did not run.

@@ -1,3 +1,4 @@
+// Shows a desktop note only when work waits on the owner or has stopped, such as a question or a rate limit.
 // Notification and StopFailure hook: a desktop note only when work waits on the owner or stopped (display design 7.10;
 // spec-p5 `r9-notify`). Notification `permission_prompt` and `elicitation_*` give `Needs you: ...` (with the asking marker's
 // count and time to the default), `quota_auto_resume_stale|disabled` give `Stopped: ...`; StopFailure `rate_limit` gives

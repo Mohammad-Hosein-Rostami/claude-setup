@@ -1,3 +1,4 @@
+// Starts the disk clean-up in the background at most once every 24 hours, without delaying the session start.
 // SessionStart(startup): starts `disk-clean --apply --all-lines` in the background at most once every 24 hours, so old scratchpads, test leftovers
 // and hook counters never pile up. --all-lines: the log is the one place that keeps every NOT removed and SKIPPED line of the run. The stamp file `~/.claude/state/disk-clean.stamp` records the last start (its mtime).
 // Exports: startIfDue(input, deps) -> 'started' | 'not-due' | 'skipped'; openLogFile, cleanEnv (tests).

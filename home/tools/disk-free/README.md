@@ -1,5 +1,7 @@
 # disk-free
 
+Prints `ok`, `WARN` or `FAIL` for free disk space and names the biggest caches to clear; `disk-clean` removes old scratch folders.
+
 An early, plain signal before the disk fills up. A full disk makes every agent and build fail with `ENOSPC` and no clear cause.
 Node 22, no dependencies (it uses `df` and `du`). It only reads: it never deletes anything.
 

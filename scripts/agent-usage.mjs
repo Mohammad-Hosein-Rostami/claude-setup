@@ -1,14 +1,16 @@
 #!/usr/bin/env node
-// Purpose: usage numbers for the agents of this setup, read from Claude Code's own transcripts: the per-agent table of the
-//   final-pass plan (section 2) and the numbers its rules M1-M10 (section 7) need, so the review after real use is one command.
+// Purpose: prints read-only usage numbers for the agents of this setup, taken from Claude Code's own transcripts.
+//   They are the per-agent table of the final-pass plan (section 2) and the numbers its rules M1-M10 (section 7) need, so the
+//   review after real use is one command.
 // Usage: node scripts/agent-usage.mjs [--since <iso>] [--project <key>] [--json]
 //   --since    an ISO 8601 instant; transcripts last written before it are skipped (default: 7 days ago)
 //   --project  one folder name under <config dir>/projects, the project key (default: every project)
 //   --json     one JSON object { since, project, runs, rules, skippedLines, unreadable } instead of the text
 // Reads: <config dir>/projects/<key>/<session>/subagents/*.jsonl (the agent type from the .meta.json beside each) and
 //   <config dir>/projects/<key>/<session>.jsonl (the main session, the boss). <config dir> is CLAUDE_CONFIG_DIR, else ~/.claude.
-// Output: a summary line, the table (one row per agent type; per-run columns are means, like the plan's baseline, report words
-//   a median), then one line per rule `M<n> <what>: <number>`. A number with no runs behind it prints `no runs`, never 0%.
+// Output: a summary line, the table (one row per agent type: runs, cold start, context read, turns and own Bash per run as means,
+//   like the plan's baseline, background shells, TaskStop and `sleep` commands, report words as a median), then one line per
+//   rule `M<n> <what>: <number>`. A number with no runs behind it prints `no runs`, never 0%.
 // Exit: 0, also when nothing matched (a zero table and `no runs since <iso>`); 2 on a bad or unknown flag or an unknown project.
 // Exports: main(argv, env, nowMs) -> exit code.
 // Invariants: reads only and prints counts only, never transcript text. A line that is not JSON is skipped and counted; a file
