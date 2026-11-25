@@ -10,8 +10,10 @@ Write `HANDOFF.md` in the project root (never committed: hide it with `.git/info
 2. **Rules**: the standing rules the owner gave for this job, one line each.
 3. **Decisions**: one item each, with why.
 4. **Files touched**: from `git status --porcelain` and `git log --oneline <start>..HEAD` (paste the command output, never
-   from memory); the branch and head sha the same way; every open branch and
-   worktree (`git worktree list`) with its owner and what it waits for.
+   from memory); the branch and head sha the same way. Then the session id (`echo $CLAUDE_CODE_SESSION_ID`) and its agents,
+   with their branches and folders, from `node ~/.claude/tools/board/board.mjs show --refresh`, and every open branch and
+   worktree from `git worktree list`, each pasted as printed (never kept by hand); the note adds only each one's owner and
+   what it waits for.
 5. **Last check**: the command run and its exact result or error text (copied from the log).
 6. **Open questions**: each with who decides.
 7. **Next**: ordered steps, each concrete enough to run without asking.
@@ -20,6 +22,7 @@ Write `HANDOFF.md` in the project root (never committed: hide it with `.git/info
 10. **Reports**: only the paths of report files agents wrote; never their content.
 
 Entries are itemized and updated in place: add, mark done or edit one item; never rewrite the note from the old one, and
-keep every earlier item word for word unless it is wrong (then mark it, do not delete it).
+keep every earlier item word for word unless it is wrong (then mark it, do not delete it). The boss keeps no running log of
+lanes and agents; it writes this note only before a restart.
 
 Then tell the user: run `/clear`, then "continue from HANDOFF.md". Delete the file once the next session has absorbed it.
