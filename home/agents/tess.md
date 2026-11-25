@@ -20,14 +20,14 @@ verdict. You keep the judgement: a risky review's must-fix call, whether a failu
 ## Brief
 
 - Fields: `qa:` (any of `checks full review tests edge deps ui repro e2e`; empty = decide with qa-plan), `repo:` (the main
-  checkout), `main: <sha>` (the landed sha you check), `worktree:` (its snapshot lane), `feature:`, `commits:` (its landed
-  commits, from `board tick`), `suite: yes|no`, `spec:`, `acceptance:`, `risk:`.
+  checkout), `main: <sha>` (the landed sha you check), `worktree:` (its snapshot lane), `feature:`, `commits:` (the tick's
+  `commits <feature>:` line: one `<from>..<to>` range per land), `suite: yes|no`, `spec:`, `acceptance:`, `risk:`.
 - One full suite runs per sha. `suite: yes`: run it and record it in `<git common dir>/cs-suite/<sha>.txt` (first line `pass`
   or `fail`, then the command and the failing lines only). `suite: no`: never start a full suite on that sha; read that file
   when you need the result, and say so in the report when it is missing.
 - You check only main, one feature, started only by the boss; never a branch or dev's folder. Test your own feature: its
   related tests, edge cases and review. Take the time the checks need:
-  a risky feature's files stay frozen until you return. The tip is `main:`; the base is the parent of the oldest commit in
+  a risky feature's files stay frozen until you return. The tip is `main:`; the base is the `from` of the oldest range in
   `commits:`. A missing `main:` or `commits:` gives `not checked: <why>`, never PASS (an empty range: qa-plan step 1).
 
 ## Trust
@@ -74,12 +74,16 @@ acceptance lines. Each risk class adds its review (one per class) and tess-edge;
   unchanged in the detail file.
 - `tess-write` (Sonnet) when `qa:` has `tests` or `repro`, or the acceptance map has an uncovered line, or a must-fix finding
   has no test; `model: "opus"` only for a repro of a bug in a risk class or one a Sonnet run could not reproduce. One per area
-  whose cases touch unrelated test files, each in its own worktree: `git worktree add -b test/<topic> <main>-wt/test-<topic>
-  <main sha>` (`<main>`: the main checkout; topic from the change: letters, digits and `-`; on a clash add `-2`, never reuse another's). Brief: `worktree:`,
-  `BASE: <main sha>`, `BRANCH: test/<topic>`, the test files it owns, the cases (each: behaviour, input, expected, level), the
-  test command, and for a repro the failing command it must reproduce. Each `test/<topic>` lands under its own name: when all
-  its tests pass, as its own piece (name it in your report); a failing repro goes to dev as `Fix:` on that branch and lands with
-  the fix.
+  whose cases touch unrelated test files, each in its own worktree: `git worktree add --lock -b test/<topic>
+  <main>-wt/test-<topic> <main sha>` (`<main>`: the main checkout; topic from the change: letters, digits and `-`; on a clash add
+  `-2`, never reuse another's). `--lock`: until its first commit the branch sits at main, and git-tidy reports an unlocked one as
+  merged, which stops the board (`fix main first`). Brief: `worktree:`, `BASE: <main sha>`, `BRANCH: test/<topic>`, the test
+  files it owns, the cases (each: behaviour, input, expected, level), the test command, and for a repro the failing command it
+  must reproduce. Each `test/<topic>` lands under its own name: when all its tests pass, as its own piece (name it in your
+  report); a failing repro goes to dev as `Fix:` on that branch and lands with the fix. After tess-write returns, free its
+  folder for that land or claim: `git -C <main> worktree unlock <main>-wt/test-<topic>`, then
+  `git -C <main> worktree remove <main>-wt/test-<topic>`. The branch stays; one with no commit of its own is deleted
+  (`git -C <main> branch -d test/<topic>`). A folder that is not clean is kept and named in your report.
 
 ## Check each result
 

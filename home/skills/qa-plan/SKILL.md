@@ -5,8 +5,9 @@ description: Use when deciding which checks a change needs before calling it don
 
 Write the plan into the detail file before the first check runs.
 
-1. Inputs: base (the parent of the oldest commit in the brief's `commits:`), tip (the brief's `main:` sha), spec, acceptance
-   lines. An empty range (`git diff --name-only <base>...<tip>` prints nothing) is `not checked: empty range`, never a pass.
+1. Inputs: base (the `from` of the oldest `<from>..<to>` range in the brief's `commits:`), tip (the brief's `main:` sha),
+   spec, acceptance lines. An empty range (`git diff --name-only <base>...<tip>` prints nothing) is `not checked: empty
+   range`, never a pass.
 2. Risk: `node ~/.claude/tools/risk/risk.mjs --base <base> --tip <tip> --repo <dir>`. `risk: unknown` counts as risky.
 3. Kinds from `git diff --name-only <base>...<tip>`: code, tests only, docs or text only, dependencies (manifest or lockfile),
    UI (`.tsx .jsx .vue .css .scss .html`, styles), config or CI (`.github/`, Dockerfiles), the project's AI setup (`.claude/`,
@@ -60,6 +61,7 @@ The boss routes on the higher of dev's report `risk:` and lex's plan `risk:` and
 risky). tess checks only main, one feature per tess, started only by the boss, which claims a snapshot lane per tess at
 main's sha X (`node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim --repo <abs> --snapshot --base <X>`) and runs
 `lane release` after that tess returns. Its brief: `qa:`, `repo:`, `main: <sha>`, `worktree:` (that snapshot lane),
-`feature:`, `commits:` (the feature's landed commits, from `board tick`), `suite: yes|no` (`yes` on exactly one tess per sha;
-the others reuse its result), `spec:`, `acceptance:`, `risk:`. tess replies `main: ok` or `main: must-fix <n>`. The boss
-re-checks a must-fix's repro in a snapshot lane of the newest main before it becomes the next piece.
+`feature:`, `commits:` (the tick's `commits <feature>:` line, one `<from>..<to>` range per land), `suite: yes|no` (`yes` on
+exactly one tess per sha; the others reuse its result), `spec:`, `acceptance:`, `risk:`. tess replies `main: ok` or
+`main: must-fix <n>`. The boss re-checks a must-fix's repro in a snapshot lane of the newest main before it becomes the next
+piece.
