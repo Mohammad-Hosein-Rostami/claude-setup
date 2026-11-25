@@ -146,7 +146,7 @@ test('dev-run, tess-run, tess and lex-web compact at 200000 tokens; no other age
 });
 
 test('read-only agents cannot write files', () => {
-  for (const name of ['lex-scout', 'lex-web', 'dev-run', 'tess', 'tess-review', 'tess-simple', 'tess-edge', 'pixel-qa']) {
+  for (const name of ['lex-scout', 'lex-web', 'dev-run', 'tess-run', 'tess', 'tess-review', 'tess-simple', 'tess-edge', 'pixel-qa']) {
     const tools = listed(name, 'tools');
     const denied = listed(name, 'disallowedTools');
     const writes = ['Write', 'Edit'].some((tool) => (tools.length === 0 || tools.includes(tool)) && !denied.includes(tool));

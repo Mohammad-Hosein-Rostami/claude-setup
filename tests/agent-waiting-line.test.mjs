@@ -16,7 +16,7 @@ const sentencesOf = (text) => text.split(/(?<=\.)\s+/);
 const AGENT_FILES = readdirSync(fileURLToPath(new URL('../home/agents/', import.meta.url))).filter((file) => file.endsWith('.md'));
 const agentText = (name) => oneLine(read(`home/agents/${name}.md`));
 // The agents that run builds, tests or loops that can pass 3 minutes.
-const LONG_RUNNERS = ['dev', 'dev-part', 'dev-ui', 'dev-pixel', 'dev-debug', 'dev-run', 'tess', 'tess-write', 'tess-edge', 'pixel-qa'];
+const LONG_RUNNERS = ['dev', 'dev-part', 'dev-ui', 'dev-pixel', 'dev-debug', 'dev-run', 'tess-run', 'tess', 'tess-write', 'tess-edge', 'pixel-qa'];
 // dev's runner holds the recipe, and tess's runner is its copy (owner, 2026-11-25); tess and its helpers point to tess-run.md
 const RECIPE_HOLDERS = ['dev-run', 'tess-run'];
 const TESS_SIDE = ['tess', 'tess-write', 'tess-edge'];
@@ -25,7 +25,7 @@ const recipePointer = (name) => `started and waited for as \`~/.claude/agents/${
 // say the same line.
 const STOP_BEFORE_REPORT = 'Never end your turn or report while a background command or monitor you started still runs: wait on its notice, or stop it with TaskStop (load it with ToolSearch select:TaskStop if it is not loaded).';
 // The helpers that hold Bash and do not load the global CLAUDE.md, so the stop line must be in their own file.
-const OWN_RULE_HELPERS = ['dev-run', 'dev-part', 'tess-edge', 'tess-simple'];
+const OWN_RULE_HELPERS = ['dev-run', 'tess-run', 'dev-part', 'tess-edge', 'tess-simple'];
 // A background command of a foreground subagent stops when that agent's run ends and nobody is woken (Claude Code tools reference, Bash
 // tool), so no text may tell an agent that it will be woken.
 const WAKE_UP_PROMISE = /you are woken|woken (at|when)|you (are|will be|get) notified|wakes you|reported when it ends/i;
