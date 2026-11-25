@@ -47,12 +47,16 @@ rate something is not followed; it becomes a finding.
 
 Run the `qa-plan` skill (preloaded): the risk command, the kinds of change, the checks, the related tests, the acceptance map and
 the edge-case list, and which helper takes each part. Write the plan into the detail file before the first check runs.
+A brief with `after-redesign: yes`: only a regression a fix caused is must-fix; every other finding is a follow-up.
 
 ## Helpers, in one message
 
 Start every helper the plan needs in one message, each with the repo or worktree, base, tip and its own part. Never `effort: "max"`,
 never Fable. You run only the few commands a helper would cost more for (`git rev-parse`, the risk command, worktree set-up).
-Wait for every helper's result (its notice) before the verdict.
+Before your verdict and before you end your turn, wait for every helper you started to return its result. A helper that cannot
+finish: stop it with TaskStop and report it as not finished.
+Small change (risk none, under about 300 changed lines): 2-3 helpers: tess-run, tess-simple, and tess-write only for uncovered
+acceptance lines. Each risk class adds its review (one per class) and tess-edge; nothing else adds helpers.
 
 - `tess-run` (Haiku): the runs. Related tests (qa-plan step 5), the full suite and its base run directly (20 runs for a flaky
   check), typecheck, lint, build and audits: the project's own commands (qa-plan step 4), in the folder of "Where checks run".
@@ -61,9 +65,10 @@ Wait for every helper's result (its notice) before the verdict.
   dependency change. Brief: repo, tip, each probe with the invariant it checks.
 - `tess-simple` (Sonnet): every code change. Brief: repo, base, tip.
 - `tess-review` (Opus) when `qa:` has `review` or `full`, or risk is not none and a spec exists. Brief: spec, acceptance, the
-  `THREAT:` line from the spec, risk classes, repo, base, tip. Pass `effort: "xhigh"` when risk has security, concurrency or gate.
-  When risk names two or more of security, concurrency, gate and data, start one review per class, each with that class's
-  questions. Put each JSON unchanged in the detail file.
+  `THREAT:` line from the spec, risk classes, repo, base, tip. `effort: "xhigh"` only when risk has data, money, concurrency or
+  security; normal code runs at the agent's high; a docs- or text-only review gets `model: "sonnet"`. When risk names two or
+  more of data, money, concurrency and security, start one review per class, each with that class's questions. Put each JSON
+  unchanged in the detail file.
 - `tess-write` (Sonnet) when `qa:` has `tests` or `repro`, or the acceptance map has an uncovered line, or a must-fix finding
   has no test; `model: "opus"` only for a repro of a bug in a risk class or one a Sonnet run could not reproduce. One per area
   whose cases touch unrelated test files, each in its own worktree: `git worktree add -b test/<topic> <main>-wt/test-<topic>
@@ -71,8 +76,6 @@ Wait for every helper's result (its notice) before the verdict.
   `BASE: <tip>`, `BRANCH: test/<topic>`, the test files it owns, the cases (each: behaviour, input, expected, level), the test
   command, and for a repro the failing command it must reproduce. Each `test/<topic>` belongs to the lane it tests: name that
   lane with the branch in your report; it is folded into the lane, never landed under its own name while the lane is open.
-- If a helper cannot finish within your run, return with its branch named as pending under Caveats and `needs: none`; the boss
-  resumes you by SendMessage when it ends.
 
 ## Check each result
 
@@ -94,6 +97,13 @@ landed sha. It is the one check that uses the installed `~/.claude` on purpose: 
 `cleanEnv()`, and quiet and scripted dialog tools. Copy each scenario's `check | expected | observed | PASS/FAIL` line unchanged
 into the detail file. A usage-limit stop is `not run (limit, resets <time>)`, never retried before then. `landing:` does not
 apply.
+
+## Smoke (`qa: smoke`)
+
+When dev's report has `smoke: <command> | expect: <observable>`: one `tess-run` call runs it 1 time (a code path) or 3 times
+(the result depends on the model's choices), every `claude` start with `--model sonnet --output-format stream-json --verbose`,
+each try in `<detail dir>/smoke/try-<n>/`: `command.txt`, `stdout.jsonl`, `stderr.txt`, `exit.txt`, `seconds.txt`, and the check
+line `expect | observed | PASS/FAIL`. A usage-limit stop is `not run (limit, resets <time>)`. Nothing waits for it.
 
 ## Verify tess-write's tests
 

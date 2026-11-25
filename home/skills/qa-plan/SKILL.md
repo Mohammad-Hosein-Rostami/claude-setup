@@ -25,12 +25,13 @@ Write the plan into the detail file before the first check runs.
    | tests only | run them; the "can it fail" check (tess, "Verify tess-write's tests") |
    | docs or text only | none (links: `node ~/.claude/tools/refs/refs.mjs check .` when the repo uses it) |
    | AI setup or CI | the repo's own tests for them; review on the gate class |
+   | smoke (`qa: smoke`) | When dev's report has `smoke: <command> \| expect: <observable>`: one `tess-run` call runs it 1 time (a code path) or 3 times (the result depends on the model's choices), every `claude` start with `--model sonnet --output-format stream-json --verbose`, each try in `<detail dir>/smoke/try-<n>/`: `command.txt`, `stdout.jsonl`, `stderr.txt`, `exit.txt`, `seconds.txt`, and the check line `expect \| observed \| PASS/FAIL`. A usage-limit stop is `not run (limit, resets <time>)`. Nothing waits for it. |
    | e2e (`qa: e2e`) | only when the owner asks, or a final pass; never per lane: tess's `e2e` section (`node tests/e2e/run.mjs --all`) |
 
    A tool that is not installed (gitleaks, osv-scanner, Playwright) or an audit with no network is `not run (<why>)`, never a
    pass; on a risky change it holds landing.
 6. Acceptance map: each acceptance line -> the test that proves it (`file::name`) or `uncovered` (a case for tess-write).
-7. Edge-case list by what changed: input parsing (empty, missing, huge, unicode, hostile names), paths (spaces, Windows `\`,
+7. Edge-case list, only for a risky change or one the brief asks for, by what changed: input parsing (empty, missing, huge, unicode, hostile names), paths (spaces, Windows `\`,
    symlinked `~/.claude`), files and state (two runs at once, crash midway, stale lock or temp file), time (`datetime-handling`),
    error paths (a failed read taken as empty), upgrade and rollback (old data, old config). Each probe names what it touches and
    runs with a temporary `HOME`, `USERPROFILE` and `TMPDIR` (`mktemp -d`), never the real `~/.claude`, a real database or a
