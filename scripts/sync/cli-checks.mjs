@@ -1,10 +1,13 @@
 // Purpose: the pure checks of scripts/sync-machines.mjs: reading a machine's claude report, comparing the machines, and the floor.
-// Exports: VERSION, readReport, cliProblems, afterInstallProblem, readFloor.
-// Invariants: fail closed: a missing or unreadable value (version, pin, floor) is a problem for that machine, never a pass.
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+// Exports: VERSION, CLAUDE_FLOOR, readReport, cliProblems, afterInstallProblem.
+// Invariants: fail closed: a missing or unreadable value (version, pin) is a problem for that machine, never a pass.
 
 export const VERSION = /^\d+\.\d+\.\d+$/;
+/**
+ * The oldest Claude Code every machine must run: the floor every phase pins (spec-p0-close.md 0.7). npm's stable channel gives
+ * 2.1.323, below it. It lived in scripts/doctor.sh until doctor was removed (guard-removal plan, 2026-11-25).
+ */
+export const CLAUDE_FLOOR = '2.1.326';
 
 /** The sections of a remote read: `== name` header lines, each followed by the lines of its output. */
 function sections(text) {
@@ -48,9 +51,8 @@ export function cliProblems(names, reports, { floor, localName, pin }) {
   names.forEach((machine, index) => {
     const report = reports[index];
     const add = (text) => problems[machine].push(`${machine}: ${text}`);
-    if (!floor) add('cannot read CLAUDE_FLOOR from scripts/doctor.sh');
     if (!VERSION.test(report.version)) return add('claude --version gave no version');
-    if (floor && !atLeast(report.version, floor)) add(`claude ${report.version} is below the floor ${floor}`);
+    if (!atLeast(report.version, floor)) add(`claude ${report.version} is below the floor ${floor}`);
     if (!report.checkout) add('no checkout of the repo');
     if (machine === localName && !report.pinned) add('DISABLE_UPDATES=1 is not set, so the phase pin does not hold');
     if (report.pin === null) add('the pin in settings/local.json is unreadable');
@@ -72,9 +74,4 @@ export function afterInstallProblem(machine, before, after, isTarget) {
   if (after.version !== before.version) return `${machine}: claude is ${after.version} after the install, but was ${before.version} before it`;
   if (isTarget && after.pinned !== true) return `${machine}: DISABLE_UPDATES=1 is not set after the install, so the phase pin does not hold (put env.DISABLE_UPDATES "1" in that machine's settings/local.json, then sync again)`;
   return '';
-}
-
-/** The floor from scripts/doctor.sh (CLAUDE_FLOOR), '' when it cannot be read. */
-export function readFloor(repo) {
-  try { return /^CLAUDE_FLOOR=(\d+\.\d+\.\d+)/m.exec(readFileSync(join(repo, 'scripts', 'doctor.sh'), 'utf8'))?.[1] ?? ''; } catch { return ''; }
 }

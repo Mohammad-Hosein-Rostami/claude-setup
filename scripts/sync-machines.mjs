@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 // Purpose: bring this machine and each sync target to the base tip (or the targets to a phase tag), check that every machine runs
-//   the same pinned Claude Code, install the setup and run doctor on each. It replaces the sync-machines workflow.
+//   the same pinned Claude Code and install the setup on each. It replaces the sync-machines workflow.
 // Usage: node scripts/sync-machines.mjs --repo <abs or ~/path> [--base <branch, default main>] [--tag <tag>] [--targets <name,...>]
 //          [--json]
 //   Run it from the repo folder on the main machine, once per job, after the last land: `node scripts/sync-machines.mjs --repo "$PWD"`
 //   syncs the PC (the default target `pc` over `ssh pc`). Targets come from settings/local.json `claudeSetup.syncTargets`.
-// Steps: verify (tag, base branch, no tracked changes, git-tidy), versions (one claude version and channel on every machine, at or above the floor of scripts/doctor.sh, on the local.json
-//   pin), then per machine side by side: install on this machine; on a target a git bundle, a fast-forward pull (or a fetched tag),
-//   the shared local values, install, then the version and DISABLE_UPDATES read again; then doctor.sh. Never pushes; never touches a project repo.
-// Output: one line per machine (or a JSON array with --json): { machine, synced, sha, doctorExit, problem }.
-// Exit: 0 every machine synced and doctor exited 0, 1 a machine failed (its row says why), 2 usage, 3 a verify check failed.
+// Steps: verify (tag, base branch, no tracked changes, git-tidy), versions (one claude version and channel on every machine, at or above
+//   CLAUDE_FLOOR of scripts/sync/cli-checks.mjs, on the local.json pin), then per machine side by side: install on this machine; on a
+//   target a git bundle, a fast-forward pull (or a fetched tag), the shared local values, install, then the version and DISABLE_UPDATES
+//   read again. Never pushes; never touches a project repo.
+// Output: one line per machine, `<machine>: synced sha <40-hex> install <exit>` (or a JSON array with --json): { machine, synced, sha,
+//   installExit, problem }. installExit is install.sh's exit on this machine and the exit of the remote pull-and-install line on a
+//   target; null when the install did not run.
+// Exit: 0 every machine synced (installed with exit 0 and at the tip: the base branch's sha, or the tag's commit on a target of a
+//   --tag run), 1 a machine failed (its row says why), 2 usage, 3 a verify check failed.
 // Invariants: everything that reaches an ssh line (base, tag, repo, host) is validated first; every remote command is ONE line,
 //   printed before it runs: perl's alarm (this Mac has no `timeout`), ssh, and the PATH export inside the quotes with the command.
 //   Every ssh and scp call carries SSH_OPTIONS: it never waits for a password or a host-key question, and gives up on a connect after 30 s.
@@ -19,7 +23,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readLocal, sharedPart, syncConfig } from './install/local-settings.mjs';
-import { afterInstallProblem, cliProblems, readFloor, readReport } from './sync/cli-checks.mjs';
+import { CLAUDE_FLOOR, afterInstallProblem, cliProblems, readReport } from './sync/cli-checks.mjs';
 
 const EXIT_FAILED = 1;
 const EXIT_USAGE = 2;
@@ -29,7 +33,6 @@ const REMOTE_PATH_EXPORT = 'export PATH="$HOME/.volta/bin:/usr/local/bin:/opt/ho
 const READ_SECONDS = 120; // a remote read
 const SYNC_SECONDS = 540; // the remote pull and install
 const TRANSFER_SECONDS = 300; // the scp of the bundle over a slow link (the PC sits behind a phone relay)
-const DOCTOR_SECONDS = 300; // doctor runs no tests: its slowest part is the account login call; 5 minutes is a wide margin
 const TAIL_LINES = 10;
 // The temp files of a run: /tmp/sync-local-shared.json and /tmp/sync-sync-<target>.bundle, here and on each target (the names the
 // removed --row option gave by default, so a killed older run's leftover is still found).
@@ -140,9 +143,9 @@ async function readTargetCli(ctx, target) {
 /** This machine: install, then HEAD and the claude version. */
 async function syncLocal(ctx) {
   const install = await exec(join(ctx.localRepo, 'scripts', 'install.sh'), [], { cwd: ctx.localRepo });
-  if (install.status !== 0) return { problem: `install.sh exit ${install.status}: ${tail(install.out)}` };
+  if (install.status !== 0) return { installExit: install.status, problem: `install.sh exit ${install.status}: ${tail(install.out)}` };
   const head = await exec('git', ['-C', ctx.localRepo, 'rev-parse', 'HEAD']);
-  return { sha: head.out.trim(), after: await readLocalCli() };
+  return { installExit: install.status, sha: head.out.trim(), after: await readLocalCli() };
 }
 
 /** Creates an empty file nobody else holds (F2: a second run, or a killed one's leftover, is a usage error naming the file). */
@@ -171,31 +174,31 @@ async function syncTarget(ctx, target) {
   const chain = ctx.tag
     ? `${merge} && git fetch ${remoteBundle} refs/tags/${ctx.tag}:refs/tags/${ctx.tag} && scripts/install.sh --update --to ${ctx.tag}`
     : `[ "$(git branch --show-current)" = "${ctx.base}" ] && [ -z "$(git status --porcelain --untracked-files=no)" ] && git pull --ff-only ${remoteBundle} ${ctx.base} && ${merge} && scripts/install.sh`;
-  const script = `cd "${remoteCheckout(ctx.repo)}" || exit 3; ${chain}; code=$?; echo "== version"; claude --version; ${SETTINGS_READ}; echo "== head"; git rev-parse HEAD; exit $code`;
+  // A tag install links ~/.claude to a worktree of the tag and leaves the checkout's HEAD where it was (scripts/install/pin.mjs),
+  // so the sha that runs there is the tag's commit.
+  const installed = ctx.tag ? `refs/tags/${ctx.tag}^{commit}` : 'HEAD';
+  const script = `cd "${remoteCheckout(ctx.repo)}" || exit 3; ${chain}; code=$?; echo "== version"; claude --version; ${SETTINGS_READ}; echo "== head"; git rev-parse ${installed}; exit $code`;
   const ran = await runLine(target.name, remoteLine(target.ssh, SYNC_SECONDS, script), SYNC_SECONDS);
   const after = readReport(ran.out);
-  return ran.status === 0 ? { sha: after.sha, after } : { problem: `pull or install exit ${ran.status}: ${tail(ran.out)}` };
+  const installExit = ran.status;
+  return installExit === 0 ? { installExit, sha: after.sha, after } : { installExit, problem: `pull or install exit ${installExit}: ${tail(ran.out)}` };
 }
 
-/** doctor.sh on a machine: { exit, tail }. */
-async function doctor(ctx, target) {
-  if (!target) return exec(join(ctx.localRepo, 'scripts', 'doctor.sh'), [], { cwd: ctx.localRepo, seconds: DOCTOR_SECONDS }).then((result) => ({ exit: result.status, tail: tail(result.out) }));
-  const ran = await runLine(target.name, remoteLine(target.ssh, DOCTOR_SECONDS, `cd "${remoteCheckout(ctx.repo)}" || exit 3; scripts/doctor.sh`), DOCTOR_SECONDS);
-  return { exit: ran.status, tail: tail(ran.out) };
-}
-
-/** One machine's whole sync: install, the after-install checks, doctor. Always returns its row. */
+/** One machine's whole sync: install, the after-install checks, the sha against the tip. Always returns its row. */
 async function syncMachine(ctx, name, target, before) {
-  const row = { machine: name, synced: false, sha: '', doctorExit: null, problem: '' };
+  const row = { machine: name, synced: false, sha: '', installExit: null, problem: '' };
   try {
     const moved = target ? await syncTarget(ctx, target) : await syncLocal(ctx);
     row.sha = moved.sha ?? '';
+    row.installExit = moved.installExit ?? null;
     row.problem = moved.problem ?? afterInstallProblem(name, before, moved.after, Boolean(target));
     if (row.problem) return row;
+    const tip = target ? ctx.tips.target : ctx.tips.local;
+    if (row.sha !== tip) {
+      row.problem = `${name}: at ${row.sha || 'an unreadable sha'} after the install, not the tip ${tip}`;
+      return row;
+    }
     row.synced = true;
-    const checked = await doctor(ctx, target);
-    row.doctorExit = checked.exit;
-    if (checked.exit !== 0) row.problem = `${name}: doctor exit ${checked.exit}: ${checked.tail}`;
   } catch (error) {
     row.problem = `${name}: ${error.message}`;
   }
@@ -215,7 +218,7 @@ function chooseTargets(options) {
 
 function printRows(rows, json) {
   if (json) return console.log(JSON.stringify(rows));
-  for (const row of rows) console.log(`${row.machine}: ${row.synced ? 'synced' : 'NOT synced'} sha ${row.sha || '-'} doctor ${row.doctorExit ?? '-'}${row.problem ? ` problem: ${row.problem}` : ''}`);
+  for (const row of rows) console.log(`${row.machine}: ${row.synced ? 'synced' : 'NOT synced'} sha ${row.sha || '-'} install ${row.installExit ?? '-'}${row.problem ? ` problem: ${row.problem}` : ''}`);
 }
 
 /** Claims this run's bundle and shared files, syncs every machine without a problem side by side, and removes the files. */
@@ -230,11 +233,23 @@ async function syncAll(options, names, problems, reports) {
     writeFileSync(sharedFile, `${JSON.stringify(sharedPart(readLocal(join(options.localRepo, 'settings', 'local.json'))), null, 2)}\n`);
     const ctx = { ...options, sharedFile, bundles };
     return await Promise.all(names.map((name, index) => (problems[name].length > 0
-      ? { machine: name, synced: false, sha: '', doctorExit: null, problem: problems[name].join('; ') }
+      ? { machine: name, synced: false, sha: '', installExit: null, problem: problems[name].join('; ') }
       : syncMachine(ctx, name, options.targets[index - 1], reports[index]))));
   } finally {
     claimed.forEach((path) => rmSync(path, { force: true }));
   }
+}
+
+/**
+ * The sha each machine must be at after its install: this machine stays on the base branch; a target goes to the base branch, or
+ * to the tag's commit in a --tag run. Read after verify, which has checked that the branch (and the tag) exist.
+ * @param {{localRepo: string, base: string, tag?: string}} options the parsed arguments
+ * @returns {Promise<{local: string, target: string}>} the two 40-hex shas
+ */
+async function tipShas({ localRepo, base, tag }) {
+  const sha = async (ref) => (await exec('git', ['-C', localRepo, 'rev-parse', '--verify', '--quiet', ref])).out.trim();
+  const local = await sha(`refs/heads/${base}`);
+  return { local, target: tag ? await sha(`refs/tags/${tag}^{commit}`) : local };
 }
 
 async function main(argv) {
@@ -244,10 +259,11 @@ async function main(argv) {
   if (verified !== 0) return verified;
   const names = [config.machine, ...targets.map((target) => target.name)];
   const reports = await Promise.all([readLocalCli(), ...targets.map((target) => readTargetCli(options, target))]);
-  const problems = cliProblems(names, reports, { floor: readFloor(options.localRepo), localName: config.machine, pin: config.cliVersion });
-  const rows = await syncAll({ ...options, targets }, names, problems, reports);
+  const problems = cliProblems(names, reports, { floor: CLAUDE_FLOOR, localName: config.machine, pin: config.cliVersion });
+  const tips = await tipShas(options);
+  const rows = await syncAll({ ...options, targets, tips }, names, problems, reports);
   printRows(rows, options.json);
-  return rows.every((row) => row.synced && row.doctorExit === 0) ? 0 : EXIT_FAILED;
+  return rows.every((row) => row.synced && row.installExit === 0) ? 0 : EXIT_FAILED;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
