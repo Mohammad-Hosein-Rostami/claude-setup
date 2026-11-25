@@ -4,7 +4,7 @@
 // folder, every child with its own temp HOME, USERPROFILE and TMPDIR and a fake session id, so nothing reads or writes the real ~/.claude.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -34,6 +34,7 @@ function safeEnv(extra = {}) {
 }
 
 const checkoutEnv = (env) => ({ ...env, [FILL_ENV]: CHECKOUT_MODE });
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const head = (dir) => git(dir, 'rev-parse', 'HEAD');
 const branchOf = (folder) => git(folder, 'branch', '--show-current');
 const commonDirOf = (repo) => git(repo, 'rev-parse', '--path-format=absolute', '--git-common-dir');
@@ -174,17 +175,39 @@ test('release deletes the fill file of its lane, so the next clone claim reuses 
   assert.deepEqual(next.fill.warnings, [], 'no note that the slot was broken and emptied');
 });
 
-test('land of a lane whose admin folder holds an index.lock exits 0 and leaves no worktree unlocked on its branch', () => {
+test('land of a lane whose admin folder holds an index.lock exits 1, keeps the lane locked on its branch, and a second land after the lock is gone frees it', () => {
   const repo = jsRepo();
   const env = safeEnv();
+  const base = git(repo, 'branch', '--show-current');
   const claimed = claimOk(repo, env, { branch: 'lane/h', base: head(repo) });
-  commit(claimed.folder, 'lane.txt');
-  writeFileSync(join(git(claimed.folder, 'rev-parse', '--absolute-git-dir'), 'index.lock'), '');
+  const tip = commit(claimed.folder, 'lane.txt');
+  const indexLock = join(git(claimed.folder, 'rev-parse', '--absolute-git-dir'), 'index.lock');
+  writeFileSync(indexLock, '');
+  const runLand = () => spawnSync(process.execPath, [LAND, 'lane/h', '--repo', repo], { cwd: repo, encoding: 'utf8', env: { ...CLEAN_ENV, ...env } });
 
-  const landed = spawnSync(process.execPath, [LAND, 'lane/h', '--repo', repo], { cwd: repo, encoding: 'utf8', env: { ...CLEAN_ENV, ...env } });
+  const kept = runLand();
 
-  assert.equal(landed.status, 0, landed.stderr);
-  const blocks = git(repo, 'worktree', 'list', '--porcelain').split('\n\n');
-  const unlockedOnLane = blocks.filter((block) => block.split('\n').includes('branch refs/heads/lane/h') && !block.split('\n').some((line) => line.startsWith('locked')));
+  assert.equal(kept.status, 1, kept.stdout + kept.stderr);
+  const keptLine = new RegExp(
+    `^land: lane/h landed on ${escapeRegExp(base)} at ${tip}; lane folder ${escapeRegExp(claimed.folder)} not freed: git switch failed: .+; ` +
+      `deal with that, then free it with: node ~/\\.claude/tools/git-tidy/git-tidy\\.mjs lane release --repo ${escapeRegExp(realpathSync(repo))} --folder ${escapeRegExp(claimed.folder)}$`,
+    'm',
+  );
+  assert.match(kept.stderr, keptLine);
+  assert.equal(head(repo), tip, 'the landing stands: main took the lane tip');
+  const blocks = git(repo, 'worktree', 'list', '--porcelain').split('\n\n').map((block) => block.split('\n'));
+  const laneBlock = blocks.find((block) => realpathSync(block[0].slice('worktree '.length)) === claimed.folder);
+  assert.ok(laneBlock?.includes('branch refs/heads/lane/h'), 'lane-1 is still on lane/h');
+  assert.ok(laneBlock?.includes('locked cs-lane-pool lane/h'), 'lane-1 is still locked by the pool');
+  const unlockedOnLane = blocks.filter((block) => block.includes('branch refs/heads/lane/h') && !block.some((line) => line.startsWith('locked')));
   assert.deepEqual(unlockedOnLane, [], 'no worktree on lane/h is left unlocked');
+
+  rmSync(indexLock);
+  const freed = runLand();
+
+  assert.equal(freed.status, 0, freed.stdout + freed.stderr);
+  assert.ok(freed.stdout.includes(`lane folder ${claimed.folder} detached at ${tip} (kept for the next lane)`), freed.stdout);
+  assert.ok(freed.stdout.includes('deleted branch lane/h'), freed.stdout);
+  const listed = tidy(['lane', 'list', '--repo', repo], { env });
+  assert.match(listed.stdout.split('\n')[0], /^lane-1 free /, listed.stdout);
 });
