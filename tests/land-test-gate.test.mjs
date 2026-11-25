@@ -36,10 +36,13 @@ const HANG_TIMEOUT_SECONDS = 1;
 const HANG_EXIT_WITHIN_MS = 8000;
 const DEATH_WAIT_MS = 2000;
 const POLL_MS = 50;
-const MS_PER_SECOND = 1000;
-// A background process a passing test leaves running lives this long unless land kills it; the test's deadline is far shorter.
-const BACKGROUND_MS = 30_000;
-const BACKGROUND_TIMEOUT_SECONDS = 5;
+// No clock assert: a passing test's leftover process must not make land wait, and land waiting shows as a land that does not exit.
+// So the three values are ordered, not measured: a run that works takes about the 2 s output drain of run-test.mjs, so the spawn
+// timeout (a hang guard, not a speed bound) is far above that; a land that waits for the leftover process or for the deadline
+// outlasts the spawn timeout, since the leftover process lives longer and the --test-timeout is longer still.
+const BACKGROUND_EXIT_WITHIN_MS = 30_000;
+const BACKGROUND_MS = 60_000;
+const BACKGROUND_TIMEOUT_SECONDS = 120;
 // The README's longest --test-timeout: 2^31 - 1 ms, the longest a Node timer holds, in whole seconds.
 const MAX_TIMEOUT_SECONDS = 2147483;
 
@@ -376,9 +379,9 @@ test('a test that hangs past --test-timeout is killed with the processes it star
 
 test('a passing test leaves no background process behind, and one holding the output open does not make it time out', () => {
   for (const kind of ['quiet', 'holds-output']) {
-    const { pids, result, repo, elapsed } = landWithBackground(kind);
+    const { pids, result, repo } = landWithBackground(kind);
     try {
-      assertPassedBeforeDeadline(kind, { result, repo, elapsed });
+      assertPassedWithoutWaiting(kind, { result, repo });
       assert.equal(pids.length, 1, `${kind}: the test wrote the background pid`);
       assert.deepEqual(waitForDeath(pids), [], `${kind}: the background process did not outlive the test`);
     } finally {
@@ -387,10 +390,10 @@ test('a passing test leaves no background process behind, and one holding the ou
   }
 });
 
-test('a passing test whose background process holds the output from its own process group still passes before the deadline', () => {
-  const { pids, result, repo, elapsed } = landWithBackground('own-group');
+test('a passing test whose background process holds the output from its own process group still passes without waiting for the deadline', () => {
+  const { pids, result, repo } = landWithBackground('own-group');
   try {
-    assertPassedBeforeDeadline('own-group', { result, repo, elapsed });
+    assertPassedWithoutWaiting('own-group', { result, repo });
     assert.equal(pids.length, 1, 'the test wrote the background pid');
   } finally {
     // Outside the test's group land does not kill it (README: the group is killed), so the test removes it.
@@ -403,18 +406,15 @@ function landWithBackground(kind) {
   const { repo } = laneBehindBase();
   const pidFile = join(repo, '..', `background-${kind}.pid`);
   const command = backgroundThenPassCommand(repo, pidFile, kind);
-  const started = Date.now();
-  const result = land([LANE, '--repo', repo, '--test', command, '--test-timeout', String(BACKGROUND_TIMEOUT_SECONDS)], { cwd: repo, timeout: HANG_EXIT_WITHIN_MS });
-  const elapsed = Date.now() - started;
+  const result = land([LANE, '--repo', repo, '--test', command, '--test-timeout', String(BACKGROUND_TIMEOUT_SECONDS)], { cwd: repo, timeout: BACKGROUND_EXIT_WITHIN_MS });
   const pids = existsSync(pidFile) ? [Number(readFileSync(pidFile, 'utf8'))] : [];
-  return { pids, result, repo, elapsed };
+  return { pids, result, repo };
 }
 
-/** Asserts land passed the test and landed well before the test's deadline. */
-function assertPassedBeforeDeadline(kind, { result, repo, elapsed }) {
-  assert.equal(result.error, undefined, `${kind}: land did not exit within ${HANG_EXIT_WITHIN_MS} ms`);
+/** Asserts land exited (it did not wait for the background process or the deadline), passed the test and landed. */
+function assertPassedWithoutWaiting(kind, { result, repo }) {
+  assert.equal(result.error, undefined, `${kind}: land did not exit within ${BACKGROUND_EXIT_WITHIN_MS} ms`);
   assert.equal(result.status, 0, `${kind}: ${result.stderr}`);
-  assert.ok(elapsed < BACKGROUND_TIMEOUT_SECONDS * MS_PER_SECOND, `${kind}: land took ${elapsed} ms, past the test's deadline`);
   assert.ok(result.stdout.includes(`test passed on ${git(repo, 'rev-parse', 'main')}\n`), `${kind}: ${result.stdout}`);
 }
 
