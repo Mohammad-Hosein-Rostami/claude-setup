@@ -1,11 +1,12 @@
 // Purpose: the pure checks of scripts/sync-machines.mjs: reading a machine's claude report, comparing the machines, and the floor.
-// Exports: VERSION, CLAUDE_FLOOR, readReport, cliProblems, afterInstallProblem.
+// Exports: VERSION, CLAUDE_FLOOR, atLeast, readReport, cliProblems, afterInstallProblem.
 // Invariants: fail closed: a missing or unreadable value (version, pin) is a problem for that machine, never a pass.
 
 export const VERSION = /^\d+\.\d+\.\d+$/;
 /**
  * The oldest Claude Code every machine must run: the floor every phase pins (spec-p0-close.md 0.7). npm's stable channel gives
- * 2.1.323, below it. It lived in scripts/doctor.sh until doctor was removed (guard-removal plan, 2026-11-25).
+ * 2.1.323, below it. It lived in scripts/doctor.sh until doctor was removed (guard-removal plan, 2026-11-25). The installer's
+ * --claude-version refuses a version below it too (scripts/install/cli.mjs).
  */
 export const CLAUDE_FLOOR = '2.1.326';
 
@@ -39,7 +40,7 @@ export function readReport(text) {
 }
 
 /** True when `version` is `floor` or later (2.1.99 is older than 2.1.326). */
-function atLeast(version, floor) {
+export function atLeast(version, floor) {
   const [a, b] = [version, floor].map((text) => text.split('.').map(Number));
   for (let index = 0; index < 3; index += 1) if (a[index] !== b[index]) return a[index] > b[index];
   return true;

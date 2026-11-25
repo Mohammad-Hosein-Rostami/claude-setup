@@ -1,26 +1,20 @@
 // Purpose: `install --claude-version <x.y.z>`: the phase pin's CLI install with the Windows trap closed (changes I30, #111067):
 //   `claude install <v>` can fail and leave no `claude`, so the old binary is kept aside first, `claude --version` runs right
 //   after the install, and the old binary goes back when the version is not the one asked for.
-// Exports: CLI_FLOOR, claudeVersion, installClaude.
-// Invariants: never below the floor (2.1.326: it replaces Windows' 2.1.316 and the stable channel's 2.1.323, both below it, so
-//   do not use the stable channel (2.1.323)); DISABLE_UPDATES, which
+// Exports: claudeVersion, installClaude.
+// Invariants: never below the floor (CLAUDE_FLOOR of scripts/sync/cli-checks.mjs, the one the sync checks; 2.1.326: it replaces
+//   Windows' 2.1.316 and the stable channel's 2.1.323, both below it, so do not use the stable channel); DISABLE_UPDATES, which
 //   blocks `claude install` too, is cleared for the child and, for the length of the install only, out of ~/.claude/settings.json
 //   (the file is put back byte for byte, failure or not); the kept copy is deleted once the new version answers.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
+import { CLAUDE_FLOOR, atLeast } from '../sync/cli-checks.mjs';
 import { InstallError, act, note } from './context.mjs';
 
-export const CLI_FLOOR = '2.1.326';
 const STABLE_CHANNEL_VERSION = '2.1.323'; // what npm's stable channel gives (2026-11-22), below the floor: named in the refusal
 const CLI_TIMEOUT_MS = 10 * 60 * 1000; // a native install downloads about 200 MB
 const VERSION = /(\d+\.\d+\.\d+)/;
-
-const atLeast = (version, floor) => {
-  const [a, b] = [version, floor].map((text) => text.split('.').map(Number));
-  for (let index = 0; index < 3; index += 1) if (a[index] !== b[index]) return a[index] > b[index];
-  return true;
-};
 
 function childEnv(env) {
   const { DISABLE_UPDATES, ...rest } = env;
@@ -82,7 +76,7 @@ function restoreOld(old) {
  */
 export function installClaude(ctx) {
   const wanted = ctx.claudeVersion;
-  if (!atLeast(wanted, CLI_FLOOR)) throw new InstallError(`--claude-version ${wanted} is below the floor ${CLI_FLOOR}; do not use the stable channel (${STABLE_CHANNEL_VERSION})`, 2);
+  if (!atLeast(wanted, CLAUDE_FLOOR)) throw new InstallError(`--claude-version ${wanted} is below the floor ${CLAUDE_FLOOR}; do not use the stable channel (${STABLE_CHANNEL_VERSION})`, 2);
   if (claudeVersion(ctx) === wanted) {
     note(ctx, `ok claude ${wanted}`);
     return;
