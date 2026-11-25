@@ -83,6 +83,10 @@ plugins the install output names. `gitkraken` is installed by the GitKraken app.
 `git pull`. Linked content (skills, agents, rules, standards, hooks, tools) is live on disk. Re-run `scripts/install.sh`
 when `settings/`, `plugins/` or a tool's `package.json` changed.
 
+When a pull deletes hooks, run `scripts/install.sh` from a terminal right after it, before you use Claude Code again. Until
+install merges the settings again, `~/.claude/settings.json` still names the deleted hook files, and an entry set to
+`"onFailure": "block"` (the old guards) then blocks every call it covers.
+
 A running Claude Code session reads settings, hooks config, CLAUDE.md, agents and plugins only at start: after any change,
 restart open sessions (`/exit`, then `claude -c` to continue). Hook scripts run fresh on every call, so edits to a hook's
 code apply at once.
