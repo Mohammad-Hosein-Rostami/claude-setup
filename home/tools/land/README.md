@@ -17,12 +17,9 @@ branch checked out there, so `land feat/x --repo ~/code/app` lands `feat/x` on w
 `land lane/x --repo ~/code/app --test "node --test tests/*.test.mjs"`. `--test-timeout` is its deadline in seconds (default
 1800, 30 minutes; at most 2147483, about 24 days, the longest a Node timer holds).
 
-When the base and the lane both changed the same files since the lane branched, a rebase without a conflict can still combine
-into broken code, so `land` prints those files and requires a test before it lands: `--test`, else `npm test` when the lane's
-`package.json` has a `test` script. With neither, it refuses (after a trial rebase, so a conflict is still reported as one)
-and prints the command to run with `--test`. The lane's branch moves only once the test and the checks after it passed, so
-after a refusal the next `land` sees the same files and asks for the test again. A lane you rebase by hand has no overlap left
-to see: land it with `--test`.
+With no `--test`, `land` always rebases and lands, also when the base and the lane changed the same files. When both sides
+changed the same files, run the full suite on the rebased tip (`land --test`) before landing: a rebase without a conflict
+can still combine into broken code.
 
 Steps, in order; nothing changes until every check has passed:
 
@@ -30,28 +27,24 @@ Steps, in order; nothing changes until every check has passed:
    marked assume-unchanged, or skip-worktree and on disk (git status does not show edits there; a clean sparse checkout
    passes); the branch exists and is not the base; when
    the branch has a worktree, that worktree is clean in the same way and is not the main worktree.
-2. Overlap: the base's sha is read once; the files both the base and the lane changed since their merge base (a rename counts
-   as both paths) decide whether a test must run. A lane with no commit in common with the base is refused; so is a needed
-   test for a branch with no worktree to run it in.
-3. Rebase onto that sha: with no test, in the lane's worktree, or, for a branch with no worktree, in the base checkout (which is
-   switched back to the base after). With a test, in the lane's worktree on a detached HEAD, so the branch stays where it was.
+2. Rebase onto the base's sha, read once: with no test, in the lane's worktree, or, for a branch with no worktree, in the
+   base checkout (which is switched back to the base after). With a test, in the lane's worktree on a detached HEAD, so the branch stays where it was.
    A rebase that stops (a conflict) is aborted, so the lane is left as it was: rebase it by hand, then land again.
-4. Test, when `--test` is given or files overlap (`test-gate.mjs`, `run-test.mjs`): `--test`, else the rebased `package.json`
-   test script, else refused. The command runs in the lane's worktree at the rebased tip. It fails on a non-zero exit, a
+3. Test, only when `--test` is given (`test-gate.mjs`, `run-test.mjs`); a branch with no worktree to run it in is refused.
+   The command runs in the lane's worktree at the rebased tip. It fails on a non-zero exit, a
    signal or the deadline. Its whole process group is ended when it ends, at the deadline and on a Ctrl-C of `land`: SIGTERM,
    then SIGKILL to what is left after 3 s (Windows: `taskkill /T /F`); a process that put itself in a group of its own is out
    of reach. A failure prints its last 40
    output lines. Refused too: a worktree or branch that moved during the test, tracked files the test changed in the worktree
    (untracked ones are allowed), and a base checkout edited or switched to another branch meanwhile. Every refusal in this
    step puts the worktree back on the unchanged branch; a pass moves the branch to the tested sha.
-5. Fast-forward: `git merge --ff-only <full sha>` in the base checkout, with the sha the rebase produced, which is the sha tested.
-   A base that moved since step 2 is refused; after a passing test that leaves the lane at the tested sha, and the next `land`
-   compares it with the moved base.
-6. Clean-up: a locked worktree is unlocked, then removed with `git worktree remove` (ignored files in it, such as notes or
+4. Fast-forward: `git merge --ff-only <full sha>` in the base checkout, with the sha the rebase produced (with a test, the sha tested).
+   A base that moved since step 2 is refused; after a passing test that leaves the lane at the tested sha.
+5. Clean-up: a locked worktree is unlocked, then removed with `git worktree remove` (ignored files in it, such as notes or
    `node_modules`, go with it); the branch is deleted with `git branch -d`. A git repository inside an ignored folder of the
    worktree stops the clean-up first (the landing stands, exit 1): its commits may be the only copy. The message names the
    repository; move it out of the worktree, then run `land <branch>` again, which finishes the clean-up.
-7. Sweep (`sweep.mjs`): git-tidy's `prune --apply` over the whole repository, with all its safety checks
+6. Sweep (`sweep.mjs`): git-tidy's `prune --apply` over the whole repository, with all its safety checks
    (`../git-tidy/README.md`, "prune"), held to the one rule: only branches whose content is on the base go ("Folded
    branches" below), each with its clean worktree. Older copies and agent leftover branches whose work is on another branch,
    not on the base, are kept (`its work is in <B>, not all on <base>`); the standalone `git-tidy prune --apply` still removes
@@ -107,12 +100,9 @@ written is kept. Restore one with `git branch <b> <sha>` within 2 weeks: git kee
 a FIFO, a folder or a file that cannot be written in its place stops the sweep (stderr, exit 0; move it away). A record after
 a torn last line starts a line of its own.
 
-With a test, these lines come first (the overlap lines only when files overlap):
+With a test, these lines come first:
 
 ```text
-main and feat/x both changed 2 file(s) since feat/x branched:
-  src/a.mjs
-  src/b.mjs
 testing <full sha> in /path/to/lane: npm test
 test passed on <full sha>
 ```
@@ -120,13 +110,13 @@ test passed on <full sha>
 | Exit | Meaning |
 | ---- | ------- |
 | 0 | landed and cleaned up |
-| 1 | refused or stopped; the `land:` line says why and what to do (a dirty checkout, an unknown branch, a rebase conflict, overlapping files with no test, a failed or timed-out test, a lane, worktree or base that moved meanwhile, a clean-up step that failed after landing) |
+| 1 | refused or stopped; the `land:` line says why and what to do (a dirty checkout, an unknown branch, a rebase conflict, a failed or timed-out test, a lane, worktree or base that moved meanwhile, a clean-up step that failed after landing) |
 | 2 | usage error |
 
 Git runs without a shell and without the variables that point it at another repository (`../git-tidy/lib/git.mjs`); the
 worktree list and the clean checks are git-tidy's (`../git-tidy/lib/repo.mjs`), and so are the content proof
 (`../git-tidy/lib/branches.mjs`), the deletion log (`../git-tidy/lib/deletion-log.mjs`), the `in <B>` hint
 (`../git-tidy/lib/in-lane.mjs`) and the sweep (`../git-tidy/lib/prune.mjs`); the test's process tree is ended by
-`../long-run/lib/process-tree.mjs`. Files: `land.mjs` (the CLI and its steps), `sweep.mjs` (step 7: the sweep and the `left:` block),
-`test-gate.mjs` (overlap, which test, the test step), `run-test.mjs` (runs the command), `refusal.mjs` (the refusal and the
+`../long-run/lib/process-tree.mjs`. Files: `land.mjs` (the CLI and its steps), `sweep.mjs` (step 6: the sweep and the `left:` block),
+`test-gate.mjs` (the test step), `run-test.mjs` (runs the command), `refusal.mjs` (the refusal and the
 clean check). Tests: `tests/land.test.mjs`, `tests/land-test-gate.test.mjs`, `tests/land-sweep*.test.mjs` (`land-sweep-strict` for the one rule), `tests/git-tidy-content-equal.test.mjs`.

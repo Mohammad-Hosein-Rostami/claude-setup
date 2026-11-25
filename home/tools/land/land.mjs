@@ -8,14 +8,12 @@
 // Exports: none (a CLI). Exit codes: 0 landed, 1 refused or stopped (the message says why and what to do), 2 usage error.
 // Invariants:
 // - Nothing changes before every check passed: an unknown branch, a dirty or half-merged base checkout or lane worktree, or a
-//   lane checked out in the main worktree is refused with the reason. Files both sides changed with no test to run are refused
-//   after a trial rebase on a detached HEAD, so a conflict is still reported as a conflict; the branch has not moved.
-// - When the base and the lane both changed a file since the lane branched, the rebased tip must pass a test (--test, else the
-//   lane's package.json test script) before it lands: a rebase without a textual conflict can still break the merged code.
-//   The lane's branch moves only once that test passed (test-gate.mjs), so after a refusal the next `land` asks again; only a
-//   base that moves in the last step leaves the lane at the tested sha.
+//   lane checked out in the main worktree is refused with the reason.
+// - With no --test the lane is rebased and lands, whatever files both sides changed. With --test the rebased tip must pass it
+//   first, and the lane's branch moves only once it passed (test-gate.mjs); only a base that moves in the last step leaves the
+//   lane at the tested sha.
 // - History stays one line: the base moves only by `git merge --ff-only` of the full sha the rebase produced (never a moving
-//   ref), and that is the sha that was tested. The base's sha is read once: the overlap, the rebase and the fast-forward all use
+//   ref), and with --test that is the sha that was tested. The base's sha is read once: the rebase and the fast-forward both use
 //   it, and a base that moved meanwhile is refused. A rebase that stops is aborted, so the lane is left as it was.
 // - Never pushes and never forces: a locked worktree is unlocked, then removed with `git worktree remove`; the branch goes with
 //   `git branch -d`. Git runs without a shell and without the variables that pick a repository (../git-tidy/lib/git.mjs).
@@ -30,7 +28,7 @@ import { listWorktrees } from '../git-tidy/lib/repo.mjs';
 import { LandRefusal, firstLine, refuseUnclean } from './refusal.mjs';
 import { MAX_TIMEOUT_SECONDS } from './run-test.mjs';
 import { sweepRepo } from './sweep.mjs';
-import { overlappingFiles, testRebasedTip } from './test-gate.mjs';
+import { testRebasedTip } from './test-gate.mjs';
 
 const USAGE = 'usage: node ~/.claude/tools/land/land.mjs <branch> [--repo <path>] [--test <command>] [--test-timeout <seconds>]';
 const HEADS = 'refs/heads/';
@@ -180,11 +178,9 @@ async function land({ branch, repo, test, testTimeoutSeconds }) {
   const worktree = findLane(checkout, branch);
   if (worktree !== null) refuseUnclean(`the worktree of ${branch}`, worktree.path);
   const baseSha = gitText(checkout.dir, ['rev-parse', '--verify', `${HEADS}${checkout.base}^{commit}`]);
-  // Read before the rebase, which moves the lane's branch point to the base's tip.
-  const overlap = overlappingFiles(checkout, branch, baseSha);
-  const tip = test === null && overlap.length === 0
+  const tip = test === null
     ? rebaseLane(checkout, branch, worktree, baseSha)
-    : await testRebasedTip(checkout, branch, worktree, { baseSha, requested: test, overlap, timeoutSeconds: testTimeoutSeconds });
+    : await testRebasedTip(checkout, branch, worktree, { baseSha, command: test, timeoutSeconds: testTimeoutSeconds });
   fastForward(checkout, branch, { baseSha, tip });
   const count = gitText(checkout.dir, ['rev-list', '--count', `${baseSha}..${tip}`]);
   console.log(`landed ${branch} on ${checkout.base} at ${tip} (${count} commit(s))`);

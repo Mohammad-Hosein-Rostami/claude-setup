@@ -1,86 +1,18 @@
-// Purpose: the test gate of `land`: which files the base and the lane both changed, which test (if any) the rebased tip must
-//   pass, and the test run itself on a rebased copy of the lane.
-// Exports: overlappingFiles, testRebasedTip.
+// Purpose: the test step of `land --test`: the test run on a rebased copy of the lane, which lands only when it passed.
+// Exports: testRebasedTip.
 // Invariants:
-// - The overlap is read from the lane's own branch point, before anything moves.
 // - The lane's branch moves only after its rebased tip passed the test and the checks after it: the rebase and the test run on a
-//   detached HEAD in the lane's worktree. Every refusal here puts the worktree back on the unchanged branch, so the next `land`
-//   sees the same overlap and asks for the test again.
-// - A rebase conflict is reported first, before any question about which test to run.
+//   detached HEAD in the lane's worktree. Every refusal here puts the worktree back on the unchanged branch.
 // - The sha that lands is the sha that was tested: a lane, worktree or base checkout that changed during the test is refused,
 //   and so is a test that edited tracked files in the worktree (what it tested would not be the commit).
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { runGit } from '../git-tidy/lib/git.mjs';
 import { LandRefusal, firstLine, refuseUnclean } from './refusal.mjs';
 import { runTestCommand } from './run-test.mjs';
 
 const HEADS = 'refs/heads/';
-// The test run when files overlap and no --test is given, if the lane's package.json defines a test script.
-const PACKAGE_TEST_COMMAND = 'npm test';
-// How many overlapping files a message lists; the rest are counted.
-const LISTED_FILES = 20;
 
 /** The full sha `ref` names in `dir`, or '' when it names nothing. */
 const shaOf = (dir, ref) => runGit(dir, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]).stdout.trim();
-
-/** The paths that differ between commits `from` and `to` (a rename counts as both its old and its new path). */
-function changedPaths(dir, from, to) {
-  // -z keeps every path exactly as stored (spaces, quotes, newlines); --no-renames reports a rename as a delete and an add.
-  const result = runGit(dir, ['diff-tree', '-r', '-z', '--name-only', '--no-renames', from, to]);
-  if (result.status !== 0) throw new LandRefusal(`git cannot compare ${from} with ${to} (${firstLine(result.stderr)})`);
-  return result.stdout.split('\0').filter((path) => path !== '');
-}
-
-/**
- * The files both the base (at `baseSha`) and the lane changed since the lane branched from the base, sorted; empty when the
- * base has not moved since.
- * @throws {LandRefusal} for a lane with no commit in common with the base: there is no branch point to compare from
- */
-export function overlappingFiles({ dir, base }, branch, baseSha) {
-  const laneRef = `${HEADS}${branch}`;
-  const branchPoint = runGit(dir, ['merge-base', baseSha, laneRef]);
-  if (branchPoint.status !== 0) {
-    throw new LandRefusal(`${branch} has no commit in common with ${base}, so land cannot tell which files both changed; rebase it onto ${base} by hand, then land again`);
-  }
-  const branchSha = branchPoint.stdout.trim();
-  const laneChanged = new Set(changedPaths(dir, branchSha, laneRef));
-  return changedPaths(dir, branchSha, baseSha).filter((path) => laneChanged.has(path)).sort();
-}
-
-/** The overlap as one line per file (at most LISTED_FILES, then a count of the rest), indented under a header line. */
-function describeOverlap(base, branch, files) {
-  const listed = files.slice(0, LISTED_FILES).map((path) => `  ${path}`);
-  const rest = files.length > LISTED_FILES ? [`  ... and ${files.length - LISTED_FILES} more`] : [];
-  return [`${base} and ${branch} both changed ${files.length} file(s) since ${branch} branched:`, ...listed, ...rest].join('\n');
-}
-
-/** PACKAGE_TEST_COMMAND when `folder` has a package.json with a non-empty test script, else null. */
-function packageTest(folder) {
-  const path = join(folder, 'package.json');
-  if (!existsSync(path)) return null;
-  let manifest;
-  try {
-    manifest = JSON.parse(readFileSync(path, 'utf8'));
-  } catch (error) {
-    throw new LandRefusal(`cannot read ${path} (${error.message}); nothing changed. Name the test with --test "<command>"`);
-  }
-  const script = manifest?.scripts?.test;
-  return typeof script === 'string' && script.trim() !== '' ? PACKAGE_TEST_COMMAND : null;
-}
-
-/** The overlap, as the first lines of a refusal; empty when no file overlaps. */
-const overlapNote = ({ base }, branch, overlap) => (overlap.length > 0 ? `${describeOverlap(base, branch, overlap)}\n` : '');
-
-/**
- * The command the rebased tip must pass: --test, else the lane's package.json test script (read from the rebased worktree).
- * Only called when a test is needed. Throws LandRefusal when there is none.
- */
-function chooseTest(checkout, branch, worktree, { requested, overlap }) {
-  const command = requested ?? packageTest(worktree.path);
-  if (command !== null) return command;
-  throw new LandRefusal(`${overlapNote(checkout, branch, overlap)}so the rebased tip must pass a test before it lands, and the lane has no package.json test script; nothing changed. Name the test: node ~/.claude/tools/land/land.mjs ${branch} --repo ${checkout.dir} --test "<test command>"`);
-}
 
 /**
  * Rebases the lane's commits onto `baseSha` in its worktree on a detached HEAD; the branch itself stays where it was. A rebase
@@ -133,28 +65,25 @@ function testFailure({ base }, branch, worktree, { command, tip, outcome }) {
 }
 
 /**
- * Rebases the lane onto `baseSha`, runs the test on the rebased tip in the lane's worktree, and only when it passed moves the
- * branch to that tip. Called when --test is given or files overlap.
- * Why: a failed test must leave the lane where it was; a lane left rebased would show no overlap to the next `land`, which
- * would then fast-forward the untested merged code.
+ * Rebases the lane onto `baseSha`, runs the --test command on the rebased tip in the lane's worktree, and only when it passed
+ * moves the branch to that tip.
+ * Why: a failed test must leave the lane where it was, so what failed never becomes the branch.
  * @param {{dir: string, base: string}} checkout the base checkout
  * @param {string} branch the lane
  * @param {{path: string} | null} worktree the lane's worktree (clean), or null when it has none
- * @param {{baseSha: string, requested: string | null, overlap: string[], timeoutSeconds: number}} run what to rebase onto,
- *   the --test command (null: the package.json test script), the overlapping files and the test's deadline
+ * @param {{baseSha: string, command: string, timeoutSeconds: number}} run what to rebase onto, the --test command and the
+ *   test's deadline
  * @returns {Promise<string>} the tested full sha, which the branch now points at
- * @throws {LandRefusal} with no worktree or no test to run, on a rebase conflict, a test that did not pass, or a change during
- *   the test; the branch has not moved
+ * @throws {LandRefusal} with no worktree, on a rebase conflict, a test that did not pass, or a change during the test; the
+ *   branch has not moved
  */
-export async function testRebasedTip(checkout, branch, worktree, { baseSha, requested, overlap, timeoutSeconds }) {
+export async function testRebasedTip(checkout, branch, worktree, { baseSha, command, timeoutSeconds }) {
   if (worktree === null) {
-    throw new LandRefusal(`${overlapNote(checkout, branch, overlap)}a test must run on the rebased tip, in the lane's worktree, and ${branch} has none; nothing changed. Add one (git worktree add <folder> ${branch}), then land again`);
+    throw new LandRefusal(`the test must run on the rebased tip, in the lane's worktree, and ${branch} has none; nothing changed. Add one (git worktree add <folder> ${branch}), then land again`);
   }
   const laneTip = shaOf(checkout.dir, `${HEADS}${branch}`);
   const tip = rebaseDetached(checkout, branch, worktree, baseSha);
   try {
-    const command = chooseTest(checkout, branch, worktree, { requested, overlap });
-    if (overlap.length > 0) console.log(describeOverlap(checkout.base, branch, overlap));
     console.log(`testing ${tip} in ${worktree.path}: ${command}`);
     const outcome = await runTestCommand(command, worktree.path, timeoutSeconds);
     if (!outcome.passed) throw testFailure(checkout, branch, worktree, { command, tip, outcome });
