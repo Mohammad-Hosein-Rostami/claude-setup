@@ -1,4 +1,4 @@
-// Tests for the one Node floor (audit H19): scripts/install.sh, scripts/install.ps1 and doctor's check_node hold the same
+// Tests for the one Node floor (audit H19): scripts/install.sh and scripts/install.ps1 hold the same
 // major.minor floor, install.sh refuses a Node below it and runs the installer on it, and install.ps1 checks jq before it runs.
 // Exports: none (node:test file). install.sh runs with a fake `node` first on PATH (a sh script: POSIX only); install.ps1 is
 // read, not run (no PowerShell on the Mac and Linux machines that run the suite).
@@ -21,7 +21,6 @@ function floors() {
   return {
     'install.sh': /^NODE_FLOOR=(\d+\.\d+)$/m.exec(read('install.sh'))?.[1],
     'install.ps1': /^\$NODE_FLOOR = \[version\]'(\d+\.\d+)'$/m.exec(read('install.ps1'))?.[1],
-    'doctor/checks-machine.sh': /^NODE_FLOOR=(\d+\.\d+)$/m.exec(read('doctor', 'checks-machine.sh'))?.[1],
   };
 }
 
@@ -37,8 +36,8 @@ function installWithNode(version) {
   return spawnSync('bash', [join(SCRIPTS, 'install.sh'), '--dry-run'], { env, encoding: 'utf8' });
 }
 
-test('install.sh, install.ps1 and doctor hold one Node floor, 22.15', () => {
-  assert.deepEqual(floors(), { 'install.sh': '22.15', 'install.ps1': '22.15', 'doctor/checks-machine.sh': '22.15' });
+test('install.sh and install.ps1 hold one Node floor, 22.15', () => {
+  assert.deepEqual(floors(), { 'install.sh': '22.15', 'install.ps1': '22.15' });
 });
 
 test('install.sh refuses a Node below the floor and names it', posix, () => {

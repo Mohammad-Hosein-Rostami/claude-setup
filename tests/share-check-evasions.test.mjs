@@ -1,7 +1,7 @@
 // Tests of scripts/share-check.mjs against the ways a private word slipped through its first version (review findings of lane
 // share-scrub): UTF-16 and NUL-prefixed bytes (R1), fullwidth and zero-width-split words (R2), a name split over lines or by a
 // no-break space (R3), words in file and folder names (R4), camelCase joins (extra), and the commit message being made (R8,
-// `--commit-msg` and .githooks/commit-msg). Each case runs the tree, --staged and --history where the finding named them.
+// `--commit-msg`). Each case runs the tree, --staged and --history where the finding named them.
 // Every repo is a throw-away one in the temp folder (tests/git-tidy-helpers.mjs); the deny words here are made-up, neutral ones.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,10 +11,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CLEAN_ENV, commit, git, makeRepo } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
-import { sharedToolDir } from './shared-tools.mjs';
 
 const CLI = fileURLToPath(new URL('../scripts/share-check.mjs', import.meta.url));
-const COMMIT_MSG_HOOK = fileURLToPath(new URL('../.githooks/commit-msg', import.meta.url));
 const WORD = 'zebracorp';
 const PAIR = 'Quokka Ltd';
 
@@ -122,24 +120,4 @@ test('R8: --commit-msg checks the message as git commits it, without comments or
   assert.equal(check(dir, '--commit-msg', join(folder, 'missing')).status, 2, 'a missing message file fails closed');
   assert.equal(check(dir, '--commit-msg', message('x', 'x\n'), '--staged').status, 2, 'one check at a time');
   assert.equal(check(dir, '--commit-msg', message('y', 'y\n'), 'a.md').status, 2, 'no path with --commit-msg');
-});
-
-test('R8: the commit-msg hook refuses a commit whose message holds a deny word and lets a clean one through', () => {
-  const dir = repoWithList();
-  const wrapper = `#!/usr/bin/env bash\nexec bash ${JSON.stringify(COMMIT_MSG_HOOK)} "$@"\n`;
-  // POSIX: one shared hooks folder (shared-tools.mjs: no first-run check per run); git only reads it
-  let hooks;
-  if (process.platform === 'win32') {
-    hooks = makeTempDir('share-hooks-');
-    writeFileSync(join(hooks, 'commit-msg'), wrapper, { mode: 0o755 });
-  } else hooks = sharedToolDir({ 'commit-msg': wrapper });
-  git(dir, 'config', 'core.hooksPath', hooks);
-  writeFileSync(join(dir, 'a.md'), 'clean\n');
-  git(dir, 'add', 'a.md');
-  const refused = spawnSync('git', ['commit', '-q', '-m', `docs: name ${WORD}`], { cwd: dir, encoding: 'utf8', env: CLEAN_ENV });
-  assert.equal(refused.status, 1, refused.stdout + refused.stderr);
-  assert.match(refused.stderr, /^commit message:1: zebracorp$/m); // git sends a hook's output to stderr
-  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'add base.txt', 'no commit was made');
-  git(dir, 'commit', '-q', '-m', 'docs: a clean subject');
-  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'docs: a clean subject');
 });

@@ -1,5 +1,5 @@
-// Repro tests: a second stop signal while land's test runner (home/tools/land/run-test.mjs) or `suite run`
-// (home/tools/suite/suite.mjs) is in the SIGTERM grace of the command's tree. The owner pressing Ctrl-C twice must not leave the
+// Repro tests: a second stop signal while land's test runner (home/tools/land/run-test.mjs) is in the SIGTERM grace of the
+// command's tree. The owner pressing Ctrl-C twice must not leave the
 // tree behind: once the parent has exited, nothing of the command's group may be left.
 // The commands are `sh` lines (POSIX only) that ignore SIGTERM, start a background sleep and write both pids to a file in the
 // case's temp folder; every case SIGKILLs the parent and that group in a finally block.
@@ -9,13 +9,12 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { CLEAN_ENV, makeRepo } from './git-tidy-helpers.mjs';
+import { pathToFileURL } from 'node:url';
+import { CLEAN_ENV } from './git-tidy-helpers.mjs';
 import { POSIX_ONLY, isAlive, killGroupQuietly, readPids, waitUntil } from './process-group-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const RUN_TEST = pathToFileURL(join(import.meta.dirname, '..', 'home', 'tools', 'land', 'run-test.mjs')).href;
-const SUITE = fileURLToPath(new URL('../home/tools/suite/suite.mjs', import.meta.url));
 // The second Ctrl-C comes this long after the first: well inside the 3 s grace between SIGTERM and SIGKILL.
 const SECOND_SIGNAL_AFTER_MS = 500;
 // How long the command may take to write its pids, and a killed orphan to be reaped by init once the parent is gone.
@@ -69,22 +68,6 @@ test('land: a second SIGINT during the grace leaves nothing of the test command 
     const pids = await interruptTwice(started, pidFile);
     const gone = await waitUntil(() => pids.every((pid) => !isAlive(pid)), GONE_WAIT_MS);
     assert.ok(gone, `nothing of the command's group is left once land has exited (still running: ${pids.filter(isAlive).join(' ')})`);
-  } finally {
-    started.parent.kill('SIGKILL');
-    cleanUp(pidFile);
-  }
-});
-
-test('suite: a second SIGINT during the grace leaves nothing of the command running once suite has exited', POSIX_ONLY, async () => {
-  const repo = makeRepo();
-  const work = makeTempDir('kill-tree-second-stop-');
-  const pidFile = join(work, 'pids');
-  const env = { ...CLEAN_ENV, CLAUDE_CONFIG_DIR: join(work, 'config') };
-  const started = startParent([SUITE, 'run', '--repo', repo, '--slots', '1', '--', 'sh', '-c', IGNORING_TERM, 'sh', pidFile], { cwd: repo, env });
-  try {
-    const pids = await interruptTwice(started, pidFile);
-    const gone = await waitUntil(() => pids.every((pid) => !isAlive(pid)), GONE_WAIT_MS);
-    assert.ok(gone, `nothing of the command's group is left once suite has exited (still running: ${pids.filter(isAlive).join(' ')})`);
   } finally {
     started.parent.kill('SIGKILL');
     cleanUp(pidFile);

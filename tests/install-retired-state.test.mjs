@@ -2,7 +2,7 @@
 // ~/.claude (recall, ask queue, estimate, done-check, stop-blocks, ...) into the install backup folder, never deletes them,
 // records each move, never follows a link, and keeps every store of a kept part and Claude Code's own ~/.claude/jobs.
 // HOME is a temp folder in every case (P8), with a space in its name; the link case needs POSIX symlinks. The last cases run the
-// real installer there (--no-plugins --no-tools; the repo's own git hooksPath is set to the value it already has), which needs jq.
+// real installer there (--no-plugins --no-tools), which needs jq.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -18,8 +18,8 @@ import { cleanEnv } from './clean-env.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const INSTALLER = join(REPO, 'scripts', 'install.mjs');
-// Stores of parts that stay (question popups, limits, status line, proof records) and Claude Code's own jobs: never listed or touched.
-const KEPT_STATE = ['state/question-answered', 'state/limits', 'state/board', 'state/board-cache', 'state/ui-proof', 'state/asking', 'state/account', 'jobs'];
+// Stores of parts that stay (limits, status line, proof records) and Claude Code's own jobs: never listed or touched.
+const KEPT_STATE = ['state/limits', 'state/board', 'state/board-cache', 'state/ui-proof', 'state/account', 'jobs'];
 const STORE_TEXT = '{}\n';
 
 /** Puts a store at `path`: a file when the name ends in .json, else a folder holding data.json. */
@@ -47,8 +47,8 @@ const savedPath = (ctx, relativePath) => join(ctx.backupDir, relative(ctx.home, 
 
 test('the list names only stores of removed parts, never a kept one or Claude Code\'s jobs', () => {
   for (const kept of KEPT_STATE) assert.equal(RETIRED_STATE.includes(kept), false, kept);
-  for (const relativePath of RETIRED_STATE) assert.match(relativePath, /^(recall|ask|state\/[a-z-]+(\.json)?)$/, relativePath);
-  for (const added of ['state/stop-blocks', 'state/budget-denied', 'state/mcp-discover-verdicts.json']) assert.ok(RETIRED_STATE.includes(added), added);
+  for (const relativePath of RETIRED_STATE) assert.match(relativePath, /^(recall|ask|state\/[a-z-]+(\.json)?|logs\/\.?guard[.a-z0-9-]*)$/, relativePath);
+  for (const added of ['state/stop-blocks', 'state/budget-denied', 'state/mcp-discover-verdicts.json', 'state/question-answered', 'state/asking', 'state/guard-allowed', 'logs/guard.jsonl']) assert.ok(RETIRED_STATE.includes(added), added);
 });
 
 test('an install moves every retired store into the backup folder once, records each move and leaves the kept stores', () => {
