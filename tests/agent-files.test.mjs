@@ -29,10 +29,10 @@ const OPUS = 'claude-opus-5-5';
 const SONNET = 'claude-sonnet-5-5';
 const HAIKU = 'claude-haiku-5-5';
 const PLAN = {
-  lex: { model: OPUS, effort: 'high', skills: ['tradeoff-analysis', 'tech-research', 'repo-restructure'] },
+  lex: { model: OPUS, effort: 'high', skills: ['tradeoff-analysis', 'tech-research'] },
   'lex-scout': { model: HAIKU, effort: 'high', skills: [] },
   'lex-web': { model: SONNET, effort: 'high', skills: ['tech-research'] },
-  dev: { model: OPUS, effort: 'high', skills: ['clean-code', 'safe-refactor', 'datetime-handling', 'git-linear-history'] },
+  dev: { model: OPUS, effort: 'high', skills: ['clean-code'] },
   'dev-ui': {
     model: OPUS, effort: 'high',
     skills: ['responsive-ui', 'accessibility-build', 'forms-validation', 'async-ui-states', 'ui-quality-pass', 'frontend-performance', 'frontend-security'],
@@ -50,8 +50,9 @@ const PLAN = {
   'tess-simple': { model: SONNET, effort: 'high', skills: ['clean-code'] },
   'tess-edge': { model: SONNET, effort: 'high', skills: [] },
   // owner decisions: dev-docs writes a job's docs on Sonnet, high; max ships on Opus, high
+// final-pass plan, lane A (T1-T3): an agent preloads only the skills every run of it needs; the rest load on demand
   'dev-docs': { model: SONNET, effort: 'high', skills: ['docs-writing'] },
-  max: { model: OPUS, effort: 'high', skills: ['ship-readiness', 'clean-code', 'git-linear-history'] },
+  max: { model: OPUS, effort: 'high', skills: ['ship-readiness'] },
 };
 const NAMES = Object.keys(PLAN);
 const HELPER_STARTERS = ['lex', 'dev', 'dev-part', 'dev-ui', 'dev-pixel', 'dev-debug', 'tess', 'max'];
@@ -100,8 +101,8 @@ test('playwright and chrome-devtools are defined only on dev-ui, dev-pixel and p
       continue;
     }
     assert.deepEqual(servers, ['playwright:', 'chrome-devtools:'], name);
-    assert.match(frontmatter(name), /args: \["@playwright\/mcp@latest"\]/, name);
-    assert.match(frontmatter(name), /args: \["chrome-devtools-mcp@1\.11\.0"\]/, name);
+    assert.match(frontmatter(name), /args: \["@playwright\/mcp@0\.0\.86"\]/, name);
+    assert.match(frontmatter(name), /args: \["chrome-devtools-mcp@1\.14\.0"\]/, name);
     assert.equal(field(name, 'tools'), '', `${name}: inherits every tool, its own servers included`);
   }
 });
@@ -201,7 +202,7 @@ test('no agent names the removed job machinery', () => {
 // `owner-command:` brief line, which only the boss writes from the owner's own chat words.
 test('max acts outward only on an owner-command: line the boss writes from the owner\'s words; it prepares and stops', () => {
   const text = agent('max').replace(/\s+/g, ' ');
-  assert.match(field('max', 'description'), /Prepares everything up to the outward step and stops; the owner pushes and deploys\.$/);
+  assert.match(field('max', 'description'), /Prepares everything, then stops\.$/);
   assert.ok(text.includes('Only with an `owner-command:` line in the brief. Run exactly that action from the landed sha the boss names, nothing more;'), 'the owner-command section');
   assert.ok(text.includes('Push, tag, publish, deploy, merge a PR, write to production or run a migration on real data without an `owner-command:` for that action.'), 'the outward never-list');
   assert.ok(text.includes('only the boss writes `owner-command:`, from the owner\'s own chat words.'), 'who writes the line');
@@ -213,4 +214,63 @@ test('clean-code and dev-ui point the text a person reads to docs-writing, which
   const cleanCode = readFileSync(`${HOME_DIR}skills/clean-code/SKILL.md`, 'utf8').replace(/\s+/g, ' ');
   assert.ok(cleanCode.includes('Text a person reads follows `docs-writing` (X6-X8).'), 'clean-code');
   assert.ok(agent('dev-ui').replace(/\s+/g, ' ').includes('U12 Plain sentence-case copy, no placeholder text; error and empty-state text by X6 (`docs-writing`).'), 'dev-ui');
+});
+
+// Final-pass plan, lane A (acceptance A-2 to A-4 and A-8): the preload cuts, the pinned browser servers, the removed finding caps, the
+// word caps, the `skills:` brief field, the e2e qa kind and max's new never-line. Each test fails on the text before the lane.
+const flat = (text) => text.replace(/\s+/g, ' ');
+const ON_DEMAND_SKILLS = ['safe-refactor', 'datetime-handling', 'git-linear-history', 'repo-restructure'];
+const MAX_DESCRIPTION_WORDS = 40; // the plan cuts it to "about 30 words"; it was 57
+
+test('no agent preloads safe-refactor, datetime-handling, git-linear-history or repo-restructure, and max does not preload clean-code', () => {
+  for (const name of NAMES) {
+    const preloaded = listItems(name, 'skills');
+    for (const skill of ON_DEMAND_SKILLS) assert.ok(!preloaded.includes(skill), `${name}: ${skill} loads on demand`);
+  }
+  assert.ok(!listItems('max', 'skills').includes('clean-code'), 'max writes release files, not code');
+});
+
+test('no agent file names the unpinned playwright server or the old chrome-devtools 1.11', () => {
+  for (const name of NAMES) assert.doesNotMatch(agent(name), /mcp@latest|chrome-devtools-mcp@1\.11/, name);
+});
+
+test('tess-review and tess-simple carry no finding or word cap; tess-review keeps its must-fix rule and confidence', () => {
+  for (const name of ['tess-review', 'tess-simple']) assert.doesNotMatch(agent(name), /At most 8|at most 200 words/, name);
+  const review = flat(agent('tess-review'));
+  assert.ok(review.includes('Every finding you could check, worst first.'), 'tess-review: no cap');
+  assert.ok(review.includes('`severity` (`must-fix` only with a repro and `breaks` not `none`; else `follow-up`)'), 'tess-review: the must-fix rule');
+  assert.ok(review.includes('`confidence` (high or medium; a guess you could not check is not reported)'), 'tess-review: confidence');
+  assert.ok(flat(agent('tess-simple')).includes('Every finding, each with its rule id, the simpler form and the number of callers you found.'), 'tess-simple: no cap');
+});
+
+test('dev briefs a helper with a skills: field and dev-part loads the brief\'s skills before its first edit', () => {
+  assert.ok(flat(agent('dev')).includes('`skills:` (the skills the part needs, which it loads before its first edit,'), 'dev: the helper brief list');
+  assert.ok(flat(agent('dev-part')).includes('Before the first edit, load each skill the brief\'s `skills:` line names (Skill tool).'), 'dev-part: the Start line');
+});
+
+test('e2e is a qa kind in tess, lex and qa-plan, and tess runs it from the main checkout at the landed sha with the scenarios\' lines copied unchanged', () => {
+  const tess = flat(agent('tess'));
+  assert.ok(tess.includes('(any of `checks full review tests edge deps ui repro e2e`;'), 'tess: the qa kinds name e2e');
+  assert.ok(tess.includes('## e2e `qa: e2e` runs the real end-to-end scenarios: only when the owner asks or for a final pass, never per lane.'), 'tess: the e2e section');
+  assert.ok(tess.includes('`timeout` 7200000 runs `node tests/e2e/run.mjs --all --out <detail dir>` in the main checkout at the landed sha.'), 'tess: the command');
+  assert.ok(tess.includes('Copy each scenario\'s `check | expected | observed | PASS/FAIL` line unchanged into the detail file.'), 'tess: the lines are copied');
+  assert.ok(tess.includes('`not run (limit, resets <time>)`, never retried before then. `landing:` does not apply.'), 'tess: a usage-limit stop');
+  assert.ok(flat(agent('lex')).includes('`e2e` only for a final pass the owner asks for'), 'lex: the qa kinds');
+  assert.ok(flat(readFileSync(`${HOME_DIR}skills/qa-plan/SKILL.md`, 'utf8')).includes('| e2e (`qa: e2e`) | only when the owner asks, or a final pass; never per lane:'), 'qa-plan: the e2e row');
+});
+
+test('lex-web and lex-scout cap their reply at the brief\'s word cap, else 250 and 200 words (a map 500), and drop facts, never sources', () => {
+  assert.ok(flat(agent('lex-web')).includes('Return at most the brief\'s word cap, else 250 words:'), 'lex-web');
+  assert.ok(flat(agent('lex-web')).includes('Over the cap, drop the least important facts, never a fact\'s source.'), 'lex-web: the drop rule');
+  assert.ok(flat(agent('lex-scout')).includes('Return at most the brief\'s word cap, else 200 words (a map 500):'), 'lex-scout');
+  assert.ok(flat(agent('lex-scout')).includes('Over the cap, drop the least important findings, never a finding\'s `path:line`.'), 'lex-scout: the drop rule');
+});
+
+test('max\'s description stays short with its triggers, and its Never list names starting claude or a long-run', () => {
+  const description = field('max', 'description');
+  assert.ok(description.split(/\s+/).length <= MAX_DESCRIPTION_WORDS, `${description.split(/\s+/).length} words`);
+  for (const trigger of ['release', 'deploy', 'publish', 'showcase', 'readiness review', 'incident', 'the owner asks', '`ship:` target']) {
+    assert.ok(description.includes(trigger), `description keeps the trigger ${trigger}`);
+  }
+  assert.ok(flat(agent('max')).includes('Start a Claude session (`claude`) or a long-run: the guard denies it; the command goes into the commands file.'), 'the Never line');
 });
