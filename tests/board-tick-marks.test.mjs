@@ -191,19 +191,21 @@ test('a fresh lock file refuses --mark-tess with exit 2 and changes nothing; a l
   assert.equal(existsSync(lockFile(home)), false, 'the call that broke the stale lock releases its own');
 });
 
-test('a feature named constructor, landed and not marked, does not crash the tick and is listed as due', () => {
+// An inherited key of Object.prototype is no mark: without the own-key guard in planState, `marks.constructor` is a function, a feature with no
+// land has nothing to cover, and `every` over its empty lands calls it checked. The base code (before tick-features.mjs) has no `lands` field.
+const PROTOTYPE_KEY_FEATURES = ['constructor', 'toString', 'valueOf', 'hasOwnProperty'];
+
+test('a feature named after an Object.prototype key, with no piece landed, is not checked: an inherited key is no mark', () => {
   const repo = makeRepo();
   const home = makeHome();
-  const base = headOf(repo);
-  const to = commit(repo, 'p1.txt');
-  writeLands(home, repo, [['p1', base, to]]);
-  const plan = writePlan(repo, [{ id: 'constructor', risk: 'none' }], [{ id: 'p1', feature: 'constructor' }]);
+  const plan = writePlan(repo, PROTOTYPE_KEY_FEATURES.map((id) => ({ id, risk: 'none' })), PROTOTYPE_KEY_FEATURES.map((id) => ({ id: `p-${id}`, feature: id })));
 
   const result = tick(home, ['--repo', repo, '--plan', plan]);
   assert.equal(result.status, EXIT_SHOWN, result.stdout + result.stderr);
   assert.equal(result.stderr, '');
-  assert.equal(featuresLineOf(result), `${FEATURES_LINE} constructor 1/1 (risk none) -> tess due now (last piece landed)`, result.stdout);
-  assert.equal(factsOf(home, repo, plan).plan.features[0].isChecked, false);
+  assert.equal(featuresLineOf(result), `${FEATURES_LINE} none -> tess due at 3 (now 0)`, result.stdout);
+  const shown = factsOf(home, repo, plan).plan.features;
+  assert.deepEqual(shown, PROTOTYPE_KEY_FEATURES.map((id) => ({ id, risk: 'none', landed: 0, pieces: 1, lands: [], isChecked: false })));
 });
 
 test('a piece landed twice and marked at its first land only is due, with both ranges in the commits line, and checked once marked at the second', () => {
