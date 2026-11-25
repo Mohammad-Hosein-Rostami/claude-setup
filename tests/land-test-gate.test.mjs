@@ -525,7 +525,7 @@ test('a lane with no commit in common with the base is refused before anything c
   const before = heads(repo);
   const result = land([LANE, '--repo', repo, '--test', PASS], { cwd: repo });
   assert.equal(result.status, 1, result.stdout);
-  assert.ok(result.stderr.startsWith(`land: ${LANE} has no commit in common with main, so land cannot tell which files both changed`), result.stderr);
+  assert.ok(result.stderr.startsWith(`land: ${LANE} has no commit in common with main: a rebase would replay`), result.stderr);
   assert.deepEqual(heads(repo), before, 'neither the base nor the lane moved');
   assert.ok(existsSync(worktree));
 });
