@@ -18,6 +18,8 @@ export const title = 'long-run: a lost driver, then resume with the unfinished l
 export const model = 'sonnet';
 export const minutes = LIMITS.defaultScenarioMinutes;
 export const needsShims = true;
+/** `--real-home` gives the real HOME to this scenario only (context.mjs usesRealHome); every other one keeps the temp HOME. */
+export const needsRealHome = true;
 
 const JOB_MODEL = assertModel('claude-sonnet-5-5'); // long-run takes full ids only; the allowlist still applies
 const JOB_NAME = 'e2e-e9';

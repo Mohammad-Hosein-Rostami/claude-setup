@@ -2,7 +2,8 @@
 // started), usage errors (exit 2), the dry run (C-2: exit 0, `--model` on every claude line, Fable only on E4's deny lines), a
 // usage limit (exit 3, the reset time printed, no retry), SIGINT (every process of the run ended), E7 run for real against
 // land in throwaway repos (exit 0), the login preflight (not logged in: one line, exit 2, no scenario), a login refusal (the
-// whole run stops, exit 2), no `--resume` after an error result, and an E0 that throws closing the gate.
+// whole run stops, exit 2), no `--resume` after an error result, an E0 that throws closing the gate, and `--real-home`
+// giving the real HOME to E9 only.
 // Safety: a real `claude` never runs. Every runner gets a PATH whose first folder holds a fake `claude`, a temp HOME (with a
 // made-up settings.json and CLAUDE.md) and a temp TMPDIR, so its run root, results and the HOME it copies are all in the case.
 import assert from 'node:assert/strict';
@@ -247,4 +248,14 @@ test('an E0 that throws (its git setup fails) closes the gate: the later scenari
   assert.match(stdout, /^E7 .* \| not run: E0 stopped with an error, so its probes say nothing \| NOT RUN$/m);
   assert.deepEqual(minusP(kase.calls()), []);
   assert.deepEqual(kase.runRoots(), []);
+});
+
+test('--real-home: the dry run gives the real HOME to E9 only; E0 keeps the temp HOME of the run root', async () => {
+  const kase = makeCase();
+  const { code, stdout } = await runRunner(['--dry-run', '--real-home', '--only', 'E0,E9'], kase.env);
+  assert.equal(code, 0, stdout);
+  const homeOf = (id) => new RegExp(`^# ${id} .*; HOME (\\S+)\\)$`, 'm').exec(stdout)?.[1];
+  assert.equal(homeOf('E9'), kase.env.HOME);
+  assert.ok(homeOf('E0').startsWith(join(kase.dir, RUN_PREFIX)) && homeOf('E0').endsWith('/home'), homeOf('E0'));
+  assert.ok(!/E9 run: not run/.test(stdout), 'E9 runs in this mode');
 });

@@ -1,5 +1,6 @@
 // What a scenario's setup, run and check get: the run's shared state and the scenario's own context. Exports: quote(arg),
-// commandLine(command, args, {cwd, env}), makeOps({dry, root, record}), makeRunState(spec), makeContext(run, scenario).
+// commandLine(command, args, {cwd, env}), makeOps({dry, root, record}), makeRunState(spec), usesRealHome(run, scenario),
+// makeContext(run, scenario).
 // Why: one context serves both the dry run and the live run. Each operation (mkdir, write, link, copy, a command, a `claude -p`)
 // is recorded as one printed step first; in a dry run nothing more happens (a command returns exit 0 and empty output, a claude
 // run returns no events), so `--dry-run` prints the exact setup steps and command lines of every scenario and starts nothing.
@@ -7,7 +8,8 @@
 // claudeArgs (models.mjs), so no run can start without an allowed `--model`; every child gets childEnv (env.mjs) with the
 // scenario's own names only; each child's timeout is what is left of the scenario's wall-clock budget; once a usage limit is
 // seen (run.limit), a run is refused its login (run.login, login.mjs) or the run is interrupted, no new child starts; the
-// `--resume` rounds stop at the first run that ended with an error or no result.
+// `--resume` rounds stop at the first run that ended with an error or no result. HOME: `--real-home` gives the real HOME
+// (run.realPaths) only to a scenario that exports `needsRealHome = true` (E9); every other scenario keeps the temp HOME.
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { LIMITS } from './checks.mjs';
@@ -65,7 +67,7 @@ export function makeOps({ dry, root, record }) {
 }
 
 /**
- * @param {{dry: boolean, root: string, setupFrom: string, realHome: string, realHomeMode: boolean, paths: object,
+ * @param {{dry: boolean, root: string, setupFrom: string, realHome: string, realHomeMode: boolean, paths: object, realPaths?: object,
  *   childPath?: string, quietLog?: string, dialogLog?: string, dialogModeFile?: string,
  *   registry?: import('./processes.mjs').ProcessRegistry}} spec
  * @returns {object} the run's shared state: these fields, plus the stop switch, the limit seen and every session id of the run
@@ -92,24 +94,29 @@ export function makeRunState(spec) {
   return run;
 }
 
+/** @returns {boolean} true when the scenario gets the real HOME: `--real-home` and the scenario needs it (E9 only) */
+export const usesRealHome = (run, scenario) => run.realHomeMode === true && scenario.needsRealHome === true && Boolean(run.realPaths);
+
 /**
  * @param {ReturnType<typeof makeRunState>} run
- * @param {{id: string, minutes?: number}} scenario
+ * @param {{id: string, minutes?: number, needsRealHome?: boolean}} scenario
  * @returns {object} the scenario's context (see the header)
  */
 export function makeContext(run, scenario) {
   const dir = join(run.root, scenario.id);
   const deadlineMs = Date.now() + (scenario.minutes ?? LIMITS.defaultScenarioMinutes) * MS_PER_MINUTE;
   const steps = [];
+  const realHomeMode = usesRealHome(run, scenario);
+  const paths = realHomeMode ? run.realPaths : run.paths;
   const ctx = {
     id: scenario.id, dry: run.dry, run, dir, repo: join(dir, 'repo'), origin: join(dir, 'origin.git'), logs: join(dir, 'logs'),
-    paths: run.paths, setupFrom: run.setupFrom, realHome: run.realHome, realHomeMode: run.realHomeMode,
+    paths, setupFrom: run.setupFrom, realHome: run.realHome, realHomeMode,
     phase: 'setup', steps, sessions: [], notes: {}, timedOut: false, notRun: null, deadlineMs,
     record: (text, extra = {}) => steps.push({ phase: ctx.phase, text, ...extra }),
     tool: (...parts) => join(run.setupFrom, 'home', 'tools', ...parts),
     remainingMs: () => Math.max(MIN_CHILD_MS, deadlineMs - Date.now()),
-    env: (extra = {}) => childEnv({ home: run.paths.home, tmp: run.paths.tmp, path: run.childPath, quietLog: run.quietLog,
-      longRunState: run.paths.longRunState, extra }),
+    env: (extra = {}) => childEnv({ home: paths.home, tmp: paths.tmp, path: run.childPath, quietLog: run.quietLog,
+      longRunState: paths.longRunState, extra }),
     skip(reason) {
       ctx.notRun = reason;
       ctx.record(`not run: ${reason}`);

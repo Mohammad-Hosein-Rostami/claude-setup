@@ -11,7 +11,8 @@
 // child gets childEnv (no API key, no auth token, no base URL); every write is inside the run root; the only remote is a bare
 // repo in it; every printed or kept text is redacted; at a usage limit every scenario stops, the reset time is printed and
 // nothing is retried; in a finally block and on SIGINT/SIGTERM every process group of the run is ended and checked gone; the
-// root is removed only when this run made it.
+// root is removed only when this run made it. `--real-home` gives the real HOME only to a scenario that needs it (E9,
+// `needsRealHome`); the others keep the temp HOME, and the dry run prints each scenario's HOME.
 import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -64,17 +65,18 @@ async function dryRun(options, scenarios) {
   const files = runFiles(root);
   const homeSteps = [];
   const ops = makeOps({ dry: true, root, record: (text) => homeSteps.push(text) });
-  const paths = options.realHomeMode ? homePaths(root, realHome, true) : buildHome(ops, { root, setupFrom: options.setupFrom, realHome });
+  const paths = buildHome(ops, { root, setupFrom: options.setupFrom, realHome });
+  const realPaths = options.realHomeMode ? homePaths(root, realHome, true) : null;
   installShims(ops, { ...files, modeFile: files.dialogModeFile, popupDir: '<fake popup dir>' });
-  say(`e2e dry run: nothing is made or started. run root ${root}; HOME ${paths.home}; checkout ${options.setupFrom}`);
+  say(`e2e dry run: nothing is made or started. run root ${root}; HOME ${paths.home}${realPaths ? ` (the real HOME ${realPaths.home} only for a scenario that needs it)` : ''}; checkout ${options.setupFrom}`);
   for (const text of homeSteps) say(`home setup: ${text}`);
   say(`preflight: claude ${PREFLIGHT_ARGS.join(' ')} with the child env and HOME ${paths.home} (skipped in a dry run)`);
-  const run = makeRunState({ dry: true, root, setupFrom: options.setupFrom, realHome, realHomeMode: options.realHomeMode, paths,
+  const run = makeRunState({ dry: true, root, setupFrom: options.setupFrom, realHome, realHomeMode: options.realHomeMode, paths, realPaths,
     childPath: '<run bin>:<quiet tools>:$PATH', ...files, realRepo: realRepoOf(realHome, options.setupFrom), shimDirs: [] });
   const claudeSteps = [];
   for (const scenario of scenarios) {
     const ctx = makeContext(run, scenario);
-    say(`# ${scenario.id} ${scenario.title} (model ${scenario.model}, ${scenario.minutes} min)`);
+    say(`# ${scenario.id} ${scenario.title} (model ${scenario.model}, ${scenario.minutes} min; HOME ${ctx.paths.home})`);
     await scenario.setup(ctx);
     ctx.phase = 'run';
     await scenario.run(ctx);
@@ -159,8 +161,8 @@ async function liveRun(options, scenarios) {
   process.on('SIGTERM', onTerm);
   try {
     const ops = makeOps({ dry: false, root, record: () => {} });
-    const paths = options.realHomeMode ? homePaths(root, realHome, true) : buildHome(ops, { root, setupFrom: options.setupFrom, realHome });
-    if (options.realHomeMode) for (const dir of [paths.longRunState, paths.tmp]) ops.mkdir(dir);
+    const paths = buildHome(ops, { root, setupFrom: options.setupFrom, realHome });
+    const realPaths = options.realHomeMode ? homePaths(root, realHome, true) : null;
     const quietDir = quietToolsDir();
     const login = loginPreflight({ cwd: root, env: childEnv({ home: paths.home, tmp: paths.tmp, path: childPath(files.bin, quietDir),
       quietLog: files.quietLog, longRunState: paths.longRunState }) });
@@ -169,13 +171,13 @@ async function liveRun(options, scenarios) {
       say(LOGIN_LINE);
     } else {
       say(`e2e live run: root ${root}; results ${outDir}${stale.length ? `; removed ${stale.length} stale root(s)` : ''}; login ${login.detail}`);
-      if (options.realHomeMode) say('e2e: --real-home: the children use the real HOME (owner opt-in)');
+      if (realPaths) say(`e2e: --real-home: only a scenario that needs it (E9) uses the real HOME ${realPaths.home} (owner opt-in); the rest keep the temp HOME`);
       if (process.platform !== 'win32') {
         popupDir = (await popupMaker())('deny').env.PATH.split(delimiter)[0];
         installShims(ops, { ...files, modeFile: files.dialogModeFile, popupDir });
       }
       const realRepo = realRepoOf(realHome, options.setupFrom);
-      run = makeRunState({ dry: false, root, setupFrom: options.setupFrom, realHome, realHomeMode: options.realHomeMode, paths,
+      run = makeRunState({ dry: false, root, setupFrom: options.setupFrom, realHome, realHomeMode: options.realHomeMode, paths, realPaths,
         childPath: childPath(files.bin, quietDir), ...files, registry, realRepo, shimDirs: [files.bin, quietDir].filter(Boolean) });
       run.before = leakSnapshot({ realHome, realRepo });
       await runEach(run, scenarios, { print, records, outDir });
@@ -186,10 +188,14 @@ async function liveRun(options, scenarios) {
     const left = await registry.endAll();
     print('run', checkLine('no process of the run is left', 'none', left.join(', ') || 'none', left.length === 0));
     if (run) {
-      keepTranscripts(run.paths.projectsDir, root, join(outDir, 'transcripts'), options.realHomeMode);
-      if (!options.realHomeMode) copyRedacted(run.paths.logsDir, join(outDir, 'home-logs'));
+      keepTranscripts(run.paths.projectsDir, root, join(outDir, 'transcripts'), false);
+      copyRedacted(run.paths.logsDir, join(outDir, 'home-logs'));
       copyRedacted(join(root, 'long-run-state'), join(outDir, 'long-run-state'));
-      if (options.realHomeMode) removeProjectFolders(run.paths.projectsDir, root);
+      if (run.realPaths) {
+        // the real HOME: only the project folders of this run's root are kept, then removed
+        keepTranscripts(run.realPaths.projectsDir, root, join(outDir, 'transcripts-real-home'), true);
+        removeProjectFolders(run.realPaths.projectsDir, root);
+      }
     }
     if (popupDir) removeTempDir(popupDir);
     const removal = removeRunRoot(root, madeRoots);

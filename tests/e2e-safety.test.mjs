@@ -1,7 +1,8 @@
 // Tests of the e2e harness's safety parts (owner rules for Lane C): claudeArgs is the one argv builder and refuses a missing or
 // non-subscription model; the redactor masks every token shape in printed lines, results.json and child logs; the child env
 // drops API keys and refuses a scenario that sets one; cleanup removes only a root this run made; a usage limit gives exit 3;
-// the settings copy moves the real ~/.claude paths to the temp HOME. No real `claude` runs.
+// the settings copy moves the real ~/.claude paths to the temp HOME; `--real-home` gives the real HOME to a scenario that
+// needs it (E9) and to no other, and E11's real guard log line is NOT RUN then. No real `claude` runs.
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -10,7 +11,8 @@ import { cleanEnv } from './clean-env.mjs';
 import { madeUpToken } from './e2e-fixtures.mjs';
 import { childEnv, LOGIN_ENV, REMOVED_ENV } from './e2e/lib/env.mjs';
 import { loginRefusal } from './e2e/lib/login.mjs';
-import { claudeMdCopy, settingsCopy } from './e2e/lib/home.mjs';
+import { makeContext, makeRunState } from './e2e/lib/context.mjs';
+import { claudeMdCopy, homePaths, settingsCopy } from './e2e/lib/home.mjs';
 import { ALLOWED_MODELS, claudeArgs, modelOfArgs } from './e2e/lib/models.mjs';
 import { ProcessRegistry } from './e2e/lib/processes.mjs';
 import { redact, REDACTED, redactJson } from './e2e/lib/redact.mjs';
@@ -19,6 +21,8 @@ import { assertInside, makeRunRoot, MARKER_FILE, removeProjectFolders, removeRun
 import { runDetached } from './e2e/lib/spawn.mjs';
 import { limitOf, resetText } from './e2e/lib/stream.mjs';
 import { projectKey } from './e2e/lib/transcripts.mjs';
+import * as E9 from './e2e/scenarios/E9.mjs';
+import * as E11 from './e2e/scenarios/E11.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const PROMPT = 'Reply ok.';
@@ -205,4 +209,37 @@ test('settingsCopy: hook paths move to the temp HOME, the guard switch is droppe
   assert.deepEqual(copy.env, { KEEP: '1' });
   assert.equal(copy.autoContinueAtUsageLimit, false);
   assert.equal(claudeMdCopy('@/real/setup/home/CLAUDE.md\n@/real/personal/CLAUDE.md', '/real/setup', '/lane'), '@/lane/home/CLAUDE.md\n@/real/personal/CLAUDE.md');
+});
+
+const RUN_ROOT = '/made-up/cs-test-e2e-run';
+const REAL_HOME = '/made-up/real-home';
+
+/** A dry run state with the temp HOME and, in `--real-home` mode, the real HOME's paths beside it. */
+const runState = (realHomeMode) => makeRunState({ dry: true, root: RUN_ROOT, setupFrom: '/made-up/setup', realHome: REAL_HOME, realHomeMode,
+  paths: homePaths(RUN_ROOT, REAL_HOME), realPaths: realHomeMode ? homePaths(RUN_ROOT, REAL_HOME, true) : null, childPath: '/bin' });
+
+test('makeContext: --real-home gives the real HOME only to a scenario with needsRealHome (E9); the rest keep the temp HOME', () => {
+  const tempHome = join(RUN_ROOT, 'home');
+  assert.equal(E9.needsRealHome, true);
+  const real = runState(true);
+  const e9 = makeContext(real, E9);
+  assert.equal(e9.paths.home, REAL_HOME);
+  assert.equal(e9.realHomeMode, true);
+  assert.equal(e9.env().HOME, REAL_HOME);
+  const other = makeContext(real, { id: 'E0' });
+  assert.equal(other.paths.home, tempHome);
+  assert.equal(other.realHomeMode, false);
+  assert.equal(other.env().HOME, tempHome);
+  assert.equal(makeContext(runState(false), E9).env().HOME, tempHome, 'without --real-home E9 keeps the temp HOME too');
+});
+
+test("E11: with --real-home the real guard log line is NOT RUN, never a pass; without it the line is checked", () => {
+  const lineIn = (realHomeMode) => E11.check({ run: { before: null, sessionIds: new Set(), shimDirs: [], realHomeMode, root: RUN_ROOT },
+    notes: { after: { realGuardSessions: new Set() }, tools: {} }, paths: { guardLog: join(RUN_ROOT, 'none.jsonl') } }).at(-1);
+  const real = lineIn(true);
+  assert.equal(real.notRun, true);
+  assert.equal(real.pass, false);
+  assert.match(real.observed, /real-home/);
+  assert.equal(lineIn(false).notRun, undefined);
+  assert.equal(lineIn(false).pass, true);
 });

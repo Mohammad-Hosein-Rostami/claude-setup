@@ -2,12 +2,14 @@
 // real checkout's git status and the real long-run state listing are the same as before the run; the guard log lines of the
 // run carry only the run's session ids; the real guard log holds none of them.
 // The "before" snapshot is taken by run.mjs before the first scenario (run.before); this scenario takes the "after" one.
+// With `--real-home` E9 writes to the real guard log, so the last line is NOT RUN then (never a pass on a log the run shared).
 // Exports the scenario interface (run.mjs): id, title, model, minutes, needsShims, setup(ctx), run(ctx), check(ctx).
 import { join } from 'node:path';
 import { checkLine, LIMITS } from '../lib/checks.mjs';
 import { leakSnapshot, resolveTools, WATCHED_TOOLS } from '../lib/leaks.mjs';
 import { guardLines } from '../lib/logs.mjs';
 import { readText, sameRead } from '../lib/common.mjs';
+import { notRunLine } from '../lib/report.mjs';
 
 export const id = 'E11';
 export const title = 'leaks: shims only, the real setup unchanged, guard lines of the run only';
@@ -46,7 +48,7 @@ export function check(ctx) {
       before !== null && after !== undefined && before.longRun === after.longRun),
     checkLine("the run's guard log lines carry only the run's session ids", `only the ${sessionIds.size} session id(s) of the run`,
       foreign.length === 0 ? `${runLines.length} line(s), all of the run` : `other ids: ${foreign.slice(0, 5).join(', ')}`, foreign.length === 0),
-    checkLine("the real guard log holds no line of the run's sessions", 'none', realHomeMode ? 'not checked (--real-home: the run used the real log)' : inReal.join(', ') || 'none',
-      realHomeMode !== true && inReal.length === 0),
+    realHomeMode ? notRunLine("the real guard log holds no line of the run's sessions", '--real-home: E9 used the real HOME and its guard log')
+      : checkLine("the real guard log holds no line of the run's sessions", 'none', inReal.join(', ') || 'none', inReal.length === 0),
   ];
 }
