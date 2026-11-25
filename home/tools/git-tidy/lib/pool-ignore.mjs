@@ -5,10 +5,10 @@
 // Invariants:
 // - Runs under the pool lock (lane-pool.mjs claimLane), so two claims never append the line twice; a file that already holds the line
 //   gets no second copy.
-// - Only a plain file (or a missing one, then made with mode 0644) is written: a link or anything else at info/exclude is never
-//   followed or written, and the outcome is `failed`. The path is built from the common dir, never from `--git-path`, which
-//   resolves a link at info/exclude to its target. An lstat check refuses it up front, and O_NOFOLLOW (where the system has it)
-//   closes the gap between that check and the open.
+// - Only a plain file (or a missing one, then made with mode 0644) is written: a link at info/ or info/exclude, or anything but a
+//   plain file at info/exclude, is never followed or written, and the outcome is `failed`. The path is built from the common dir
+//   (git gives it with links resolved), never from `--git-path`, which resolves a link below it too. lstat checks refuse them up
+//   front, and O_NOFOLLOW (where the system has it) closes the gap between that check and the open for info/exclude itself.
 // - Never throws: every failure is the `failed` outcome, and the claim goes on.
 import { closeSync, constants as fsConstants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -30,13 +30,16 @@ function isPoolIgnored(mainDir) {
 
 /**
  * Appends `line` to the plain file at `path` (made with its folder when missing) unless a line there already equals it.
- * @throws {Error} when `path` is a link or anything but a plain file: nothing is written, and the message says why
+ * @throws {Error} when `path` or its folder is a link, or `path` is anything but a plain file: nothing is written, and the
+ *   message says why
  */
 function appendLineOnce(path, line) {
-  mkdirSync(dirname(path), { recursive: true });
+  const folder = dirname(path);
+  const linked = [folder, path].find((part) => lstatSync(part, { throwIfNoEntry: false })?.isSymbolicLink());
+  if (linked !== undefined) throw new Error(`not added to ${path}: ${linked} is a link, never followed`);
   const found = lstatSync(path, { throwIfNoEntry: false });
-  if (found?.isSymbolicLink()) throw new Error(`not added to ${path}: it is a link, never followed`);
   if (found !== undefined && !found.isFile()) throw new Error(`not added to ${path}: it is not a plain file`);
+  mkdirSync(folder, { recursive: true });
   const fd = openSync(path, fsConstants.O_RDWR | fsConstants.O_APPEND | fsConstants.O_CREAT | NO_FOLLOW, EXCLUDE_MODE);
   try {
     if (!fstatSync(fd).isFile()) throw new Error(`not added to ${path}: it is not a plain file`);
