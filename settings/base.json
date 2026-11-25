@@ -22,11 +22,11 @@
   "hooks": {
     "PermissionRequest": [
       {
-        "matcher": "*",
+        "matcher": "AskUserQuestion",
         "hooks": [
           {
             "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/permission-timed-allow.mjs\"",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/question-popup.mjs\"",
             "timeout": 800
           }
         ]
