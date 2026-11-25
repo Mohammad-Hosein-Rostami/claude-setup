@@ -3,10 +3,11 @@
 Lands one lane on its base branch by rebase and fast-forward, then deletes the lane and every other branch already on the base.
 
 Lands one lane on its base branch with one command and keeps history one straight line: it rebases the lane onto the base,
-optionally tests the rebased tip, fast-forwards the base checkout to it with `git merge --ff-only`, then deletes the lane's
-worktree and branch, then every other branch whose content is all on the base (one content proof, below), and
-ends with a `left:` list of the branches still there and why. It runs no review, and it never pushes. Node 22, git, no
-dependencies. It replaces `land-lane` (plan 2026-11-24).
+optionally tests the rebased tip, fast-forwards the base checkout to it with `git merge --ff-only` and writes one line to the
+land ledger (below), then clears the lane's folder away (a pool folder from `git-tidy lane claim` stays for the next lane, any
+other worktree is removed) and deletes its branch, then every other branch whose content is all on the base (one content
+proof, below), and ends with a `left:` list of the branches still there and why. It runs no review, and it never pushes.
+Node 22, git, no dependencies. It replaces `land-lane` (plan 2026-11-24).
 
 ```sh
 node ~/.claude/tools/land/land.mjs <branch> [--repo <path>] [--test <command>] [--test-timeout <seconds>]
@@ -42,11 +43,22 @@ Steps, in order; nothing changes until every check has passed:
    (untracked ones are allowed), and a base checkout edited or switched to another branch meanwhile. Every refusal in this
    step puts the worktree back on the unchanged branch; a pass moves the branch to the tested sha.
 4. Fast-forward: `git merge --ff-only <full sha>` in the base checkout, with the sha the rebase produced (with a test, the sha tested).
-   A base that moved since step 2 is refused; after a passing test that leaves the lane at the tested sha.
-5. Clean-up: a locked worktree is unlocked, then removed with `git worktree remove` (ignored files in it, such as notes or
-   `node_modules`, go with it); the branch is deleted with `git branch -d`. A git repository inside an ignored folder of the
-   worktree stops the clean-up first (the landing stands, exit 1): its commits may be the only copy. The message names the
-   repository; move it out of the worktree, then run `land <branch>` again, which finishes the clean-up.
+   A base that moved since step 2 is refused; after a passing test that leaves the lane at the tested sha. Then one line goes
+   to the land ledger ("Land ledger" below).
+5. Clean-up of the lane's folder, then its branch:
+   - A pool folder (`<main worktree>/.claude/worktrees/lane-<n>`, handed out by `git-tidy lane claim` and locked with
+     `cs-lane-pool <branch>`) is not removed: git-tidy's `detachLandedSlot` (`../git-tidy/lib/lane-pool.mjs`) detaches it at
+     the landed sha and unlocks it, so `git-tidy lane list` shows it `free` (`busy` while untracked files a `--test` run left
+     are there) and the next claim reuses it with its caches warm (`lane folder <path> detached at <sha> (kept for the next
+     lane)`). Its ignored files (`node_modules`, a local `.env`) stay; the next claim cleans them, and `git-tidy lane reclaim`
+     removes idle folders (`../git-tidy/README.md`, "lane"). A pool folder that cannot be detached (its HEAD is not the landed
+     sha, it has tracked changes, or git fails) is removed as below, and the line says why
+     (`removed worktree <path> (not kept as a lane folder: <why>)`).
+   - Any other worktree is unlocked when locked, then removed with `git worktree remove` (ignored files in it, such as notes
+     or `node_modules`, go with it). A git repository inside an ignored folder of that worktree stops the clean-up first (the
+     landing stands, exit 1): its commits may be the only copy. The message names the repository; move it out of the
+     worktree, then run `land <branch>` again, which finishes the clean-up.
+   - Then the branch is deleted with `git branch -d`.
 6. Sweep (`sweep.mjs`): git-tidy's `prune --apply` over the whole repository, with all its safety checks
    (`../git-tidy/README.md`, "prune"), held to the one rule: only branches whose content is on the base go ("Folded
    branches" below), each with its clean worktree. Older copies and agent leftover branches whose work is on another branch,
@@ -79,7 +91,30 @@ left:
   lane/top: active, ahead 4
 ```
 
-With no other branch the block is `left: none`.
+With no other branch the block is `left: none`. A lane in a pool folder prints
+`lane folder /path/to/.claude/worktrees/lane-1 detached at <full sha> (kept for the next lane)` in place of its
+`removed worktree` line.
+
+## Land ledger
+
+Each landing appends one JSON line, right after the fast-forward, to `~/.claude/state/land/<repo-key>.jsonl` (`~` is the
+`HOME` land runs with), so a tool such as `board tick` can tell what landed without asking an agent:
+
+```json
+{"at":"2026-11-25T10:00:00.000Z","repo":"/path/to/app","branch":"lane/x","from":"<40-hex>","to":"<40-hex>","commits":3}
+```
+
+`at` is the time of the landing, `repo` the base checkout, `from` the base's sha before the fast-forward, `to` the landed sha
+(the base's new tip) and `commits` how many commits landed. `<repo-key>` is the first 16 hex of the sha256 of the real path
+of the repository's git common dir (`git rev-parse --path-format=absolute --git-common-dir`), so every worktree of one
+repository writes the same file, whatever link or letter case its path came through. `ledger.mjs` holds the format: land
+writes with `appendLandEntry`, a reader uses `readLandEntries` (it skips and counts lines that do not parse or lack a field)
+and `landLedgerPath`.
+
+A line that cannot be written (a link, FIFO or folder at the path, a file that would pass its 32 MB cap, a disk error)
+never fails the landing: land prints one `land: the ledger line of <branch> was not written (<why>) ...` line on stderr and
+goes on (exit 0). `git-tidy range <to sha>` finds that landing's range again from the base's reflog. The ledger is a plain
+state file: move it away or delete it to start again.
 
 ## Folded branches
 
@@ -120,6 +155,7 @@ Git runs without a shell and without the variables that point it at another repo
 worktree list and the clean checks are git-tidy's (`../git-tidy/lib/repo.mjs`), and so are the content proof
 (`../git-tidy/lib/branches.mjs`), the deletion log (`../git-tidy/lib/deletion-log.mjs`), the `in <B>` hint
 (`../git-tidy/lib/in-lane.mjs`) and the sweep (`../git-tidy/lib/prune.mjs`); the test's process tree is ended by
-`../long-run/lib/process-tree.mjs`. Files: `land.mjs` (the CLI and its steps), `sweep.mjs` (step 6: the sweep and the `left:` block),
+`../long-run/lib/process-tree.mjs`; the pool folder detach is git-tidy's (`../git-tidy/lib/lane-pool.mjs`). Files: `land.mjs`
+(the CLI and its steps), `ledger.mjs` (the land ledger), `sweep.mjs` (step 6: the sweep and the `left:` block),
 `test-gate.mjs` (the test step), `run-test.mjs` (runs the command), `refusal.mjs` (the refusal and the
 clean check). Tests: `tests/land.test.mjs`, `tests/land-test-gate.test.mjs`, `tests/land-sweep*.test.mjs` (`land-sweep-strict` for the one rule), `tests/git-tidy-content-equal.test.mjs`.

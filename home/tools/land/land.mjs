@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Purpose: land one lane on its base branch with one command: rebase the lane onto the base, optionally test the rebased tip,
-//   fast-forward the base checkout to it, then delete the lane's worktree and branch, then every other branch whose content is
-//   all on the base, and print what is left and why (sweep.mjs). It runs no review.
+//   fast-forward the base checkout to it and record that in the land ledger (ledger.mjs), then clear the lane away (a pool folder
+//   of `git-tidy lane claim` is kept for the next lane, any other worktree is removed) and delete its branch, then every other
+//   branch whose content is all on the base, and print what is left and why (sweep.mjs). It runs no review.
 // Usage: node ~/.claude/tools/land/land.mjs <branch> [--repo <path>] [--test <command>] [--test-timeout <seconds>]
 //   --repo is the base checkout (the folder where the base branch is checked out), default the current folder; the base is the
 //   branch checked out there. --test runs <command> in the lane's worktree at the rebased tip; a failing test refuses the land.
@@ -16,16 +17,22 @@
 // - History stays one line: the base moves only by `git merge --ff-only` of the full sha the rebase produced (never a moving
 //   ref), and with --test that is the sha that was tested. The base's sha is read once: the rebase and the fast-forward both use
 //   it, and a base that moved meanwhile is refused. A rebase that stops is aborted, so the lane is left as it was.
-// - Never pushes and never forces: a locked worktree is unlocked, then removed with `git worktree remove`; the branch goes with
-//   `git branch -d`. Git runs without a shell and without the variables that pick a repository (../git-tidy/lib/git.mjs).
+// - Never pushes and never forces: a pool folder (`<main>/.claude/worktrees/lane-<n>`) is detached at the landed sha and unlocked by
+//   git-tidy's detachLandedSlot (../git-tidy/lib/lane-pool.mjs), never removed; any other worktree, or a pool folder that could not
+//   be detached, is unlocked when locked, then removed with `git worktree remove`; the branch goes with `git branch -d`. Git runs
+//   without a shell and without the variables that pick a repository (../git-tidy/lib/git.mjs).
+// - The land ledger gets one line per landing, written only after the fast-forward; a line that cannot be written is one stderr
+//   warning, and the landing goes on and exits 0.
 // - The clean-up after the landing runs `git-tidy prune --apply` over the repository: a branch goes only when its tip is on
 //   the base or merging it would change nothing, and only after it is written to the deletion log. A clean-up that fails (a
 //   deletion log that is not a regular file) is printed on stderr and removes nothing more; the landing stands and exits 0.
 import { realpathSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { UsageError, gitFlag, gitText, runGit } from '../git-tidy/lib/git.mjs';
+import { detachLandedSlot } from '../git-tidy/lib/lane-pool.mjs';
 import { nestedRepositoryPaths, nestedRepositoryWhy } from '../git-tidy/lib/lane-slots.mjs';
-import { listWorktrees } from '../git-tidy/lib/repo.mjs';
+import { listWorktrees, openRepo } from '../git-tidy/lib/repo.mjs';
+import { appendLandEntry } from './ledger.mjs';
 import { LandRefusal, firstLine, refuseUnclean } from './refusal.mjs';
 import { MAX_TIMEOUT_SECONDS } from './run-test.mjs';
 import { sweepRepo } from './sweep.mjs';
@@ -145,21 +152,32 @@ function refuseNestedRepository({ base }, branch, worktree, tip) {
 }
 
 /**
- * Removes the lane's worktree (unlocked first) and deletes its branch; returns one line per step. A git repository inside an
- * ignored folder of the worktree stops it first (refuseNestedRepository).
+ * Clears the landed lane's worktree away and returns the line to print. A pool folder is detached at `tip` and unlocked for the
+ * next lane (git-tidy's detachLandedSlot, given the repository the way git-tidy's own land opens it). Any other worktree, or a pool
+ * folder that could not be detached (the line says why), is unlocked when locked and removed, after refuseNestedRepository.
+ * Throws when a git step fails.
+ */
+function clearWorktree({ dir, base }, branch, worktree, tip) {
+  const { folder, why } = detachLandedSlot(openRepo(dir, base), branch, tip);
+  if (folder !== null) return `lane folder ${folder} detached at ${tip} (kept for the next lane)`;
+  refuseNestedRepository({ base }, branch, worktree, tip);
+  if (worktree.locked) gitText(dir, ['worktree', 'unlock', worktree.path]);
+  gitText(dir, ['worktree', 'remove', worktree.path]);
+  return why === undefined ? `removed worktree ${worktree.path}` : `removed worktree ${worktree.path} (not kept as a lane folder: ${why})`;
+}
+
+/**
+ * Clears the lane's worktree away (clearWorktree) and deletes its branch; returns one line per step. A git repository inside an
+ * ignored folder of a worktree to remove stops it first (refuseNestedRepository).
  */
 function removeLane({ dir, base }, branch, worktree, tip) {
-  if (worktree !== null) refuseNestedRepository({ base }, branch, worktree, tip);
   const done = [];
   try {
-    if (worktree !== null) {
-      if (worktree.locked) gitText(dir, ['worktree', 'unlock', worktree.path]);
-      gitText(dir, ['worktree', 'remove', worktree.path]);
-      done.push(`removed worktree ${worktree.path}`);
-    }
+    if (worktree !== null) done.push(clearWorktree({ dir, base }, branch, worktree, tip));
     gitText(dir, ['branch', '-d', branch]);
     done.push(`deleted branch ${branch}`);
   } catch (error) {
+    if (error instanceof LandRefusal) throw error; // refuseNestedRepository's message says itself what to do
     throw new LandRefusal(`${branch} landed on ${base} at ${tip}, but the clean-up stopped: ${error.message}; deal with that, then run land ${branch} again`);
   }
   return done;
@@ -192,6 +210,8 @@ async function land({ branch, repo, test, testTimeoutSeconds }) {
   fastForward(checkout, branch, { baseSha, tip });
   const count = gitText(checkout.dir, ['rev-list', '--count', `${baseSha}..${tip}`]);
   console.log(`landed ${branch} on ${checkout.base} at ${tip} (${count} commit(s))`);
+  const ledgerWarning = appendLandEntry(checkout.dir, { at: new Date().toISOString(), repo: checkout.dir, branch, from: baseSha, to: tip, commits: Number(count) });
+  if (ledgerWarning !== null) console.error(ledgerWarning);
   for (const line of removeLane(checkout, branch, worktree, tip)) console.log(line);
   for (const line of sweepAfter(checkout, branch, tip)) console.log(line);
 }
