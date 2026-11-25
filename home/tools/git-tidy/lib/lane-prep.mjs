@@ -1,17 +1,25 @@
 // Purpose: prepare a claimed lane folder: install what its tip needs, generically, so its tests do not fail for a missing package (a
 //   hand-made worktree has no node_modules). For each tracked lockfile: package-lock.json -> `npm ci`, pnpm-lock.yaml -> `pnpm install
 //   --frozen-lockfile` (pnpm keeps one lockfile, at its workspace root), yarn.lock -> `yarn install --immutable`, run in that lockfile's folder.
+//   Before an install it tries the repository's deps cache (lane-deps.mjs): the node_modules of the same lockfile, cloned; after a
+//   successful install it saves the result there.
 // Exports: LOCKFILE_INSTALLS, PREP_MARKER, prepareLane, installFolder, programOnPath (lane-fill.mjs finds GNU cp with it).
 // Invariants (trust boundary F10): the command is chosen from the lockfile's name only, from LOCKFILE_INSTALLS; argv, no shell; no script
 //   of the repository is run by name (its lockfile's own lifecycle scripts run as the package manager runs them in any checkout). The
 //   program is found on PATH, never through a relative PATH entry or one inside the lane folder. A folder whose node_modules holds the
-//   marker for the same lockfile sha256 is skipped; the marker is written only after a successful install, never through a link.
+//   marker for the same lockfile sha256 is skipped; the marker is written only after a successful install, never through a link (a
+//   clone from the deps cache brings the marker of the install it was saved from).
 //   A lockfile that is a link, or over MAX_LOCKFILE_BYTES, is refused (not ready), never followed.
+//   The deps cache is never used in the main checkout, so its node_modules is never replaced by a clone, nor where lane-fill.mjs
+//   cloneSupport says cloning is not possible (GIT_TIDY_LANE_FILL=checkout turns it off); where it is used, each prepareLane prunes
+//   it once.
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { accessSync, constants, lstatSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { delimiter, isAbsolute, join, relative, sep } from 'node:path';
 import { gitText } from './git.mjs';
+import { cloneFromCache, depsKey, pruneCache, saveToCache } from './lane-deps.mjs';
+import { cloneSupport } from './lane-fill.mjs';
 import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
 
 /** In this order: a folder holding two lockfiles is installed by the first that matches. */
@@ -27,6 +35,7 @@ const MAX_LOCKFILE_BYTES = 64 * 1024 * 1024;
 const MAX_MARKER_BYTES = 4096;
 const INSTALL_TIMEOUT_MS = 15 * 60 * 1000; // a cold npm ci of a big tree; a timeout is a failure, never ready
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
+const WORKTREE_FIELD = 'worktree '; // `git worktree list --porcelain`: each worktree's first field is `worktree <path>`
 // Windows: npm, pnpm and yarn are .cmd shims that only a shell runs; their JavaScript entry beside the shim runs under node instead.
 const WIN32_ENTRIES = Object.freeze({ npm: ['node_modules', 'npm', 'bin', 'npm-cli.js'], pnpm: ['node_modules', 'pnpm', 'bin', 'pnpm.cjs'], yarn: ['node_modules', 'yarn', 'bin', 'yarn.js'] });
 
@@ -122,28 +131,49 @@ function lockfileHash(lane, install) {
 }
 
 /**
+ * The git common dir, where the deps cache lives; null when the cache is not used: in the main checkout (the cache never writes its
+ * node_modules), or when lane-fill.mjs cloneSupport says cloning is not possible (GIT_TIDY_LANE_FILL=checkout in `env` among them).
+ */
+function depsCacheDirOf(lane, env) {
+  const [gitDir, commonDir] = gitText(lane, ['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir']).split('\n');
+  if (gitDir === commonDir) return null;
+  const [mainField] = gitText(lane, ['worktree', 'list', '--porcelain', '-z']).split('\0'); // git lists the main worktree first
+  return cloneSupport(mainField.slice(WORKTREE_FIELD.length), commonDir, env).mode === 'clone' ? commonDir : null;
+}
+
+/** Brings one lockfile's folder up to date: from its marker, from the deps cache, or by an install; `{ outcome, why? }`. */
+function prepareFolder(lane, install, { env, timeoutMs, cacheDir }) {
+  const folder = join(lane, install.dir);
+  const hash = lockfileHash(lane, install);
+  if (hash.why !== undefined) return { outcome: 'failed', why: hash.why };
+  const marker = markerOf(folder);
+  if (marker?.lockfile === install.lockfile && marker.sha256 === hash.sha256) return { outcome: 'up to date' };
+  const key = depsKey({ dir: install.dir, lockfile: install.lockfile, sha256: hash.sha256 });
+  if (cacheDir !== null && cloneFromCache(cacheDir, key, folder) === 'cloned') return { outcome: 'cloned' };
+  const why = runInstall(lane, install, env, timeoutMs);
+  if (why !== null) return { outcome: 'failed', why };
+  writeMarker(folder, { lockfile: install.lockfile, sha256: hash.sha256 });
+  if (cacheDir !== null) saveToCache(cacheDir, key, folder);
+  return { outcome: 'installed' };
+}
+
+/**
  * Installs what the checked-out tip of `lane` needs (see the header).
  * @param {string} lane the lane folder (a worktree)
  * @param {{ env?: NodeJS.ProcessEnv, timeoutMs?: number }} [options] PATH and the rest of the installs' environment; their timeout
- * @returns {{ ready: boolean, installs: Array<{ dir: string, command: string, outcome: 'installed'|'up to date'|'failed', why?: string }> }}
- *   ready false at the first failed install (the later ones are not run)
- * @throws {Error} when git cannot list the lockfiles
+ * @returns {{ ready: boolean, installs: Array<{ dir: string, command: string, outcome: 'installed'|'cloned'|'up to date'|'failed', why?: string }> }}
+ *   cloned: node_modules came from the deps cache, no install ran; ready false at the first failed install (the later ones are not run)
+ * @throws {Error} when git cannot list the lockfiles or worktrees or name the git dirs, or the deps cache cannot be written or pruned (lane-deps.mjs)
  */
 export function prepareLane(lane, { env = process.env, timeoutMs = INSTALL_TIMEOUT_MS } = {}) {
+  const planned = plannedInstalls(lane);
+  const cacheDir = depsCacheDirOf(lane, env);
+  if (cacheDir !== null) pruneCache(cacheDir);
   const installs = [];
-  for (const install of plannedInstalls(lane)) {
-    const command = [install.program, ...install.args].join(' ');
-    const folder = join(lane, install.dir);
-    const hash = lockfileHash(lane, install);
-    const marker = markerOf(folder);
-    if (hash.sha256 !== undefined && marker?.lockfile === install.lockfile && marker.sha256 === hash.sha256) {
-      installs.push({ dir: install.dir, command, outcome: 'up to date' });
-      continue;
-    }
-    const why = hash.why ?? runInstall(lane, install, env, timeoutMs);
-    if (why !== null) return { ready: false, installs: [...installs, { dir: install.dir, command, outcome: 'failed', why }] };
-    writeMarker(folder, { lockfile: install.lockfile, sha256: hash.sha256 });
-    installs.push({ dir: install.dir, command, outcome: 'installed' });
+  for (const install of planned) {
+    const prepared = prepareFolder(lane, install, { env, timeoutMs, cacheDir });
+    installs.push({ dir: install.dir, command: [install.program, ...install.args].join(' '), ...prepared });
+    if (prepared.outcome === 'failed') return { ready: false, installs };
   }
   return { ready: true, installs };
 }
