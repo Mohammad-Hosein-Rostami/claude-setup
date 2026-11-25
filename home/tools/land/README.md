@@ -51,14 +51,19 @@ Steps, in order; nothing changes until every check has passed:
      the landed sha and unlocks it, so `git-tidy lane list` shows it `free` (`busy` while untracked files a `--test` run left
      are there) and the next claim reuses it with its caches warm (`lane folder <path> detached at <sha> (kept for the next
      lane)`). Its ignored files (`node_modules`, a local `.env`) stay; the next claim cleans them, and `git-tidy lane reclaim`
-     removes idle folders (`../git-tidy/README.md`, "lane"). A pool folder that cannot be detached (its HEAD is not the landed
-     sha, it has tracked changes, or git fails) is removed as below, and the line says why
-     (`removed worktree <path> (not kept as a lane folder: <why>)`).
-   - Any other worktree is unlocked when locked, then removed with `git worktree remove` (ignored files in it, such as notes
+     removes idle folders (`../git-tidy/README.md`, "lane"). The detach reads the worktrees under the pool lock, so no
+     claim or release can change the folder between that read and the switch. A pool folder that cannot be freed (its HEAD
+     is not the landed sha, it has tracked changes, or git fails) is never removed or unlocked: it is kept, locked, the
+     landing stands, and land exits 1 with
+     `land: <branch> landed on <base> at <sha>; lane folder <path> not freed: <why>; deal with that, then free it with: node ~/.claude/tools/git-tidy/git-tidy.mjs lane release --repo <repo> --folder <path>`.
+     Running `land <branch>` again once the cause is gone also frees it. A pool lock that stays busy for 60 s stops the
+     clean-up with nothing touched, also exit 1 (`... but the clean-up stopped: <why>; deal with that, then run land <branch> again`).
+   - Any other worktree that holds the branch (read under the same lock) is unlocked when locked, then removed with `git worktree remove` (ignored files in it, such as notes
      or `node_modules`, go with it). A git repository inside an ignored folder of that worktree stops the clean-up first (the
      landing stands, exit 1): its commits may be the only copy. The message names the repository; move it out of the
      worktree, then run `land <branch>` again, which finishes the clean-up.
-   - Then the branch is deleted with `git branch -d`.
+   - Then the branch is deleted with `git branch -d`. A branch already deleted (a `lane release` ran during the land) prints
+     `branch <branch> already deleted`.
 6. Sweep (`sweep.mjs`): git-tidy's `prune --apply` over the whole repository, with all its safety checks
    (`../git-tidy/README.md`, "prune"), held to the one rule: only branches whose content is on the base go ("Folded
    branches" below), each with its clean worktree. Older copies and agent leftover branches whose work is on another branch,
@@ -98,7 +103,10 @@ With no other branch the block is `left: none`. A lane in a pool folder prints
 ## Land ledger
 
 Each landing appends one JSON line, right after the fast-forward, to `~/.claude/state/land/<repo-key>.jsonl` (`~` is the
-`HOME` land runs with), so a tool such as `board tick` can tell what landed without asking an agent:
+`HOME` land runs with), so a tool such as `board tick` can tell what landed without asking an agent. A base that moved
+always gets its line. A base that did not move gets none when the ledger already has a line for the branch at a sha the
+base holds: that is a re-run of `land` after a clean-up stop, also when other lanes moved the base in between. Otherwise (a
+lane with no new commit) it gets a line with `"commits":0`, so a reader sees the lane as landed.
 
 ```json
 {"at":"2026-11-25T10:00:00.000Z","repo":"/path/to/app","branch":"lane/x","from":"<40-hex>","to":"<40-hex>","commits":3}
@@ -113,7 +121,8 @@ and `landLedgerPath`.
 
 A line that cannot be written (a link, FIFO or folder at the path, a file that would pass its 32 MB cap, a disk error)
 never fails the landing: land prints one `land: the ledger line of <branch> was not written (<why>) ...` line on stderr and
-goes on (exit 0). `git-tidy range <to sha>` finds that landing's range again from the base's reflog. The ledger is a plain
+goes on (exit 0). A ledger that cannot be checked for an earlier line prints `land: the ledger could not be checked (<why>);
+...` and the line is written. `git-tidy range <to sha>` finds that landing's range again from the base's reflog. The ledger is a plain
 state file: move it away or delete it to start again.
 
 ## Folded branches
@@ -148,7 +157,7 @@ test passed on <full sha>
 | Exit | Meaning |
 | ---- | ------- |
 | 0 | landed and cleaned up |
-| 1 | refused or stopped; the `land:` line says why and what to do (a dirty checkout, an unknown branch, a rebase conflict, a failed or timed-out test, a lane, worktree or base that moved meanwhile, a clean-up step that failed after landing) |
+| 1 | refused or stopped; the `land:` line says why and what to do (a dirty checkout, an unknown branch, a rebase conflict, a failed or timed-out test, a lane, worktree or base that moved meanwhile, a clean-up step that failed after landing, a pool folder kept locked) |
 | 2 | usage error |
 
 Git runs without a shell and without the variables that point it at another repository (`../git-tidy/lib/git.mjs`); the
