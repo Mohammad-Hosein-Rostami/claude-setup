@@ -224,9 +224,23 @@ function makeRepoWithManyBranches(perKind) {
   git(dir, 'cherry-pick', 'landed');
   git(dir, 'branch', '-D', 'landed', 'open');
   const refs = [];
-  // Each unmerged branch gets its own tip (branches with one tip are copies of each other and prune removes all but one).
+  // Each unmerged branch gets its own tip (branches with one tip are copies of each other and prune removes all but one): a child
+  // of openTip with its tree, author and committer and the message `open <i>`, as `git commit-tree` would write it. Speed: one
+  // `git hash-object` call writes them all instead of one commit-tree process per branch.
+  const [header] = git(dir, 'cat-file', 'commit', openTip).split('\n\n');
+  const people = header.split('\n').filter((line) => line.startsWith('author ') || line.startsWith('committer '));
   const openTree = git(dir, 'rev-parse', `${openTip}^{tree}`);
-  const openTips = Array.from({ length: perKind }, (_, i) => git(dir, 'commit-tree', openTree, '-p', openTip, '-m', `open ${i}`));
+  const objects = makeTempDir('git-tidy-objects-');
+  const commitFiles = Array.from({ length: perKind }, (_, i) => {
+    const file = join(objects, `open-${i}`);
+    writeFileSync(file, [`tree ${openTree}`, `parent ${openTip}`, ...people, '', `open ${i}`, ''].join('\n'));
+    return file;
+  });
+  // The paths go on stdin: 300 temp paths on one command line come near the Windows length limit.
+  const written = spawnSync('git', ['hash-object', '-t', 'commit', '-w', '--stdin-paths'], { cwd: dir, encoding: 'utf8', env: CLEAN_ENV, input: `${commitFiles.join('\n')}\n` });
+  assert.equal(written.status, 0, `git hash-object: ${written.stderr}`);
+  const openTips = written.stdout.trim().split('\n');
+  assert.equal(openTips.length, perKind, 'one new commit per unmerged branch');
   for (let i = 0; i < perKind; i++) refs.push(`${ancestorTip} refs/heads/anc/${i}`, `${landedTip} refs/heads/landed/${i}`, `${openTips[i]} refs/heads/open/${i}`);
   writeFileSync(join(dir, '.git', 'packed-refs'), `${refs.join('\n')}\n`);
   return dir;
