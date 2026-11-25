@@ -1,7 +1,7 @@
 // Purpose: prepare a claimed lane folder: install what its tip needs, generically, so its tests do not fail for a missing package (a
 //   hand-made worktree has no node_modules). For each tracked lockfile: package-lock.json -> `npm ci`, pnpm-lock.yaml -> `pnpm install
 //   --frozen-lockfile` (pnpm keeps one lockfile, at its workspace root), yarn.lock -> `yarn install --immutable`, run in that lockfile's folder.
-// Exports: LOCKFILE_INSTALLS, PREP_MARKER, prepareLane, installFolder.
+// Exports: LOCKFILE_INSTALLS, PREP_MARKER, prepareLane, installFolder, programOnPath (lane-fill.mjs finds GNU cp with it).
 // Invariants (trust boundary F10): the command is chosen from the lockfile's name only, from LOCKFILE_INSTALLS; argv, no shell; no script
 //   of the repository is run by name (its lockfile's own lifecycle scripts run as the package manager runs them in any checkout). The
 //   program is found on PATH, never through a relative PATH entry or one inside the lane folder. A folder whose node_modules holds the
@@ -38,7 +38,7 @@ const realOr = (path) => { try { return realpathSync.native(path); } catch { ret
 const isFile = (path) => { try { return statSync(path).isFile(); } catch { return false; } };
 
 /** `{ file, args }` to run `program` with, from an absolute PATH folder outside `lane`; null when it is not installed. */
-function programOnPath(env, program, lane) {
+export function programOnPath(env, program, lane) {
   const realLane = realOr(lane);
   for (const folder of (env.PATH ?? env.Path ?? '').split(delimiter)) {
     if (folder === '' || !isAbsolute(folder) || isInside(realLane, realOr(folder))) continue; // never a program the repository brings
