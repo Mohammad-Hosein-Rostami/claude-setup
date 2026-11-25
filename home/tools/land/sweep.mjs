@@ -56,7 +56,7 @@ function leftLines(repo, items, now) {
   const states = findLeftovers(repo).states;
   if (states.length === 0) return ['left: none'];
   const reasons = keptReasons(repo, items);
-  const holders = inLaneHolders(repo, states.filter(({ state }) => state === 'unmerged').map(({ name }) => name));
+  const holders = inLaneHolders(repo, states.filter(({ state }) => state === 'unmerged').map(({ name }) => name), states);
   const dates = commitDates(repo);
   const why = ({ name, ahead }) => {
     if (reasons.has(name)) return `kept: ${plain(reasons.get(name))}`;

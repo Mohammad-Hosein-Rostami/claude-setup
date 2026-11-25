@@ -192,7 +192,7 @@ function foldItems(repo, leftovers, notLanes) {
   const findings = folded.map(({ name, tip, by, landing }) => item('folded-branch', name, `${tip.slice(0, 7)} folded into ${by} (landed ${new Date(landing.landedAt).toISOString()})`));
   const foldedNames = new Set(folded.map(({ name }) => name));
   const lanes = leftovers.states.filter((b) => b.state === 'unmerged' && !notLanes.has(b.name) && !foldedNames.has(b.name)).map(({ name }) => name);
-  const hints = [...inLaneHolders(repo, lanes)].map(([name, holder]) => item('in-lane?', name, `all its commits are in ${holder}; it goes when ${holder} lands`));
+  const hints = [...inLaneHolders(repo, lanes, leftovers.states)].map(([name, holder]) => item('in-lane?', name, `all its commits are in ${holder}; it goes when ${holder} lands`));
   return { findings, hints, named: new Set([...foldedNames, ...hints.map(({ subject }) => subject)]) };
 }
 
