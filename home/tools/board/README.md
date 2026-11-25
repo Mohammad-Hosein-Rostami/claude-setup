@@ -1,11 +1,31 @@
 # board
 
+The status line's engine: a detached refresh writes each session's board file, and `show` prints it as plain lines.
+
 The engine behind the status line: which agents run, what waits on the owner and the git state of the session's worktrees, in
 one small file the status line reads (`~/.claude/state/board/<session>.json`, at most 48 KB). Node 22, no dependencies.
 
 Run: `node ~/.claude/tools/board/board.mjs refresh --session <id> [--force]` rewrites the board file. You rarely run it by
 hand: `home/statusline.mjs` starts it detached when the file is older than its refresh interval, and draws only what the file
 holds, so a slow git or transcript scan never delays a render.
+
+## The show command
+
+`node ~/.claude/tools/board/board.mjs show [--session <id>] [--refresh] [--json]` prints the session's board file as plain
+lines and writes nothing (session default `CLAUDE_CODE_SESSION_ID`). `--refresh` runs one forced refresh first (the same as
+`refresh --force`); `--json` prints the board file's JSON instead of the lines. The lines (`lib/show.mjs`), every name and text
+cleaned of control characters as on the status line:
+
+```text
+board <session> at <ISO time of the board's last write> <fresh|stale N s>
+agent <id> <type> <running|done|quiet N min> branch <branch|-> folder <worktree|-> <doing|->
+```
+
+One `agent` line per agent, in the board's order; with no agents only the `board` line prints. `stale N s` is the board's own
+mark: its last refresh went over its budget and kept data N seconds old (see [The refresh](#the-refresh)); anything else is
+`fresh`, so read the time for the age. No lane lines yet: they wait for a change of the work model (owner decision).
+Exit 0 shown, 1 no board file for the session (it prints the `refresh --force` command that writes one), 2 usage (a missing or
+malformed session id, an unknown command).
 
 ## The status line rows
 
@@ -28,9 +48,11 @@ The agents row (RC8) is one summary whatever the number of agents: running count
 The git rows (RC15, RC19) come from the board's detached refresh only (render under 50 ms). In the session's repository: its name
 (bold), the current branch, what to push and to pull (yellow), conflicts (red), an operation (`rebase 3/7`, yellow), staged,
 changed and new files (`changes ?` where the refresh had refs only; `changes unknown` while git has not answered for that
-worktree yet, with the reason in the board file's `unknown`), the stash and the last commit's age (`branches unknown`, never
+worktree yet, with the reason in the board file's `unknown`; never null; new files are counted only on the session's own
+worktree, at most every 60 s), the stash and the last commit's age (`branches unknown`, never
 `✓ clean`, while git has given no branch refs and none are cached, with the reason in `refsUnknown`); then a `lanes` row of
-its other active branches (checked out where an agent works, with changes, ahead of the base with a commit in the last 24 h, or
+its other active branches (checked out in the session folder or where a live agent works, with changes, ahead of the base
+with a commit in the last 24 h, or
 the base while not level with its upstream), at most 4 and then `+K more`, each with `↑2` ahead, `~3` changed, its agents,
 `ready to land` or `↓5 needs rebase` (yellow). Outside a repository, or with a second one, one row per used repository (at most
 2, then `+K more repos`) with its lanes after ` │ `. `git     loading` before the board's first refresh,
@@ -74,14 +96,17 @@ A refresh runs one at a time (a claim in the file), at most every 5 s while an a
   refresh (never read back from the cache): the session folder's and the setup's own (the repository holding the running board
   code, from this code's real path: `~/.claude/tools` links into it). Claude Code's folder-trust record is not used: the owner runs
   with bypass permissions, so it is unreliable. Of those, up to 3 with work: the session's own and each one a registered worktree
-  of which holds a folder this session used (an agent's edited files, its isolation worktree, its cwd, the lead's edits). Git runs
+  of which holds a folder this session used (an agent's edited files, its isolation worktree, its cwd, live or done, and the
+  lead's Edit/Write folders, read from the new bytes of the main transcript), newest use first. Git runs
   only on what the trusted repository records itself, read fresh on every refresh and never from the cache: its shared git folder
   (`--git-dir=<common>` for the refs and the base-branch facts) and each worktree it records (the main checkout, and
   `<common>/worktrees/<name>` whose `gitdir` names `<path>/.git` and whose `commondir` leads back to `<common>`; a main `.git`
   holding a `commondir` file is no main checkout), as `--git-dir=<that git folder> --work-tree=<path>`, so git
   never reads a worktree's own `.git` (a rewritten or racing `.git` cannot point it elsewhere) and `--ignore-submodules=dirty` keeps
   it out of nested repositories. Paths are compared as real paths in the disk's letter case. Every call has
-  `-c core.fsmonitor=false -c safe.bareRepository=explicit`, no inherited `GIT_*` variable and `GIT_COMMON_DIR=<common>` (git
+  `-c core.fsmonitor=false -c safe.bareRepository=explicit -c core.hooksPath=/dev/null -c log.showSignature=false` (the null
+  device on Windows), `GIT_NO_LAZY_FETCH=1` (a partial clone never fetches) and `GIT_OPTIONAL_LOCKS=0`, no inherited `GIT_*`
+  variable and `GIT_COMMON_DIR=<common>` (git
   would otherwise follow a git folder's `commondir` file even under `--git-dir=`), and one git budget per refresh. When git runs
   out of time (a loaded machine), a repository keeps its last good state for up to 60 s and its row says `stale`. Agents are
   matched to those worktrees by path prefix: the folders of the files they edited, newest first (Edit, Write, MultiEdit,
@@ -91,11 +116,15 @@ A refresh runs one at a time (a claim in the file), at most every 5 s while an a
   `%(ahead-behind:main)` every 15 s, and `--no-optional-locks status --untracked-files=no` per worktree only when its index or
   HEAD changed (15 s at most); 1.5 s timeout per call and 3 s of git per refresh (sized for a loaded machine: a call takes
   up to ~0.3 s there), past which the old values stay with their age, or `unknown` with the reason where there are none.
+  Before `status`, `config --list --name-only --show-scope` looks for a filter in the repository's own config (`status` would run
+  it, and no flag turns filters off): such a worktree gets refs only (`trust: refs`, no counts).
 
 A refresh over its budget (git's 4.5 s at most plus 300 ms) keeps the old board and marks it `stale N s` (the cursors it read are kept, so the next one
 reads only new bytes). Journals, transcripts and meta files are Claude Code's internal formats: an unreadable part shows
 nothing, never a wrong line, and never throws.
 
+The board holds no job, step or estimate facts and no `where` tree (plan 2026-11-24).
+
 Not yet shown: the tidy-gate verdict, and which agent a question comes from (the asking marker holds no agent).
 
-Files: `board.mjs` (the `refresh` command), `lib/` (see `lib/README.md`).
+Files: `board.mjs` (the `refresh` and `show` commands), `lib/` (see `lib/README.md`).
