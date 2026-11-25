@@ -36,29 +36,41 @@ if (script.includes('== pin')) {
 }
 `;
 
+const OWN_FILES = process.platform === 'win32'; // shared-tools.mjs is POSIX only
+
+/** Writes `body` to `path` and makes it runnable. */
+function writeExecutable(path, body) {
+  writeFileSync(path, body);
+  chmodSync(path, 0o755);
+}
+
 /** A repo on main with the files the script reads, stubs for the tools it runs, and a home folder with the local claude settings. */
 function setup({ targets = undefined, cliVersion = '', dirty = false } = {}) {
   const root = makeTempDir('sync-');
   const repo = join(root, 'repo');
   const home = join(root, 'home');
   for (const dir of [join(repo, 'scripts'), join(repo, 'settings'), join(repo, 'home', 'tools', 'git-tidy'), join(home, '.claude')]) mkdirSync(dir, { recursive: true });
-  // The repo's two scripts are hard links of shared files and the tools one shared folder: a new executable is slow to start. The
-  // dirty case writes its own install.sh (it changes the file, and the run stops at verify before any script runs).
+  // On POSIX the repo's two scripts are hard links of shared files and the tools one shared folder: a new executable is slow to
+  // start. The dirty case writes its own install.sh (it changes the file, and the run stops at verify before any script runs).
+  // Shared tools are POSIX only, so win32 writes every file of its own, as before.
   const scripts = { 'doctor.sh': `#!/bin/sh\nCLAUDE_FLOOR=${FLOOR}\nexit 0\n`, 'install.sh': '#!/bin/sh\nexit 0\n' };
   for (const [name, body] of Object.entries(scripts)) {
-    if (dirty && name === 'install.sh') {
-      writeFileSync(join(repo, 'scripts', name), body);
-      chmodSync(join(repo, 'scripts', name), 0o755);
-    } else hardLinkSharedTool(join(repo, 'scripts', name), body);
+    if (OWN_FILES || (dirty && name === 'install.sh')) writeExecutable(join(repo, 'scripts', name), body);
+    else hardLinkSharedTool(join(repo, 'scripts', name), body);
   }
   writeFileSync(join(repo, 'home', 'tools', 'git-tidy', 'git-tidy.mjs'), 'process.exit(0);\n');
   writeFileSync(join(repo, 'settings', 'local.json'), JSON.stringify({ claudeSetup: { ...(cliVersion ? { cliVersion } : {}), ...(targets ? { syncTargets: targets } : {}) } }));
   writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify({ env: { DISABLE_UPDATES: '1' } }));
-  const bin = sharedToolDir({
+  const tools = {
     claude: `#!/bin/sh\necho "${FLOOR} (Claude Code)"\n`,
     ssh: FAKE_SSH,
     scp: '#!/bin/sh\necho "scp $*" >> "$FAKE_LOG"\n',
-  });
+  };
+  const bin = OWN_FILES ? join(root, 'bin') : sharedToolDir(tools);
+  if (OWN_FILES) {
+    mkdirSync(bin);
+    for (const [name, body] of Object.entries(tools)) writeExecutable(join(bin, name), body);
+  }
   const git = (...args) => spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
   git('init', '-q', '-b', 'main');
   git('add', '-A');
