@@ -1,9 +1,12 @@
 // Purpose: the fill file of a lane slot in clone mode (lane-fill.mjs cloneSupport), `<git common dir>/cs-lane-fill/lane-<n>.json`
 //   holding `{ pid, branch, target, startedAt }`. A claim writes it in its first step under the pool lock and deletes it in its end
-//   step under the lock again (lane-pool.mjs). While its pid lives the slot is filling; once that pid is gone (or the claim failed in
-//   this process) the slot is broken (lane-slots.mjs readSlot), and the next claim that takes it empties it here and fills it again.
+//   step under the lock again (lane-pool.mjs). It counts only on a detached slot locked `cs-lane-pool …` (lane-slots.mjs readSlot):
+//   there the slot is filling while its pid lives, and broken once that pid is gone (or the claim failed in this process), and the
+//   next claim that takes it empties it here and fills it again. On a branch (the switch was the hand-out) it is ignored.
 // Exports: FILL_FOLDER, startFillFile, readFillFile, deleteFillFile, isPidAlive, removeStaleIndexLock, emptyForRefill.
 // Invariants:
+// - Every step that changes a slot's lock or HEAD writes or deletes its fill file before its first change: a clone claim writes it, a
+//   checkout claim, release and land's detach delete it (lane-pool.mjs, lane-release.mjs), so a stale one never counts.
 // - A fill file is written through a fresh temp file (O_EXCL, 0600) renamed over it, so a link at its name is replaced, never followed,
 //   and a reader never sees half a file. It is read only as a plain file of at most MAX_FILL_FILE_BYTES with a checked shape; anything
 //   else throws, and the reader keeps the slot busy.
@@ -68,7 +71,7 @@ export function readFillFile(commonDir, slot) {
   return value;
 }
 
-/** Deletes the fill file of `slot` (the end step of its claim); a missing one is no error. */
+/** Deletes the fill file of `slot` (a claim's end step, a checkout claim, release, land's detach); a missing one is no error. */
 export function deleteFillFile(commonDir, slot) {
   rmSync(fillFilePath(commonDir, slot), { force: true });
 }
