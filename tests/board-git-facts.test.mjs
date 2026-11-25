@@ -21,6 +21,7 @@ import { collectBoard, readBoard, refreshBoard } from '../home/tools/board/lib/r
 import { repoStats } from '../home/tools/board/lib/repo-stats.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 import { cleanEnv } from './clean-env.mjs';
+import { fastGitPath } from './fast-git.mjs';
 
 const BOARD = fileURLToPath(new URL('../home/tools/board/board.mjs', import.meta.url));
 const GIT_STATE = new URL('../home/tools/board/lib/git-state.mjs', import.meta.url).href;
@@ -39,6 +40,7 @@ mkdirSync(HOME);
 
 const GIT_ENV = {
   ...Object.fromEntries(Object.entries(cleanEnv()).filter(([name]) => !name.startsWith('GIT_'))), HOME, GIT_CONFIG_NOSYSTEM: '1',
+  ...fastGitPath(cleanEnv()), // macOS: the fixtures' git without the slow xcrun shim (fast-git.mjs); the board's own git is unchanged
   GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t',
 };
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, env: GIT_ENV, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
