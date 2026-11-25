@@ -11,7 +11,9 @@
 //   lock file, `git status` (untracked files included) empty and no file marked assume-unchanged or skip-worktree (status hides
 //   their edits). Ignored files (node_modules, dist/, a local .env) do not make it busy.
 //   A fill file (lane-fill-state.mjs) counts only on a detached slot locked `cs-lane-pool …` (a clone claim's, before the switch that
-//   hands it out): filling while its pid lives, then broken (refilled) unless a HEAD.lock or an ignored folder's git repository is there.
+//   hands it out): filling while its pid lives, then broken (refilled) unless a HEAD.lock, a nested git repository or a sign of work
+//   no stopped fill leaves is there (a lock that is not the fill's, an unfinished operation, a HEAD off both the base and the fill's
+//   target): older code left fill files on lanes it handed out, and such a lane stays busy. A git call that fails there keeps it busy.
 //   Removing a folder (reclaim) or a stale entry (claim) needs more: removalLossWhy and staleEntryLossWhy name what the removal would
 //   destroy (a HEAD reflog holding commits found nowhere else: prune's rule, reflog.mjs; a git repository inside an ignored folder).
 import { existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
@@ -96,7 +98,12 @@ export function contentBusyWhy(repo, tree) {
   const hidden = hiddenFileCount(tree.path);
   if (hidden === null) return 'git cannot list its files';
   if (hidden > 0) return `${hidden} files ${HIDDEN_FILES_WHY}`;
-  const head = runGit(tree.path, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
+  return headOffBaseWhy(repo, tree.path);
+}
+
+/** Why the HEAD of the worktree at `path` holds commits that are not on the base, or git cannot say; null when it is on the base. */
+function headOffBaseWhy(repo, path) {
+  const head = runGit(path, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
   if (head.status !== 0) return 'its HEAD cannot be read';
   const sha = head.stdout.trim();
   const landed = runGit(repo.dir, ['merge-base', '--is-ancestor', sha, repo.baseRef]);
@@ -122,6 +129,21 @@ function isOwnWorktreeRoot(folder) {
   return top.status === 0 && slotKey(top.stdout.trim()) === slotKey(folder);
 }
 
+/**
+ * Why the slot shows what no stopped fill leaves, so its fill file is a leftover of a lane already handed out (older code deleted
+ * it after the hand-out's switch, and a rebase stopped there detaches HEAD); null when there is none. A fill writes its file, locks
+ * as `cs-lane-pool <its label>` and moves HEAD only to its target, from a HEAD on the base (a free slot) or from an earlier fill's
+ * target (a broken slot: a fill stopped in that window reads busy, never emptied).
+ */
+function workAfterFillWhy(repo, folder, tree, fillFile) {
+  if (tree.lockReason !== `${LOCK_REASON_PREFIX} ${fillFile.branch}`) return `it is locked "${tree.lockReason}", not by that fill`;
+  const operation = inProgressOperation(folder);
+  if (operation !== null) return `a ${operation} is not finished there`;
+  const head = runGit(folder, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
+  // the fill's own target may be the tip of a branch off the base: those commits are the branch's, not work done here
+  return head.status === 0 && head.stdout.trim() === fillFile.target ? null : headOffBaseWhy(repo, folder);
+}
+
 /** The state the fill file of the present slot `name` gives it (filling, broken or busy: see the header); null when none counts. */
 function fillStateOf(repo, folder, name, tree) {
   // on a branch the switch was the hand-out, and any other lock is someone else's: a leftover fill file there never empties the slot
@@ -137,7 +159,8 @@ function fillStateOf(repo, folder, name, tree) {
   // a claim runs start to end in one synchronous call, so this process's own pid here is a claim of it that failed
   if (fillFile.pid !== process.pid && isPidAlive(fillFile.pid)) return as('filling', `${fillFile.branch} pid ${fillFile.pid}`);
   const stopped = `the fill of ${fillFile.branch} by pid ${fillFile.pid} stopped`;
-  const kept = gitLockWhy(folder, REFILL_BLOCKING_LOCKS) ?? nestedRepositoryWhy(folder);
+  // the git lock check first: it fails closed when git cannot read the admin folder, which inProgressOperation reads as none
+  const kept = gitLockWhy(folder, REFILL_BLOCKING_LOCKS) ?? workAfterFillWhy(repo, folder, tree, fillFile) ?? nestedRepositoryWhy(folder);
   return kept === null ? as('broken', stopped) : as('busy', `${stopped}, but ${kept}`);
 }
 
