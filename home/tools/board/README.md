@@ -67,7 +67,6 @@ A refresh runs one at a time (a claim in the file), at most every 5 s while an a
 
 - the subagent transcripts (`<session>/subagents/agent-<id>.jsonl`; an old `subagents/workflows/` folder is not read), only their new
   bytes since the last refresh, with their `.meta.json` (type, description, worktree) (`lib/agent-transcript.mjs`, `lib/agents.mjs`);
-- the writer launch records (`hooks/lib/writer-agents.mjs`);
 - each agent's tokens (the last call's usage: its context so far) and the folder of the last file it read or changed, which
   places it in a worktree when its own folder is the lead's;
 - the base branch (`lib/repo-stats.mjs`, every 60 s): its tip and the commits on its first-parent line since local midnight;
@@ -75,7 +74,7 @@ A refresh runs one at a time (a claim in the file), at most every 5 s while an a
   refresh (never read back from the cache): the session folder's and the setup's own (the repository holding the running board
   code, from this code's real path: `~/.claude/tools` links into it). Claude Code's folder-trust record is not used: the owner runs
   with bypass permissions, so it is unreliable. Of those, up to 3 with work: the session's own and each one a registered worktree
-  of which holds a folder this session used (an agent's edited files, its launch worktree, its cwd, the lead's edits). Git runs
+  of which holds a folder this session used (an agent's edited files, its isolation worktree, its cwd, the lead's edits). Git runs
   only on what the trusted repository records itself, read fresh on every refresh and never from the cache: its shared git folder
   (`--git-dir=<common>` for the refs and the base-branch facts) and each worktree it records (the main checkout, and
   `<common>/worktrees/<name>` whose `gitdir` names `<path>/.git` and whose `commondir` leads back to `<common>`; a main `.git`
@@ -87,7 +86,7 @@ A refresh runs one at a time (a claim in the file), at most every 5 s while an a
   out of time (a loaded machine), a repository keeps its last good state for up to 60 s and its row says `stale`. Agents are
   matched to those worktrees by path prefix: the folders of the files they edited, newest first (Edit, Write, MultiEdit,
   NotebookEdit, counted only after the call succeeded; a Bash call's cwd says nothing of where it writes), then their isolation
-  worktree (`meta.worktreePath`); the launch folder (launch record) and the cwd only say the repository. One refresh per session
+  worktree (`meta.worktreePath`); the cwd only says the repository. One refresh per session
   at a time (an O_EXCL lock file from `tools/disk-free/lib/lock-file.mjs`, broken after 20 s): one `for-each-ref` with
   `%(ahead-behind:main)` every 15 s, and `--no-optional-locks status --untracked-files=no` per worktree only when its index or
   HEAD changed (15 s at most); 1.5 s timeout per call and 3 s of git per refresh (sized for a loaded machine: a call takes

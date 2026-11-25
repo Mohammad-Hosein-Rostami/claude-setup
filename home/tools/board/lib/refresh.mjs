@@ -11,7 +11,7 @@
 // (<= MAX_BOARD_BYTES: done agents go first, then the oldest, until it fits). Cache (cache-file.mjs, <session>.json): { cursors, git,
 // stats, lead, used }. The repositories (repos.mjs, owner decisions RC15 and RC19): the session folder's, then those holding a
 // folder this session used, newest use first: `used` = [{ dir, atMs }] (at most MAX_USED_DIRS) of the agents' edited folders,
-// launch worktrees and cwds (live or done) and the lead's Edit/Write folders (`lead`: an agent-transcript.mjs cursor on the main
+// isolation worktrees and cwds (live or done) and the lead's Edit/Write folders (`lead`: an agent-transcript.mjs cursor on the main
 // transcript that starts at its end, so only new bytes are read); each with the worktrees the repository records
 // (trusted-repos.mjs worktreeRecords, passed to git as `--git-dir=`/`--work-tree=`, never the used folder itself); agents are
 // matched to those worktrees by path prefix (repos.mjs placeAgents). One refresh at a time per session: an O_EXCL lock file
@@ -92,14 +92,13 @@ function leadCursor(cached, transcriptPath) {
   }
 }
 
-/** The folders each source used now, with when: agents (now while live, else when done), writer launches, the lead's new edit folders. */
-function usesNow({ agents, launchDirs, lead, oldLead, nowMs }) {
+/** The folders each source used now, with when: agents (now while live, else when done), the lead's new edit folders. */
+function usesNow({ agents, lead, oldLead, nowMs }) {
   const uses = agents.flatMap((agent) => {
     const atMs = agent.state === 'done' ? (agent.doneMs ?? nowMs) : nowMs;
     const places = agent.places ?? {};
     return [...(places.changed ?? []), places.worktree, places.cwd].map((dir, at) => ({ dir, atMs: atMs - at }));
   });
-  uses.push(...launchDirs.map((dir) => ({ dir, atMs: nowMs })));
   // the lead's folders get a time only when its list of edit folders changed: the newest first, so the order holds
   const leadDirs = lead?.changedDirs ?? [];
   if (leadDirs.join('\n') !== (oldLead?.changedDirs ?? []).join('\n')) uses.push(...leadDirs.map((dir, at) => ({ dir, atMs: (lead.lastMs ?? nowMs) - at })));
@@ -126,12 +125,11 @@ function usedDirsOf(cachedUsed, uses) {
 export function collectBoard({ session, transcriptPath, cwd }, { env = process.env, nowMs = Date.now(), cache = null } = {}) {
   const sessionFolder = typeof transcriptPath === 'string' ? join(dirname(transcriptPath), basename(transcriptPath, '.jsonl')) : null;
   const found = sessionFolder === null ? { agents: [], cursors: {} }
-    : sessionAgents({ session, sessionFolder, cursors: cache?.cursors ?? {}, env, nowMs });
-  const launchDirs = found.launchDirs ?? [];
+    : sessionAgents({ sessionFolder, cursors: cache?.cursors ?? {}, env, nowMs });
   const lead = leadCursor(cache?.lead ?? null, transcriptPath);
-  const used = usedDirsOf(cache?.used, usesNow({ agents: found.agents, launchDirs, lead, oldLead: cache?.lead ?? null, nowMs }));
-  const liveDirs = [...launchDirs, ...found.agents.filter((agent) => agent.state !== 'done')
-    .flatMap((agent) => [...(agent.places?.changed ?? []), agent.places?.worktree, agent.places?.cwd])].filter(isUsableDir);
+  const used = usedDirsOf(cache?.used, usesNow({ agents: found.agents, lead, oldLead: cache?.lead ?? null, nowMs }));
+  const liveDirs = found.agents.filter((agent) => agent.state !== 'done')
+    .flatMap((agent) => [...(agent.places?.changed ?? []), agent.places?.worktree, agent.places?.cwd]).filter(isUsableDir);
   const gitStartMs = Date.now(); // one git budget for the whole refresh (git-call.mjs GIT_BUDGET_MS), repo-stats included
   const git = sessionRepos({ sessionFolder: cwd, usedDirs: used.map(({ dir }) => dir), liveDirs, cache: cache?.git ?? null, nowMs, startMs: gitStartMs, env });
   const placed = placeAgents(found.agents, git.repos);
