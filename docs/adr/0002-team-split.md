@@ -1,6 +1,8 @@
 # 0002: Team split (one part builder per call, tess as a manager, tests only in tess)
 
 - Status: accepted. Date: 2026-11-25. Number: 0001 is taken by the Bash guard record on its lane; renumber at land if needed.
+- Superseded in part by 0008: no hook enforces the main-agent cap or the model floor any more (they are instructions), and the
+  `suite run` queue and `--cache` are gone (full suites run directly, once per tree).
 
 ## Context
 

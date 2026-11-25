@@ -1,6 +1,8 @@
 # 0006: Switch a long run to another account with `resume --account`
 
 - Status: accepted. Date: 2026-11-25.
+- Superseded in part by 0008: the guard's deny list of Claude starts is gone; "never start `claude` or a long run" is an
+  instruction now.
 
 ## Context
 

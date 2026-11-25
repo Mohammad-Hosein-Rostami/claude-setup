@@ -1,7 +1,8 @@
 # 0001: Bash guard backstop (string guard now, sandbox and env scrub only after a probe)
 
-- Status: accepted for option A; options B (sandbox) and the env scrub are **not adopted** until their probes below have run and
-  passed. Date: 2026-11-24.
+- Status: superseded by [0008](0008-full-access-no-checks.md) (2026-11-25), which removes the Bash guard. It read: accepted for
+  option A; options B (sandbox) and the env scrub are **not adopted** until their probes below have run and passed.
+  Date: 2026-11-24.
 
 ## Context
 

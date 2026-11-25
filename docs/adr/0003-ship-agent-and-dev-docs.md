@@ -1,6 +1,8 @@
 # 0003: A ship agent (max) and a docs writer (dev-docs)
 
 - Status: accepted. Date: 2026-11-25.
+- Superseded in part by 0008: no hook enforces the click on `max`'s dialog or the `owner-command:` rule any more; both stay as
+  instructions.
 
 ## Context
 
