@@ -59,13 +59,13 @@ function runLines(view, now) {
 
 /** The lines of one run, or its `unreadable` line; null when the run is finished and `all` is off. */
 function linesOfRun(root, runId, { now, all }) {
-  let view;
   try {
-    view = runView(runPaths(root, runId), now);
+    const view = runView(runPaths(root, runId), now);
+    return all || !FINISHED.has(view.state) ? runLines(view, now) : null;
   } catch (error) {
-    return [`${runId}  unreadable (${error.message})`]; // a broken run folder must not hide the other runs
+    // A broken run folder (an unreadable file, or a value in it that cannot be shown) must not hide the other runs.
+    return [`${runId}  unreadable (${error.message})`];
   }
-  return all || !FINISHED.has(view.state) ? runLines(view, now) : null;
 }
 
 /**
