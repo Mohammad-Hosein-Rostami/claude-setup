@@ -1,15 +1,16 @@
 // Tests for home/agents/*.md: exactly the seventeen agents of the lex/dev/tess setup, each with frontmatter whose name matches its
-// file, the model and effort pins the guard's floor reads (lib/agent-pins.mjs), the preloaded skills of the plan, the Agent tool
+// file, the model and effort pins, the preloaded skills of the plan, the Agent tool
 // for the agents that start helpers, the browser servers only where the plan puts them, tess in the background, and no text
 // about the removed job machinery.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { readPin } from '../home/hooks/lib/agent-pins.mjs';
+import { buildCatalog } from '../scripts/catalog.mjs';
 
 const AGENTS_DIR = fileURLToPath(new URL('../home/agents/', import.meta.url));
 const HOME_DIR = fileURLToPath(new URL('../home/', import.meta.url));
+const REPO_DIR = fileURLToPath(new URL('../', import.meta.url));
 const agent = (name) => readFileSync(`${AGENTS_DIR}${name}.md`, 'utf8');
 const frontmatter = (name) => agent(name).split('---')[1];
 const field = (name, key) => new RegExp(`^${key}:\\s*(.*)$`, 'm').exec(frontmatter(name))?.[1] ?? '';
@@ -71,11 +72,10 @@ test('home/agents holds exactly the seventeen agents, each named like its file, 
   }
 });
 
-test('each agent pins the model and effort of the plan, and the guard floor reads exactly that pin', () => {
+test('each agent pins the model and effort of the plan', () => {
   for (const [name, { model, effort }] of Object.entries(PLAN)) {
     assert.equal(field(name, 'model'), model, name);
     assert.equal(field(name, 'effort'), effort, name);
-    assert.deepEqual(readPin(name, '/', { CLAUDE_CONFIG_DIR: HOME_DIR }), { model, effort }, `${name}: pin floor`);
   }
 });
 
@@ -156,9 +156,10 @@ test('read-only agents cannot write files', () => {
 
 test('the writers work in their own worktree and commit without a merge commit', () => {
   for (const name of ['dev', 'dev-part', 'dev-docs', 'dev-ui', 'dev-pixel', 'dev-debug', 'tess-write', 'max']) {
-    assert.match(agent(name), /own worktree/, name);
+    // dev works in the pool folder the boss claimed and names it as the brief's `worktree:`; the others say their own worktree.
+    assert.match(agent(name), name === 'dev' ? /Work only in the `worktree: <absolute path>` the brief names/ : /own worktree/, name);
     assert.match(agent(name), /never `--no-verify`/i, name);
-    assert.match(agent(name), /never return with uncommitted work/i, name);
+    assert.match(flat(agent(name)), /never return with uncommitted work/i, name);
   }
 });
 
@@ -238,7 +239,8 @@ test('no agent file names the unpinned playwright server or the old chrome-devto
 
 test('tess-review and tess-simple carry no finding or word cap; tess-review keeps its must-fix rule and confidence', () => {
   // The whole file, its frontmatter description included, and the catalog row generated from it: a leftover "at most 8" in either says the cap is still there.
-  const catalog = readFileSync(new URL('../docs/catalog.md', import.meta.url), 'utf8');
+  // docs/catalog.md is generated and git-ignored (ADR 0009), so the text is built from the files here, not read from disk.
+  const catalog = buildCatalog(REPO_DIR).text;
   for (const name of ['tess-review', 'tess-simple']) {
     assert.doesNotMatch(agent(name), /at most 8|at most 200 words/i, `home/agents/${name}.md`);
     const row = catalog.split('\n').find((line) => line.startsWith(`| \`${name}\` |`));
@@ -257,15 +259,15 @@ test('dev briefs a helper with a skills: field and dev-part loads the brief\'s s
   assert.ok(flat(agent('dev-part')).includes('Before the first edit, load each skill the brief\'s `skills:` line names (Skill tool).'), 'dev-part: the Start line');
 });
 
-test('e2e is a qa kind in tess, lex and qa-plan, and tess runs it from the main checkout at the landed sha with the scenarios\' lines copied unchanged', () => {
+test('e2e is a qa kind in tess, lex and qa-plan, and tess runs it in the brief\'s worktree at the landed sha with the scenarios\' lines copied unchanged', () => {
   const tess = flat(agent('tess'));
   assert.ok(tess.includes('(any of `checks full review tests edge deps ui repro e2e`;'), 'tess: the qa kinds name e2e');
-  assert.ok(tess.includes('## e2e `qa: e2e` runs the real end-to-end scenarios: only when the owner asks or for a final pass, never per lane.'), 'tess: the e2e section');
-  assert.ok(tess.includes('`timeout` 7200000 runs `node tests/e2e/run.mjs --all --out <detail dir>` in the main checkout at the landed sha.'), 'tess: the command');
+  assert.ok(tess.includes('## e2e `qa: e2e` runs the real end-to-end scenarios: only when the owner asks or for a final pass, never per feature.'), 'tess: the e2e section');
+  assert.ok(tess.includes('`timeout` 7200000 runs `node tests/e2e/run.mjs --all --out <detail dir>` in the brief\'s `worktree:` (the landed sha).'), 'tess: the command');
   assert.ok(tess.includes('Copy each scenario\'s `check | expected | observed | PASS/FAIL` line unchanged into the detail file.'), 'tess: the lines are copied');
-  assert.ok(tess.includes('`not run (limit, resets <time>)`, never retried before then. `landing:` does not apply.'), 'tess: a usage-limit stop');
+  assert.ok(tess.includes('`not run (limit, resets <time>)`, never retried before then.'), 'tess: a usage-limit stop');
   assert.ok(flat(agent('lex')).includes('`e2e` only for a final pass the owner asks for'), 'lex: the qa kinds');
-  assert.ok(flat(readFileSync(`${HOME_DIR}skills/qa-plan/SKILL.md`, 'utf8')).includes('| e2e (`qa: e2e`) | only when the owner asks, or a final pass; never per lane:'), 'qa-plan: the e2e row');
+  assert.ok(flat(readFileSync(`${HOME_DIR}skills/qa-plan/SKILL.md`, 'utf8')).includes('| e2e (`qa: e2e`) | only when the owner asks, or a final pass; never per feature:'), 'qa-plan: the e2e row');
 });
 
 test('lex-web and lex-scout cap their reply at the brief\'s word cap, else 250 and 200 words (a map 500), and drop facts, never sources', () => {
@@ -281,5 +283,5 @@ test('max\'s description stays short with its triggers, and its Never list names
   for (const trigger of ['release', 'deploy', 'publish', 'showcase', 'readiness review', 'incident', 'owner asks', '`ship:`']) {
     assert.ok(description.includes(trigger), `description keeps the trigger ${trigger}`);
   }
-  assert.ok(flat(agent('max')).includes('Start a Claude session (`claude`) or a long-run: the guard denies it; the command goes into the commands file.'), 'the Never line');
+  assert.ok(flat(agent('max')).includes('Start a Claude session (`claude`) or a long-run: the command goes into the commands file.'), 'the Never line');
 });
