@@ -1,5 +1,5 @@
 // Purpose: how scripts/share-check.mjs finds a deny word: the list format, the text a word is looked for in, and the pattern of a word.
-// Exports: DENY_MAX_BYTES, parseDenyList(text), searchable(text), wordPattern(word), findHits(text, denied), findHitsInBytes(bytes, denied),
+// Exports: DENY_MAX_BYTES, parseDenyList(text), wordPattern(word), findHits(text, denied), findHitsInBytes(bytes, denied),
 //   nameWords(name, denied).
 // Invariants:
 // - A text is searched after format and default-ignorable characters (zero-width space, joiners, soft hyphen) are removed and NFKC
@@ -48,7 +48,7 @@ export function parseDenyList(text) {
  * @param {string} text any text
  * @returns {string} the folded text
  */
-export function searchable(text) {
+function searchable(text) {
   return text.replace(IGNORED, '').normalize('NFKC').replace(IGNORED, '');
 }
 

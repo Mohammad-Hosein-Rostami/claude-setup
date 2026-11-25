@@ -11,7 +11,7 @@
 // Problems (a person fixes them in the file named): a line over MAX_ROW_CHARS characters, a skill or agent whose frontmatter
 //   has no description or names another name, a hook, tool or script with no summary line, a hook file no settings file wires
 //   or a wired hook with no file, a settings/base.json key with no settings/README.md row.
-// Exports: buildCatalog(repo) -> { text, problems }, readFrontmatter(text) -> { fields, lists }, main(argv) -> exit code.
+// Exports: buildCatalog(repo) -> { text, problems }, main(argv) -> exit code.
 // Invariants: the text depends on the files only (every list sorted by name); read-only except `write`.
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -37,7 +37,7 @@ const SKILL_MODEL_DEFAULT = 'session model';
  * @param {string} text the whole file
  * @returns {{ fields: Record<string, string>, lists: Record<string, string[]> }} empty when the file has no frontmatter
  */
-export function readFrontmatter(text) {
+function readFrontmatter(text) {
   const fields = {};
   const lists = {};
   const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);

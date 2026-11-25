@@ -17,7 +17,7 @@
 //   0 with `share-check: not run (no deny list at <path>)` when there is no list and no personal/ folder (a clone without the
 //   person's layer), 0 with `share-check: not run (no words in <path>)` while the list is empty, 2 with `share-check: error: <why>`
 //   on any failure, a personal/ folder without its list included (the message names the template to copy).
-// Exports: DENY_LIST_PATH, readDenyList, main.
+// Exports: main.
 // Invariants:
 // - Trust boundary: the output never holds a line's text or the list; only file names (quoted and escaped when they hold a control
 //   character, so a name cannot print a fake line), line numbers and the deny word that matched.
@@ -40,7 +40,7 @@ import { escaped } from '../home/hooks/lib/shown-name.mjs';
 import { checkHistory } from './share-check/history.mjs';
 import { DENY_MAX_BYTES, findHits, findHitsInBytes, nameWords, parseDenyList, wordPattern } from './share-check/match.mjs';
 
-export const DENY_LIST_PATH = ['personal', 'share-deny.txt']; // below the main checkout
+const DENY_LIST_PATH = ['personal', 'share-deny.txt']; // below the main checkout
 const DENY_LIST_TEMPLATE = ['personal.example', 'share-deny.txt']; // the empty list the installer starts personal/ with
 const MESSAGE_MAX_BYTES = 1024 * 1024; // a commit message larger than this is refused (exit 2)
 const GIT_MAX_BUFFER_BYTES = 512 * 1024 * 1024; // the blobs of a long history, the index list of a big repo
@@ -72,7 +72,7 @@ const nulList = (buffer) => buffer.toString('utf8').split('\0').filter((entry) =
  * @returns {{path: string, words: string[] | null}} words null when the default list does not exist
  * @throws {Error} when git fails, the explicit list is missing, or a list exists but is not a readable regular file of at most 1 MiB
  */
-export function readDenyList(cwd, explicit) {
+function readDenyList(cwd, explicit) {
   const path = explicit ?? join(dirname(realpathSync(gitText(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']))), ...DENY_LIST_PATH);
   try {
     return { path, words: parseDenyList(readPlainFile(path, DENY_MAX_BYTES)) };
