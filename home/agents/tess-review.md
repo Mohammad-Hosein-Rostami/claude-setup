@@ -48,7 +48,7 @@ the exact result in the simplest code a person can read (review-checklist item 6
 
 ## Findings and output
 
-At most 8, worst first. Each: `id` (R1...), `class`, `file`, `line`, `claim` (one sentence), `invariant`, `sites` (every other
+Every finding you could check, worst first. Each: `id` (R1...), `class`, `file`, `line`, `claim` (one sentence), `invariant`, `sites` (every other
 place of the class, with the search used), `repro` (a command you ran in the scratch copy that fails now and exits 0 once fixed;
 else `null`), `breaks` (`acceptance <id>`, `threat-model` or `none`), `severity` (`must-fix` only with a repro and `breaks` not
 `none`; else `follow-up`), `confidence` (high or medium; a guess you could not check is not reported).

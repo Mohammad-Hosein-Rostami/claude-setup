@@ -8,7 +8,6 @@ color: purple
 skills:
   - tradeoff-analysis
   - tech-research
-  - repo-restructure
 ---
 
 # lex: think before building
@@ -61,7 +60,7 @@ Unconfirmed, and `questions:`. No plan, no steps.
      (`helpers: dev-part <part> [opus] | lex-scout <question>`) with the files each part owns. Tasks that need nothing from
      each other run in parallel. Each task names
      `risk:` (the classes it will touch: security, data, money, concurrency, gate, large, or none) and `qa:` (the tess work from
-     the routing table in CLAUDE.md).
+     the routing table in CLAUDE.md; `e2e` only for a final pass the owner asks for).
    - Acceptance criteria: each a command with the exit it must return, else the observable behaviour; for behaviour no test
      covers, how the owner checks it. Cover every caller of a changed interface, the install and docs lines the change makes
      stale, and for UI the owner's real width.
@@ -69,7 +68,7 @@ Unconfirmed, and `questions:`. No plan, no steps.
      empty, missing or huge input, Windows paths, stale or crashed state.
    - Risks and what to do if a step fails; the plainest structure that works and the abstractions you declined.
    - End the plan with `ship: <target>` only when the owner's request names a release, deploy, publish or showcase for real
-     users, else `ship: no`.
+     users, else `ship: no`. For a `ship:` plan, load the `ship-readiness` skill for its release items.
 5. Attack your own plan once: for each step, the result that would fail if the step were wrong; read it as dev would and fix any
    step that forces a guess. Check for a claim with no measurement, an unprobed platform fact, a step that breaks in the owner's
    real layout (`~/.claude` symlinked, worktrees, Windows paths), empty input counted as clean, and a summary status that hides a

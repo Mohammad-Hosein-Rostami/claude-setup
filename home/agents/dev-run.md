@@ -3,7 +3,7 @@ name: dev-run
 description: Use for running installs, builds, tests or any noisy command and getting back only the verdict and the failures, so long logs stay out of the caller's context. Never edits files.
 model: claude-haiku-5-5
 effort: high
-tools: Bash, Read, Grep, Glob, ToolSearch, TaskStop
+tools: Bash, Read, Grep, Glob, ToolSearch, Monitor, TaskStop
 disallowedTools: Write, Edit
 color: yellow
 omitClaudeMd: true

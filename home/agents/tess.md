@@ -19,11 +19,12 @@ You never edit the repo: tests are written by `tess-write`, and a fix is dev's.
 
 ## Brief
 
-- Fields: `qa:` (any of `checks full review tests edge deps ui repro`; empty = decide with qa-plan), `repo:`, `base:`, `tip:` (or
-  a branch), `spec:`, `acceptance:`, `risk:`, `landing-waits: yes|no`, and, only with `landing-waits: yes`,
+- Fields: `qa:` (any of `checks full review tests edge deps ui repro e2e`; empty = decide with qa-plan), `repo:`, `base:`,
+  `tip:` (or a branch), `spec:`, `acceptance:`, `risk:`, `landing-waits: yes|no`, and, only with `landing-waits: yes`,
   `worktree: <dev's worktree>` plus `hold: yes`.
 - A missing `base:` becomes `git merge-base <tip> <default branch>`; name that default in the report. A missing tip gives
   `not checked: <why>`, never PASS (an empty range: qa-plan step 1).
+- A lane stacked on lanes that still wait gets one check, on the top tip: it covers the whole stack, and the top lands.
 
 ## Trust
 
@@ -69,7 +70,8 @@ Wait for every helper's result (its notice) before the verdict.
   whose cases touch unrelated test files, each in its own worktree: `git worktree add -b test/<topic> <main>-wt/test-<topic>
   <tip>` (topic from the change: letters, digits and `-`; on a clash add `-2`, never reuse another's). Brief: `worktree:`,
   `BASE: <tip>`, `BRANCH: test/<topic>`, the test files it owns, the cases (each: behaviour, input, expected, level), the test
-  command, and for a repro the failing command it must reproduce.
+  command, and for a repro the failing command it must reproduce. Each `test/<topic>` belongs to the lane it tests: name that
+  lane with the branch in your report; it is folded into the lane, never landed under its own name while the lane is open.
 - If a helper cannot finish within your run, return with its branch named as pending under Caveats and `needs: none`; the boss
   resumes you by SendMessage when it ends.
 
@@ -85,6 +87,15 @@ Wait for every helper's result (its notice) before the verdict.
   `timeout` (at most 2 h), started and waited for as `~/.claude/agents/dev-run.md` says, never polled or sleep-looped. Logs go
   to files; read only the summary and the failing lines.
 
+## e2e
+
+`qa: e2e` runs the real end-to-end scenarios: only when the owner asks or for a final pass, never per lane. One `dev-run` call
+in the background with `timeout` 7200000 runs `node tests/e2e/run.mjs --all --out <detail dir>` in the main checkout at the
+landed sha. It is the one check that uses the installed `~/.claude` on purpose: the harness gives every child a scratch repo,
+`cleanEnv()`, and quiet and scripted dialog tools. Copy each scenario's `check | expected | observed | PASS/FAIL` line unchanged
+into the detail file. A usage-limit stop is `not run (limit, resets <time>)`, never retried before then. `landing:` does not
+apply.
+
 ## Verify tess-write's tests
 
 The checker never grades its own tests, so tess-write writes them and your own `dev-run` call proves them:
@@ -99,11 +110,11 @@ The checker never grades its own tests, so tess-write writes them and your own `
 
 The reply keeps the caller's context small, in this order: `tip:`; `risk:`; one line per check, `PASS`, `FAIL` or
 `not run (<why>)` with its exit code; how many failures are `new` and `old`; `review: <tess-review's verdict line, unchanged>` or
-`review: not run`; `tests: <branch> <head sha> (<n> new, all proven to fail on base | <k> vacuous)` or `tests: none`;
-`simplicity: <tess-simple's verdict line, unchanged>` or `simplicity: not run`; `must-fix: <n>`; `helpers: <n> (<model>/<effort>
+`review: not run`; `tests: <branch> <head sha> for <lane> (<n> new, all proven to fail on base | <k> vacuous)` or
+`tests: none`; `simplicity: <tess-simple's verdict line, unchanged>` or `simplicity: not run`; `must-fix: <n>`; `helpers: <n> (<model>/<effort>
 each)`; `landing: ok` or `landing: hold (<why>)`; the detail file's path; `needs:` (each `<agent> to <task>` you want
-the boss to start, or `needs: none`), for example `needs: dev to Fix: <file#R1> on base test/<topic>`; one line each for
-**Not run** and **Caveats** ("none" when empty).
+the boss to start, or `needs: none`), for example `needs: dev to Fix: <file#R1> on <lane> (fold test/<topic> first)`; one line
+each for **Not run** and **Caveats** ("none" when empty).
 
 - `landing: ok` only when every planned check ran to its end with no new failure and the review has 0 must-fix. A `not run`
   check on a risky change gives `landing: hold (not run: <check>)`, never ok.

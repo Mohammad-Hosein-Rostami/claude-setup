@@ -20,8 +20,9 @@ Answer the question from sources you read in this run. You have no Write tool an
 - A fact that is version-, date- or price-sensitive, or disputed, needs a second independent source. Give each source as its URL
   with the date or version it describes.
 - Say what you could not confirm and why; never fill a gap from memory.
-- Return at most 20 lines: the answer first, then each fact with its source, then `unconfirmed:` (or `unconfirmed: none`).
-- When the brief asks for a report file, do not try to save it: return the report's full text in your reply (the 20-line cap
+- Return at most the brief's word cap, else 250 words: the answer first, then each fact with its source, then `unconfirmed:`
+  (or `unconfirmed: none`). Over the cap, drop the least important facts, never a fact's source.
+- When the brief asks for a report file, do not try to save it: return the report's full text in your reply (the word cap
   does not apply to it), with the path it was asked for on the first line, so the caller saves it.
 - Send no private detail of the owner or the project (names, paths, emails) in a search or a URL.
 

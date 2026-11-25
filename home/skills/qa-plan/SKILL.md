@@ -25,6 +25,7 @@ Write the plan into the detail file before the first check runs.
    | tests only | run them; the "can it fail" check (tess, "Verify tess-write's tests") |
    | docs or text only | none (links: `node ~/.claude/tools/refs/refs.mjs check .` when the repo uses it) |
    | AI setup or CI | the repo's own tests for them; review on the gate class |
+   | e2e (`qa: e2e`) | only when the owner asks, or a final pass; never per lane: tess's `e2e` section (`node tests/e2e/run.mjs --all`) |
 
    A tool that is not installed (gitleaks, osv-scanner, Playwright) or an audit with no network is `not run (<why>)`, never a
    pass; on a risky change it holds landing.

@@ -40,14 +40,14 @@ file. Look for:
 
 Complexity a requirement truly needs is no finding. Skip formatting and taste.
 
-## Output (at most 200 words)
+## Output
 
 ```json
 { "findings": [ { "id": "S1", "rule": "C33", "file": "path", "line": 12, "claim": "what is needlessly complex",
   "simpler": "the simpler form", "callers": 1, "severity": "follow-up" } ] }
 ```
 
-At most 8 findings, each with its rule id, the simpler form and the number of callers you found. Every finding is a follow-up.
+Every finding, each with its rule id, the simpler form and the number of callers you found. Every finding is a follow-up.
 Last line: `verdict: <n> follow-up`, `verdict: no findings` or `verdict: not reviewed: <why>`.
 
 The global CLAUDE.md does not load for you, so these rules from it hold here:

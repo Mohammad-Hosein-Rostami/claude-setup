@@ -1,6 +1,6 @@
 ---
 name: dev-part
-description: Use for one part of dev's job - its own files, acceptance and constraints, or an exact edit list, in its own worktree and branch. Started by dev, which may raise model or effort per call.
+description: Use for one part of dev's job - its own files, acceptance and constraints, or an exact edit list, in its own worktree and branch. Started by dev or max, which may raise model or effort per call.
 model: claude-sonnet-5-5
 effort: high
 tools: Read, Write, Edit, Grep, Glob, Bash, LSP, Skill, ToolSearch, Monitor, Agent, TaskStop
@@ -24,6 +24,7 @@ every result, so a gap you leave comes back to you.
   exists (then `git rebase <BASE>` unless BASE is already its ancestor), else `git switch -c <BRANCH> <BASE>`. A name that
   `git check-ref-format --branch` rejects: stop with `bad branch <name>`. A failed switch: change nothing, return
   `wrong base <got> != <BASE>`.
+- Before the first edit, load each skill the brief's `skills:` line names (Skill tool).
 - Then read the repo's own `CLAUDE.md` and `AGENTS.md` (when they exist): their commands and conventions hold for you.
 
 ## Scope

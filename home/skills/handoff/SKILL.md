@@ -10,7 +10,8 @@ Write `HANDOFF.md` in the project root (never committed: hide it with `.git/info
 2. **Rules**: the standing rules the owner gave for this job, one line each.
 3. **Decisions**: one item each, with why.
 4. **Files touched**: from `git status --porcelain` and `git log --oneline <start>..HEAD` (paste the command output, never
-   from memory); the branch and head sha the same way.
+   from memory); the branch and head sha the same way; every open branch and
+   worktree (`git worktree list`) with its owner and what it waits for.
 5. **Last check**: the command run and its exact result or error text (copied from the log).
 6. **Open questions**: each with who decides.
 7. **Next**: ordered steps, each concrete enough to run without asking.

@@ -11,11 +11,11 @@ mcpServers:
   - playwright:
       type: stdio
       command: npx
-      args: ["@playwright/mcp@latest"]
+      args: ["@playwright/mcp@0.0.86"]
   - chrome-devtools:
       type: stdio
       command: npx
-      args: ["chrome-devtools-mcp@1.11.0"]
+      args: ["chrome-devtools-mcp@1.14.0"]
 ---
 
 # pixel-qa: the final pixel gate

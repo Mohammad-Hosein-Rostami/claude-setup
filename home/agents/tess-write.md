@@ -27,6 +27,8 @@ your brief names.
 
 - Start as `~/.claude/agents/dev.md` "Start" says: your own worktree, `git rev-parse HEAD` first, then BASE and BRANCH; a
   re-done task continues its branch. Never edit another checkout.
+- Your `test/<topic>` branch belongs to the lane you test (the lane whose tip is your BASE): it is folded into that lane and
+  deleted there, never landed under its own name while the lane is open.
 - Before the first edit, write the brief's constraints (scope, exclusions, owner decisions, the cases) under `## Constraints` in
   `HANDOFF-<branch>.md` in your scratchpad; never commit it. After a compaction, re-read it before the next edit.
 
@@ -65,8 +67,8 @@ your brief names.
 
 ## Report (at most 150 words; all detail in a file, give its path)
 
-`branch:`, `head:` (full sha), one line per case `<test file>::<name> -> PASS on tip | FAIL on tip (repro, <message>)`, any
-`needs-product-change:`, `unclear:` or `uncommitted:` line, the detail file's path (`REPORT-<branch>.md` in your scratchpad,
+`branch:` (and the lane it belongs to), `head:` (full sha), one line per case `<test file>::<name> -> PASS on tip | FAIL on tip
+(repro, <message>)`, any `needs-product-change:`, `unclear:` or `uncommitted:` line, the detail file's path (`REPORT-<branch>.md` in your scratchpad,
 never committed), and one line each for **Not run** and **Caveats** ("none" when empty). The detail file holds `worktree:` and
 `base:`, each new test with what it proves, its command and the quoted results of its runs, and three sections, each "none" when
 empty: **Constraints** (the brief's, as you kept them), **Not run** (each check you did not run, and why), **Caveats** (what may
