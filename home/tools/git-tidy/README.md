@@ -99,6 +99,9 @@ and prints why. With `--apply`, in this order, each fact read again from git rig
    (`used <n> min ago (an agent may still work there)`), `--include-recent` does not lift it, because an agent may still be working there.
    An `agent-leftover` that is on the base is a merged branch for prune.
 
+Land's sweep (`tools/land`) calls this apply with `onlyOnBase`: copies are kept there (`its work is in <B>, not all on
+<base>; land removes only what is on the base`), so only branches whose content is on the base go.
+
 Each branch is written to the deletion log (below) before it is deleted; a branch whose record cannot be written is kept, and
 an `--apply` whose log is not safe to write removes nothing and exits 2.
 

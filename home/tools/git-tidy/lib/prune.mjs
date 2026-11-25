@@ -9,6 +9,7 @@
 //   Anything not proven is kept, with the reason. Order: stale entries, worktrees, branches (a branch is free once its
 //   worktree is gone). Every branch is written to the deletion log (deletion-log.mjs) with its sha before it is deleted, so it
 //   can be restored; one that cannot be written is kept. An apply whose log is unsafe (not a regular file) removes nothing.
+//   With `onlyOnBase` (land's sweep) copies are never removed: their work is on another branch, not on the base.
 import { branchState, isMerged } from './branches.mjs';
 import { copyCandidates, isStillCopy } from './copies.mjs';
 import { checkDeletionLog, recordDeletion } from './deletion-log.mjs';
@@ -200,6 +201,9 @@ export function deleteBranch(repo, name, tip) {
   return item('deleted', 'merged-branch', name, `was ${tip}${configFailed ? `; its config section could not be removed: ${config.stderr}` : ''}`);
 }
 
+// Why `onlyOnBase` keeps a copy: its work is on another branch, not on the base.
+const notOnBaseReason = (repo, copy) => `${copy.by ? `its work is in ${copy.by}` : 'its commits are on other branches'}, not all on ${repo.base}; land removes only what is on the base`;
+
 // Writes the branch about to be deleted to the deletion log; returns null, or why it must be kept (the record failed).
 function unloggedReason(repo, name, verdict, copy) {
   const reason = copy ? `${copy.kind}${copy.by ? ` of ${copy.by}` : ''}` : verdict.state;
@@ -241,11 +245,12 @@ export function refuseUnsafeApply(repo) {
  * Plans (apply false) or performs (apply true) the removal of stale and merged worktrees and merged branches.
  * `leftovers` are the candidates (from findLeftovers); each is re-checked right before it is acted on, so candidates
  * found earlier may be out of date. `includeRecent` (true, or an array of lane names that it applies to) lifts only the "used in the last 60 minutes" rule, and not for a lane with no commit of
- * its own yet (see isNotStarted): that one stays protected while its worktree was used. Returns items
+ * its own yet (see isNotStarted): that one stays protected while its worktree was used. `onlyOnBase` (land's sweep) keeps every
+ * copy (superseded-copy, agent-leftover not on the base) with the reason, so only branches whose content is on the base go. Returns items
  * `{ action, kind, subject, detail }` with action `remove`/`keep` for a plan and `removed`/`deleted`/`kept`/`failed` for an
  * apply. Throws UsageError when apply meets an unfinished operation, an ambiguous base or a deletion log that is not safe to write.
  */
-export function pruneRepo(repo, { apply, includeRecent = false, leftovers = findLeftovers(repo) }) {
+export function pruneRepo(repo, { apply, includeRecent = false, onlyOnBase = false, leftovers = findLeftovers(repo) }) {
   if (apply) {
     refuseUnsafeApply(repo);
     checkDeletionLog(repo.dir); // without a safe log no branch may go, so nothing is removed
@@ -253,11 +258,13 @@ export function pruneRepo(repo, { apply, includeRecent = false, leftovers = find
   const gone = new Set();
   const mergedNames = new Set(leftovers.mergedBranches.map((entry) => entry.name));
   // A copy on the base is already a merged branch; only the others go through the copy path.
-  const copies = copyCandidates(repo, leftovers).filter((copy) => !mergedNames.has(copy.name));
+  const allCopies = copyCandidates(repo, leftovers).filter((copy) => !mergedNames.has(copy.name));
+  const copies = onlyOnBase ? [] : allCopies;
   const ctx = makeContext(repo, { apply, includeRecent }, leftovers, copies);
   const copyBranches = copies.map((copy) => ({ name: copy.name, short: copy.tip.slice(0, 7) }));
   const copyWorktrees = listWorktrees(repo).filter((tree) => !tree.main && !tree.missing && ctx.copies.has(tree.branch)).map(({ path, branch }) => ({ path, branch }));
   const items = pruneStale(ctx, leftovers.staleWorktrees, gone);
+  if (onlyOnBase) items.push(...allCopies.map((copy) => item('keep', copy.kind, copy.name, notOnBaseReason(repo, copy))));
   for (const candidate of [...leftovers.mergedWorktrees, ...copyWorktrees]) items.push(pruneWorktree(ctx, candidate, gone));
   for (const candidate of [...leftovers.mergedBranches, ...copyBranches]) items.push(pruneBranch(ctx, candidate, gone));
   items.push(...detachedWorktrees(ctx));

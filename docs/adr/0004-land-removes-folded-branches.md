@@ -41,6 +41,10 @@ deleted only when ONE content proof holds: its tip is an ancestor of the base, o
 `content-equal`). Patch ids (`patch-equal`) only name the state of a branch that also passes `merge-tree`. Reflogs and
 landed history are never a reason to delete; they only give the `in <B> (lands with it)` hint of `left:`.
 
+- The sweep holds the rule everywhere: older copies and agent leftover branches whose work is on another branch, not on the
+  base, are kept and named under `left:` (prune's `onlyOnBase`). The standalone `git-tidy prune --apply` a person runs by
+  hand keeps main's copy rule.
+- A git older than 2.40 has no `merge-tree --stdin`: land still lands and skips the sweep with one stderr line.
 - Prune's other checks stay: a dirty, locked or recently used worktree, ignored files that exist only there, commits that
   exist only in a reflog, the not-started rule and the protected branches keep a branch.
 - Every branch is written to the deletion log `<git common dir>/cs-tidy-log.jsonl` with its sha before it is deleted, so it

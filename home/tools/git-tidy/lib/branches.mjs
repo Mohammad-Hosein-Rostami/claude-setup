@@ -1,6 +1,6 @@
 // Purpose: decide whether a local branch (or any commit) is already on the base, and how many commits it still has that are not.
-// Exports: ancestorBranches, branchState, compareBranch, compareWithBase, contentOnBase, withContentState, isLanded, isMerged,
-//   mergeChangesNothing, CONTENT_EQUAL.
+// Exports: ancestorBranches, branchState, compareBranch, compareWithBase, contentOnBase, contentProofUnsupported,
+//   withContentState, isLanded, isMerged, mergeChangesNothing, CONTENT_EQUAL.
 // Invariants: only `ancestor`, `patch-equal` and `content-equal` mean "merged"; anything that cannot be proven is `unmerged`
 //   (fail closed). `content-equal` is the one content proof for every other branch: merging it into the base changes nothing
 //   (`git merge-tree --write-tree` prints the base's own tree), so all its content is on the base already (a squash or a
@@ -17,6 +17,8 @@ export const CONTENT_EQUAL = 'content-equal';
 // Options of the content proof: names only for conflicts, no messages, and a branch with no history in common still merges
 // (an orphan branch whose files are all on the base is content-equal; any other one is not).
 const CONTENT_MERGE = ['merge-tree', '--stdin', '--name-only', '--no-messages', '--allow-unrelated-histories'];
+const MIN_GIT = { major: 2, minor: 40 }; // the first git whose merge-tree reads --stdin
+const GIT_VERSION = /^git version (\d+)\.(\d+)/;
 
 /**
  * Local branches whose tip is already on the base, as Map(name -> full tip hash), in one git call. With `name` only
@@ -71,6 +73,17 @@ export function contentOnBase(repo, refs) {
     if (clean === '1' && tree === baseTree) proven.add(ref);
   }
   return proven;
+}
+
+/**
+ * Null when the git in `dir` can run the content proof (`git merge-tree --stdin`, git 2.40 or newer), else why not. An older
+ * git only makes contentOnBase prove nothing (safe); land's sweep asks first so it can say so instead.
+ */
+export function contentProofUnsupported(dir) {
+  const version = runGit(dir, ['version']).stdout.trim();
+  const [, major, minor] = (GIT_VERSION.exec(version) ?? []).map(Number);
+  const isNewEnough = major > MIN_GIT.major || (major === MIN_GIT.major && minor >= MIN_GIT.minor);
+  return isNewEnough ? null : `${version || 'an unknown git'} is older than ${MIN_GIT.major}.${MIN_GIT.minor}, which the content proof needs (git merge-tree --stdin)`;
 }
 
 /** `states` (`[{ name, state, ... }]`) with each `unmerged` branch whose content is on the base (contentOnBase) as `content-equal`. */

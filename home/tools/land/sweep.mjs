@@ -1,11 +1,12 @@
 // Purpose: the clean-up `land` runs once the lane has landed and its own branch is gone: git-tidy's `prune --apply` over the
-//   whole repository (branches whose content is all on the base, copies, with all of prune's safety checks), then the `left:`
-//   block, one line per branch still there and why.
+//   whole repository (branches whose content is all on the base, with all of prune's safety checks; copies of another branch are
+//   kept with the reason), then the `left:` block, one line per branch still there and why.
 // Exports: sweepRepo.
 // Invariants: removes only what prune proves; a prune that refuses (an unfinished rebase or merge in some worktree) removes
 //   nothing and prints `cleanup skipped: <reason>`; a deletion log that is not safe to write stops it before anything is removed
-//   (prune throws, land prints it on stderr). Text from git (names, paths, messages) is printed without control characters.
-import { isMerged } from '../git-tidy/lib/branches.mjs';
+//   (prune throws, land prints it on stderr), and so does a git older than 2.40. Text from git (names, paths, messages) is
+//   printed without control characters.
+import { contentProofUnsupported, isMerged } from '../git-tidy/lib/branches.mjs';
 import { UNLANDED_AFTER_HOURS } from '../git-tidy/lib/check.mjs';
 import { commitDates } from '../git-tidy/lib/copies.mjs';
 import { checkDeletionLog } from '../git-tidy/lib/deletion-log.mjs';
@@ -35,7 +36,7 @@ function itemLine({ action, kind, subject, detail }) {
 // Prune's items, or none with the reason it refused.
 function pruneItems(repo) {
   try {
-    return { items: pruneRepo(repo, { apply: true }), skipped: null };
+    return { items: pruneRepo(repo, { apply: true, onlyOnBase: true }), skipped: null };
   } catch (error) {
     if (!(error instanceof UsageError)) throw error;
     return { items: [], skipped: error.message };
@@ -74,10 +75,13 @@ function leftLines(repo, items, now) {
 
 /**
  * Cleans the repository of the base checkout `{ dir, base }` after a landing and returns the lines to print: what prune
- * deleted, removed or kept (or `cleanup skipped: <reason>`), then the `left:` block. Throws, removing nothing, when the
- * deletion log is not safe to write, and when git fails unexpectedly.
+ * deleted, removed or kept (or `cleanup skipped: <reason>`), then the `left:` block. Copies are kept (`onlyOnBase`): only
+ * branches whose content is on the base go. Throws, removing nothing, when git is older than 2.40 (no content proof), when
+ * the deletion log is not safe to write, and when git fails unexpectedly.
  */
 export function sweepRepo({ dir, base }, now = Date.now()) {
+  const unsupported = contentProofUnsupported(dir);
+  if (unsupported !== null) throw new Error(unsupported);
   const repo = openRepo(dir, base);
   checkDeletionLog(repo.dir);
   const { items, skipped } = pruneItems(repo);

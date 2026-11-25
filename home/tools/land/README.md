@@ -48,9 +48,11 @@ Steps, in order; nothing changes until every check has passed:
 6. Clean-up: a locked worktree is unlocked, then removed with `git worktree remove` (ignored files in it, such as notes or
    `node_modules`, go with it); the branch is deleted with `git branch -d`.
 7. Sweep (`sweep.mjs`): git-tidy's `prune --apply` over the whole repository, with all its safety checks
-   (`../git-tidy/README.md`, "prune"): branches whose content is on the base ("Folded branches" below), older copies, each
-   with its clean worktree. A dirty, locked or recently used worktree, a branch that moved, or any doubt keeps the branch,
-   with the reason. An unfinished rebase or merge in any worktree skips the sweep (`cleanup skipped: <reason>`); a later
+   (`../git-tidy/README.md`, "prune"), held to the one rule: only branches whose content is on the base go ("Folded
+   branches" below), each with its clean worktree. Older copies and agent leftover branches whose work is on another branch,
+   not on the base, are kept (`its work is in <B>, not all on <base>`); the standalone `git-tidy prune --apply` still removes
+   them. A dirty, locked or recently used worktree, a branch that moved, or any doubt keeps the branch, with the reason. A git
+   older than 2.40 (no `git merge-tree --stdin`) skips the sweep with one stderr line; the landing stands, exit 0. An unfinished rebase or merge in any worktree skips the sweep (`cleanup skipped: <reason>`); a later
    `land` or `git-tidy prune --apply` does it. A deletion log that is not safe to write stops the sweep before it removes
    anything: one stderr line, exit 0. Then `left:` names every branch still there: `in <B> (lands with it)` (all its commits
    are in the live branch B: a stacked lane, a folded test branch), `kept: <reason>`, `on <base> (<state>), not removed`
@@ -117,4 +119,4 @@ worktree list and the clean checks are git-tidy's (`../git-tidy/lib/repo.mjs`), 
 (`../git-tidy/lib/in-lane.mjs`) and the sweep (`../git-tidy/lib/prune.mjs`); the test's process tree is ended by
 `../long-run/lib/process-tree.mjs`. Files: `land.mjs` (the CLI and its steps), `sweep.mjs` (step 7: the sweep and the `left:` block),
 `test-gate.mjs` (overlap, which test, the test step), `run-test.mjs` (runs the command), `refusal.mjs` (the refusal and the
-clean check). Tests: `tests/land.test.mjs`, `tests/land-test-gate.test.mjs`, `tests/land-sweep*.test.mjs`, `tests/git-tidy-content-equal.test.mjs`.
+clean check). Tests: `tests/land.test.mjs`, `tests/land-test-gate.test.mjs`, `tests/land-sweep*.test.mjs` (`land-sweep-strict` for the one rule), `tests/git-tidy-content-equal.test.mjs`.
