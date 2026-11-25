@@ -235,7 +235,14 @@ test('no agent file names the unpinned playwright server or the old chrome-devto
 });
 
 test('tess-review and tess-simple carry no finding or word cap; tess-review keeps its must-fix rule and confidence', () => {
-  for (const name of ['tess-review', 'tess-simple']) assert.doesNotMatch(agent(name), /At most 8|at most 200 words/, name);
+  // The whole file, its frontmatter description included, and the catalog row generated from it: a leftover "at most 8" in either says the cap is still there.
+  const catalog = readFileSync(new URL('../docs/catalog.md', import.meta.url), 'utf8');
+  for (const name of ['tess-review', 'tess-simple']) {
+    assert.doesNotMatch(agent(name), /at most 8|at most 200 words/i, `home/agents/${name}.md`);
+    const row = catalog.split('\n').find((line) => line.startsWith(`| \`${name}\` |`));
+    assert.ok(row, `docs/catalog.md has a row for ${name}`);
+    assert.doesNotMatch(row, /at most 8/i, `docs/catalog.md row of ${name}`);
+  }
   const review = flat(agent('tess-review'));
   assert.ok(review.includes('Every finding you could check, worst first.'), 'tess-review: no cap');
   assert.ok(review.includes('`severity` (`must-fix` only with a repro and `breaks` not `none`; else `follow-up`)'), 'tess-review: the must-fix rule');

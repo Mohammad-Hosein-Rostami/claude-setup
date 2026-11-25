@@ -145,12 +145,14 @@ const SUITE_SLOTS = 1; // the owner's default for the machine-wide suite queue (
 // READMEs): the only hook text that names Fable.
 const FABLE_GATE_FILES = ['README.md', 'agent-budget.mjs', 'agent-model-guard.mjs', 'lib/README.md', 'lib/agent-model-gates.mjs', 'lib/agent-pins.mjs', 'lib/fable-model-reasons.mjs', 'lib/settings-env.mjs'];
 
-test('home/CLAUDE.md names the owner\'s cap of 3 lex, 3 dev, 3 tess and 3 max (the guard\'s cap) and the suite run queue, whose 1 slot dev-run names', () => {
+test('home/CLAUDE.md names the owner\'s cap of 3 lex, 3 dev, 3 tess and 3 max (the guard\'s cap) and the 1-slot suite run queue', () => {
   const claude = flat(read('home/CLAUDE.md'));
   const cap = MAX_AGENTS_PER_TYPE;
   assert.ok(claude.includes(`- At most ${cap} lex, ${cap} dev, ${cap} tess and ${cap} max run at once; their helpers are not counted.`), `the cap line names ${cap} of each`);
-  assert.ok(claude.includes('Full suites, installs and builds go through the `suite run` queue, a full suite once per tree'), 'the suite queue line');
-  // The slot count left home/CLAUDE.md for its byte cap (final-pass plan, lane A); dev-run, the agent that runs the queue, keeps it.
+  assert.ok(claude.includes(`Full suites, installs and builds go through the \`suite run\` queue (${SUITE_SLOTS} slot)`), 'the suite queue line');
+});
+
+test('dev-run, which runs the suite queue, names its slot count', () => {
   assert.ok(flat(read('home/agents/dev-run.md')).includes(`through the machine-wide \`suite run\` queue (${SUITE_SLOTS} slot by default)`), 'the slot count');
 });
 
