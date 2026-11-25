@@ -13,6 +13,8 @@ import { TOKEN_A, cli, createRun, makeSandbox } from './long-run-helpers.mjs';
 const SESSION_ID = 'a1b2c3d4-e5f6-4789-8abc-def012345678';
 const SHORT_SESSION_ID = 'a1b2c3d4';
 const SHORT_TOKEN_SHAPE = 'sk-ant-x1y2';
+const BAD_TIME = 'not-a-date';
+const NOT_A_STRING_SESSION_ID = 12345;
 const WAIT_MINUTES = 30;
 const MS_PER_MINUTE = 60 * 1000;
 const ESC = '\x1b';
@@ -128,6 +130,30 @@ test('a run whose job.json is garbage is one unreadable line and the other runs 
   const lines = linesOf(result);
   assert.ok(lines.some((line) => line.startsWith(`${broken.runId}  unreadable (`)), `an unreadable line for ${broken.runId} in:\n${result.stdout}`);
   assert.ok(lines.some((line) => line.startsWith(fine.runId)), `a line for ${fine.runId} in:\n${result.stdout}`);
+});
+
+test('one run with a bad value in driver.json is one line and the other runs still print, with exit 0', () => {
+  const box = makeSandbox();
+  const bad = createRun(box, jobOf(box, 'bad-value'));
+  const fine = createRun(box, jobOf(box, 'fine'));
+  writeJournal(bad, 'one', journalOf('one', { running: true, pid: process.pid }));
+  holdRun(bad, { one: { state: 'waiting-limit', until: BAD_TIME, since: new Date().toISOString() } }); // valid JSON, but formatWhen cannot read `until`
+  const result = live(box);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(!result.stderr.includes('RangeError'), result.stderr);
+  assert.ok(result.stdout.includes(fine.runId), `a line for ${fine.runId} in:\n${result.stdout}`);
+  assert.ok(result.stdout.includes(bad.runId), `a line for ${bad.runId} in:\n${result.stdout}`);
+});
+
+test('liveLoop keeps drawing the other runs when one run has a session id that is not a string', async () => {
+  const box = makeSandbox();
+  const bad = createRun(box, jobOf(box, 'bad-session'));
+  const fine = createRun(box, jobOf(box, 'fine'));
+  writeJournal(bad, 'one', journalOf('one', { sessionId: NOT_A_STRING_SESSION_ID, running: true, pid: process.pid }));
+  holdRun(bad, { one: { state: 'running', since: new Date().toISOString() } });
+  const { frames } = await loopFrames(box, { isTTY: false });
+  assert.equal(frames.length, FRAMES_BEFORE_ABORT);
+  for (const frame of frames) assert.ok(frame.includes(fine.runId), `a line for ${fine.runId} in:\n${frame}`);
 });
 
 /** liveLoop over `root` with a sleep that returns at once and aborts after `framesBeforeAbort` frames. @returns the frames and the sleep calls. */
