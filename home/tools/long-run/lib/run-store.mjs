@@ -5,10 +5,11 @@
 //   listRunIds, ensureRunDirs.
 // Invariants: folders 0700 and files 0600 (account/lib/private-fs.mjs); every JSON file is replaced whole (temp + rename), so a
 //   reader never sees half of one; the lock file is created with flag "wx" and is broken only when its driver is gone (dead pid on
-//   this host, or a heartbeat older than STALE_BEAT_MS: a reused pid is caught by the beat age); a release removes the lock only
-//   while it still names this process. Nothing here holds a token.
+//   this host, or a heartbeat older than STALE_BEAT_MS: a reused pid is caught by the beat age) and the process the lock names is
+//   not a live one on this host that took it less than STALE_BEAT_MS ago (a driver that is starting has no beat yet); a release
+//   removes the lock only while it still names this process. Nothing here holds a token.
 import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { PRIVATE_FILE_MODE, ensurePrivateDir, writeFileAtomic } from '../../account/lib/private-fs.mjs';
@@ -134,10 +135,30 @@ export function driverAlive(paths, now = new Date()) {
 }
 
 /**
+ * The pid of a live process on this host that took the lock less than STALE_BEAT_MS ago, else null. A driver takes its lock
+ * before it writes its first driver.json beat, so driverAlive cannot see it yet; breaking its lock then would leave it running
+ * with no lock, and a second driver could start beside it.
+ */
+function freshLockHolder(lockPath, now) {
+  let text;
+  let takenMs;
+  try {
+    text = readFileSync(lockPath, 'utf8');
+    takenMs = statSync(lockPath).mtimeMs;
+  } catch (error) {
+    if (error.code === 'ENOENT') return null; // released just now: nothing to protect
+    throw error;
+  }
+  const [pid, host] = text.trim().split(' ');
+  const isFresh = now.getTime() - takenMs < STALE_BEAT_MS;
+  return isFresh && host === hostname() && isPidAlive(Number(pid)) ? pid : null;
+}
+
+/**
  * Takes the run's driver lock.
  * @param {Record<string, string>} paths runPaths().
  * @param {Date} now the current time.
- * @throws {RunBusy} when a live driver holds it.
+ * @throws {RunBusy} when a live driver holds it, or a live process on this host took it just now (a starting driver).
  */
 export function acquireLock(paths, now = new Date()) {
   const text = `${process.pid} ${hostname()}\n`;
@@ -148,6 +169,8 @@ export function acquireLock(paths, now = new Date()) {
     if (error.code !== 'EEXIST') throw error;
   }
   if (driverAlive(paths, now)) throw new RunBusy(`run ${paths.runId} is busy: its driver runs (pid ${readJson(paths.driver)?.pid})`);
+  const holder = freshLockHolder(paths.lock, now);
+  if (holder !== null) throw new RunBusy(`run ${paths.runId} is busy: pid ${holder} took its lock just now`);
   rmSync(paths.lock, { force: true });
   try {
     writeFileSync(paths.lock, text, { flag: 'wx', mode: PRIVATE_FILE_MODE });
