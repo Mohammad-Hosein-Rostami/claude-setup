@@ -55,6 +55,7 @@ export const TOOLS_WITH_DEPS = ['ui-check', 'env-names', 'long-run'];
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
+const GIT_CONFIG_KEY_MISSING = 1; // `git config --get` exit when the key is not set (git-config(1))
 const RETIRED_HOOKS_PATH = '.githooks'; // the commit-hook folder earlier installs set; the hooks were removed (guard-removal plan, 2026-11-25)
 
 /**
@@ -65,8 +66,13 @@ const RETIRED_HOOKS_PATH = '.githooks'; // the commit-hook folder earlier instal
  */
 function retireGitHooks(ctx) {
   const git = (...args) => spawnSync('git', ['-C', ctx.repo, 'config', '--local', ...args], { encoding: 'utf8' });
+  const why = (run) => run.error?.message ?? (run.stderr.trim() || `exit ${run.status}`); // no git at all: error is set, stderr is null
   const current = git('--get', 'core.hooksPath');
-  if (current.status !== 0) return; // not set: nothing to undo
+  if (current.status === GIT_CONFIG_KEY_MISSING) return; // not set: nothing to undo
+  if (current.status !== 0) {
+    warn(`could not read git core.hooksPath (${why(current)}); check it with: git config --get core.hooksPath`);
+    return;
+  }
   const value = current.stdout.trim();
   if (value !== RETIRED_HOOKS_PATH) {
     note(ctx, `git hooksPath left as it is (${value}): not the one this setup set`);
@@ -78,7 +84,7 @@ function retireGitHooks(ctx) {
   }
   const unset = git('--unset', 'core.hooksPath');
   if (unset.status === 0) note(ctx, `git hooksPath unset (was ${RETIRED_HOOKS_PATH})`);
-  else warn(`could not unset git core.hooksPath (${unset.stderr.trim()}); run: git config --unset core.hooksPath`);
+  else warn(`could not unset git core.hooksPath (${why(unset)}); run: git config --unset core.hooksPath`);
 }
 
 function install(ctx, record) {
