@@ -21,7 +21,8 @@
 //   git-tidy's detachLandedSlot (../git-tidy/lib/lane-pool.mjs), never removed; any other worktree, or a pool folder that could not
 //   be detached, is unlocked when locked, then removed with `git worktree remove`; the branch goes with `git branch -d`. Git runs
 //   without a shell and without the variables that pick a repository (../git-tidy/lib/git.mjs).
-// - The land ledger gets one line per landing, written only after the fast-forward; a line that cannot be written is one stderr
+// - The land ledger gets one line per landing; a re-run that lands nothing new writes none (a line for the branch at the same
+//   landed sha is already there). The line is written only after the fast-forward; a line that cannot be written is one stderr
 //   warning, and the landing goes on and exits 0.
 // - The clean-up after the landing runs `git-tidy prune --apply` over the repository: a branch goes only when its tip is on
 //   the base or merging it would change nothing, and only after it is written to the deletion log. A clean-up that fails (a
@@ -32,7 +33,7 @@ import { UsageError, gitFlag, gitText, runGit } from '../git-tidy/lib/git.mjs';
 import { detachLandedSlot } from '../git-tidy/lib/lane-pool.mjs';
 import { nestedRepositoryPaths, nestedRepositoryWhy } from '../git-tidy/lib/lane-slots.mjs';
 import { listWorktrees, openRepo } from '../git-tidy/lib/repo.mjs';
-import { appendLandEntry } from './ledger.mjs';
+import { appendLandEntry, readLandEntries } from './ledger.mjs';
 import { LandRefusal, firstLine, refuseUnclean } from './refusal.mjs';
 import { MAX_TIMEOUT_SECONDS } from './run-test.mjs';
 import { sweepRepo } from './sweep.mjs';
@@ -110,7 +111,7 @@ function findLane({ dir, base }, branch) {
 /** Refuses a lane with no commit in common with the base: a rebase would replay all its history onto the base. */
 function refuseUnrelated({ dir, base }, branch, baseSha) {
   if (runGit(dir, ['merge-base', baseSha, `${HEADS}${branch}`]).status === 0) return;
-  throw new LandRefusal(`${branch} has no commit in common with ${base}, so land cannot tell which files both changed; rebase it onto ${base} by hand, then land again`);
+  throw new LandRefusal(`${branch} has no commit in common with ${base}: a rebase would replay its whole history onto ${base}; rebase it onto ${base} by hand, then land again`);
 }
 
 /**
@@ -184,6 +185,18 @@ function removeLane({ dir, base }, branch, worktree, tip) {
 }
 
 /**
+ * Whether the ledger already has a line for `branch` at `tip`. A re-run after a clean-up stop lands at the same tip, and a second
+ * line would count that landing twice.
+ */
+function isInLedger(dir, branch, tip) {
+  try {
+    return readLandEntries(dir).entries.some((entry) => entry.branch === branch && entry.to === tip);
+  } catch {
+    return false; // an unreadable ledger: write the line as before, and appendLandEntry warns when that fails too
+  }
+}
+
+/**
  * The clean-up of the other branches (sweep.mjs). The lane has landed by then, so a failure (a deletion log that is not a regular
  * file, git failing) does not fail the land: it is printed on stderr and the clean-up stops, which keeps the other branches.
  */
@@ -210,7 +223,8 @@ async function land({ branch, repo, test, testTimeoutSeconds }) {
   fastForward(checkout, branch, { baseSha, tip });
   const count = gitText(checkout.dir, ['rev-list', '--count', `${baseSha}..${tip}`]);
   console.log(`landed ${branch} on ${checkout.base} at ${tip} (${count} commit(s))`);
-  const ledgerWarning = appendLandEntry(checkout.dir, { at: new Date().toISOString(), repo: checkout.dir, branch, from: baseSha, to: tip, commits: Number(count) });
+  const entry = { at: new Date().toISOString(), repo: checkout.dir, branch, from: baseSha, to: tip, commits: Number(count) };
+  const ledgerWarning = isInLedger(checkout.dir, branch, tip) ? null : appendLandEntry(checkout.dir, entry);
   if (ledgerWarning !== null) console.error(ledgerWarning);
   for (const line of removeLane(checkout, branch, worktree, tip)) console.log(line);
   for (const line of sweepAfter(checkout, branch, tip)) console.log(line);
