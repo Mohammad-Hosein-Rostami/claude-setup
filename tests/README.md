@@ -13,7 +13,7 @@ One file: `node --test tests/land.test.mjs`. The `ui-check` tool has its own tes
 
 ## Areas (by file name prefix)
 
-- `question-*`, `timed-ask*`, `post-edit*`, `project-*`, `git-tidy-gate*`: the hooks (`home/hooks`) and their libraries.
+- `hook-*`, `notify-*`, `post-edit*`, `project-*`, `git-tidy-gate*`: the hooks (`home/hooks`) and their libraries.
 - `modes-consistency`, `rules-text`, `principles`: the always-loaded rule texts.
 - `statusline*`, `board-*`: the status line and its board engine.
 - `install-*`, `lane-new`, `merge-settings`: the install scripts, the new-lane script and the settings merge.
