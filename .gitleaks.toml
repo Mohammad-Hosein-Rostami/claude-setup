@@ -1,4 +1,4 @@
-# Purpose: gitleaks config for the pre-commit hook; keeps the default rules and adds one for Claude login tokens.
+# Purpose: gitleaks config for the hand check before each commit (CLAUDE.md); keeps the default rules and adds one for Claude login tokens.
 # No allowlist: every path is scanned (a fixture with a fake secret builds it at run time, as tests/account-gitleaks.test.mjs does).
 title = "claude-setup"
 

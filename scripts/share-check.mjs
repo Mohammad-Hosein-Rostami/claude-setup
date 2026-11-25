@@ -6,10 +6,10 @@
 //   copies the empty template from `personal.example/`. You run it by hand before a commit (CLAUDE.md).
 // Usage: node scripts/share-check.mjs [--deny <file>] [--staged | --history | --commit-msg <file>] [<path>...]
 //   (no mode)          the tracked files of the working tree and their paths (only those under <path>... when given)
-//   --staged           the index blobs and paths of the files added or changed in the index (what the next commit holds; pre-commit)
+//   --staged           the index blobs and paths of the files added or changed in the index (what the next commit holds)
 //   --history          every commit message of every ref, and every commit whose changes hold a deny word: in the old or the new
 //                      content of a changed file, or in its path (scripts/share-check/history.mjs)
-//   --commit-msg <f>   the message of the commit being made (the commit-msg hook, .githooks/commit-msg), without git's comment lines
+//   --commit-msg <f>   the message in <f> of the commit about to be made (run by hand before it), without git's comment lines
 //                      and what follows the scissors line, as git commits it
 // Output: one `<file>:<line>: <deny word>` per hit in content, `<file>:name: <deny word>` for a word in a path, `commit message:<line>:
 //   <deny word>` (a history hit: `share-check: history <word>: ...`); `share-check: skipped <file> (<why>)` for an entry with no content
@@ -47,7 +47,7 @@ const GIT_MAX_BUFFER_BYTES = 512 * 1024 * 1024; // the blobs of a long history, 
 const SCISSORS = /^.*-{24} >8 -{24}$/m; // git's cut line (`git commit -v`): what follows it is not committed
 const EXIT = Object.freeze({ clean: 0, hit: 1, error: 2 });
 // git config that would make a read run a program the repository names (as in home/hooks/lib/gated-folder.mjs). The git
-// environment is kept on purpose: under a pre-commit hook GIT_INDEX_FILE names the index the commit is made from.
+// environment is kept on purpose: a GIT_INDEX_FILE the caller sets names the index the commit is made from.
 const HARDENED = ['-c', 'core.fsmonitor=false', '-c', 'log.showSignature=false'];
 
 class CheckError extends Error {}
