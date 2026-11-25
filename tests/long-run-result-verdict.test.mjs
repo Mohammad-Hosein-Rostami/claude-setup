@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync } from 'node:fs';
-import { readJson, runPaths, writeJson } from '../home/tools/long-run/lib/run-store.mjs';
+import { readJson, readJsonLines, runPaths, writeJson } from '../home/tools/long-run/lib/run-store.mjs';
 import { cli, journalOf, killRunProcesses, makeSandbox, readCalls, waitFor } from './long-run-helpers.mjs';
 
 const FROM = 'acct-a';
@@ -34,7 +34,12 @@ async function runOneStep(name, switchTo, { bossMode = `sleep:${BOSS_RUN_MS}`, t
       assert.equal(told.status, 0, told.stderr);
     }
     await waitFor(() => ['done', 'held'].includes(readJson(paths.driver)?.status), STEP_WAIT_MS, 'run end');
-    return { calls: readCalls(box), journal: journalOf(paths, 'one'), queuedTells: readdirSync(paths.control).filter((file) => file.endsWith('.tell')) };
+    return {
+      calls: readCalls(box),
+      journal: journalOf(paths, 'one'),
+      queuedTells: readdirSync(paths.control).filter((file) => file.endsWith('.tell')),
+      toldEvents: readJsonLines(paths.events).filter((event) => event.event === 'told'),
+    };
   } finally {
     killRunProcesses(box, paths);
   }
@@ -69,13 +74,15 @@ for (const verdict of ['blocked', 'needs-owner']) {
   });
 }
 
-test('a tell queued while the boss is about to give a done result keeps the verdict: one start, outcome done, the message stays queued unread', async () => {
+// A tell is not a verdict to keep: the boss ends at its result line as `told`, and the next start carries the message.
+test('a tell queued while the boss is about to give a done result is delivered: told, then a start with the message, outcome done', async () => {
   const run = await runOneStep('verdicttell', null, { tellMessage: TELL_MESSAGE });
 
-  assert.deepEqual(run.journal.startsLog.map((entry) => entry.outcome), ['done'], `the done result was thrown away (${describeRun(run)})`);
-  assert.equal(run.calls.length, 1, `the done step started again (${describeRun(run)})`);
-  assert.equal(run.journal.final.status, 'done');
-  // The step is finished, so no start takes the message: it is kept in the run's control folder, never sent to a boss.
-  assert.equal(run.queuedTells.length, 1, 'the told text stays queued');
+  assert.deepEqual(run.journal.startsLog.map((entry) => entry.outcome), ['told', 'done'], describeRun(run));
+  assert.equal(run.calls.length, 2, describeRun(run));
   assert.ok(!run.calls[0].stdin.includes(TELL_MESSAGE), 'the first start did not carry the message');
+  assert.ok(run.calls[1].stdin.includes(TELL_MESSAGE), 'the second start carries the told text');
+  assert.deepEqual(run.queuedTells, [], 'the delivered tell file is removed from control/');
+  assert.equal(run.journal.final.status, 'done');
+  assert.equal(run.toldEvents.length, 1, 'the told event appears once');
 });
