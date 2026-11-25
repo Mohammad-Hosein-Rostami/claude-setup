@@ -186,6 +186,14 @@ function valueCell(value) {
   return code(JSON.stringify(value));
 }
 
+/** The `hooks` value in one cell: each event and the hook files it registers (`SessionStart -> \`a.mjs\`, \`b.mjs\``). */
+function hooksCell(hooks) {
+  return Object.entries(hooks).map(([event, groups]) => {
+    const files = groups.flatMap((group) => (group.hooks ?? []).map((hook) => HOOK_IN_COMMAND.exec(hook.command ?? '')?.[1]));
+    return `${event} -> ${[...new Set(files.filter(Boolean))].map(code).join(', ')}`;
+  }).join('; ');
+}
+
 /** Rows of the Settings keys table: each key of settings/base.json (SPLIT_SETTINGS one level down) and its value. */
 function settingRows(repo, problems) {
   const settings = JSON.parse(read(repo, 'settings', 'base.json'));
@@ -195,7 +203,9 @@ function settingRows(repo, problems) {
   const readme = join(repo, 'settings', 'README.md');
   const explained = existsSync(readme) ? readFileSync(readme, 'utf8') : '';
   for (const [key] of pairs) if (!explained.includes(`| ${code(key)} |`)) problems.push(`settings/README.md has no row for ${key}`);
-  return pairs.sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => [code(key), valueCell(value)]);
+  // `hooks` names its hook files, not just its event keys, so the row shows what each event runs.
+  return pairs.sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => [code(key), key === 'hooks' ? hooksCell(value) : valueCell(value)]);
 }
 
 /** The Plugins section's lines, from plugins/plugins.json. */
