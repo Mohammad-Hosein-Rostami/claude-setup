@@ -25,7 +25,7 @@ The installer links `home/*` (rules, skills, agents, standards, hooks, tools, st
 `~/.claude`, makes `personal/` from `personal.example/` when it is missing (git-ignored, its own git repo with a first commit),
 links `~/.claude/project-notes` to `personal/project-notes`, and writes `~/.claude/CLAUDE.md` as a marker line plus
 `@<repo>/home/CLAUDE.md` and `@<repo>/personal/CLAUDE.md`, builds `~/.claude/settings.json`, installs `home/tools/ui-check` dependencies (lockfile if present,
-otherwise a plain install), unsets `core.hooksPath` when an earlier install set it to `.githooks`, then installs plugins. Anything replaced is moved
+otherwise a plain install), unsets `core.hooksPath` when an earlier install set it to `.githooks`, writes `docs/catalog.md` (git-ignored; a problem in it is only a warning, and `node scripts/catalog.mjs write` rebuilds it), then installs plugins. Anything replaced is moved
 to `~/.claude-backup-<stamp>/`, never deleted. One install runs at a time: a second one started meanwhile stops with a message. To check the result, ask `tess` for a setup check.
 To check free disk space, run `node ~/.claude/tools/disk-free/disk-free.mjs check` (FAIL below 5 GB, WARN below 15 GB; `DISK_FAIL_FREE_GB` and `DISK_WARN_FREE_GB` move the limits); it names the caches to clear.
 

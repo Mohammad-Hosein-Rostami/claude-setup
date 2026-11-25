@@ -44,7 +44,7 @@ Run tests (the second needs the ui-check deps that `install.sh` installs; `npm r
     npm run test:ui-check       # ui-check's own tests
 
 No test runs by itself: a commit and a push run none, and `land` runs one only with `--test`; the boss sends changes to
-`tess` by the "Quality checks" table in `home/CLAUDE.md`. Run the whole suite by hand (or ask `tess`) when you want to know
+`tess` by the table "Which tess work a change gets" in the `qa-plan` skill. Run the whole suite by hand (or ask `tess`) when you want to know
 everything still works.
 
 Windows: `powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-Update [-To <tag>]] [-Uninstall]` (not verified on Windows yet). Needs git (Git for Windows).

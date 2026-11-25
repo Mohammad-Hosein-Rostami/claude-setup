@@ -1,7 +1,7 @@
 # Daily use
 
 How to work with this setup day to day. Editing the repo itself is in [usage.md](usage.md); install is in
-[setup.md](setup.md); every file is listed in [catalog.md](catalog.md).
+[setup.md](setup.md); every file is listed in [catalog.md](catalog.md), which install generates.
 
 ## Start
 Start a session with `claude --model <m> --effort <e>`, for example `claude --model opus --effort high` (the usual boss);
@@ -15,7 +15,8 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   itself. It starts four main agents, at most 3 of each at once:
   - `lex` (Opus, high; the boss raises it to `effort: "xhigh"` for a hard design or an unclear need, and to `effort: "max"`
     only when a wrong choice is costly to undo) clarifies, researches, compares, designs and plans, and writes the acceptance
-    lines. It asks you its questions at the start of a job. Its helpers take the simple parts: `lex-scout` (code and doc
+    lines. It asks you its questions at the start of a job. Work on locks, concurrency, security or data loss gets a short
+    state design from it first, even when the build looks clear. Its helpers take the simple parts: `lex-scout` (code and doc
     lookups, maps of an area) and `lex-web` (web research with sources).
   - `dev` writes code, config and fixes in its own worktree and runs no tests. It splits the job into parts, each owning its
     files (parts that share a file run one after another), may write any part itself and reads every helper's diff before
@@ -23,10 +24,15 @@ Keep extra usage off in claude.ai so nothing can bill credits.
     `dev-ui` (screens, components, forms), `dev-pixel` (Figma to code; its final gate is `pixel-qa`), `dev-debug` (hard bugs,
     root cause), `dev-docs` (the docs and user-facing text, written while the code is built), `dev-run` (installs, long logs,
     returned as a short summary) and `lex-scout`.
-  - `tess` runs the quality checks in the background, by the table under "Quality checks" in `home/CLAUDE.md`: a risky change
+  - `tess` runs the quality checks in the background, by the table "Which tess work a change gets" in the `qa-plan` skill
+    (`home/CLAUDE.md`, "Quality checks", sums it up): a risky change
     (security, data, money, concurrency, gate such as the setup's own hooks, large) waits for tess before it lands; other code changes get
-    one background check at the end of the job; docs and text only get none; and anything you ask for runs at once. tess (Opus)
-    plans and judges; its helpers do the work: `tess-run` (the runs, the full suite once per tree), `tess-edge`
+    one background check at the end of the job; docs and text only get none; and anything you ask for runs at once. When a
+    feature that uses Claude first works, dev names a `smoke:` line (the command and what it should show); tess runs it 1 to 3
+    times with real Claude and records each try, and nothing waits for it. tess (Opus)
+    plans and judges; its helpers do the work. A small change (risk none, under about 300 changed lines) gets 2 or 3 of them,
+    and a review runs at effort `xhigh` only for data, money, concurrency or security work (a review of docs or text only runs
+    on Sonnet). The helpers: `tess-run` (the runs, the full suite once per tree), `tess-edge`
     (edge cases), `tess-simple` (needless complexity), `tess-review` (reviews the code against lex's spec) and `tess-write`
     (writes the missing tests in its own worktree, one per area; tess then proves each one can fail).
   - `max` (the ship agent; Opus, high) starts rarely: when you call it, or after a job's last land when lex's plan names a
@@ -36,6 +42,8 @@ Keep extra usage off in claude.ai so nothing can bill credits.
 - Only the boss starts `lex`, `dev`, `tess` and `max`. An agent that needs one asks the boss with a `needs:` line (by message
   while it runs in the background, else in its report); the boss starts it, keeps track of who is on what and sends the result
   back.
+- After 3 rounds of fix and review on one area, the boss stops patching and sends the area to `lex` for a redesign; on the
+  redesigned tasks only a regression that a fix caused blocks landing.
 - Helpers are not counted. Two lanes or helpers never change the same file at once. Technical choices are made and stated in one line; your decisions are asked.
 - Landing is one script call, not an agent: the `land` script (`home/tools/land`) rebases the branch, fast-forwards it with
   `git merge --ff-only` and removes the landed branch and worktree. `--test "<command>"` runs a test on the rebased tip first.
@@ -125,7 +133,9 @@ History stays one straight line: no merge commits, no branch merged into another
 - Auto-compaction runs at a 400000-token window (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`); the status line shows the
   context size. Run `/compact` at a natural seam, not mid-step.
 - Phase change, repeated compactions or `/clear`: run the `handoff` skill, then `/clear` and say
-  "continue from HANDOFF.md".
+  "continue from HANDOFF.md". The note pastes the session's agents with their branches and folders from
+  `node ~/.claude/tools/board/board.mjs show --refresh`. Run `show [--session <id>] [--refresh] [--json]` yourself any time to
+  see the board as plain lines.
 - Start a fresh session for an unrelated task, or when context is large and the next step is a new phase.
 
 ## Resume after an exit or an account switch
@@ -159,4 +169,4 @@ tests have not been run there (`tests/pin-home.mjs` and the warm-exec fakes assu
 
 ## Where things are
 - Reports from agents and audits: `~/Desktop/claude-setup-reports/`.
-- What exists: [catalog.md](catalog.md). Problems: [troubleshooting.md](troubleshooting.md).
+- What exists: [catalog.md](catalog.md), generated by install (`node scripts/catalog.mjs write` rebuilds it). Problems: [troubleshooting.md](troubleshooting.md).
