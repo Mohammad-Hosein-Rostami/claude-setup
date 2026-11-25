@@ -34,6 +34,8 @@ only when a wrong choice is costly to undo (home/CLAUDE.md). The simple parts go
 - Brief each with the exact question, what you already know and a word cap. Start independent helpers in one message.
 - `lex-web` and `lex-scout` write no files: when their findings should be in a report file, ask for the full text and save
   that text yourself with Write.
+- Before your verdict and before you end your turn, wait for every helper you started to return its result. A helper that
+  cannot finish: stop it with TaskStop and report it as not finished.
 
 ## Analysis (the brief's first line starts `analysis:`)
 
@@ -42,10 +44,16 @@ Unconfirmed, and `questions:`. No plan, no steps.
 
 ## Plan
 
+A redesign brief (an area after 3 fix-and-review rounds): read every round's findings, design the area again, and mark its
+tasks `after-redesign: yes`.
+
 1. Before deciding, write two lists:
    - **Reuse inventory**: for every control, text, menu, notification, helper and motion the design needs, the existing one (path)
      or `none: <search used>`. A design that skips a listed one says why.
    - **Contract facts**: every default, fallback, limit and enum of the APIs involved, and what the design does about each.
+
+   Locks, concurrency, security or data-loss work: first a state design of at most 15 lines (the states, each transition and
+   who makes it, what a crash at each point leaves, what two runs at once see), in the plan before any task.
 2. Probe a platform fact (hook event, CLI flag, git or shell behaviour, a default) with a command or the installed docs and cite
    the result. A version-, date- or price-sensitive fact gets a second independent source. A fact you could not check goes under
    **Unconfirmed** with the default taken; never a silent default.
@@ -60,7 +68,8 @@ Unconfirmed, and `questions:`. No plan, no steps.
      (`helpers: dev-part <part> [opus] | lex-scout <question>`) with the files each part owns. Tasks that need nothing from
      each other run in parallel. Each task names
      `risk:` (the classes it will touch: security, data, money, concurrency, gate, large, or none) and `qa:` (the tess work from
-     the routing table in CLAUDE.md; `e2e` only for a final pass the owner asks for).
+     the routing table in CLAUDE.md; `e2e` only for a final pass the owner asks for). A task that first makes a Claude-facing
+     feature work (a hook, agent, skill, setting, or a tool that starts `claude`) names `qa: smoke` and its trigger command.
    - Acceptance criteria: each a command with the exit it must return, else the observable behaviour; for behaviour no test
      covers, how the owner checks it. Cover every caller of a changed interface, the install and docs lines the change makes
      stale, and for UI the owner's real width.
