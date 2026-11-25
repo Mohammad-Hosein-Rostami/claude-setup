@@ -3,9 +3,9 @@
 // readmeText(readme), makeLibrary(ctx, options), addWorktree(ctx, name, branch), commitAll(ctx, cwd, message).
 // Why: every scenario that lets Claude work, land or push needs a real repo whose only remote is a bare repo in the run root
 // (owner rule: no outward action; E6 pushes only there). The bare repo is made with `git clone --bare`, so setup pushes nothing.
-// `src/slug.mjs` has a header line and a last line far apart, so E7's two lanes change different hunks of one file.
+// `src/slug.mjs` has a header line and a last line far apart, so E7's three lanes change different hunks of one file.
 // Invariants: every path is under the scenario folder; commits carry a fixed identity and no signing, so they work under the temp
-// HOME and under `--real-home` alike; `testScript: false` leaves package.json without a test script (land then needs --test, E7).
+// HOME and under `--real-home` alike; `testScript: false` leaves package.json without a test script (land then runs no test unless --test is given, E7).
 // Every setup step goes through mustGit: a git step that fails throws, so the scenario ends with a FAIL line naming it instead
 // of running on a repo that is not there (a missing origin read as "unchanged").
 import { join } from 'node:path';

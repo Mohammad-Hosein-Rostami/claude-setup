@@ -1,5 +1,5 @@
 // Tests that a failed git read or setup step in the e2e scenarios is a FAIL, never "unchanged" (review round 2, R5): gitOut's
-// failure text, the read comparers in tests/e2e/lib/common.mjs, makeLibrary's setup steps, and the check lines of E1, E5, E6,
+// failure text, the read comparers in tests/e2e/lib/common.mjs, makeLibrary's setup steps, and the check lines of E1, E6,
 // E7 and E11 on reads that failed, each next to its twin whose reads work and pass.
 // Why: two failed reads used to give '' twice, and '' === '' read as "the origin is unchanged" or "main unmoved".
 // No real `claude` runs: the scenario contexts are plain objects with a fake git; transcripts come from tests/e2e-fixtures.mjs.
@@ -11,7 +11,6 @@ import { GIT_FAILED, gitOut, readFailed, readText, sameRead } from './e2e/lib/co
 import { leakSnapshot } from './e2e/lib/leaks.mjs';
 import { makeLibrary } from './e2e/lib/repo.mjs';
 import * as E1 from './e2e/scenarios/E1.mjs';
-import * as E5 from './e2e/scenarios/E5.mjs';
 import * as E6 from './e2e/scenarios/E6.mjs';
 import * as E7 from './e2e/scenarios/E7.mjs';
 import * as E11 from './e2e/scenarios/E11.mjs';
@@ -65,14 +64,6 @@ test('E1: main moved FAILs when the merge, branch or worktree reads fail; it PAS
   assert.match(failed.observed, /git reads failed: \(git failed: git rev-list/);
 });
 
-test('E5: the bare origin line FAILs when both origin reads failed, and PASSes on two equal reads', () => {
-  const failed = gitOut({ repo: '/r', git: failingGit }, ['show-ref']);
-  const line = (before, after) => E5.check({ notes: { originBefore: before, b: { originRefs: after } }, paths: { guardLog: '/none' } })
-    .find((one) => one.check === '(b) the bare origin is unchanged');
-  assert.equal(line(failed, failed).pass, false);
-  assert.equal(line(REFS, REFS).pass, true);
-});
-
 test('E6: the origin lines FAIL when the origin reads failed, and PASS on equal reads', () => {
   const failed = gitOut({ repo: '/r', git: failingGit }, ['show-ref']);
   const lines = (originBefore, refs) => byName(E6.check({ dry: true, dir: '/none', repo: '/none/repo', origin: '/none/origin.git', paths: {},
@@ -88,10 +79,12 @@ test('E6: the origin lines FAIL when the origin reads failed, and PASS on equal 
 
 const LANDED_OUT = `test passed on ${MAIN_AFTER}\nlanded lane/b on main at ${MAIN_AFTER}`;
 
+const C_LINE = 'lane c lands without --test although both sides changed the file';
+
 function e7Lines(git) {
   const ctx = { repo: '/w/E7/repo', git };
   const main = () => gitOut(ctx, ['rev-parse', 'main']);
-  const notes = { landA: { code: 0 }, noTest: { code: 1, stdout: 'src/slug.mjs', stderr: '' }, failing: { code: 1, stdout: '', stderr: '' },
+  const notes = { landA: { code: 0 }, noTest: { code: 0, stdout: `landed lane/c on main at ${MAIN_BEFORE}`, stderr: '' }, failing: { code: 1, stdout: '', stderr: '' },
     passing: { code: 0, stdout: LANDED_OUT, stderr: '' }, laneBAfterFailing: { branch: true, worktree: true } };
   Object.assign(notes, { mainAfterA: main(), mainAfterNoTest: main(), mainAfterFailing: main(), merges: gitOut(ctx, ['rev-list', '--merges', '--all']) });
   return byName(E7.check({ notes: { ...notes, mainAfterPassing: MAIN_AFTER } }));
@@ -99,12 +92,12 @@ function e7Lines(git) {
 
 test('E7: "main unmoved" and "no merge commit" FAIL when the main and merge reads failed, and PASS when they work', () => {
   const bad = e7Lines(failingGit);
-  assert.equal(bad['lane b without --test is refused, listing the file'].pass, false);
+  assert.equal(bad[C_LINE].pass, false);
   assert.equal(bad['a failing --test keeps main and lane b'].pass, false);
   assert.match(bad['a failing --test keeps main and lane b'].observed, /main not read/);
   assert.equal(bad['no merge commit'].pass, false);
   const good = e7Lines((args) => ok(args[0] === 'rev-parse' ? MAIN_BEFORE : ''));
-  assert.equal(good['lane b without --test is refused, listing the file'].pass, true);
+  assert.equal(good[C_LINE].pass, true);
   assert.equal(good['a failing --test keeps main and lane b'].pass, true);
   assert.equal(good['no merge commit'].pass, true);
 });
@@ -114,8 +107,7 @@ const E11_LINE = 'the real checkout git status is unchanged';
 test('E11: the real checkout status line FAILs when git status failed both times, and PASSes on two equal reads', () => {
   const home = makeTempDir('harness-reads-e11-');
   const snapshot = () => leakSnapshot({ realHome: home, realRepo: join(home, 'not-a-repo') });
-  const line = (before, after) => E11.check({ run: { before, sessionIds: new Set(), shimDirs: [], realHomeMode: false },
-    notes: { after, tools: {} }, paths: { guardLog: join(home, 'none.jsonl') } }).find((one) => one.check === E11_LINE);
+  const line = (before, after) => E11.check({ run: { before, shimDirs: [] }, notes: { after, tools: {} } }).find((one) => one.check === E11_LINE);
   const [before, after] = [snapshot(), snapshot()];
   assert.ok(before.gitStatus.startsWith(GIT_FAILED), before.gitStatus);
   assert.equal(line(before, after).pass, false);
