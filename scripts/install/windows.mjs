@@ -30,7 +30,7 @@ export function findGitBash(env) {
 
 /**
  * Stops the install without Git Bash: Claude Code on Windows runs its Bash tool, the hooks' shell and the status line
- * through it; without it the PowerShell tool is the only shell and the guard's Bash rules do not hold.
+ * through it; without it the PowerShell tool is the only shell, and the hooks and the status line do not run.
  * @throws {InstallError} when Git Bash is not found
  */
 export function requireGitBash(ctx) {
