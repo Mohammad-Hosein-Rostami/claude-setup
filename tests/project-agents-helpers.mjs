@@ -23,7 +23,7 @@ export const AGENTS = '.claude/agents/'; // how the note names the agents folder
 export const CAP_ADVICE = 'a maxTurns file is never edited: brief our agent of that role with the file\'s path';
 export const SHADOW_ADVICE = 'tell the owner (project repos keep only project config)';
 export const BOTH_ADVICE = `${CAP_ADVICE}; ${SHADOW_ADVICE}`;
-export const LINK_ADVICE = 'tell the owner about each link (a link is not read, and nothing is edited through it)';
+export const LINK_ADVICE = 'tell the owner about each link (never read, nothing edited through it)';
 
 /** The text of an agent file with this frontmatter name; `extra` is more frontmatter lines, each ending in a newline. */
 export const agent = (name, extra = '') => `---\nname: ${name}\ndescription: x\n${extra}---\nBody\n`;

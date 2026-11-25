@@ -16,10 +16,10 @@ import { AGENT_HEAD_BYTES } from './agent-file-walk.mjs';
 // agent names, so units, code points and bytes are the same number for today's set.
 // Why 800: the note is one line of the lead note project-merge.mjs prints at SessionStart, whose own cap (LEAD_NOTE_MAX_CHARS in
 // project-merge-text.mjs) holds it with the other lines, far below the 10,000-character cap of a hook string.
-// What is never cut measures 731 with today's eight personal agents and the six built-in ones all shadowed and six digits in each
-// count (755 once the eight carry the 3-character `cs-` prefix): start 90, the three pieces of advice 226, the personal names with
-// their label, the built-in names with theirs 101, the three counts 62, 39 and 51, a list that only counts its files 34, and the full
-// stops. tests/project-agents-cap.test.mjs fails when that stops fitting. A single item can be up to about 830 long (two escaped
+// What is never cut measures 794 with today's 18 personal agents and the six built-in ones all shadowed and six digits in each
+// count (848 once the 18 carry the 3-character `cs-` prefix: that lane must shorten the note or raise the cap): start 90, the three
+// pieces of advice 211, the personal names with their label, the built-in names with theirs 101, the three counts 62, 39 and 51, a
+// list that only counts its files 34, and the full stops. tests/project-agents-cap.test.mjs fails when that stops fitting. A single item can be up to about 830 long (two escaped
 // parts of 387, the quotes, the longest reason); one that does not fit is counted, not shown.
 export const NOTE_MAX_CHARS = 800;
 // The file names in the note come from the repository. The label says so, and everything the hook itself says stands before the list.
@@ -36,7 +36,7 @@ const LIST_START = 'Files: ';
 // our agents get it (owner decision R22-L1, a later lane), so it says "our agent of that role".
 const CAP_ADVICE = 'a maxTurns file is never edited: brief our agent of that role with the file\'s path';
 const SHADOW_ADVICE = 'tell the owner (project repos keep only project config)';
-const LINK_ADVICE = 'tell the owner about each link (a link is not read, and nothing is edited through it)';
+const LINK_ADVICE = 'tell the owner about each link (never read, nothing edited through it)';
 
 /** Why a file or folder is listed. The texts that end in "check by hand" make no claim about the file's name or maxTurns. */
 export const REASONS = Object.freeze({
