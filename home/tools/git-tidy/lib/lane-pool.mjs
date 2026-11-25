@@ -22,6 +22,8 @@
 //   not a worktree of this repository) is never switched, cleaned or removed.
 // - What a claim adds (the worktree, its `cs-lane-pool <branch>` lock, the branch) land or release removes (lane-release.mjs). No
 //   `--force` and no reset anywhere.
+// - A claim adds `/.claude/worktrees/` to the repository's local info/exclude when git does not ignore the pool yet (pool-ignore.mjs),
+//   under the lock, so lane folders stay out of `git status` and `git add -A`.
 // - A branch name passes `git check-ref-format --branch` unchanged, does not start with `-` or `refs/` and is no base branch (the base,
 //   main, master, develop), before anything is written.
 // - The clean is `git clean -fdx` (one -f): a git repository inside an ignored folder stays. A stale entry is removed only when its
@@ -35,6 +37,7 @@ import { cloneSupport, FILL_ENV, fillFresh, fillIgnored } from './lane-fill.mjs'
 import { deleteFillFile, emptyForRefill, readFillFile, removeStaleIndexLock, startFillFile } from './lane-fill-state.mjs';
 import { commonDirOf, LOCK_REASON_PREFIX, poolFolderOf, poolSlots, readSlot, SNAPSHOT_LABEL, staleEntryLossWhy } from './lane-slots.mjs';
 import { baseNames, branchTip, recordFolder, slotTree } from './lane-release.mjs';
+import { ignorePool } from './pool-ignore.mjs';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -261,8 +264,9 @@ const checkoutFill = ({ mode, why }) => ({ mode, entries: 0, seconds: 0, repaire
  * @param {{ branch?: string|null, base: string, env?: NodeJS.ProcessEnv, snapshot?: boolean }} lane `base`: full sha a new branch
  *   starts at, or the snapshot's commit; `env`: HOME and session id of the job-made record, and GIT_TIDY_LANE_FILL (cloneSupport)
  * @returns {{ folder: string, slot: string, created: boolean, kept: string[], branch: string|null, base: string, snapshot: boolean,
- *   fill: object, record: string }} `kept`: dependency folders left in place; `fill`: `{ mode: 'clone'|'checkout', entries, seconds,
- *   repaired, warnings, why }` (why: cloneSupport's reason; warnings: the fill's, and a broken slot's refill); `record`: job-made outcome
+ *   fill: object, record: string, poolIgnore: ReturnType<typeof ignorePool> }} `kept`: dependency folders left in place; `fill`:
+ *   `{ mode: 'clone'|'checkout', entries, seconds, repaired, warnings, why }` (why: cloneSupport's reason; warnings: the fill's, and a
+ *   broken slot's refill); `record`: job-made outcome; `poolIgnore`: whether git ignores the pool folder now (pool-ignore.mjs)
  * @throws {UsageError} bad branch name or sha, a snapshot with a branch, branch checked out in another folder or being filled there
  *   (named), no main worktree; PoolBusy; Error when git or the fill fails (the folder is then not handed out)
  */
@@ -277,7 +281,10 @@ export function claimLane(repo, { branch = null, base, env = process.env, snapsh
   mkdirSync(pool, { recursive: true }); // cloneSupport reads the pool's volume; the first worktree add would make it anyway
   const support = cloneSupport(worktrees[0].path, pool, env);
   const cloning = support.mode === CLONE_MODE;
-  const { pending, ...claimed } = withPoolLock(commonDirOf(repo), `claim ${label}`, () => claimUnderLock(repo, { branch, base, label }, cloning));
+  const { pending, ...claimed } = withPoolLock(commonDirOf(repo), `claim ${label}`, () => {
+    const taken = claimUnderLock(repo, { branch, base, label }, cloning);
+    return { ...taken, poolIgnore: ignorePool(worktrees[0].path) }; // under the lock: two claims never append the line twice
+  });
   const fill = cloning ? fillAndEnd(repo, claimed, pending, support.why) : checkoutFill(support);
   return { ...claimed, branch, base, snapshot, fill, record: recordFolder(env, claimed.folder, 'made', 'git-tidy lane claim') };
 }

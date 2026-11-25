@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { UsageError } from './git.mjs';
 import { claimLane, poolSlots, reclaimLanes, releaseLane } from './lane-pool.mjs';
 import { installFolder, prepareLane } from './lane-prep.mjs';
+import { POOL_EXCLUDE_LINE } from './pool-ignore.mjs';
 import { PoolBusy } from './pool-lock.mjs';
 import { openRepo } from './repo.mjs';
 
@@ -74,8 +75,15 @@ const fillLine = (fill) => (fill.mode === 'checkout' ? `fill: checkout (${fill.w
 /** An install for the `installed:` line; one whose node_modules came from the deps cache (lane-deps.mjs) says so. */
 const installedText = (install) => `${install.command} in ${install.dir}${install.outcome === 'cloned' ? ' (from the deps cache)' : ''}`;
 
+/** The stderr line for what the claim did to keep the pool out of `git status` (pool-ignore.mjs); none when git already ignored it. */
+function reportPoolIgnore(repoDir, { outcome, path, why }) {
+  if (outcome === 'added') console.error(`git-tidy: added ${POOL_EXCLUDE_LINE} to ${path} so lane folders stay out of git status`);
+  if (outcome === 'failed') console.error(`git-tidy: lane folders show in git status of ${repoDir} (${why}): land refuses there until git ignores .claude/worktrees/`);
+}
+
 function runClaim(repo, options) {
   const claimed = claimLane(repo, { branch: options.branch, base: options.base, snapshot: options.snapshot });
+  reportPoolIgnore(options.repo, claimed.poolIgnore);
   warnRecord(claimed.record);
   claimed.fill.warnings.forEach((warning) => console.error(`git-tidy: fill warning: ${warning}`));
   const prep = prepareLane(claimed.folder);
