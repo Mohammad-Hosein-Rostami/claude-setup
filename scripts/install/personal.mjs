@@ -1,6 +1,8 @@
 // Purpose: the personal layer of an install. Runs the <repo>/personal/ steps (personal-folder.mjs: the folder from personal.example/,
 //   the owner's notes into personal/project-notes), links ~/.claude/project-notes there, and writes ~/.claude/CLAUDE.md as the
-//   marker line plus an @ import of the core home/CLAUDE.md and, while it exists, of personal/CLAUDE.md.
+//   marker line plus an @ import of the core home/CLAUDE.md and, while it exists, of personal/CLAUDE.md. In a linked git worktree
+//   (a lane, or a test run there with a temp HOME) it only writes ~/.claude/CLAUDE.md with the core import: personal/ belongs to
+//   the main checkout, and one made in a lane would stop `land` from removing that worktree.
 // Exports: PERSONAL_ITEMS, CLAUDE_MD_MARKER, importPath, checkImportPath, claudeMdText, hasInstallMarker, installPersonal,
 //   removeWrittenFiles.
 // Invariants: writes stay inside ~/.claude and <repo>/personal, never through a link there; ~/.claude/CLAUDE.md is replaced
@@ -13,6 +15,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { worktreeOf } from '../../home/hooks/lib/gated-folder.mjs';
 import { readRegularFile } from '../../home/tools/env-names/lib/read-regular-file.mjs';
 import { InstallError, act, leave, note, samePath, warn } from './context.mjs';
 import { backup, isMade } from './record.mjs';
@@ -140,14 +143,25 @@ function writeClaudeMd(ctx, record, withPersonal) {
   });
 }
 
+/** True when `repo` is a linked git worktree (its git folder is not the shared one); false for the main checkout or no git. */
+function isLinkedWorktree(repo) {
+  const worktree = worktreeOf(repo);
+  return worktree !== null && !samePath(worktree.gitDir, worktree.commonDir);
+}
+
 /**
  * The personal steps of an install, inside the install lock: personal/, on the layer's first install the owner's notes (restored
- * from git history when a pull removed them, then moved), the project-notes link, CLAUDE.md.
+ * from git history when a pull removed them, then moved), the project-notes link, CLAUDE.md. In a linked worktree only CLAUDE.md,
+ * with the core import (header).
  * @param {object} ctx the run context (repo, root, claudeDir, dryRun)
  * @param {object} record the install record (movedNotes, backups, and the CLAUDE.md entry of `written` are kept there)
  * @throws {InstallError} when the template is missing or a git step fails (install.mjs has checked the import paths already)
  */
 export function installPersonal(ctx, record) {
+  if (isLinkedWorktree(ctx.repo)) {
+    note(ctx, `skipped ${PERSONAL_DIR}/ and ~/.claude/${NOTES}: ${ctx.repo} is a linked git worktree; the personal layer belongs to the main checkout`);
+    return writeClaudeMd(ctx, record, false);
+  }
   const willCopyTemplate = !lstatOrNull(personalDir(ctx));
   const firstLayerInstall = !isLayerLinked(ctx); // read before the link below is made
   ensurePersonal(ctx);

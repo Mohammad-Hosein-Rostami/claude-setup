@@ -49,6 +49,9 @@ How it behaves:
   folder. Later installs move nothing, so a shared note not yet committed in `home/project-notes` stays in core.
   `--uninstall` moves the moved notes back and keeps `personal/`. A `.personal-*` copy of the template that a stopped
   install left is removed by the next install once it is older than 30 minutes (a running install's copy is seconds old).
+  An install from a linked git worktree (a lane, or a test there with a temp HOME) skips all of this and the
+  `~/.claude/project-notes` link, and writes `~/.claude/CLAUDE.md` with the core import only: `personal/` belongs to the
+  main checkout, and one in a lane would keep `land` from removing its worktree.
 - New machine (no record, its own `settings.json`, `~/.claude/CLAUDE.md` neither the installer's marker file nor linked into
   this repo): that `settings.json` is kept as the first, lowest layer under `settings/base.json`, `settings/<os>.json` and
   `settings/local.json`.
