@@ -4,11 +4,13 @@
 // Invariants: an outcome is returned, never thrown; waits are wall-clock targets saved in the journal and read in 30 s slices, so a
 //   sleep or a crash loses only the wait already spent; a limit wait, a pause, a stop, a takeover or an owner message is never an
 //   attempt; `maxAttempts` counts failed attempts and `maxStarts` every start (loop guards of owner decision O2, not budgets); a
-//   run-level pause or stop parks the unit after its journal is written (the driver then exits: spec 7.2, the P3 crash path).
+//   run-level pause or stop parks the unit after its journal is written (the driver then exits: spec 7.2, the P3 crash path); an
+//   unfinished unit takes the account run.json names at each runUnit (so `resume --account` switches it) and then drops a limit
+//   wait recorded under the old account.
 import { claimLane } from '../../git-tidy/lib/lane-pool.mjs';
 import { openRepo } from '../../git-tidy/lib/repo.mjs';
 import { limitWaitUntil } from './limit-time.mjs';
-import { isPidAlive, readJournal, writeJournal } from './run-store.mjs';
+import { isPidAlive, readJournal, readJson, writeJournal } from './run-store.mjs';
 import { endOrphan } from './claude-run.mjs';
 import { AccountRefusal } from './run-account.mjs';
 import { startOnce } from './step-start.mjs';
@@ -63,6 +65,19 @@ function journalFor(ctx, unit, visit, reply) {
   if (!saved || saved.visit !== visit) return newJournal(ctx, unit, visit, saved);
   if (!reply || saved.replyId === reply.id) return saved; // the same reply again: the driver restarted after applying it
   return { ...saved, final: null, attempts: 0, starts: 0, nextAttemptAt: null, replyId: reply.id, notes: [...saved.notes, `owner: ${reply.action}`] };
+}
+
+/**
+ * The journal on the account run.json names now. `resume --account` rewrites run.json while no driver runs; reading it here,
+ * not ctx.account, keeps run.json the one truth even when two resumes race. A limit wait belongs to the old account's limit,
+ * so it ends and the step starts at once; the session id stays, so the step continues its own conversation.
+ */
+function onRunAccount(ctx, journal) {
+  const { account } = readJson(ctx.paths.run);
+  if (account === journal.account) return journal;
+  const switched = `account ${journal.account} -> ${account}`;
+  const note = journal.waitUntil ? `${switched}: limit wait dropped` : switched;
+  return { ...journal, account, waitUntil: null, notes: [...journal.notes, note] };
 }
 
 function claimWorktree(ctx, unit, journal) {
@@ -161,6 +176,7 @@ export async function runUnit(ctx, unit, { visit, reply }) {
     const orphan = await endOrphan({ pid: journal.pid, sessionId: journal.sessionId, platform: ctx.platform, isAlive: isPidAlive, killAfter: ctx.killAfter });
     journal = { ...journal, running: false, pid: null, last: journal.last ?? 'restart', notes: [...journal.notes, `driver restarted mid-start; the old child: ${orphan}`] };
   }
+  journal = onRunAccount(ctx, journal);
   writeJournal(ctx.paths, unit.id, journal);
   let pendingReply = reply;
   for (;;) {

@@ -1,6 +1,6 @@
 // Purpose: what the owner (or a controller session) reads about runs: the run status word, short `status` lines (with a warning
 //   for a lost driver's boss that still runs), `--json`, and the summary file `summary.md` (M3, with the worktrees the bosses
-//   made) rewritten at every hold and at the end.
+//   made, and the last account switch) rewritten at every hold and at the end.
 // Exports: RUN_STATES, runState, runView, statusLines, writeSummary, formatWhen.
 // Invariants: reads only; one line per run, step or session (spec 19.4); a question text is shown on the owner's own machine
 //   (status, summary) and never leaves it (notify.mjs sends no text); times are shown in local time with Intl, stored as UTC ISO.
@@ -60,8 +60,8 @@ function sessionOf(paths, unit, journal, driver) {
  * Everything `status <run>` shows, as data.
  * @param {Record<string, string>} paths runPaths().
  * @param {Date} now the current time.
- * @returns {object} `{ runId, name, state, account, steps: [...], sessions: [...], hold, warnings: string[] }` (`warnings`: a
- *   stale run's bosses that still run).
+ * @returns {object} `{ runId, name, state, account, lastSwitch, steps: [...], sessions: [...], hold, warnings: string[] }`
+ *   (`lastSwitch`: run.json's last `{ from, to, at }` of `resume --account`, or null; `warnings`: a stale run's bosses that still run).
  */
 export function runView(paths, now = new Date()) {
   const job = readRunJob(paths);
@@ -86,7 +86,7 @@ export function runView(paths, now = new Date()) {
     const session = sessionOf(paths, unit, journal, alive ? driver : null);
     if (session) sessions.push(session);
   }
-  return { runId: paths.runId, name: job.name, state, account: run.account ?? null, startedBy: run.startedBy ?? null, steps, sessions, hold: driver?.hold ?? null, warnings };
+  return { runId: paths.runId, name: job.name, state, account: run.account ?? null, lastSwitch: run.switches?.at(-1) ?? null, startedBy: run.startedBy ?? null, steps, sessions, hold: driver?.hold ?? null, warnings };
 }
 
 const stepLine = (step) => [
@@ -148,9 +148,10 @@ function worktreeLines(paths, job) {
 export function writeSummary(paths, { nextCommand, now = new Date() }) {
   const view = runView(paths, now);
   const job = readRunJob(paths);
+  const account = view.lastSwitch ? `${view.account} (was ${view.lastSwitch.from} until ${formatWhen(view.lastSwitch.at)})` : view.account;
   const questions = view.steps.filter((step) => step.question && step.status === 'needs-owner').map((step) => `- ${step.id}: ${step.question}`);
   const lines = [
-    `# long-run ${view.runId}`, '', `Status: ${view.state}. Account: ${view.account}. Written ${formatWhen(now.toISOString())}.`, '',
+    `# long-run ${view.runId}`, '', `Status: ${view.state}. Account: ${account}. Written ${formatWhen(now.toISOString())}.`, '',
     '| Step | Outcome | Starts | Attempts | Wall time | Tokens (information only) | HEAD before -> after | Branch and folder |',
     '|---|---|---|---|---|---|---|---|', ...units(job).map((unit) => summaryRow(paths, unit)), '',
     '## Questions for you', '', ...(questions.length > 0 ? questions : ['none']), '',

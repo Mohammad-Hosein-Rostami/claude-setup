@@ -25,7 +25,7 @@ import { runView, statusLines, writeSummary } from './lib/view.mjs';
 import { LOG_TAIL_DEFAULT, logLines, watchRun } from './lib/watch.mjs';
 
 const EXIT = { ok: 0, refused: 1, usage: 2, notFound: 3, busy: 4 };
-const VALUE_FLAGS = new Set(['answer', 'answer-file', 'item', 'reload-job', 'from', 'run', 'since', 'after', 'tail', 'server', 'at', 'on', 'schedule', 'delay', 'message-file', 'max-wait', 'older-than']);
+const VALUE_FLAGS = new Set(['account', 'answer', 'answer-file', 'item', 'reload-job', 'from', 'run', 'since', 'after', 'tail', 'server', 'at', 'on', 'schedule', 'delay', 'message-file', 'max-wait', 'older-than']);
 const STATUS_RUNS = 20;
 const EVENTS_SINCE_DEFAULT = 20;
 const WAIT_NEXT_DEFAULT_SECONDS = 2 * 60 * 60;
@@ -40,7 +40,7 @@ const HELP = `long-run <command>
   pause | stop <run> [<step>]           end a boss cleanly (pause keeps it ready; stop fails the step)
   takeover <run> <step>                 pause a step and print the lines that open its session by hand
   tell <run> <step> "<message>"         send a step a message (--message-file <f>)
-  resume <run> [--answer <t> | --answer-file <f>] [--item <id>] [--retry | --skip | --abandon] [--reload-job <f>] [--force] [--foreground]
+  resume <run> [--account <name>] [--answer <t> | --answer-file <f>] [--item <id>] [--retry | --skip | --abandon] [--reload-job <f>] [--force] [--foreground]
   resume --stale [--delay <s>]          resume every run whose driver died (autostart)
   rerun <run> --from <step> [--reload-job <f>]
   summary <run>                         print summary.md

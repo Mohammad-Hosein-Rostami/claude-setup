@@ -33,7 +33,7 @@ running (pause or stop it first) or the folder is used by another live run.
 | `pause` / `stop <run> [<step>]` | end a boss cleanly; pause keeps it ready, stop fails the step (routed by `next.failed` or held) |
 | `takeover <run> <step>` | pause the step and print the lines that open its session in a terminal |
 | `tell <run> <step> "<message>"` | a message for a step (`--message-file <f>`; at most 8 KB each) |
-| `resume <run> [--answer <t> \| --answer-file <f>] [--item <id>] [--retry \| --skip \| --abandon] [--reload-job <f>] [--force] [--foreground]` | continue a held, paused, stopped, taken-over or stale run |
+| `resume <run> [--account <name>] [--answer <t> \| --answer-file <f>] [--item <id>] [--retry \| --skip \| --abandon] [--reload-job <f>] [--force] [--foreground]` | continue a held, paused, stopped, taken-over or stale run; `--account` moves it to another stored account |
 | `resume --stale [--delay <s>]` | resume every run whose driver died (what autostart runs) |
 | `rerun <run> --from <step> [--reload-job <f>]` | run again from an earlier step (fresh sessions; files are not rolled back) |
 | `summary <run>` | print `summary.md` |
@@ -44,7 +44,8 @@ running (pause or stop it first) or the folder is used by another live run.
 | `schedule <job.json> --at HH:MM [--daily \| --on YYYY-MM-DD]`, `schedule list`, `schedule remove <name>` | timed starts |
 
 The account is the one selected when the run starts (`CLAUDE_ACCOUNT`, else the store's default), recorded in `run.json` and
-used again on every resume. A run is refused unless usage credits are recorded off for it (`claude-account credits-off
+kept until `long-run resume <run> --account <name>` switches it (the same check as a start, plus a token in the store; the
+run must not be running). A run is refused unless usage credits are recorded off for it (`claude-account credits-off
 <name>`, the owner's one-time step); the token is read from the account store inside the runner and goes into the child's
 environment only. Fable is refused anywhere in a job; the default model is `claude-opus-5-5`.
 
@@ -159,7 +160,7 @@ When a run stops (a pause, a stop, a reboot, a crash or a killed driver) while a
 ## How you control a run
 
 - Start: in a plain terminal, `claude-as <account>` (once per terminal), then `node ~/.claude/tools/long-run/long-run.mjs start job.json`.
-  Or ask the lead in chat; it runs the same command. The run uses the account selected at that moment, and keeps it.
+  Or ask the lead in chat; it runs the same command. The run uses the account selected at that moment, and keeps it until you switch it.
 - See it: `long-run status` lists every run; `long-run status <run>` lists each boss session that is running, paused or taken
   over, with its step, account, session id, folder and log file. `long-run watch <run> [step]` shows a step working live.
 - Pause or stop: `long-run pause <run> [step]` stops the session cleanly and keeps it ready to continue; `long-run stop <run>
@@ -169,6 +170,11 @@ When a run stops (a pause, a stop, a reboot, a crash or a killed driver) while a
   the boss checks what you did, finishes what is left and the step is judged as usual.
 - Answer a question: when a step needs you, you get a ping; `long-run status <run>` shows the question; `long-run resume <run>
   --answer "..."`.
+- Switch account: `long-run pause <run>`, wait until `long-run status <run>` says `paused`, then `long-run resume <run>
+  --account <name>`. It prints `account <old> -> <new>` and records an `account-switched` event; `summary.md` names both
+  accounts. Each unfinished step continues its own session on the new account, and a limit wait of the old account ends.
+  Done steps keep the old name in their journal. The first start of each step on the new account writes its whole history
+  into that account's prompt cache once. A running or limit-waiting run is refused with exit 4.
 - After a reboot, unfinished runs continue by themselves (autostart on); paused and stopped runs wait for you.
 
 ## How you control runs from a Claude session
@@ -251,6 +257,9 @@ for a Node in use, C replaces only `lib/graph.mjs`.
 - The cost of resuming a big session after its cache expired (`summary.md` shows tokens per step) and how plan limits weigh
   cache writes against reads.
 - A scheduled start missed during sleep: macOS relies on launchd running it at wake; Windows misses it.
+- A resume on another account (`resume --account`) was tried on two personal subscriptions on Opus 5.5 only, not on a Team or
+  Enterprise organization. Sonnet 5.5 and Haiku 5.5 runs lose their earlier thinking after a switch: the API drops it, with
+  no error (the visible conversation stays). See `docs/adr/0005-long-run-account-switch.md`.
 
 ## Notes for maintainers
 

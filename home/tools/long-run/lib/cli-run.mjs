@@ -1,13 +1,16 @@
 // Purpose: the commands that make a run go: `check`, `start`, `resume` (one run or every stale one) and `rerun` (M9).
 // Exports: planLines, checkCommand, startCommand, resumeCommand, resumeStale, rerunCommand.
 // Invariants: nothing starts before the job, the account (stored, usage credits recorded off) and the SQLite module pass; a run
-//   records its account once and every resume checks that same account again; resume refuses while a taken-over session looks
-//   open (unless --force) and never while a driver lives; --retry, --skip and --abandon are refused unless a step is held; rerun moves the later journals aside and never touches git.
+//   keeps the account it started on until `resume --account` switches it (the start check plus a token in the store, recorded in
+//   run.json `switches` and an `account-switched` event); every resume checks the account; resume refuses while a taken-over
+//   session looks open (unless --force) and never while a driver lives; --retry, --skip and --abandon are refused unless a step is
+//   held; rerun moves the later journals aside and never touches git.
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { NAME_PATTERN } from '../../account/lib/names.mjs';
 import { freezeJob, loadJob, reloadChanges, units } from './job.mjs';
-import { requireCreditsOff, startAccount } from './run-account.mjs';
+import { accountToken, requireCreditsOff, startAccount } from './run-account.mjs';
 import { RunBusy, driverAlive, ensureRunDirs, listRunIds, newRunId, readJournal, readJson, readRunJob, runPaths, writeJson } from './run-store.mjs';
 import { NativeModuleError, assertNativeModule } from './driver.mjs';
 import { clearControl, sessionLooksOpen } from './control.mjs';
@@ -121,14 +124,37 @@ function replyOf(flags) {
   return { action, text: answer, item: flags.item ?? null, id: randomUUID() };
 }
 
+/** `resume --account`: run.json names the new account (each unfinished step takes it at its next start, step.mjs). */
+function switchAccount(paths, to, write) {
+  const run = readJson(paths.run);
+  if (to === run.account) {
+    write(`already on ${to}`);
+    return;
+  }
+  const now = new Date();
+  writeJson(paths.run, { ...run, account: to, switches: [...(run.switches ?? []), { from: run.account, to, at: now.toISOString() }] });
+  const detail = `account ${run.account} -> ${to}`;
+  recordEvent(paths, { event: 'account-switched', detail, at: now, data: { from: run.account, to } });
+  write(detail);
+}
+
 /**
- * `resume <run> [...]`: continue a held, paused, stopped, taken-over or stale run with the owner's reply.
+ * `resume <run> [--account <name>] [...]`: continue a held, paused, stopped, taken-over or stale run with the owner's reply,
+ * on another account when `--account` names one.
  * @returns {Promise<void>}
- * @throws {RunBusy} while its driver lives; {Refusal} for a finished run, an account that cannot be used or an open session.
+ * @throws {UsageError} for an `--account` that is not an account name; {RunBusy} while its driver lives (a limit wait too);
+ *   {Refusal} for a finished run or an open session; {AccountRefusal} for an account that cannot be used.
  */
 export async function resumeCommand({ runId, flags, env, root, write }) {
+  const switchTo = flags.account;
+  // User text: checked before it reaches a path or the store.
+  if (switchTo !== undefined && !NAME_PATTERN.test(switchTo)) throw new UsageError('--account takes an account name: 1 to 32 characters of a-z, 0-9, _ and -, starting with a letter or a digit');
   const paths = openRun(root, runId);
-  if (driverAlive(paths)) throw new RunBusy(`run ${runId} is running; pause or stop it first, or use tell to steer a step`);
+  if (driverAlive(paths)) {
+    throw new RunBusy(switchTo === undefined
+      ? `run ${runId} is running; pause or stop it first, or use tell to steer a step`
+      : `run ${runId} is running; pause it first: long-run pause ${runId}, then resume --account ${switchTo}`);
+  }
   const state = runState(paths);
   if (state === 'done' || state === 'abandoned') throw new Refusal(`run ${runId} is ${state}; use rerun --from <step>`);
   const reply = replyOf(flags);
@@ -136,11 +162,14 @@ export async function resumeCommand({ runId, flags, env, root, write }) {
     // Only a held step takes these; on any other run they would start its boss again instead (audit Job A, the abandon bug).
     throw new Refusal(`run ${runId} holds no step (it is ${state}); --${reply.action} applies to a held step only. Leave it ${state} (it spends nothing) or continue it with long-run resume ${runId}`);
   }
-  requireCreditsOff(readJson(paths.run).account, env);
+  // The new account passes the start check and must have a token in the store; the token is read only to prove that, and dropped.
+  if (switchTo === undefined) requireCreditsOff(readJson(paths.run).account, env);
+  else accountToken(switchTo, { env });
   if (!flags.force) refuseOpenSessions(paths, readRunJob(paths), env);
   if (flags['reload-job']) reloadJob(paths, flags['reload-job'], write);
   claimRunFolders(paths, readRunJob(paths));
   clearControl(paths);
+  if (switchTo !== undefined) switchAccount(paths, switchTo, write);
   writeJson(join(paths.dir, 'resume.json'), reply);
   write(`resuming ${runId} (${reply.action}${reply.item ? ` for ${reply.item}` : ''})`);
   const ended = await startDriver(paths, { env, foreground: Boolean(flags.foreground) });

@@ -1,9 +1,10 @@
 // Purpose: which Claude account a long run spends (spec 7.5, owner decision O6) and the token of that account, read in process.
 // Exports: AccountRefusal, startAccount, requireCreditsOff, accountToken.
 // Invariants: the job file names no account; a run takes the account selected when it starts (CLAUDE_ACCOUNT, else the default the
-//   owner set) and keeps it on every resume, whatever the terminal uses then; `-` (a `claude-as --once` terminal) is refused because
-//   a later resume could not find its token; an account whose usage credits are not recorded off is refused at every start and
-//   resume; the token goes only into the child's environment and is never returned with the name in any printed text.
+//   owner set) and keeps it until `resume --account` switches it, whatever the terminal uses then; `-` (a `claude-as --once`
+//   terminal) is refused because a later resume could not find its token; an account whose usage credits are not recorded off is
+//   refused at every start and resume; the token goes only into the child's environment and is never returned with the name in any
+//   printed text.
 import { NAME_PATTERN } from '../../account/lib/names.mjs';
 import { readRegistry } from '../../account/lib/registry.mjs';
 import { openStore } from '../../account/lib/store.mjs';
