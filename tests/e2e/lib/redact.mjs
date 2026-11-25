@@ -3,10 +3,13 @@
 // What is masked: Anthropic keys and OAuth tokens (`sk-ant-...`, any kind), `Bearer <value>`, an `Authorization:` header, and the
 // value of any JSON field or `NAME=value` pair whose name says token, secret, key, password or authorization
 // (`"accessToken": "..."`, `CLAUDE_CODE_OAUTH_TOKEN=...`). The stream of a `claude` child is redacted line by line before it is
-// written, so a checker never reads a raw token either.
-// Invariants: pure; masking is idempotent (redact(redact(x)) === redact(x)); non-string input is turned into a string first.
+// written, so a checker never reads a raw token either. The runner's own login token (CLAUDE_CODE_OAUTH_TOKEN, env.mjs) is masked
+// by its value too, whatever its shape, wherever it shows up.
+// Invariants: reads nothing but that one env value; masking is idempotent (redact(redact(x)) === redact(x)); non-string input is turned into a string first.
 
 export const REDACTED = '<redacted>';
+const LOGIN_ENV = 'CLAUDE_CODE_OAUTH_TOKEN'; // env.mjs LOGIN_ENV (not imported: env.mjs loads the account tool)
+const MIN_SECRET_CHARS = 8; // a shorter value would mask ordinary words
 
 const SECRET_NAME = '[A-Za-z0-9_]*(?:token|secret|password|passwd|api_?key|authorization)[A-Za-z0-9_]*';
 const PATTERNS = [
@@ -26,7 +29,9 @@ const PATTERNS = [
  * @returns {string} the text with every token-shaped part replaced by REDACTED
  */
 export function redact(text) {
-  return PATTERNS.reduce((out, [pattern, replacement]) => out.replace(pattern, replacement), String(text ?? ''));
+  const login = process.env[LOGIN_ENV] ?? '';
+  const masked = login.length >= MIN_SECRET_CHARS ? String(text ?? '').split(login).join(REDACTED) : String(text ?? '');
+  return PATTERNS.reduce((out, [pattern, replacement]) => out.replace(pattern, replacement), masked);
 }
 
 /**

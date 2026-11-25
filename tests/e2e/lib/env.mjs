@@ -1,8 +1,12 @@
-// The environment of every child the e2e harness starts (`claude`, git, land, suite, long-run). Exports: REMOVED_ENV,
+// The environment of every child the e2e harness starts (`claude`, git, land, suite, long-run). Exports: REMOVED_ENV, LOGIN_ENV,
 // SCENARIO_MAY_SET, BG_WAIT_CEILING_MS, childEnv({home, tmp, path, quietLog, longRunState, extra}).
-// Why: a child must run on the logged-in subscription (keychain), never on an API key (an `ANTHROPIC_API_KEY` in the env is
+// Why: a child must run on the logged-in subscription, never on an API key (an `ANTHROPIC_API_KEY` in the env is
 // always used and billed as API, plan section 5), and never with a switch of the session that started the runner (cleanEnv drops
 // every CLAUDE_* and CLAUDECODE). A scenario adds only what it tests (E5's CLAUDE_GUARD_ASK=allow, E4's model remap).
+// The login: under the temp HOME a child finds no stored login (the owner's one live E0 run: "Not logged in" in every call), so
+// the subscription token of the terminal the runner was started in (`claude-as <account>` sets CLAUDE_CODE_OAUTH_TOKEN) is passed
+// on, by that one name and only from the runner's own env: never read from a file, never set by a scenario, never printed
+// (redact.mjs masks its value).
 // Invariants: every billing variable is removed after the scenario's own names are added, except one alias-target variable a
 // scenario sets on purpose (E4's second session); a scenario can never set an API key, an auth token or a base URL (throws);
 // the GUI markers that make the guard skip its dialog (SSH_*, CI, NODE_TEST_CONTEXT) are removed, so the scripted dialog is
@@ -20,16 +24,18 @@ export const SCENARIO_MAY_SET = ALIAS_TARGET;
 export const BG_WAIT_CEILING_MS = 2 * 60 * 60 * 1000;
 const BG_WAIT_ENV = 'CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS';
 const CONFIG_DIR_ENV = 'CLAUDE_CONFIG_DIR';
+/** The subscription login token a child gets from the runner's env (the one CLAUDE_* name passed on). */
+export const LOGIN_ENV = 'CLAUDE_CODE_OAUTH_TOKEN';
 
 /**
  * @param {{home: string, tmp: string, path: string, quietLog: string, longRunState: string, extra?: Record<string, string>}} spec
  *   the child's HOME and TMPDIR, its PATH (shims first), the quiet tools' log, long-run's state folder, the scenario's own names
- * @returns {Record<string, string>} the environment
- * @throws {Error} when `extra` names a billing variable other than an alias target, or CLAUDE_CONFIG_DIR
+ * @returns {Record<string, string>} the environment, with the runner's LOGIN_ENV when it has one
+ * @throws {Error} when `extra` names a billing variable other than an alias target, CLAUDE_CONFIG_DIR or LOGIN_ENV
  */
 export function childEnv({ home, tmp, path, quietLog, longRunState, extra = {} }) {
   for (const name of Object.keys(extra)) {
-    if ((BILLING_ENV.test(name) && !SCENARIO_MAY_SET.test(name)) || name === CONFIG_DIR_ENV) {
+    if ((BILLING_ENV.test(name) && !SCENARIO_MAY_SET.test(name)) || name === CONFIG_DIR_ENV || name === LOGIN_ENV) {
       throw new Error(`e2e: a scenario may not set ${name} (subscription only; the keychain login must stay in use)`);
     }
   }
@@ -41,5 +47,6 @@ export function childEnv({ home, tmp, path, quietLog, longRunState, extra = {} }
     if (REMOVED_ENV.includes(name) || BILLING_ENV.test(name) || NO_GUI_MARKERS.includes(name)) delete env[name];
   }
   delete env[CONFIG_DIR_ENV];
-  return Object.fromEntries(Object.entries({ ...env, ...extra }).filter(([, value]) => value !== undefined));
+  const login = process.env[LOGIN_ENV] ? { [LOGIN_ENV]: process.env[LOGIN_ENV] } : {};
+  return Object.fromEntries(Object.entries({ ...env, ...extra, ...login }).filter(([, value]) => value !== undefined));
 }

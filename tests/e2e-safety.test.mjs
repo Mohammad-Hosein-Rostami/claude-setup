@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { cleanEnv } from './clean-env.mjs';
 import { madeUpToken } from './e2e-fixtures.mjs';
-import { childEnv, REMOVED_ENV } from './e2e/lib/env.mjs';
+import { childEnv, LOGIN_ENV, REMOVED_ENV } from './e2e/lib/env.mjs';
 import { claudeMdCopy, settingsCopy } from './e2e/lib/home.mjs';
 import { ALLOWED_MODELS, claudeArgs, modelOfArgs } from './e2e/lib/models.mjs';
 import { ProcessRegistry } from './e2e/lib/processes.mjs';
@@ -24,6 +24,20 @@ const PROMPT = 'Reply ok.';
 const RESETS_AT_S = 1_795_000_000; // a reset time in the stream's epoch seconds
 const PASS_LINE = { check: 'c', expected: 'e', observed: 'o', pass: true };
 const FAIL_LINE = { ...PASS_LINE, pass: false };
+const LOGIN_VALUE = 'made-up-login-value-0000'; // not sk-ant- shaped: only the value mask can catch it
+const SPEC = { home: '/h', tmp: '/t', path: '/bin', quietLog: '/q', longRunState: '/l' };
+
+/** Runs `body` with the runner env names set (undefined: unset), then puts the old values back. */
+function withRunnerEnv(values, body) {
+  const kept = Object.fromEntries(Object.keys(values).map((name) => [name, process.env[name]]));
+  const put = (entries) => { for (const [name, value] of Object.entries(entries)) if (value === undefined) delete process.env[name]; else process.env[name] = value; };
+  try {
+    put(values);
+    return body();
+  } finally {
+    put(kept);
+  }
+}
 
 test('claudeArgs: an allowed model gives exactly one --model; no model, Fable or a run-time alias throws', () => {
   for (const model of ALLOWED_MODELS) assert.equal(modelOfArgs(claudeArgs({ prompt: PROMPT, model })), model);
@@ -86,6 +100,29 @@ test('childEnv: API key, auth token, base URL and model remaps of the runner are
       else process.env[name] = value;
     }
   }
+});
+
+test('childEnv: the runner login token is passed on by its one name; other CLAUDE_* stay dropped; a scenario cannot set it', () => {
+  withRunnerEnv({ [LOGIN_ENV]: LOGIN_VALUE, CLAUDE_GUARD_ASK: 'allow', CLAUDE_CODE_SESSION_ID: 'boss-session' }, () => {
+    const env = childEnv(SPEC);
+    assert.equal(env[LOGIN_ENV], LOGIN_VALUE);
+    // the harness's own switches (the wait ceiling, cleanEnv's notes switch) and the login are the only CLAUDE_* names
+    assert.deepEqual(Object.keys(env).filter((name) => name.startsWith('CLAUDE')).sort(),
+      [LOGIN_ENV, 'CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS', 'CLAUDE_LONG_RUN_DESKTOP_NOTES'].sort());
+    assert.equal(env.CLAUDE_GUARD_ASK, undefined);
+    assert.throws(() => childEnv({ ...SPEC, extra: { [LOGIN_ENV]: 'from-a-scenario' } }), /may not set CLAUDE_CODE_OAUTH_TOKEN/);
+  });
+  withRunnerEnv({ [LOGIN_ENV]: undefined }, () => assert.equal(LOGIN_ENV in childEnv(SPEC), false, 'no token in the runner env: none in the child'));
+});
+
+test('redact: the runner login token is masked by its value, whatever its shape, in lines and results.json', () => {
+  withRunnerEnv({ [LOGIN_ENV]: LOGIN_VALUE }, () => {
+    const out = redact(`stderr: token ${LOGIN_VALUE} was refused; again:${LOGIN_VALUE}`);
+    assert.equal(out, `stderr: token ${REDACTED} was refused; again:${REDACTED}`);
+    assert.ok(!formatLine('E0', { ...FAIL_LINE, observed: LOGIN_VALUE }).includes(LOGIN_VALUE));
+    assert.ok(!redactJson({ note: `x ${LOGIN_VALUE}` }).includes(LOGIN_VALUE));
+    assert.equal(redact(out), out);
+  });
 });
 
 test('assertInside: a path inside the root passes; one outside it, or a link out of it, is refused', () => {
