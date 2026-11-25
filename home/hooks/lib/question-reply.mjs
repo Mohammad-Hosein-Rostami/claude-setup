@@ -1,4 +1,4 @@
-// AskUserQuestion for the PermissionRequest hook (permission-timed-allow.mjs): one timed popup per question, one after the other.
+// AskUserQuestion for the PermissionRequest hook (question-popup.mjs): one timed popup per question, one after the other.
 // Exports: questionReply(input, env, {ask, pollMs}) -> Promise<{behavior: 'allow', updatedInput} | undefined>; questionTimeoutSeconds(env);
 // TERMINAL_AUTO_CONTINUE_S.
 // Each question gets its own popup (title "question 2 of 3", that question and the option that will be taken) and its own wait,
@@ -17,22 +17,20 @@
 // PostToolUse hook question-answered.mjs leaves a mark (lib/question-answered.mjs); it is polled every pollMs while a popup is open and
 // checked before each next one. Turning the question down in the terminal ("Chat about this", Esc) runs no tool and leaves no mark, so the
 // session transcript is watched for it too (lib/question-rejected.mjs). A mark or a rejection closes the open popup (abort signal, lib/timed-ask-async.mjs) and the loop ends with undefined.
-// Invariants: never two popups at once; every popup is logged (guard log) without secrets; no exception leaves this function for a bad input.
-import { logDecision } from './guard-log.mjs';
+// Invariants: never two popups at once; no exception leaves this function for a bad input.
 import { wasQuestionAnswered } from './question-answered.mjs';
 import { watchTerminalRejection } from './question-rejected.mjs';
 import { answerAskAsync } from './timed-ask-async.mjs';
 import { markAsking } from './asking-marker.mjs';
 import { MAX_ASK_TIMEOUT_S, formatDuration } from './timed-ask.mjs';
 
-const HOOK_NAME = 'permission-timed-allow';
 const QUESTION_TOOL = 'AskUserQuestion';
 const QUESTION_BUTTONS = { accept: 'Use recommended', decline: 'Answer in terminal' };
 // Popups 2..N open minutes after the terminal question appeared, often while the owner types in it: a stray Enter must not pick an answer,
 // so there Enter hits "Answer in terminal" (the safe hand-back). "Use recommended" and the timeout answer stay as they are.
 const LATER_QUESTION_BUTTONS = { ...QUESTION_BUTTONS, defaultButton: 'decline' };
 const QUESTION_TITLE = 'Claude asks';
-// Each question popup's own wait (owner RC3, 2026-11-22: 2 min; was 60 s), apart from the permission wait (CLAUDE_PERMISSION_TIMEOUT_S, 120 s).
+// Each question popup's own wait (owner RC3, 2026-11-22: 2 min; was 60 s).
 const QUESTION_TIMEOUT_ENV = 'CLAUDE_QUESTION_TIMEOUT_S';
 const DEFAULT_QUESTION_TIMEOUT_S = 120;
 
@@ -78,7 +76,6 @@ function popupRequest({ item, index, count, answer, timeoutS, input }) {
       `No answer in ${formatDuration(timeoutS)} → "${plainLabel(answer)}" is taken and asked again in the next report.`,
     ],
     timeoutS,
-    cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(),
     sessionId: input.session_id,
     agentId: input.agent_id,
   };
@@ -98,7 +95,7 @@ function timeoutAnnotations(toolInput, timedOut, timeoutS) {
 /**
  * Answers an AskUserQuestion prompt question by question, unless the owner chooses to answer in the terminal.
  * @param {{tool_input?: {questions?: unknown[]}, cwd?: string, session_id?: string, agent_id?: string}} input hook JSON for an AskUserQuestion PermissionRequest
- * @param {Record<string, string | undefined>} env process environment (timeout, GUI detection, HOME, log path)
+ * @param {Record<string, string | undefined>} env process environment (timeout, GUI detection, HOME)
  * @param {{ask?: typeof answerAskAsync, pollMs?: number}} options `ask` is the popup (a test passes a fake); `pollMs` how often to look for the terminal answer
  * @returns {Promise<{behavior: 'allow', updatedInput: object} | undefined>} the allow decision carrying the answers, or undefined to leave the question to Claude Code's own UI
  */
@@ -122,9 +119,7 @@ export async function questionReply(input, env, { ask = answerAskAsync, pollMs =
       const answer = recommendedLabel(item.options);
       const request = popupRequest({ item, index, count: questions.length, answer, timeoutS, input });
       const result = await ask(request, env, { signal: closePopup.signal });
-      const decision = result.decision === 'allow' ? 'allow' : 'ask'; // "ask": Claude Code's own question UI
-      logDecision({ hook: HOOK_NAME, tool: QUESTION_TOOL, command: item.question, cwd: request.cwd, session: input.session_id, decision, outcome: result.outcome, reason: request.reason }, env);
-      if (decision !== 'allow') return undefined;
+      if (result.decision !== 'allow') return undefined; // Claude Code's own question UI
       answers[item.question] = answer;
       if (result.outcome === 'timeout') timedOut.push(item.question);
     }

@@ -1,10 +1,10 @@
 // The timed native dialog of lib/timed-ask.mjs as a promise, so it can be closed from outside.
 // Exports: answerAskAsync(request, env, {signal, platform, now}) -> Promise<{decision, outcome, reason}>, closeLiveDialogs(), installDialogCleanup().
-// Why: answerAsk blocks in spawnSync, so a hook cannot notice that the owner already answered in the terminal and cannot stop its popup
-// when Claude Code stops the hook (the dialog tool is a separate child that outlives the hook). Here the dialog runs with `spawn`:
+// Why: a dialog run with spawnSync blocks the hook, so it cannot notice that the owner already answered in the terminal and cannot stop
+// its popup when Claude Code stops the hook (the dialog tool is a separate child that outlives the hook). Here the dialog runs with `spawn`:
 // aborting `signal` kills it and the answer is outcome "closed" (decision "ask": the caller leaves the question to Claude Code); every
 // dialog still open is killed by closeLiveDialogs(), which installDialogCleanup() runs when the process gets SIGTERM, SIGINT or SIGHUP
-// and when it exits. The request, the dialog text, the buttons and the mapping of the answer are the ones of answerAsk (same helpers).
+// and when it exits. The dialog text, the buttons and the mapping of the answer come from lib/timed-ask.mjs.
 // Invariants: never rejects; a "timeout" is only believed after the full wait; the dialog tool also gives up by itself at its own timeout.
 import { spawn } from 'node:child_process';
 import { constants } from 'node:os';
@@ -78,7 +78,7 @@ function runDialog(invocation, env, timeoutS, signal) {
 
 /**
  * Asks the owner through a native dialog that an abort signal can close.
- * @param {object} request what to show, as answerAsk takes it
+ * @param {object} request what to show (lib/timed-ask-text.mjs dialogText), with its title, buttons and timeoutS
  * @param {Record<string, string | undefined>} env process environment (timeout, ssh/CI detection, PATH)
  * @param {{signal?: AbortSignal, platform?: string, now?: () => number}} options `signal` closes the dialog (answer "closed"); `now` is the clock in milliseconds
  * @returns {Promise<{decision: 'allow' | 'deny' | 'ask', outcome: 'allow' | 'deny' | 'timeout' | 'no-gui' | 'dialog-failed' | 'closed', reason: string}>}

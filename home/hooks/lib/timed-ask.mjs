@@ -1,66 +1,31 @@
-// Timed ask for PreToolUse and PermissionRequest hooks (the dialog's text is built in timed-ask-text.mjs). Exports: askTimeoutSeconds(env), secretAskTimeoutSeconds(env),
-// permissionTimeoutSeconds(env), guiAvailable(env, platform), dialogInvocation(platform, text,
-// title, timeoutS, buttons), requestInvocation(request, timeoutS, platform, clickOnly), parseDialogResult(platform, result, buttons) ->
-// 'allow'|'deny'|'timeout'|'unavailable', answerFromOutcome(outcome, {reason, timeoutS, waitedMs}), answerAsk(request, env) ->
-// {decision, outcome, reason}, decisionOutput(answer) -> hook stdout, askOwner(request, env) -> hook stdout (asks, logs, formats), ASK_SWITCH_ENV,
-// CLICK_ONLY_AGENT_TYPE and needsClickedAllow(request, env) (lib/click-only.mjs's).
-// The per-person switch CLAUDE_GUARD_ASK=allow (the env of that person's settings/local.json) turns every ask into an allow at once,
-// with no dialog and no wait, except a request marked `outward: true` (the owner's rule: confirm every outward-facing action); it is
-// read here once, so every hook that asks through answerAsk or askOwner obeys it. It never touches a deny. Lookup: the hook's env first;
-// when unset, `env.CLAUDE_GUARD_ASK` of the user settings file ($CLAUDE_CONFIG_DIR/settings.json, else ~/.claude/settings.json), read
-// at most once per hook run by lib/settings-env.mjs envValue; a missing or broken file means off.
-// max (owner, plans M2 and M2b, lib/click-only.mjs): an outward request from max, and every outward request while any max runs on this
-// machine, runs only after a click on Allow: no answer, a failed dialog and no GUI deny, and the dialog's timeout line says why. Every
-// other request keeps the timed allow below.
-// answerAsk blocks until the dialog ends; lib/timed-ask-async.mjs opens the same dialog as a child that can be closed from outside.
-// Why: the native "ask" waits forever. The owner's policy is "everything goes ahead after 2 min": show a native dialog with Allow
-// (default) and Deny, and go ahead when nobody answers within the request's timeoutS, else CLAUDE_ASK_TIMEOUT_S (default 120; a
-// secret-only ask passes CLAUDE_ASK_SECRET_TIMEOUT_S, default 120, see secretAskTimeoutSeconds; a Claude Code permission prompt answered
-// by permission-timed-allow.mjs passes CLAUDE_PERMISSION_TIMEOUT_S, default 120, see permissionTimeoutSeconds; each at most 190 so it
-// stays under the 230 s hook timeout; the question popups of permission-timed-allow.mjs run up to 4 in a row under its 800 s). Only a click on Deny denies. Allow and timeout print NO decision (empty stdout, exit 0): the CLI's normal permission
-// flow then still applies, so base.json deny rules keep working and the rest of a compound command is not pre-approved.
+// The timed native dialog of the question popup (question-popup.mjs, through lib/question-reply.mjs and lib/timed-ask-async.mjs,
+// which runs it as a child that can be closed from outside); its text is built in timed-ask-text.mjs.
+// Exports: askTimeoutSeconds(env), guiAvailable(env, platform), dialogExecutable(platform), dialogInvocation(platform, text, title,
+// timeoutS, buttons), requestInvocation(request, timeoutS, platform), parseDialogResult(platform, result, buttons) ->
+// 'allow'|'deny'|'timeout'|'unavailable', answerFromOutcome(outcome, {reason, timeoutS, waitedMs}) -> {decision, outcome, reason},
+// ASK_TIMEOUT_ENV, DEFAULT_ASK_TIMEOUT_S, MAX_ASK_TIMEOUT_S, and timed-ask-text.mjs's ALLOW_DENY_BUTTONS and formatDuration.
+// Why: the native question waits forever. The owner's rule is "everything goes ahead after 2 min": the dialog shows the accept button
+// (default) and the decline button, and takes accept when nobody answers within the request's timeoutS, else CLAUDE_ASK_TIMEOUT_S
+// (default 120; at most 190, so the up to 4 question popups in a row stay under the 800 s hook timeout in settings/base.json).
 // A timeout only counts when the full time really passed; a dialog that was killed, crashed or gave up early is "dialog-failed".
-// No GUI (ssh session, CI, no display) or a failing dialog tool -> decision "ask": the CLI's own prompt, which also covers
-// bypassPermissions mode. Dialog tools: macOS osascript, Windows PowerShell WScript.Shell Popup (its buttons are fixed to
-// Yes = Allow / No = Deny), Linux zenity (plain text, --no-markup). The dialog text is passed as an argument or an environment
-// variable, never spliced into a script. Every shown value is masked and then made visible (line breaks become a visible mark, control,
-// format, bidi, zero-width and other default-ignorable characters are dropped), so no value can fake a "Why:" line or hide part of a
-// command; a long value shows its head, its tail and its full length. Invariants: never throws, never puts a secret in the dialog (the
-// whole value is masked with its real line breaks, before it is flattened or cut).
+// No GUI (ssh session, CI, no display) or a failing dialog tool -> decision "ask": Claude Code's own question UI. Dialog tools: macOS
+// osascript, Windows PowerShell WScript.Shell Popup (its buttons are fixed to Yes = accept / No = decline), Linux zenity (plain text,
+// --no-markup). The dialog text is passed as an argument or an environment variable, never spliced into a script.
 // A request may name its own buttons ({accept, decline}, default Allow/Deny; accept is the default and the timeout answer), title and
-// labelled detail lines (AskUserQuestion's dialog uses all three; a label is masked and cut like a value, a detail may keep a long
-// value's start instead of its head and tail; buttons.defaultButton 'decline' makes Enter hit the decline button, for a popup that may open
-// while the owner types elsewhere); Windows keeps Yes/No and the body says which is which. On macOS the decline button is
-// the cancel button, so Esc declines, never takes the default.
-import { spawnSync } from 'node:child_process';
-import { clearAsking, markAsking } from './asking-marker.mjs';
-import { CLICK_ONLY_AGENT_TYPE, clickOnlyNote, needsClickedAllow } from './click-only.mjs';
-import { logDecision } from './guard-log.mjs';
-import { maskSecrets } from './secrets.mjs';
-import { envValue } from './settings-env.mjs';
+// labelled detail lines (timed-ask-text.mjs); buttons.defaultButton 'decline' makes Enter hit the decline button, for a popup that may
+// open while the owner types elsewhere; Windows keeps Yes/No and the body says which is which. On macOS the decline button is the
+// cancel button, so Esc declines, never takes the default.
+// Invariants: never throws; never puts a secret in the dialog (timed-ask-text.mjs masks every shown value before it is cut).
 import { ALLOW_DENY_BUTTONS, dialogText, formatDuration } from './timed-ask-text.mjs';
 
-export { ALLOW_DENY_BUTTONS, CLICK_ONLY_AGENT_TYPE, formatDuration, needsClickedAllow };
+export { ALLOW_DENY_BUTTONS, formatDuration };
 
 export const ASK_TIMEOUT_ENV = 'CLAUDE_ASK_TIMEOUT_S';
 export const DEFAULT_ASK_TIMEOUT_S = 120; // seconds; the owner: every prompt goes ahead after 2 min unless Deny is clicked
-export const SECRET_ASK_TIMEOUT_ENV = 'CLAUDE_ASK_SECRET_TIMEOUT_S';
-export const DEFAULT_SECRET_ASK_TIMEOUT_S = 120; // seconds
-export const PERMISSION_TIMEOUT_ENV = 'CLAUDE_PERMISSION_TIMEOUT_S';
-export const DEFAULT_PERMISSION_TIMEOUT_S = 120; // seconds
-export const MAX_ASK_TIMEOUT_S = 190; // seconds; one popup's longest wait: the hook timeouts in settings/base.json are 230 s (800 s for 4 question popups)
+export const MAX_ASK_TIMEOUT_S = 190; // seconds; one popup's longest wait (see the header)
 const TIMEOUT_SLACK_MS = 500; // a dialog tool may report its timeout marginally before the full time has elapsed
 const MS_PER_SECOND = 1000;
-const SPAWN_GRACE_S = 5; // the dialog tool gives up by itself at the timeout; this only stops one that hangs
-export const ASK_SWITCH_ENV = 'CLAUDE_GUARD_ASK';
-const ALLOW_AT_ONCE = 'allow'; // CLAUDE_GUARD_ASK=allow: no dialog, no wait, for every ask that is not outward
-// The hook's own env wins when it sets the switch at all; only an unset one falls back to the settings file.
-// Why the file: a hook inherits only the environment the claude process started with (lib/settings-env.mjs). A file that cannot be
-// read leaves the switch off, the safe default (every ask keeps its dialog).
-const askSwitch = (env) => envValue(ASK_SWITCH_ENV, env);
-const allowsAtOnce = (request, env) => request.outward !== true && askSwitch(env) === ALLOW_AT_ONCE;
 const DIALOG_TITLE = 'Claude Code: confirm action';
-const notRunText = (clickOnly) => `${clickOnly}, so it did not run`; // clickOnly: lib/click-only.mjs clickOnlyNote's answer
 const TEXT_ENV = 'CLAUDE_ASK_DIALOG_TEXT';
 const TITLE_ENV = 'CLAUDE_ASK_DIALOG_TITLE';
 const WINDOWS_POPUP_ALLOW = 6;
@@ -95,25 +60,6 @@ function positiveSeconds(raw, fallback) {
 export function askTimeoutSeconds(env = process.env) {
   return positiveSeconds(env[ASK_TIMEOUT_ENV], DEFAULT_ASK_TIMEOUT_S);
 }
-
-/**
- * The shorter timeout for a secret-only ask (a repeated "confirm" about a value the owner typed themselves should not hold up a run).
- * @param {Record<string, string | undefined>} env process environment
- * @returns {number} CLAUDE_ASK_SECRET_TIMEOUT_S (default 120), but never more than the normal ask timeout
- */
-export function secretAskTimeoutSeconds(env = process.env) {
-  return Math.min(positiveSeconds(env[SECRET_ASK_TIMEOUT_ENV], DEFAULT_SECRET_ASK_TIMEOUT_S), askTimeoutSeconds(env));
-}
-
-/**
- * The timeout for Claude Code's own permission prompts (a "Dangerous rm operation not ruled out" check in bypassPermissions mode).
- * @param {Record<string, string | undefined>} env process environment
- * @returns {number} CLAUDE_PERMISSION_TIMEOUT_S when it is a positive number (at most 190), else 120; independent of CLAUDE_ASK_TIMEOUT_S
- */
-export function permissionTimeoutSeconds(env = process.env) {
-  return positiveSeconds(env[PERMISSION_TIMEOUT_ENV], DEFAULT_PERMISSION_TIMEOUT_S);
-}
-
 
 /**
  * @param {Record<string, string | undefined>} env process environment
@@ -183,101 +129,24 @@ export function parseDialogResult(platform, result, buttons = ALLOW_DENY_BUTTONS
 }
 
 /**
- * @param {object} request what to show (see answerAsk)
+ * @param {object} request what to show (see timed-ask-text.mjs dialogText)
  * @param {number} timeoutS seconds until the dialog closes itself
  * @param {string} platform process.platform
- * @param {string} clickOnly clickOnlyNote's answer: when set, the timeout line says no answer does not run it, and why
  * @returns {{command: string, args: string[], env: Record<string, string>} | undefined} how to run the dialog for this request; undefined for an unknown platform
  */
-export const requestInvocation = (request, timeoutS, platform, clickOnly = '') => dialogInvocation(platform,
-  dialogText({ ...request, clickOnlyNote: clickOnly }, timeoutS, platform), request.title ?? DIALOG_TITLE, timeoutS, request.buttons ?? ALLOW_DENY_BUTTONS);
+export const requestInvocation = (request, timeoutS, platform) => dialogInvocation(platform,
+  dialogText(request, timeoutS, platform), request.title ?? DIALOG_TITLE, timeoutS, request.buttons ?? ALLOW_DENY_BUTTONS);
 
 /**
- * Turns what the person did into the decision answerAsk returns. A "timeout" is only believed when the full time really passed.
+ * Turns what the person did into the decision the popup takes. A "timeout" is only believed when the full time really passed.
  * @param {'allow' | 'deny' | 'timeout' | 'unavailable'} outcome parseDialogResult's answer ("unavailable": no dialog, killed, crashed)
- * @param {{reason: string, timeoutS: number, waitedMs: number, clickOnly?: string}} context the masked reason, the dialog's timeout,
- *   how long it was open, and clickOnly (clickOnlyNote's answer): when set, a timeout or a failed dialog denies with that note
+ * @param {{reason: string, timeoutS: number, waitedMs: number}} context the masked reason, the dialog's timeout and how long it was open
  * @returns {{decision: 'allow' | 'deny' | 'ask', outcome: 'allow' | 'deny' | 'timeout' | 'dialog-failed', reason: string}}
  */
-export function answerFromOutcome(outcome, { reason, timeoutS, waitedMs, clickOnly = '' }) {
-  const notRun = notRunText(clickOnly);
+export function answerFromOutcome(outcome, { reason, timeoutS, waitedMs }) {
   const early = outcome === 'timeout' && waitedMs < timeoutS * MS_PER_SECOND - TIMEOUT_SLACK_MS;
-  const failed = outcome === 'unavailable' || early;
-  if (failed && clickOnly) return { decision: 'deny', outcome: 'dialog-failed', reason: `the dialog failed; ${notRun} (${reason})` };
-  if (failed) return { decision: 'ask', outcome: 'dialog-failed', reason };
+  if (outcome === 'unavailable' || early) return { decision: 'ask', outcome: 'dialog-failed', reason };
   if (outcome === 'deny') return { decision: 'deny', outcome, reason: `denied by the owner in the dialog (${reason})` };
-  if (outcome === 'timeout' && clickOnly) return { decision: 'deny', outcome, reason: `no answer in ${formatDuration(timeoutS)}; ${notRun} (${reason})` };
   if (outcome === 'timeout') return { decision: 'allow', outcome, reason: `no answer in ${formatDuration(timeoutS)}, went ahead (${reason})` };
   return { decision: 'allow', outcome, reason: `allowed by the owner in the dialog (${reason})` };
-}
-
-/**
- * Asks the owner through a native dialog and turns the answer into a decision.
- * @param {{tool: string, reason: string, command?: string, targetLabel?: string, details?: Array<{label: string, value: string, keepStart?: boolean}>, title?: string,
- *   buttons?: {accept: string, decline: string}, timeoutS?: number, cwd?: string, sessionId?: string, agentId?: string, agentType?: string,
- *   outward?: boolean}} request what to show: `command` is the call's target (a command, or a file, URL or query when targetLabel says so;
- *   default label "Command"); outward: an outward-facing action, which keeps its dialog under CLAUDE_GUARD_ASK=allow; agentType: the hook
- *   input's agent_type (an outward request from max, or any outward request while a max runs, runs only after a click on Allow: no
- *   answer, no GUI and a failed dialog deny, lib/click-only.mjs);
- *   details are extra labelled lines (label and value masked and cut; keepStart shows a long value's start, else its head and tail); buttons default to Allow/Deny (accept -> "allow", decline -> "deny"); timeoutS overrides CLAUDE_ASK_TIMEOUT_S
- * @param {Record<string, string | undefined>} env process environment (timeout, ssh/CI detection, PATH, HOME for the max record)
- * @param {string} platform process.platform
- * @param {() => number} now clock in milliseconds (injectable so a test can simulate the full wait)
- * @returns {{decision: 'allow' | 'deny' | 'ask', outcome: 'allow' | 'deny' | 'timeout' | 'no-gui' | 'dialog-failed' | 'switch-allow', reason: string}}
- *   decision "ask" means the caller falls back to the CLI's own prompt; outcome "switch-allow": CLAUDE_GUARD_ASK=allow, no dialog shown
- */
-export function answerAsk(request, env = process.env, platform = process.platform, now = () => performance.now()) {
-  const reason = maskSecrets(String(request.reason));
-  if (allowsAtOnce(request, env)) return { decision: 'allow', outcome: 'switch-allow', reason: `allowed at once by ${ASK_SWITCH_ENV}=${ALLOW_AT_ONCE} (${reason})` };
-  const clickOnly = clickOnlyNote(request, env); // read once, so the dialog's text and the answer agree
-  if (!guiAvailable(env, platform)) {
-    return clickOnly ? { decision: 'deny', outcome: 'no-gui', reason: `no dialog can be shown here; ${notRunText(clickOnly)} (${reason})` } : { decision: 'ask', outcome: 'no-gui', reason };
-  }
-  const timeoutS = request.timeoutS ?? askTimeoutSeconds(env);
-  let outcome = 'unavailable';
-  let waitedMs = 0;
-  try {
-    const invocation = requestInvocation(request, timeoutS, platform, clickOnly);
-    if (invocation) {
-      const started = now();
-      const result = spawnSync(invocation.command, invocation.args, {
-        encoding: 'utf8',
-        env: { ...env, ...invocation.env },
-        timeout: (timeoutS + SPAWN_GRACE_S) * MS_PER_SECOND,
-        windowsHide: true,
-      });
-      // killed or crashed dialog -> unavailable
-      outcome = result.signal || result.status === null ? 'unavailable' : parseDialogResult(platform, result, request.buttons ?? ALLOW_DENY_BUTTONS);
-      waitedMs = now() - started;
-    }
-  } catch {
-    outcome = 'unavailable';
-  }
-  return answerFromOutcome(outcome, { reason, timeoutS, waitedMs, clickOnly });
-}
-
-/**
- * @param {{decision: 'allow' | 'deny' | 'ask', reason: string}} answer result of answerAsk
- * @returns {string} the PreToolUse hook JSON line for deny and ask; '' for allow (no decision: the normal permission flow applies)
- */
-export function decisionOutput({ decision, reason }) {
-  if (decision === 'allow') return '';
-  return `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decision, permissionDecisionReason: reason } })}\n`;
-}
-
-/**
- * The whole timed ask for one hook call: dialog, decision log, hook JSON.
- * @param {{hook: string, tool: string, reason: string, command?: string, timeoutS?: number, cwd?: string, sessionId?: string, agentId?: string, agentType?: string, outward?: boolean, omitCommandFromLog?: boolean, onAnswer?: (answer: ReturnType<typeof answerAsk>) => void}} request what to show and who asks
- *   (omitCommandFromLog: the dialog shows the command, the decision log does not; onAnswer runs after the log line, e.g. to remember an allow)
- * @param {Record<string, string | undefined>} env process environment
- * @returns {string} the hook stdout line for the decision (allow, deny, or the native ask as a fallback)
- */
-export function askOwner(request, env = process.env) {
-  // The asking marker (lib/asking-marker.mjs): the board shows "needs you" while the dialog is open; a dialog that ends clears it.
-  if (!allowsAtOnce(request, env)) markAsking({ session: request.sessionId, kind: 'permission', tool: request.tool, count: 1, openedAt: Date.now(), waitS: request.timeoutS ?? askTimeoutSeconds(env) }, env);
-  const answer = answerAsk(request, env);
-  if (answer.decision !== 'ask') clearAsking(request.sessionId, env, 'permission'); // "ask": Claude Code's own prompt stays open
-  logDecision({ hook: request.hook, tool: request.tool, decision: answer.decision, outcome: answer.outcome, reason: request.reason, command: request.omitCommandFromLog ? '' : request.command, cwd: request.cwd, session: request.sessionId }, env);
-  request.onAnswer?.(answer);
-  return decisionOutput(answer);
 }
