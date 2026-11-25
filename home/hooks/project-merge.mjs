@@ -13,7 +13,7 @@
 // Parts: lib/project-note-key.mjs (key, notes), lib/project-setup-scan.mjs (what the project brings), lib/project-merge-text.mjs
 // (wording, caps). Output: JSON { hookSpecificOutput: { hookEventName, additionalContext } }, at most LEAD_NOTE_MAX_CHARS
 // characters, below the 10,000-character cap of a hook string (hooks docs), as its own hook entry in settings/base.json.
-// Exports: HOOK_BUDGET_MS, GIT_TIMEOUT_MS, SCAN_BUDGET_MS, hookOutput(input, deps), ourSetup(home, coreHome).
+// Exports: HOOK_BUDGET_MS, GIT_TIMEOUT_MS, hookOutput(input, deps).
 // Invariants: read-only, no state file, so parallel sessions and agents get the same answer (F2); never blocks (exit 0, nothing
 // on bad input); git runs hardened (lib/gated-folder.mjs runGit) with GIT_TIMEOUT_MS per call; one deadline, HOOK_BUDGET_MS from
 // the start of the process, below the 5 s timeout of both entries: the scan gets at most SCAN_BUDGET_MS of it and the agents
@@ -31,7 +31,7 @@ import { timedProjectAgentNote } from './lib/project-agents-timed.mjs';
 
 export const HOOK_BUDGET_MS = 4000; // the 5,000 ms timeout of both entries minus 1,000 ms for node's start and the printing
 export const GIT_TIMEOUT_MS = 1000; // one git call; two at most per run
-export const SCAN_BUDGET_MS = 1000;
+const SCAN_BUDGET_MS = 1000;
 const NOTES_RESERVE_MS = 200; // kept back from the agents child for the notes and the printing
 const SETTINGS_MAX_BYTES = 1024 * 1024; // our merged settings.json is about 30 KiB
 const AGENTS_MD_SETTING = 'claude-md-and-agents-md';
@@ -80,7 +80,7 @@ function effortOf(settings, model) {
  * @returns {{ model: string, subagentModel: string, effortLevel: string, envKeys: Set<string>, memoryPaths: string[],
  *   agentsMdSetting: boolean }} '' and empty sets where the file says nothing or cannot be read (then nothing is called weaker).
  */
-export function ourSetup(home, coreHome = CORE_HOME) {
+function ourSetup(home, coreHome = CORE_HOME) {
   let settings = {};
   try {
     settings = JSON.parse(readPlainFile(realpathSync(join(home, '.claude', 'settings.json')), SETTINGS_MAX_BYTES)) ?? {};
