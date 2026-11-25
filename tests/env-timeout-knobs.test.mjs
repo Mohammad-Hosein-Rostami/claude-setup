@@ -170,3 +170,16 @@ test('sweepDescendants sends SIGKILL to a process that ignores SIGTERM after the
     assert.ok(await waitUntil(() => !groupExists(stubborn.pid), GONE_WAIT_MS), 'the stubborn process group is gone');
   }
 });
+
+test('a knob of 2^31 ms or more keeps the default (timer overflow)', async () => {
+  // Node clamps a timer of 2^31 ms or more to 1 ms (TimeoutOverflowWarning): the driver would poll its control files every ms.
+  for (const overflowing of ['2147483648', '9007199254740991']) {
+    const { fromEnv, controlPoll } = await runChild(`
+      const { msFromEnv } = await import(${JSON.stringify(ENV_MS_URL)});
+      const { CONTROL_POLL_MS } = await import(${JSON.stringify(DRIVER_URL)});
+      console.log(JSON.stringify({ fromEnv: msFromEnv(${JSON.stringify(CONTROL_POLL_KNOB)}, ${DEFAULT_CONTROL_POLL_MS}), controlPoll: CONTROL_POLL_MS }));
+    `, { [CONTROL_POLL_KNOB]: overflowing });
+    assert.equal(fromEnv, DEFAULT_CONTROL_POLL_MS, `msFromEnv with ${overflowing}`);
+    assert.equal(controlPoll, DEFAULT_CONTROL_POLL_MS, `CONTROL_POLL_MS with ${overflowing}`);
+  }
+});
