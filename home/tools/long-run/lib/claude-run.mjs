@@ -5,8 +5,8 @@
 // Invariants: the prompt goes on stdin, never argv; the token is only in the child env (claude-child.mjs childEnv drops every
 //   billing variable, CLAUDE_CODE_RETRY_WATCHDOG* and CLAUDECODE); every stdout and stderr line is scrubbed of the token and any
 //   token-shaped text before it is written; no `--bare`, no permission flag, no `--max-turns` (owner decisions O2, O4); the exit
-//   code alone never makes a step done; an unknown result subtype is `crash`; a boss that has given its result line is never
-//   ended for a safe-point reason (tell, account switch), so its verdict is kept; an ended boss's descendants that outlive it are
+//   code alone never makes a step done; an unknown result subtype is `crash`; an account switch never ends a boss whose result
+//   line carries a final verdict (it is kept; the next step takes the new account); an ended boss's descendants that outlive it are
 //   ended too (process-tree.mjs) before `done` resolves, so a driver that exits right after leaves none of them running.
 import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, openSync, writeSync } from 'node:fs';
@@ -65,9 +65,16 @@ function openLog(path) {
   };
 }
 
-// The end of a tool use. The final `result` line is not one: a boss that gave its result is ending by itself with its verdict,
-// and ending it there would turn that verdict into `told` or `switched` and start a finished step again.
-const isSafePoint = (event) => event?.type === 'user' && Array.isArray(event.message?.content) && event.message.content.some((part) => part?.type === 'tool_result');
+const isSafePoint = (event) => event?.type === 'result'
+  || (event?.type === 'user' && Array.isArray(event.message?.content) && event.message.content.some((part) => part?.type === 'tool_result'));
+
+/**
+ * Whether an account switch must let this boss end by itself: its result line is a success with a final verdict (done,
+ * blocked, needs-owner), which ending it as `switched` would throw away. An error or limit result still follows the switch,
+ * and a `tell` still ends the boss there, so the message is delivered by the next start.
+ */
+const keepsVerdict = (reason, result) => reason === 'account' && result?.subtype === 'success' && result.is_error !== true
+  && parseVerdict(result.result).verdict !== null;
 
 function parseLine(line) {
   try {
@@ -132,11 +139,10 @@ export function startClaude({ args, prompt, cwd, env, token, added, logBase, pla
     state.timers.push(setTimeout(() => { state.endedHow = 'SIGTERM'; ender.signal('SIGTERM'); }, killAfter.term));
     state.timers.push(setTimeout(() => { state.endedHow = platform === 'win32' ? 'taskkill /F' : 'SIGKILL'; ender.signal('SIGKILL'); }, killAfter.kill));
   };
-  // A verdict that has already arrived wins: a message or an account switch then applies to the next start.
   const endAtSafePoint = (reason, maxMs = SAFE_POINT_MAX_MS) => {
-    if (state.safePoint !== null || state.result !== null) return;
+    if (state.safePoint !== null || keepsVerdict(reason, state.result)) return;
     state.safePoint = reason;
-    state.timers.push(setTimeout(() => { if (state.result === null) end(reason); }, maxMs));
+    state.timers.push(setTimeout(() => { if (!keepsVerdict(reason, state.result)) end(reason); }, maxMs));
   };
   createInterface({ input: child.stdout }).on('line', (raw) => {
     const line = scrub(raw, token);
@@ -144,7 +150,7 @@ export function startClaude({ args, prompt, cwd, env, token, added, logBase, pla
     if (event?.type === 'result') state.result = event;
     out.write(line, event?.type === 'result');
     if (event && onEvent) onEvent(event);
-    if (state.safePoint !== null && isSafePoint(event)) end(state.safePoint);
+    if (state.safePoint !== null && isSafePoint(event) && !keepsVerdict(state.safePoint, state.result)) end(state.safePoint);
   });
   createInterface({ input: child.stderr }).on('line', (raw) => {
     const line = scrub(raw, token);
