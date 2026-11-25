@@ -50,10 +50,10 @@ test('resume --account racing a plain resume never records a switch that the liv
         blockFor(SLICE_MS);
       }
     };
-    // The window is resumeCommand's gap between its driverAlive check and prepareResume's acquireLock: the token read of
-    // accountToken (the Keychain or store in real use) and the open-session check sit there. resumeCommand's first env read is
+    // The window is the time before resumeCommand's driverAlive check, its last check before any write: the token read of
+    // accountToken (the Keychain or store in real use) and the open-session check come first. resumeCommand's first env read is
     // that token read, so the plain resume runs to its end on that first read, with its driver in the limit wait before the switch
-    // takes the lock. The plain resume itself gets box.env, not the proxy, so it does not trigger again.
+    // checks for a driver or writes run.json. The plain resume itself gets box.env, not the proxy, so it does not trigger again.
     let plainResumed = false;
     const env = new Proxy(box.env, {
       get(target, key, receiver) {

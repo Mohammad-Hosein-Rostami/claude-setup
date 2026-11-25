@@ -1,7 +1,7 @@
-// Test of `resume --account` racing a plain `resume` whose driver starts inside the switch's locked writes, on a machine where ps cannot
-// tell a process start (Windows, Git Bash; tests/no-ps-hook.mjs stands in for it) and, as the control, where ps shows starts. The driver's
-// own lock must hold the switch's lock there as it does with ps: a switch must never end recorded while a live driver keeps step one on
-// the old account.
+// Test of `resume --account` racing a plain `resume` whose driver starts inside the switch's writes, on a machine where ps cannot
+// tell a process start (Windows, Git Bash; tests/no-ps-hook.mjs stands in for it) and, as the control, where ps shows starts. The
+// switch takes no lock: it writes run.json and every driver follows it, with ps or without. A switch must never end recorded while a
+// live driver keeps step one on the old account.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
@@ -23,15 +23,16 @@ const BUSY_LINE = /is busy: /;
 const HOOK_URL = pathToFileURL(fileURLToPath(new URL('./no-ps-hook.mjs', import.meta.url))).href;
 
 const pause = (ms) => new Promise((done) => { setTimeout(done, ms); });
-// resumeCommand calls `write` synchronously inside its locked gap, so holding the gap open needs a blocking wait.
+// resumeCommand calls `write` synchronously inside its writes, so holding them open needs a blocking wait.
 const blockFor = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 /** The sandbox's env, with the no-ps hook added to NODE_OPTIONS so each node process the CLI starts loads it. */
 const noPsEnv = (box) => ({ ...box.env, NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import ${HOOK_URL}`].filter(Boolean).join(' ') });
 
 /**
- * Runs `resume --account` and, from its `write` hook on the "reloaded" line (inside prepareResume, under the switch's lock), a plain
- * `resume` through the CLI; waits there until that driver starts a boss or says the run is busy. Then checks the invariant.
+ * Runs `resume --account` and, from its `write` hook on the "reloaded" line (inside prepareResume, after run.json names the new
+ * account), a plain `resume` through the CLI; waits there until that driver starts a boss or says the run is busy. Then checks the
+ * invariant.
  */
 async function switchRacesPlainResume(env, box) {
   box.script({ [STEP]: ['hang', 'done'] }); // a driver that keeps the step on its account hangs at it instead of finishing
@@ -89,7 +90,7 @@ test('with no ps start, resume --account racing a plain resume\'s starting drive
   }
 });
 
-// Control: where ps shows starts the driver refuses the switch's lock, so the same race ends with the step on the new account.
+// Control: where ps shows starts, the same race must end the same way: the driver follows run.json, so no boss starts on the old account.
 test('with ps starts, resume --account racing a plain resume\'s starting driver never records a switch while step one runs on the old account', async () => {
   const box = makeSandbox();
   try {
