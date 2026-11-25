@@ -1,17 +1,18 @@
 // Purpose: the commands that make a run go: `check`, `start`, `resume` (one run or every stale one) and `rerun` (M9).
 // Exports: planLines, checkCommand, startCommand, resumeCommand, resumeStale, rerunCommand.
 // Invariants: nothing starts before the job, the account (stored, usage credits recorded off) and the SQLite module pass; a run
-//   keeps the account it started on until `resume --account` switches it (the start check plus a token in the store, written under
-//   the run lock and recorded in run.json `switches` and an `account-switched` event); every resume checks the account; resume refuses while a taken-over
-//   session looks open (unless --force) and never while a driver lives; --retry, --skip and --abandon are refused unless a step is
-//   held; rerun moves the later journals aside and never touches git.
+//   keeps the account it started on until `resume --account` switches it (the start check plus a token in the store, recorded in
+//   run.json `switches` and an `account-switched` event before the driver starts; every driver takes it at its next attempt,
+//   step.mjs); every resume checks the account; a resume runs every check first and its one liveness check last, so a refusal
+//   writes nothing; it refuses while a taken-over session looks open (unless --force) and never while a driver lives; --retry,
+//   --skip and --abandon are refused unless a step is held; rerun moves the later journals aside and never touches git.
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { NAME_PATTERN } from '../../account/lib/names.mjs';
 import { freezeJob, loadJob, reloadChanges, units } from './job.mjs';
 import { accountToken, requireCreditsOff, startAccount } from './run-account.mjs';
-import { RunBusy, acquireLock, driverAlive, ensureRunDirs, listRunIds, newRunId, readJournal, readJson, readRunJob, releaseLock, runPaths, writeJson } from './run-store.mjs';
+import { RunBusy, driverAlive, ensureRunDirs, listRunIds, newRunId, readJournal, readJson, readRunJob, runPaths, writeJson } from './run-store.mjs';
 import { NativeModuleError, assertNativeModule } from './driver.mjs';
 import { clearControl, sessionLooksOpen } from './control.mjs';
 import { recordEvent } from './events.mjs';
@@ -105,12 +106,17 @@ function refuseOpenSessions(paths, job, env) {
   }
 }
 
-function reloadJob(paths, jobPath, write) {
+/** `--reload-job <f>`, checked but not written yet: the loaded job and the unfinished steps whose prompt changed. */
+function planReload(paths, jobPath) {
   const loaded = loadJob(jobPath);
   const old = readRunJob(paths);
   const finished = new Set(units(old).map((unit) => unit.id).filter((unitId) => readJournal(paths, unitId)?.final?.status === 'done'));
   for (const entry of old.steps) if (entry.kind === 'group' && entry.items.every((item) => finished.has(item.id))) finished.add(entry.id);
-  const changed = reloadChanges(old, loaded.job, finished);
+  return { loaded, changed: reloadChanges(old, loaded.job, finished) };
+}
+
+/** Writes a planned reload into the run's job.json. */
+function writeReload(paths, { loaded, changed }, write) {
   writeJson(paths.job, freezeJob(loaded));
   write(changed.length > 0 ? `reloaded; changed prompts: ${changed.join(', ')}` : 'reloaded; no unfinished prompt changed');
 }
@@ -141,30 +147,16 @@ function switchAccount(paths, to, write) {
 }
 
 /**
- * The writes of a resume before its driver starts: the job reload, the folder claim, the cleared control files and, with
- * `--account`, the switch. With `--account` they run under the run lock: a driver that started since resume's first check (a
- * plain resume in the gap the store read leaves) would keep its steps on the old account and its limit wait, so the lock
- * refuses and nothing is written, the owner's pause and stop files included. Any live pid in the lock refuses (keepLivePid):
- * where ps cannot tell a starting driver from a reused pid, a plain resume (the beat rule) takes a crashed run over first.
- * @throws {RunBusy} with the pause command when the lock is held.
+ * The writes of a resume, after its last check: the folder claim (all or none, so it may still refuse), the switch, the job
+ * reload, the cleared control files. The switch comes before the reload: a driver a plain resume starts meanwhile reads the
+ * account already written, and any driver follows run.json at its next attempt anyway (step.mjs).
+ * @throws {RunBusy} from the folder claim only.
  */
-function prepareResume(paths, { flags, switchTo, write }) {
-  if (switchTo !== undefined) {
-    try {
-      acquireLock(paths, new Date(), { keepLivePid: true });
-    } catch (error) {
-      if (error instanceof RunBusy) throw new RunBusy(`run ${paths.runId} looks live: a live process holds its lock. If it runs, pause it first: long-run pause ${paths.runId}, then resume --account ${switchTo}; if it crashed, run long-run resume ${paths.runId} first, then switch`);
-      throw error;
-    }
-  }
-  try {
-    if (flags['reload-job']) reloadJob(paths, flags['reload-job'], write);
-    claimRunFolders(paths, readRunJob(paths));
-    clearControl(paths);
-    if (switchTo !== undefined) switchAccount(paths, switchTo, write);
-  } finally {
-    if (switchTo !== undefined) releaseLock(paths);
-  }
+function prepareResume(paths, { reloaded, switchTo, write }) {
+  claimRunFolders(paths, reloaded?.loaded.job ?? readRunJob(paths));
+  if (switchTo !== undefined) switchAccount(paths, switchTo, write);
+  if (reloaded) writeReload(paths, reloaded, write);
+  clearControl(paths);
 }
 
 /**
@@ -179,7 +171,6 @@ export async function resumeCommand({ runId, flags, env, root, write }) {
   // User text: checked before it reaches a path or the store.
   if (switchTo !== undefined && !NAME_PATTERN.test(switchTo)) throw new UsageError('--account takes an account name: 1 to 32 characters of a-z, 0-9, _ and -, starting with a letter or a digit');
   const paths = openRun(root, runId);
-  if (driverAlive(paths)) throw new RunBusy(switchTo === undefined ? `run ${runId} is running; pause or stop it first, or use tell to steer a step` : pauseFirst(runId, switchTo));
   const state = runState(paths);
   if (state === 'done' || state === 'abandoned') throw new Refusal(`run ${runId} is ${state}; use rerun --from <step>`);
   const reply = replyOf(flags);
@@ -191,7 +182,10 @@ export async function resumeCommand({ runId, flags, env, root, write }) {
   if (switchTo === undefined) requireCreditsOff(readJson(paths.run).account, env);
   else accountToken(switchTo, { env });
   if (!flags.force) refuseOpenSessions(paths, readRunJob(paths), env);
-  prepareResume(paths, { flags, switchTo, write });
+  const reloaded = flags['reload-job'] ? planReload(paths, flags['reload-job']) : null;
+  // The one liveness check, last before the first write: from here to the run.json write only a few file calls run.
+  if (driverAlive(paths)) throw new RunBusy(switchTo === undefined ? `run ${runId} is running; pause or stop it first, or use tell to steer a step` : pauseFirst(runId, switchTo));
+  prepareResume(paths, { reloaded, switchTo, write });
   writeJson(join(paths.dir, 'resume.json'), reply);
   write(`resuming ${runId} (${reply.action}${reply.item ? ` for ${reply.item}` : ''})`);
   const ended = await startDriver(paths, { env, foreground: Boolean(flags.foreground) });
@@ -235,7 +229,7 @@ export async function rerunCommand({ runId, flags, env, root, write }) {
   const paths = openRun(root, runId);
   if (driverAlive(paths)) throw new RunBusy(`run ${runId} is running; stop it first`);
   if (!flags.from) throw new UsageError('rerun needs --from <step>');
-  if (flags['reload-job']) reloadJob(paths, flags['reload-job'], write);
+  if (flags['reload-job']) writeReload(paths, planReload(paths, flags['reload-job']), write);
   const job = readRunJob(paths);
   const entry = job.steps.find((one) => one.id === flags.from);
   if (!entry) throw new Refusal(`no top-level step ${flags.from} in run ${runId}`);

@@ -4,13 +4,14 @@
 // Invariants: an outcome is returned, never thrown; waits are wall-clock targets saved in the journal and read in 30 s slices, so a
 //   sleep or a crash loses only the wait already spent; a limit wait, a pause, a stop, a takeover or an owner message is never an
 //   attempt; `maxAttempts` counts failed attempts and `maxStarts` every start (loop guards of owner decision O2, not budgets); a
-//   run-level pause or stop parks the unit after its journal is written (the driver then exits: spec 7.2, the P3 crash path); an
-//   unfinished unit takes the account run.json names at each runUnit (so `resume --account` switches it) and then drops a limit
-//   wait recorded under the old account.
+//   run-level pause or stop parks the unit after its journal is written (the driver then exits: spec 7.2, the P3 crash path); the
+//   account is read from run.json at each attempt and in each wait slice, so a recorded switch (`resume --account`) ends a wait
+//   at once and drops a limit wait of the old account; a running boss follows a switch at its next safe point (driver.mjs
+//   pollControl, outcome `switched`, never an attempt) and continues its own session on the new account.
 import { claimLane } from '../../git-tidy/lib/lane-pool.mjs';
 import { openRepo } from '../../git-tidy/lib/repo.mjs';
 import { limitWaitUntil } from './limit-time.mjs';
-import { isPidAlive, readJournal, readJson, writeJournal } from './run-store.mjs';
+import { isPidAlive, readJournal, runAccount, writeJournal } from './run-store.mjs';
 import { endOrphan } from './claude-run.mjs';
 import { AccountRefusal } from './run-account.mjs';
 import { startOnce } from './step-start.mjs';
@@ -68,12 +69,12 @@ function journalFor(ctx, unit, visit, reply) {
 }
 
 /**
- * The journal on the account run.json names now. `resume --account` rewrites run.json while no driver runs; reading it here,
- * not ctx.account, keeps run.json the one truth even when two resumes race. A limit wait belongs to the old account's limit,
- * so it ends and the step starts at once; the session id stays, so the step continues its own conversation.
+ * The journal on the account run.json names now (the same object when nothing changed). run.json is the one truth, not
+ * ctx.account: a driver that started before a switch was written follows it at its next attempt. A limit wait belongs to the
+ * old account's limit, so it ends and the step starts at once; the session id stays, so the step continues its own conversation.
  */
 function onRunAccount(ctx, journal) {
-  const { account } = readJson(ctx.paths.run);
+  const account = runAccount(ctx.paths) ?? journal.account;
   if (account === journal.account) return journal;
   const switched = `account ${journal.account} -> ${account}`;
   const note = journal.waitUntil ? `${switched}: limit wait dropped` : switched;
@@ -94,14 +95,19 @@ function controlNow(ctx, unitId) {
   return signal === null ? null : { outcome: { pause: 'paused', stop: 'stopped', takeover: 'taken-over' }[signal] };
 }
 
-/** Waits until `untilIso` in slices; returns null when it passed, else the control outcome that cut it short. */
-async function waitUntil(ctx, unit, untilIso, state) {
+/**
+ * Waits until `untilIso` in slices; returns null when it passed, else what cut it short: the control outcome, or 'account'
+ * when run.json names another account than `account` (the unit's), so the wait ends within one slice of a switch.
+ */
+async function waitUntil(ctx, unit, { untilIso, state, account }) {
   const until = Date.parse(untilIso);
   ctx.live.waiting(unit.id, { state, until: untilIso });
   try {
     for (;;) {
       const control = controlNow(ctx, unit.id);
       if (control !== null) return control;
+      const recorded = runAccount(ctx.paths);
+      if (recorded !== null && recorded !== account) return 'account';
       if (ctx.control.hasTell(unit.id) && state === 'waiting-retry') return null; // an owner message is not held back by a backoff
       const left = until - ctx.now().getTime();
       if (left <= 0) return null;
@@ -141,14 +147,14 @@ function act(ctx, unit, journal, verdict) {
     if (attempts < ctx.job.loopGuards.maxAttempts) ctx.event(unit.id, 'waiting-retry', `until ${next}`, { outcome: verdict.outcome, attempt: attempts });
     return { journal: { ...journal, attempts, nextAttemptAt: next }, final: null };
   }
-  if (verdict.outcome === 'told') return { journal, final: null };
+  if (verdict.outcome === 'told' || verdict.outcome === 'switched') return { journal, final: null };
   return { journal, final: finalOf(verdict, journal) };
 }
 
 async function gate(ctx, unit, journal) {
   for (const [field, state] of [['waitUntil', 'waiting-limit'], ['nextAttemptAt', 'waiting-retry']]) {
     if (!journal[field]) continue;
-    const control = await waitUntil(ctx, unit, journal[field], state);
+    const control = await waitUntil(ctx, unit, { untilIso: journal[field], state, account: journal.account });
     if (control !== null) return { journal, control };
     journal = { ...journal, [field]: null };
     writeJournal(ctx.paths, unit.id, journal);
@@ -176,12 +182,15 @@ export async function runUnit(ctx, unit, { visit, reply }) {
     const orphan = await endOrphan({ pid: journal.pid, sessionId: journal.sessionId, platform: ctx.platform, isAlive: isPidAlive, killAfter: ctx.killAfter });
     journal = { ...journal, running: false, pid: null, last: journal.last ?? 'restart', notes: [...journal.notes, `driver restarted mid-start; the old child: ${orphan}`] };
   }
-  journal = onRunAccount(ctx, journal);
   writeJournal(ctx.paths, unit.id, journal);
   let pendingReply = reply;
   for (;;) {
+    const followed = onRunAccount(ctx, journal);
+    if (followed !== journal) writeJournal(ctx.paths, unit.id, followed);
+    journal = followed;
     const gated = await gate(ctx, unit, journal);
     journal = gated.journal;
+    if (gated.control === 'account') continue; // a switch was recorded during the wait: take it at the top
     if (gated.control === 'park') return ctx.park(unit.id);
     if (gated.control) return finish(ctx, unit, { ...journal, last: gated.control.outcome }, finalOf(gated.control, journal));
     const guard = guardReason(ctx, journal);

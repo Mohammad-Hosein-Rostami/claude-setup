@@ -164,7 +164,7 @@ async function runChild(ctx, unit, begun, { args, prompt, token, logBase, fresh 
   try {
     const added = { CLAUDE_ACCOUNT: begun.account, LONG_RUN_ID: ctx.runId, LONG_RUN_STEP: unit.id };
     const handle = startClaude({ args, prompt, cwd: begun.folder, env: ctx.env, token, added, logBase, platform: ctx.platform, killAfter: ctx.killAfter, onEvent });
-    ctx.live.running(unit.id, { pid: handle.pid, handle, sessionId: begun.sessionId, folder: begun.folder, log: `${logBase}.jsonl` });
+    ctx.live.running(unit.id, { pid: handle.pid, handle, sessionId: begun.sessionId, folder: begun.folder, log: `${logBase}.jsonl`, account: begun.account });
     save({ pid: handle.pid });
     ctx.event(unit.id, 'step-started', `${fresh ? 'new' : 'resumed'} session ${begun.sessionId}`, { start: begun.totalStarts, sessionId: begun.sessionId });
     const timer = ctx.job.stepTimeoutMinutes ? setTimeout(() => handle.end('timeout'), ctx.job.stepTimeoutMinutes * MS_PER_MINUTE) : null;

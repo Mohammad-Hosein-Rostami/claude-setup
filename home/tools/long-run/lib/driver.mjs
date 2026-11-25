@@ -1,5 +1,6 @@
 // Purpose: the driver of one run (`long-run drive <run>`, usually detached): takes the run lock, beats, keeps the machine awake,
-//   reads the control files every 2 s (CLAUDE_LONG_RUN_CONTROL_POLL_MS, env-ms.mjs), runs the graph from where it stopped (new,
+//   reads the control files and run.json's account every 2 s (CLAUDE_LONG_RUN_CONTROL_POLL_MS, env-ms.mjs; a boss on another
+//   account than the recorded one ends at its next safe point), runs the graph from where it stopped (new,
 //   resumed, answered or re-run), and records how it ended (held, done, abandoned, paused, stopped) with events, the summary and
 //   a note to the owner.
 // Exports: CONTROL_POLL_MS, BEAT_MS, STOP_SIGNALS, NativeModuleError, assertInstallStamp, assertNativeModule, makeSemaphore,
@@ -17,7 +18,7 @@ import { createRequire } from 'node:module';
 import { hostname } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { Command, RunControl, isGraphDrained } from '@langchain/langgraph';
-import { appendJsonLine, acquireLock, readJournal, readJson, readRunJob, releaseFolder, releaseLock, writeJournal, writeJson } from './run-store.mjs';
+import { appendJsonLine, acquireLock, readJournal, readJson, readRunJob, releaseFolder, releaseLock, runAccount, writeJournal, writeJson } from './run-store.mjs';
 import { removeIfEmpty } from './worktrees.mjs';
 import { units } from './job.mjs';
 import { makeControl } from './control.mjs';
@@ -104,6 +105,7 @@ function makeLive(paths, base, now) {
     waiting(unitId, info) { entries[unitId] = { ...info, since: now().toISOString() }; write(); },
     stopped(unitId) { handles.delete(unitId); delete entries[unitId]; write(); },
     runningCount: () => Object.values(entries).filter((entry) => entry.state === 'running').length,
+    accountOf: (unitId) => entries[unitId]?.account ?? null, // the account a running boss started on
   };
 }
 
@@ -147,11 +149,14 @@ async function endParked(ctx, signal) {
 
 function pollControl(ctx) {
   const signal = ctx.control.runSignal();
+  const recorded = runAccount(ctx.paths); // never throws: this runs in a timer
   for (const [unitId, handle] of ctx.live.handles) {
     if (signal !== null) handle.end(signal);
     const unitSignal = ctx.control.unitSignal(unitId);
     if (unitSignal !== null) handle.end(unitSignal);
     else if (ctx.control.hasTell(unitId)) handle.endAtSafePoint('tell');
+    // A switch recorded while this boss runs: it ends at its next safe point and step.mjs starts it again on the new account.
+    else if (recorded !== null && recorded !== ctx.live.accountOf(unitId)) handle.endAtSafePoint('account');
   }
   if (signal !== null && ctx.live.runningCount() === 0 && !ctx.ending) {
     ctx.ending = true;

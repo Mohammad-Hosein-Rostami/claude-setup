@@ -224,7 +224,8 @@ export function parseVerdict(text) {
   return { verdict: match ? match[1] : null, reason: match?.[2]?.trim() ?? '', summary };
 }
 
-const ENDED_BY = { pause: 'paused', stop: 'stopped', takeover: 'taken-over', timeout: 'timeout', tell: 'told' };
+// `account`: pollControl ended the boss for a recorded account switch; `switched` starts it again, never an attempt.
+const ENDED_BY = { pause: 'paused', stop: 'stopped', takeover: 'taken-over', timeout: 'timeout', tell: 'told', account: 'switched' };
 
 function classifySuccess(run) {
   if (run.result.is_error || run.exitCode !== 0) return { outcome: 'crash', detail: `exit ${run.exitCode}, is_error ${run.result.is_error}` };
@@ -242,7 +243,8 @@ function classifySuccess(run) {
  * How a start ended (spec 7.2 step 2), before the step check.
  * @param {{exitCode: number | null, result: object | null, stderrTail: string, endedBy: string | null, error: string | null}} run
  * @returns {{outcome: string, summary?: string, reason?: string, question?: string, detail?: string, limitText?: string}}
- *   outcome one of done, limit, auth, max-turns, timeout, crash, no-verdict, blocked, needs-owner, paused, stopped, taken-over, told.
+ *   outcome one of done, limit, auth, max-turns, timeout, crash, no-verdict, blocked, needs-owner, paused, stopped, taken-over, told,
+ *   switched.
  */
 export function classify(run) {
   if (run.endedBy !== null) return { outcome: ENDED_BY[run.endedBy] ?? 'crash', detail: run.endedBy };
