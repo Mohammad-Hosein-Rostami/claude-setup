@@ -180,7 +180,10 @@ When a run stops (a pause, a stop, a reboot, a crash or a killed driver) while a
   Done steps keep the old name in their journal. The first start of each step on the new account writes its whole history
   into that account's prompt cache once. A running or limit-waiting run is refused with exit 4. A held, paused, stopped or
   taken-over run needs no pause. A live driver that started before the switch was written follows it at its next start: a
-  waiting step ends its wait, and a running boss ends at its next safe point and continues on the new account.
+  waiting step ends its wait, and a running boss ends at its next safe point and continues on the new account; a boss that
+  has already given its result keeps its verdict, and the next step starts on the new account. Upgrade: a driver started
+  by an older version of this tool does not follow a switch, so until it has ended, switch only after `long-run pause <run>`.
+  If run.json is not a readable regular file, the steps keep their account and the run gets one `run-file-unreadable` event.
 - After a reboot, unfinished runs continue by themselves (autostart on); paused and stopped runs wait for you.
 
 ## How you control runs from a Claude session

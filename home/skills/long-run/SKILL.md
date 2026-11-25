@@ -64,7 +64,7 @@ Every event of every run is one numbered line in `~/.claude/state/long-run/event
 
 Events: `run-started`, `step-started`, `step-done`, `step-failed`, `waiting-limit until <time>`, `waiting-retry until <time>`,
 `needs-owner`, `blocked`, `paused`, `taken-over`, `told`, `resumed`, `account-switched` (`account <old> -> <new>`),
-`run-done`, `run-stopped`, `run-abandoned`, `driver-lost` (the runner process died: offer `LR resume <run>`).
+`run-file-unreadable` (the run's run.json is damaged or replaced: tell the owner), `run-done`, `run-stopped`, `run-abandoned`, `driver-lost` (the runner process died: offer `LR resume <run>`).
 
 ## The owner's words and the command
 
