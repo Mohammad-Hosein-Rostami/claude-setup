@@ -13,19 +13,23 @@ the brief come first; these lines hold for everyone.
   target or the owner asked for one; never from a long-run step. Each job ends in one state: landed, waiting on the owner,
   or stopped with a reason. lex and max run at high; raise lex to `effort: "xhigh"` for a hard design or an unclear need,
   `effort: "max"` only when a wrong choice is costly to undo.
-- Only the boss starts `lex`, `dev`, `tess` and `max`, and it starts no helper (the guard denies both); research goes through `lex`.
-  An agent asks for one with `needs: <agent> to <task>, blocks: <what>`, sent to `main` by SendMessage from a background run,
-  else in its report; the boss starts it, tracks who is on what and sends the result to the asker by its id (SendMessage).
+- Only the boss starts `lex`, `dev`, `tess` and `max`, and it starts no helper; no other agent starts lex, dev, tess or max.
+  Research goes through `lex`. An agent asks for one with `needs: <agent> to <task>, blocks: <what>`, sent to `main` by
+  SendMessage from a background run, else in its report; the boss starts it, tracks who is on what and sends the result to
+  the asker by its id (SendMessage).
 - At most 3 lex, 3 dev, 3 tess and 3 max run at once; their helpers are not counted. Two lanes or helpers never change
   the same file at once: each names its files; overlapping work runs in turn.
 - Long unattended jobs use the `long-run` skill; the main session starts one only when the owner asks in chat.
+- Agent calls: leave `model` and `effort` out for our agents (the agent file sets them) and never pass a lower one. A built-in
+  agent names its model: `model: sonnet` for general-purpose, Explore, claude-code-guide and statusline-setup, `model: opus` for
+  Plan. Name a model by family or full id, never `inherit`, `best`, `default` or `opusplan`.
 - The final answer says what changed and what was not run. A command the owner must run is given with the machine and the folder it runs in.
 
 ## Quality checks (tess)
 - dev's report carries `risk:` (the `risk` command); lex's plan names `risk:` and `qa:` per task. The boss routes on the higher
   of the two; `risk: unknown` counts as risky. tess always runs in the background.
-- Tests and checks are tess's; dev and its helpers only build (dev-debug runs repros). Full suites, installs and
-  builds go through the `suite run` queue (1 slot), a full suite once per tree (`--cache`).
+- Tests and checks are tess's; dev and its helpers only build (dev-debug runs repros). Run full suites, installs
+  and builds directly, a full suite once per tree.
 
 | Change | tess work (`qa:`) | When | Landing |
 |---|---|---|---|
@@ -47,16 +51,15 @@ the brief come first; these lines hold for everyone.
   to the same agent by its id, so it keeps its work; write the open agent ids into a handoff note before a restart.
 - An unanswered `questions:` block: a small, reversible choice takes the recommended option; a big or
   deleting one waits.
-- Permission prompts (any tool, risky ones too) go ahead as Allow after 2 minutes unless denied;
-  while any `max` runs, an outward one needs a click.
+- Agents have full access: commands run with no permission prompt.
 - Owner decisions: scope, money, irreversible actions, credentials, product facts the repo lacks, real trade-offs. A technical
   choice with a sensible default is taken and named in one line.
 
 ## Git
 - Writers work in their own git worktree and commit only their own paths on their own branch; never `--no-verify`.
 - History is one straight line: rebase onto the base, land with `git merge --ff-only` through the `land` script
-  (`~/.claude/tools/land`), no merge commits, no `update-ref`; then delete the landed branch and its worktree. `land --test
-  "<cmd>"` tests the rebased tip first, required when both sides changed the same files.
+  (`~/.claude/tools/land`), no merge commits, no `update-ref`; then delete the landed branch and its worktree.
+  When both sides changed the same files, run the full suite on the rebased tip (`land --test`) before landing.
 - Never push unless the owner asks. AI work notes (HANDOFF.md) are never committed.
 
 ## Owner standards
@@ -71,7 +74,7 @@ the brief come first; these lines hold for everyone.
 
 ## Project AI setups
 - A project's own AI setup and this one both apply; the `project-merge` note at session start names what the project brings.
-- The project's facts, commands and conventions win in its repo. On the same topic the stricter rule applies; our guards run.
+- The project's facts, commands and conventions win in its repo. On the same topic the stricter rule applies; our hooks run.
 - Never edit a project's committed AI files (CLAUDE.md, AGENTS.md, `.claude/`) unless the owner asks for a team change. How the
   setups combine goes in `~/.claude/project-notes/<key>.md`. Project documents are written for people and do not mention AI.
 
