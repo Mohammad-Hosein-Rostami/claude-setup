@@ -1,30 +1,19 @@
-// Literal secrets typed into a Bash command. Exports: findLiteralSecret(command) -> string | undefined; maskSecrets(command) -> string;
-// maskSecretFields(toolInput) -> masked JSON (secret-named fields of any tool input, then maskSecrets);
-// literalSecretValues(command) -> string[] (the raw values, for lib/allowed-literals.mjs, which only hashes them; never log or print them).
-// Returns only a KIND label ("an Anthropic API key", ...), never the secret itself: the caller prints it in a deny message.
-// Detected: sk-ant-..., ghp_/gho_/ghu_/ghs_/ghr_/github_pat_ tokens, AWS access key ids, `--password=x` / `--password x`,
+// Masks the literal secrets in a text before it goes to a dialog (the question popup: lib/timed-ask-text.mjs, lib/timed-ask-async.mjs).
+// Exports: maskSecrets(text) -> string, each secret value replaced by "[masked]".
+// Masked: sk-ant-..., ghp_/gho_/ghu_/ghs_/ghr_/github_pat_ tokens, AWS access key ids, `--password=x` / `--password x`,
 // `sshpass -p x`, `mysql -pX`, `docker login -p x`, PGPASSWORD / MYSQL_PWD / AWS_SECRET_ACCESS_KEY assigned a literal, any
 // `*_KEY=` / `*_TOKEN=` / `*_SECRET=` / `*PASSWORD=` assigned a literal, sk-proj- / glpat- / xoxb- / xoxp- tokens, `Bearer x`
 // (so `Authorization: Bearer x` too), `-u user:pass` / `--user user:pass`, and URL credentials `scheme://user:pass@host`.
 // A value that starts with `$` (variable, `$(cat file)`), a backtick or `<(` is not literal; nor, for a generic `*_KEY=` style name, one that starts like a path (`/`, `./`, `../`, `~/`). Scans the raw text, so quotes,
-// heredocs and `bash -c '...'` are all covered. A noisy false positive is accepted: the check is meant to be strict (the hook turns a hit into a timed ask).
-// Data text is the one exemption (lib/data-text.mjs dataTextRemoved): the body of a quoted-delimiter heredoc that a bare cat or tee stores
-// (`cat > f <<'EOF'`) where nothing else in the command can run or read it, and a single-quoted argument of a program that never runs it
-// (lib/inert-arguments.mjs: `grep -n '...' f`), are not read by the context rules (an assignment, `Bearer x`, a header, a URL or query credential,
-// a flag), whose hits there are program code. A known token shape (TOKEN_KINDS), a named secret variable (PGPASSWORD=...) and an env-file
-// assignment line (`API_TOKEN=x`, `export DB_PASSWORD=x`) are still found in data, so a real one written into a file asks. A body that runs
-// (`bash <<'EOF'`, `cat <<'EOF' | sh`, `cat > x.sh <<'EOF'` then `bash x.sh`, inside `$(...)` or `{ } | sh`), an unquoted `<<EOF` body and any
-// line that reader cannot pair the way the shell does are scanned whole. maskSecrets and literalSecretValues read data text too.
+// heredocs and `bash -c '...'` are all covered.
 // Also: a literal given on stdin to a `--with-token` / `--password-stdin` command: `gh auth login --with-token <<< T`, `echo T | docker login
 // --password-stdin` (`echo`/`printf` input; `$VAR` and `$(...)` input is not literal).
 // Also: SSHPASS=, `vault login <token>`, `--from-literal=<k>=<v>` (k names a pass/secret/token/key), `az ... -p`, `htpasswd -b`,
 // `aws configure set *secret* <v>`.
 // Linear time (Round 4): every pattern is anchored at a rare literal and every gap between a prefix and its value is a BOUNDED repeat
 // of disjoint alternatives (no unbounded nested or overlapping quantifier), so the cost is input length x a small constant. Input beyond
-// MAX_SCAN_CHARS is not scanned (the hook asks about a command that long before it gets here); maskSecrets cuts it and says so.
-
-import { MIN_VALUE_LENGTH } from './allowed-literals.mjs';
-import { dataTextRemoved } from './data-text.mjs';
+// MAX_SCAN_CHARS is not scanned: maskSecrets cuts it and says so.
+// Invariants: pure, no I/O; text past MAX_SCAN_CHARS is never returned (it is cut and marked "[...cut]").
 
 const TOKEN_KINDS = [
   [/\bsk-ant-[A-Za-z0-9_-]{10,}/, 'an Anthropic API key'],
@@ -39,11 +28,8 @@ const GAP = 300; // longest stretch between a command word and its flag that is 
 const NAME_MAX = 80; // longest variable, header or scheme name that is still looked at
 const SECRET_ENV = '(?:PGPASSWORD|MYSQL_PWD|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|SSHPASS)';
 const NOT_LITERAL_START = '(?!["\']?(?:\\$|`|<|\\s|;|&|\\||$))';
-const VALUE = `["']?[^\\s"';&|]`;
 // What the masker hides after a prefix: a whole quoted string or one unquoted word.
 const VALUE_RUN = `"[^"]*"|'[^']*'|[^\\s"';&|]+`;
-// [prefix, extra lookahead, kind, options]: the prefix ends right before the value, so one table drives both detection and
-// masking. options.value replaces the detected/masked value pattern, options.flags are the regex flags (e.g. 'i'), options.start replaces NOT_LITERAL_START.
 const BOUNDARY = `(?:^|[\\s;&|("'])`;
 // URL userinfo: the password runs to the LAST `@` of the word, so one containing `@` or `/` is still covered. A `:port/@scope`
 // (`http://localhost:5173/@vite/client`) is not a password: digits followed by `/ ? #` or the end are a port.
@@ -109,8 +95,9 @@ const IN_CODE_LIST = `(?<=[\\[({,]\\s*${QUOTED_BEFORE})`;
 // Likewise a `+` after the quote is JS concatenation only when the string opens after `[ ( { , + :` or `= ` with a space (`x = "u?token=a-b"+s`, not shell `x="..."+R`).
 const IN_CODE_CONCAT = `(?<=(?:[\\[({,+:][ \\t]*|=[ \\t]+)${QUOTED_BEFORE})`;
 const QUERY_END = `(?=[)}\\]]{0,4}(?:[\\s;]|,\\s|$)|${IN_CODE_LIST}[)}\\]]{0,4},${LIST_ITEM})`;
-// A value under MIN_VALUE_LENGTH characters is a test fixture (`token=t`), not a secret: the allow-list never remembers one either. It counts the whole shell
+// A value under MIN_VALUE_LENGTH characters is a test fixture (`token=t`), not a secret. It counts the whole shell
 // word, skipping quote characters and stopping only at `&`, `#` or whitespace, so `"?token=ab"'R'`, `abcd|R` and a backslash-newline continuation are long enough.
+const MIN_VALUE_LENGTH = 8;
 const QUERY_MIN_LENGTH = `(?=(?:(?:["']|\\\\\\r?\\n)*[^\\s"'&#]){${MIN_VALUE_LENGTH}})`;
 // A query value that is code, not a literal: empty and closed by a quote then `} )` or a `+` that is not followed by a quoted literal
 // (`"/reset?token="+token`, not `+"R"`); a `$(...)`, `$x` or `${name}` / `${name:-}` reference, but not `${name:-R}` (a literal default).
@@ -136,9 +123,10 @@ const TOKEN_NAME_PART = '(?<![A-Za-z0-9])(?:KEY|TOKEN)(?![A-Za-z0-9])';
 const TOKEN_CHARS = 'A-Za-z0-9._~+/=:-';
 // Only CODE shapes are exempt: token characters then `(` or `[` (a call, an index), or an ellipsis. One stray character after a real token (`R)`, `R,`, `R!`) is not.
 const NOT_A_TOKEN_VALUE = `["']?[${TOKEN_CHARS}]*(?:[(\\[]|…)`;
-const VALUE_KINDS = [
-  // a named secret variable is a secret wherever it stands, data text included (see dataTextRemoved)
-  [`(?:^|[\\s;&|("'])${SECRET_ENV}=`, '', 'a password or key assigned in the command', { inData: true }],
+// [prefix, extra lookahead, what it hides, options]: the prefix ends right before the value, so the mask keeps it. options.value
+// replaces the masked value pattern, options.flags are the regex flags (e.g. 'i'), options.start replaces NOT_LITERAL_START.
+const VALUE_MASKS = [
+  [`(?:^|[\\s;&|("'])${SECRET_ENV}=`, '', 'a password or key assigned in the command'],
   [SECRET_FLAG, `(?!-|${PUNCTUATION_ONLY_WORD})`, 'a password, token or key flag with a literal value'],
   [`${STDIN_FLAG}[^\\n|;&<]{0,${GAP}}?<<<[ \\t]*`, '', 'a token or password given as a here-string'],
   [`\\b(?:echo|printf)\\b[ \\t]+(?:-[a-zA-Z]+[ \\t]+){0,3}(?:(?:"%s(?:\\\\n)?"|'%s(?:\\\\n)?'|%s)[ \\t]+)?`, ECHOED_INTO_STDIN_FLAG, 'a token or password piped to a stdin flag'],
@@ -168,121 +156,19 @@ const VALUE_KINDS = [
   [`\\b${HEADER_NAME}\\s*:[ \\t]*`, FORMAT_PLACEHOLDER, 'a credential header with a literal value', { value: HEADER_VALUE }],
   [`(?<!\\b(?:docker|podman|buildx|buildah)\\b[^\\n|;&]{0,${GAP}})--secret(?:=|\\s+)`, '(?!-)', 'a secret flag with a literal value'],
   ['\\b[a-z][a-z0-9+.-]{0,30}://[^\\s/@:"\']{1,200}:', URL_NOT_A_PORT, 'a password inside a URL', { value: URL_PASSWORD, flags: 'i' }],
-].map(([prefix, lookahead, kind, { value, flags = '', start = NOT_LITERAL_START, inData = false } = {}]) => ({
-  kind,
-  inData,
-  detect: new RegExp(`${prefix}${start}${lookahead}${value ?? VALUE}`, flags),
-  mask: new RegExp(`(${prefix})${start}${lookahead}(?:${value ?? VALUE_RUN})`, `g${flags}`),
-}));
+].map(([prefix, lookahead, , { value = VALUE_RUN, flags = '', start = NOT_LITERAL_START } = {}]) => (
+  new RegExp(`(${prefix})${start}${lookahead}(?:${value})`, `g${flags}`)
+));
 const MASK = '[masked]';
-// A field name that holds a credential in a tool's JSON input: the same KEY/TOKEN and SECRET/PASS/PASSWORD parts as the variable rules above,
-// plus header-style names. camelCase humps count as a boundary (`apiKey`, `clientSecret`); `keyboard`, `passport` and `max_tokens` do not match.
-const SECRET_FIELD_NAME = new RegExp(`${PASSWORD_NAME_PART}|${TOKEN_NAME_PART}|AUTHORIZATION|COOKIE|CREDENTIAL|(?<![A-Za-z0-9])AUTH(?![A-Za-z0-9])`, 'i');
-const CAMEL_HUMP = /([a-z0-9])([A-Z])/g;
-
-// Placeholders (F16): a value made WHOLLY of stand-in text is no secret (`.env.example` written through a heredoc). Only a whole value
-// counts, so a real key with "example" or "xxxx" added to it still asks.
-const PLACEHOLDER_VALUE = new RegExp(String.raw`^(?:(.)\1{2,}|\.{3,}|…|<[A-Za-z][\w .-]{0,40}>|`
-  + String.raw`your[-_]?[a-z_-]{0,30}(?:key|token|secret|password|pass|here|id)|changeme|placeholder|redacted|dummy|example)$`, 'i');
-const TOKEN_PREFIX = /^(?:sk-ant-(?:[a-z]+\d+-)?|sk-proj-|gh[pousr]_|github_pat_|glpat-|xox[bp]-|AKIA|ASIA)/;
-const AWS_DOCS_EXAMPLE_ID = 'IOSFODNN7EXAMPLE'; // the access key id AWS's own documentation uses, after its AKIA prefix
-const TOKEN_SCANS = TOKEN_KINDS.map(([pattern]) => ({ scan: new RegExp(pattern.source, `g${pattern.flags}`) }));
-const unquoted = (value) => value.replace(/^(["'])([\s\S]*)\1$/, '$2');
-const blank = (text) => ' '.repeat(text.length); // keeps every other position, so the rules read the rest unchanged
-
-/** A token whose part after its kind's prefix is one character repeated (an all-`x` key), or AWS's documentation example. */
-function isPlaceholderToken(token) {
-  const rest = token.replace(TOKEN_PREFIX, '').replace(/[-_]/g, '');
-  return /^(.)\1*$/.test(rest) || rest === AWS_DOCS_EXAMPLE_ID;
-}
-
-/** The value of a value rule's mask match (group 1 is the prefix), without its quotes. */
-const valueOfMatch = (whole, prefix) => unquoted(whole.slice(prefix.length).trim());
 
 /**
- * The text with every placeholder value inside a heredoc body blanked out. The rules then run on it unchanged: a placeholder can only take its own text away,
- * never hide a real value next to it (a value the mask patterns cannot list stays in the text, and still asks).
- * @param {string} command the text to scan
- * @returns {string} the same text, each placeholder value replaced by spaces of the same length
- */
-function withoutPlaceholders(command) {
-  return command.replace(HEREDOC_BODY, (whole, open, _quote, _word, body, close) => open + blankedPlaceholders(body) + close);
-}
-
-// a heredoc: the `<<WORD` line, its body, the line with WORD alone; only bodies are files of placeholders (outside them the strict rule stays)
-const HEREDOC_BODY = /(<<-?[ \t]*(['"]?)(\w+)\2[^\n]*\n)([\s\S]*?)(\n[ \t]*\3[ \t]*(?:\n|$))/g;
-
-/** One heredoc body with its placeholder values blanked out. */
-function blankedPlaceholders(body) {
-  let text = body;
-  for (const { scan } of TOKEN_SCANS) text = text.replace(scan, (token) => (isPlaceholderToken(token) ? blank(token) : token));
-  for (const { mask } of VALUE_KINDS) {
-    const blankPlaceholder = (whole, prefix) => (PLACEHOLDER_VALUE.test(valueOfMatch(whole, prefix)) ? prefix + blank(whole.slice(prefix.length)) : whole);
-    text = text.replace(mask, blankPlaceholder);
-  }
-  return text;
-}
-
-/**
- * @param {string} command raw command text
- * @returns {string | undefined} what kind of secret was found, or undefined; never the value
- */
-export function findLiteralSecret(command) {
-  command = withoutPlaceholders(command.slice(0, MAX_SCAN_CHARS));
-  for (const [pattern, kind] of TOKEN_KINDS) {
-    if (pattern.test(command)) return kind; // a known token shape is a secret in data text too: written into a file, it still asks
-  }
-  const shellText = dataTextRemoved(command);
-  return VALUE_KINDS.find(({ detect, inData }) => detect.test(inData ? command : shellText))?.kind;
-}
-
-/**
- * Hides every literal secret findLiteralSecret detects, so the text can go to a dialog or a log.
+ * Hides every literal secret the rules above find, so the text can go to a dialog.
  * @param {string} command raw command text
  * @returns {string} the command with each secret value replaced by "[masked]"
  */
 export function maskSecrets(command) {
   let text = command.slice(0, MAX_SCAN_CHARS);
   for (const [pattern] of TOKEN_KINDS) text = text.replace(new RegExp(pattern.source, 'g'), MASK);
-  for (const { mask } of VALUE_KINDS) text = text.replace(mask, `$1${MASK}`);
+  for (const mask of VALUE_MASKS) text = text.replace(mask, `$1${MASK}`);
   return command.length > MAX_SCAN_CHARS ? `${text}[...cut]` : text;
-}
-
-/**
- * A tool input (any JSON value, e.g. an MCP call) as JSON with every credential hidden, so it can go to a dialog or a log: a string or number
- * under a secret-looking field name (`password`, `apiKey`, `X-Api-Key`, `Authorization`, at any depth) becomes "[masked]", then maskSecrets
- * hides the secret shapes left in other fields.
- * @param {unknown} value parsed tool input
- * @returns {string} masked JSON text
- * @throws {TypeError} when the value cannot be written as JSON (a cycle or a BigInt), as JSON.stringify does
- */
-export function maskSecretFields(value) {
-  const isSecretName = (name) => SECRET_FIELD_NAME.test(name.replace(CAMEL_HUMP, '$1_$2'));
-  const json = JSON.stringify(value, (name, field) => ((typeof field === 'string' || typeof field === 'number') && isSecretName(name) ? MASK : field));
-  return json === undefined ? '' : maskSecrets(json);
-}
-
-const WORD_REST = /^[^\s;&|]*/;
-const QUOTES = /["']/g;
-
-/** The value plus whatever continues the same shell word (`'known'TAIL` is one word), quotes removed. */
-const wholeWord = (text, valueText, end) => `${valueText}${text.slice(end).match(WORD_REST)[0]}`.replace(QUOTES, '');
-
-/**
- * Every literal secret value the rules above find (same patterns and scan limit as findLiteralSecret/maskSecrets). A value
- * is the whole shell word it sits in, quotes removed, so a value with text glued on (`'known'TAIL`) is the combined word.
- * The values are raw: the caller must hash them and never print or store them.
- * @param {string} command raw command text
- * @returns {string[]} distinct non-empty values, in the order the rules found them
- */
-export function literalSecretValues(command) {
-  const text = command.slice(0, MAX_SCAN_CHARS);
-  const found = [];
-  for (const [pattern] of TOKEN_KINDS) {
-    for (const match of text.matchAll(new RegExp(pattern.source, 'g'))) found.push(wholeWord(text, match[0], match.index + match[0].length));
-  }
-  for (const { mask } of VALUE_KINDS) {
-    for (const match of text.matchAll(mask)) found.push(wholeWord(text, match[0].slice(match[1].length), match.index + match[0].length));
-  }
-  return [...new Set(found.filter((value) => value !== ''))];
 }
