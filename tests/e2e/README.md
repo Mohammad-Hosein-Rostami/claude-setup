@@ -5,8 +5,9 @@ transcripts, the guard log and the git state of throwaway repos. They cost subsc
 scenario, 120 for E1), so they never run by themselves: `tests/e2e/**` is outside the `tests/*.test.mjs` glob, and a live run
 needs `CS_E2E_LIVE=1`.
 
-The normal suite tests the runner itself without a real `claude`: `tests/e2e-checks.test.mjs` (the checkers, on fixture
-transcripts), `tests/e2e-safety.test.mjs` (model, redaction, env and cleanup rules) and `tests/e2e-runner.test.mjs` (the command
+The normal suite tests the runner itself without a real `claude`: `tests/e2e-checks.test.mjs`, `tests/e2e-reads.test.mjs` and
+`tests/e2e-traps.test.mjs` (the checkers, on fixture transcripts and failed git reads), `tests/e2e-jobs.test.mjs` (when a job is
+done), `tests/e2e-safety.test.mjs` (model, redaction, env, HOME and cleanup rules) and `tests/e2e-runner.test.mjs` (the command
 line, against a fake `claude`).
 
 ## Before a run
@@ -15,8 +16,13 @@ line, against a fake `claude`).
   `ui-check`), as `scripts/install.sh` does.
 - `~/.claude/settings.json` and `~/.claude/CLAUDE.md` must exist; the runner copies them and stops with a clear message if
   either is missing.
-- Be logged in to Claude Code on the subscription. E0(e) checks that the nested sessions are; when it fails, no later scenario
-  runs.
+- Start the run from a terminal opened with `claude-as <account>`, so the subscription login is in its environment. A Claude
+  Code session cannot hand its own login on. The runner passes on only `CLAUDE_CODE_OAUTH_TOKEN` from its environment, and
+  never writes or prints it.
+- Before any scenario, the runner runs `claude auth status --json` with the sessions' environment and the temp HOME. When that
+  says you are not logged in, it prints one line and exits 2. A session that is refused its login stops the whole run the
+  same way (exit 2), and nothing is retried. E0(e) also checks that every nested session ran logged in; when it fails, no
+  later scenario runs.
 
 ## Commands
 
@@ -29,19 +35,28 @@ CS_E2E_LIVE=1 node tests/e2e/run.mjs --only E0 --out ~/e2e-results/E0
 CS_E2E_LIVE=1 node tests/e2e/run.mjs --all --out ~/e2e-results/all
 ```
 
-Start with E0 alone. It probes what the other scenarios rely on: whether a background agent's answer arrives in the same run
-(else later scenarios use `--resume` rounds), the guard log line, the scripted dialog, the 12-minute wait ceiling and the login.
+Start with E0 alone. It probes what the other scenarios rely on: whether a background agent's answer arrives in the same run,
+the guard log line, the scripted dialog, the 12-minute wait ceiling and the login.
+
+E0(a) sets the answer mode for the rest of the run, and the runner prints it (`e2e: E0 answer mode ...`):
+
+- `direct`: the answer came in one run, so each job of E2, E3, E5 and E6 runs once.
+- `resume`: E0 needed `--resume` rounds, or did not finish, or did not run. Each job then gets `--resume <id> "continue"`
+  rounds (at most 20) until it has a good result and a completed notice for every agent its boss started in the background.
+
+A job that is still not done fails its own line, `each claude job ended`, which names the mode.
 
 Options:
 
 - `--only E0,E7` or `--all`: which scenarios, in run order.
 - `--out <dir>`: where `results.json` and the redacted logs and transcripts go (default: a new folder in the temp folder).
 - `--setup-from <checkout>`: the checkout under test (default: the one the runner is in).
-- `--real-home`: the sessions use your real HOME. Only E9 needs it, because long-run reads its token from the account store,
-  which refuses a temp HOME. Without it, E9 is reported NOT RUN.
+- `--real-home`: E9 uses your real HOME, because long-run reads its token from the account store, which refuses a temp
+  HOME. Every other scenario keeps the temp HOME, and the dry run prints each scenario's HOME. Without this option, E9 is
+  reported NOT RUN. With it, E11's check of the real guard log is NOT RUN, because E9 writes to that log, so the run exits 1.
 
-Exit codes: 0 every check passed; 1 a check failed or did not run; 2 a usage error or no `CS_E2E_LIVE=1`; 3 stopped at a
-usage limit (the reset time is printed, and nothing is retried).
+Exit codes: 0 every check passed; 1 a check failed or did not run; 2 a usage error, no `CS_E2E_LIVE=1`, or not logged in;
+3 stopped at a usage limit (the reset time is printed, and nothing is retried).
 
 Each check prints one line: `<scenario> <check> | <expected> | <observed> | PASS`, `FAIL` or `NOT RUN`.
 
@@ -68,3 +83,6 @@ Each check prints one line: `<scenario> <check> | <expected> | <observed> | PASS
 - The no-model-name rule allows the word only in E4's lines: its title and its deny cases name the model on purpose.
 - A check that did not run counts as a failure (exit 1).
 - On Windows, the scenarios that need the stand-ins are reported NOT RUN.
+- `--real-home` applies to E9 only, not to the whole run, and E11's real guard log check is NOT RUN under it.
+- E0's answer mode also applies to E2, E3, E5 and E6, not only to E1. A job left not done fails its own line.
+- The login check runs once before any scenario, and a refused login stops the run with exit 2.
