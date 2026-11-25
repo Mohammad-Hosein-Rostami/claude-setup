@@ -139,8 +139,20 @@ History stays one straight line: no merge commits, no branch merged into another
 - Agents never push unless you ask.
 
 ## Codex
-The install turns on OpenAI's Codex plugin (`codex@openai-codex`), so you can ask Codex for a second opinion from a Claude
-Code session. You start each command yourself; the agents (`lex`, `dev`, `tess`) do not use Codex.
+No session uses Codex unless you ask for it in chat, and then only for a second opinion: Codex reads and gives its view, and
+never builds or edits.
+
+Say "use codex" (for example "build this, use codex for a second opinion") and the boss adds a `codex: yes` line to that
+job's `lex`, `dev` or `tess` brief. Each of them then starts its own Codex helper once, which runs
+`codex exec -m gpt-6.2-sol -c 'model_reasoning_effort="max"' --sandbox read-only` and passes Codex's opinion back unchanged:
+- `lex-codex`: after lex has written its plan, a second opinion on the plan.
+- `dev-codex`: after dev has committed its work, a review of the diff against the brief; dev fixes what it agrees with.
+- `tess-codex`: at the start, a second opinion on tess's test plan; tess adjusts the plan, then runs the checks.
+
+Each agent weighs the opinion and reports what it took and what it rejected, and why (`codex: took <n>, rejected <m>`). If
+Codex is not logged in or hits a usage limit, the helper says so in one line and the job goes on without it; nothing retries.
+
+The install also turns on OpenAI's Codex plugin (`codex@openai-codex`), whose commands you start yourself:
 - `/codex:review`: a read-only Codex review of your uncommitted changes, or of the branch with `--base main`.
 - `/codex:adversarial-review`: a read-only review that challenges the design; add focus text, such as
   `look for race conditions`.
@@ -151,10 +163,10 @@ Code session. You start each command yourself; the agents (`lex`, `dev`, `tess`)
 
 Codex use counts against the usage limits of the ChatGPT plan that `codex` is logged in with.
 
-Each machine needs this once: install the `codex` CLI (`npm install -g @openai/codex`), run `codex login`, then run
-`/codex:setup` in a Claude Code session. The review gate (a Stop hook that keeps Claude from stopping until a Codex review
-passes) stays off: do not run `/codex:setup --enable-review-gate`. Why, and where the plugin keeps that choice:
-[plugins/README.md](../plugins/README.md).
+Each machine needs this once: install the `codex` CLI (`npm install -g @openai/codex`), run `codex login` (sign in with
+ChatGPT; an API key bills per use, and the helpers refuse it), then run `/codex:setup` in a Claude Code session. The review
+gate (a Stop hook that keeps Claude from stopping until a Codex review passes) stays off: do not run
+`/codex:setup --enable-review-gate`. Why, and where the plugin keeps that choice: [plugins/README.md](../plugins/README.md).
 
 ## Keeping context
 - Auto-compaction runs at a 400000-token window (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`); the status line shows the
