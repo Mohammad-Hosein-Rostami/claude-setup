@@ -115,7 +115,7 @@ test('agents that run commands: Bash timeout 600000 for installs and long runs, 
 
 test('dev starts dev-docs for a change\'s docs and user text, and never runs two parts on the same files at once', () => {
   const text = flat(read('home/agents/dev.md'));
-  assert.ok(text.includes('`dev-docs`: the docs and user-facing text a change needs, started with the code parts from the plan\'s interfaces (a one-line doc change you write yourself); model as dev-part\'s table, `model: "opus"` for migration notes of a breaking change, a public API reference, or security or data-loss text. Nothing else.'), 'the dev-docs helper line');
+  assert.ok(text.includes('`dev-docs`: the docs and user-facing text a change needs, started with the code parts from the plan\'s interfaces (a one-line doc change you write yourself); model as dev-part\'s table, `model: "opus"` for migration notes of a breaking change, a public API reference, or security or data-loss text. `dev-codex`: a Codex review of your finished work, only with `codex: yes` (Build). Nothing else.'), 'the dev-docs helper line');
   assert.ok(text.includes('- One file, one writer: each part names the files it owns (`files:`); parts whose files overlap run one after another, never at once.'), 'the one-writer line');
 });
 
