@@ -72,6 +72,7 @@ Events: `run-started`, `step-started`, `step-done`, `step-failed`, `waiting-limi
 | --- | --- |
 | how is it going / status | `LR status` (one line per run), `LR status <run>` (one line per step and session) |
 | what is step X doing | `LR log <run> <step> --tail 20` (not `watch`, unless the owner asks to watch) |
+| show me a live view | give the owner `node ~/.claude/tools/long-run/long-run.mjs live` to run in a terminal, from any folder (it redraws every 2 s; Ctrl-C quits); never run `live` yourself, it does not end; for a look in chat run `LR live --once` |
 | pause step X / pause everything | `LR pause <run> <step>` / `LR pause <run>` |
 | stop step X / stop everything | `LR stop <run> <step>` / `LR stop <run>` |
 | continue | `LR resume <run>` |

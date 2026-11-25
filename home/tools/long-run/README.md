@@ -29,6 +29,7 @@ running (pause or stop it first) or the folder is used by another live run.
 | `start <job.json> [--foreground]` | check, freeze the job into the run folder, start the driver (`<run>/driver.log`); prints `started <run-id>` |
 | `status [<run>] [--json]` | all runs, one line each; one run: a line per step and per running, paused or taken-over session |
 | `watch <run> [<step>]` | follow the live log as readable lines; Ctrl-C ends only the watching |
+| `live [--once] [--all]` | every run that is not done or abandoned (`--all`: those too), newest first: its state, account and steps, a limit or retry wait with its time, the short session id; redrawn every 2 s until Ctrl-C (which ends only the view); `--once` prints one frame |
 | `log <run> [<step>] [--tail N] [--raw]` | the last N readable lines (default 20, 0 = all); `--raw` the stream lines |
 | `pause` / `stop <run> [<step>]` | end a boss cleanly; pause keeps it ready, stop fails the step (routed by `next.failed` or held) |
 | `takeover <run> <step>` | pause the step and print the lines that open its session in a terminal |
@@ -167,6 +168,7 @@ When a run stops (a pause, a stop, a reboot, a crash or a killed driver) while a
   Or ask the lead in chat; it runs the same command. The run uses the account selected at that moment, and keeps it until you switch it.
 - See it: `long-run status` lists every run; `long-run status <run>` lists each boss session that is running, paused or taken
   over, with its step, account, session id, folder and log file. `long-run watch <run> [step]` shows a step working live.
+  `long-run live` keeps every running run on screen, its steps, waits and account, redrawn every 2 s; Ctrl-C quits.
 - Pause or stop: `long-run pause <run> [step]` stops the session cleanly and keeps it ready to continue; `long-run stop <run>
   [step]` ends it (nothing restarts it by itself). `long-run resume <run>` continues either.
 - Do a step yourself: `long-run takeover <run> <step>` pauses it and prints three lines (account, folder, `claude --resume <id>`).

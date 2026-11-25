@@ -19,8 +19,9 @@ The modules of `long-run.mjs`. The tool's own README has the commands, the job f
 | `limit-time.mjs` | when a usage limit resets, from the printed text or the limit samples |
 | `control.mjs` | the control files (pause, stop, takeover, tell), the open-session check, the takeover lines per shell |
 | `events.mjs` | the per-run and global event lines, rotation, `events --follow` / `--wait-next`, `driver-lost` |
-| `view.mjs` | the run status word, `status` lines and `--json`, `summary.md` |
+| `view.mjs` | the run status word, `status` lines and `--json` (also read by `live`), `summary.md` |
 | `watch.mjs` | readable log lines: `log --tail` and `watch` |
+| `live.mjs` | `live`: the frame of the runs and their steps, redrawn every 2 s |
 | `notify.mjs` | desktop notes and the ntfy phone push |
 | `env-ms.mjs` | timeout knobs: a wait read from a `CLAUDE_<TOOL>_<CONSTANT>` variable (1 ms to 2^31-1 ms), else its default; also used by `scripts/doctor-accounts.mjs` |
 | `awake.mjs` | keep the machine from idle sleep while a driver lives |
