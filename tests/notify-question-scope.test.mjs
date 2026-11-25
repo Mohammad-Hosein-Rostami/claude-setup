@@ -4,12 +4,10 @@
 // existed reads with an empty header and gives the old note.
 // Each test has a private HOME.
 import assert from 'node:assert/strict';
-import { join } from 'node:path';
 import { test } from 'node:test';
 import { askingDir, cleanHeader, markAsking, MAX_HEADER_CHARS, readAsking } from '../home/hooks/lib/asking-marker.mjs';
 import { noteSequence } from '../home/hooks/lib/notify-note.mjs';
 import { noteFor } from '../home/hooks/notify.mjs';
-import { questionReply } from '../home/hooks/lib/question-reply.mjs';
 import { writeSessionFile } from '../home/hooks/lib/session-store.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -117,24 +115,4 @@ test('a permission marker keeps its tool text and shows no header', () => {
   markAsking(entry('scope-8', { kind: 'permission', tool: 'Bash', header: 'Scope' }), env);
   const note = noteFor({ hook_event_name: 'Notification', notification_type: 'permission_prompt', session_id: 'scope-8' }, env, NOW);
   assert.equal(note, 'Needs you: permission for Bash · default in 0:45');
-});
-
-test('the question hook (questionReply) writes the first question\'s header, so the note shows it while the popup is open', async () => {
-  const env = { ...privateEnv(), CLAUDE_GUARD_LOG: join(makeTempDir('notify-scope-log-'), 'guard.log') };
-  const input = {
-    session_id: 'scope-caller', cwd: '/work/proj', hook_event_name: 'PermissionRequest', tool_name: 'AskUserQuestion',
-    tool_input: { questions: [
-      { question: 'Which scope?', header: 'Scope', options: [{ label: 'Small (Recommended)' }, { label: 'Big' }], multiSelect: false },
-      { question: 'Ship it?', header: 'Ship', options: [{ label: 'Yes' }, { label: 'No' }], multiSelect: false },
-    ] },
-  };
-  const notes = [];
-  const ask = async () => {
-    const marker = readAsking('scope-caller', env);
-    notes.push(noteFor({ hook_event_name: 'Notification', notification_type: 'elicitation_dialog', session_id: 'scope-caller' }, env, marker.openedAt + 1000));
-    return { decision: 'allow', outcome: 'allow', reason: 'fake' };
-  };
-  const result = await questionReply(input, env, { ask, pollMs: 10 });
-  assert.equal(result.behavior, 'allow');
-  assert.match(notes[0], /^Needs you: question 1 of 2 \(Scope\) · default in /);
 });

@@ -14,7 +14,6 @@ import { InstallError, OS_NAME, makeContext } from '../scripts/install/context.m
 import { INSTALL_LOCK_NAME } from '../scripts/install/record.mjs';
 import { mergedSettings } from '../scripts/install/settings.mjs';
 import { enabledPluginIds, installPlugins } from '../scripts/install/tools.mjs';
-import { pluginFindings } from '../scripts/doctor-projects.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 import { cleanEnv } from './clean-env.mjs';
 
@@ -213,13 +212,4 @@ test('Windows: install.ps1 holds no plugin step of its own and runs install.mjs,
   assert.doesNotMatch(ps1, /plugin install|plugins\.json/);
   const mjs = readFileSync(INSTALLER, 'utf8');
   assert.equal(mjs.match(/tools\.installPlugins\(ctx\)/g)?.length, 1);
-});
-
-test('a plugin the setup leaves off but a project turns on later is still named by doctor-projects (no silent gap)', () => {
-  const project = makeTempDir('install-plugins-project-');
-  mkdirSync(join(project, '.claude'));
-  writeFileSync(join(project, '.claude', 'settings.local.json'), JSON.stringify({ enabledPlugins: { 'miro@claude-plugins-official': true } }));
-  const found = pluginFindings(project, new Set(['miro@claude-plugins-official']));
-  assert.equal(found.length, 1);
-  assert.match(found[0], /^WARN.*turns on miro@claude-plugins-official/);
 });

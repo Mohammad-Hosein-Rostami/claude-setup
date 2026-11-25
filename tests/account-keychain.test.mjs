@@ -2,23 +2,21 @@
 // as an explicit path: the login keychain is never read or changed, and `security list-keychains` is the same before and
 // after. Defined on macOS only (by platform; other systems have no `security`). The token is a made-up one, the account
 // names are made per run, and each test ends by asking the default search list (attributes only) for them: not found.
-// The tests after those run the store and doctor's Keychain call through a fake `security` program (a node script behind
+// The tests after those run the store through a fake `security` program (a node script behind
 // a /bin/sh launcher named `security`) in a cs-test- temp folder that is the only folder on the child's PATH, so they
 // start no real `security`. The fake speaks the `security -i` dialect the store uses (one command line on stdin; exit 0,
 // 44 = no such item, 45 = duplicate), keeps its items as JSON in the scratch keychain file it is given (replaced on each
 // write, as the real program does), and puts an item
 // for a call with no keychain file into its own stand-in default keychain, so a test can see that nothing went there.
-// FAKE_SECURITY_HANG makes it wait like an unlock window (doctor's bound). Those are defined on POSIX only (the launcher
-// is a shell script).
+// Those are defined on POSIX only (the launcher is a shell script).
+
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
 import { KEYCHAIN_SERVICE, SECURITY_TIMEOUT_MS, keychainStore, runSecurity } from '../home/tools/account/lib/keychain-store.mjs';
 import { AccountError } from '../home/tools/account/lib/names.mjs';
-import { KEYCHAIN_PROBE_TIMEOUT_MS } from '../scripts/doctor-accounts.mjs';
 import { fakeToken } from './account-helpers.mjs';
 import { sharedToolDir } from './shared-tools.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -87,15 +85,12 @@ if (process.platform === 'darwin') {
 }
 
 const EXIT_DUPLICATE = 45;
-const REPO = fileURLToPath(new URL('..', import.meta.url));
 const posixTest = process.platform !== 'win32' ? test : () => {};
-const HANG_GUARD_MS = 60000; // a doctor run that waits past its bound fails here; nothing is measured
 
 // The fake `security -i`. Items: {"<service>/<account>": token}, kept as JSON in the keychain file named last on the line.
 const FAKE_SECURITY = `
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 if (process.argv[2] !== '-i') { console.error('fake security: expected -i only'); process.exit(2); }
-if (process.env.FAKE_SECURITY_HANG) await new Promise((done) => setTimeout(done, 120000));
 const line = readFileSync(0, 'utf8').replace(/\\n$/, '');
 if (line.includes('\\n')) { console.error('fake security: one command line only'); process.exit(2); }
 const quoted = / "([^"]+)"$/.exec(line);
@@ -145,7 +140,7 @@ function fakeSecurityBox() {
   return { dir, bin, keychain, defaultKeychain, spawn, calls, run: (line) => runSecurity(line, spawn) };
 }
 
-test('runSecurity: the store\'s timeout by default (doctor gives a shorter one through its spawn)', () => {
+test('runSecurity: the store\'s timeout by default', () => {
   const seen = [];
   const spawnSpy = (command, args, options) => { seen.push({ command, args, input: options.input, timeout: options.timeout }); return { status: 0, stdout: '', stderr: '' }; };
   runSecurity(`add-generic-password -U -a work -s ${KEYCHAIN_SERVICE} -w ${TOKEN_A}`, spawnSpy);
@@ -175,38 +170,4 @@ posixTest('the fake security program: a duplicate add and a failed add print no 
   assert.ok(!`${duplicate.stdout}${duplicate.stderr}`.includes('MadeUp'));
   const store = keychainStore({ keychain: box.keychain, run: (line) => box.run(line.replace(' -U ', ' ')) });
   assert.throws(() => store.put('work', TOKEN_A), (error) => error instanceof AccountError && error.kind === 'store' && /exit 45/.test(error.message) && !error.message.includes('MadeUp'));
-});
-
-// Runs doctor in a child (its findings go to stdout) with a Keychain-kind store and doctor's own bounded runner, whose
-// spawn starts the fake `security`. The store's own reads must not happen: the Keychain counts as locked.
-const DOCTOR_DRIVER = `
-import { spawnSync } from 'node:child_process';
-import { appendFileSync } from 'node:fs';
-import { keychainStore } from ${JSON.stringify(pathToFileURL(join(REPO, 'home/tools/account/lib/keychain-store.mjs')).href)};
-import { keychainProbeRunner, main } from ${JSON.stringify(pathToFileURL(join(REPO, 'scripts/doctor-accounts.mjs')).href)};
-const spawn = (command, args, options) => {
-  appendFileSync(process.env.CALLS_LOG, JSON.stringify({ command, args, input: options.input, timeout: options.timeout }) + '\\n');
-  return spawnSync('security', args, { ...options, env: { PATH: process.env.FAKE_SECURITY_BIN, FAKE_SECURITY_HANG: '1' } });
-};
-const store = keychainStore({ run: () => { throw new Error('the store must not be asked while the Keychain is locked'); } });
-process.exitCode = await main(process.argv.slice(2), process.env, { store, run: keychainProbeRunner(spawn) });
-`;
-
-posixTest('F3: doctor\'s Keychain call is bounded: a Keychain that waits (an unlock window) is ended and reported as locked, exit 0', () => {
-  const box = fakeSecurityBox();
-  const home = join(box.dir, 'home');
-  const project = join(box.dir, 'project');
-  for (const path of [home, join(home, '.claude'), project]) mkdirSync(path);
-  writeFileSync(join(box.dir, 'driver.mjs'), DOCTOR_DRIVER);
-  const callsLog = join(box.dir, 'calls.jsonl');
-  const env = { PATH: process.env.PATH, HOME: home, USERPROFILE: home, SHELL: '/bin/zsh', CLAUDE_ACCOUNT_DIR: join(home, 'accounts'), CLAUDE_ACCOUNT_STORE: 'file', CALLS_LOG: callsLog, FAKE_SECURITY_BIN: box.bin };
-  const done = spawnSync(process.execPath, [join(box.dir, 'driver.mjs'), join(home, '.claude'), REPO, project], { env, encoding: 'utf8', timeout: HANG_GUARD_MS });
-  assert.equal(done.error, undefined, 'doctor came back before the guard');
-  assert.deepEqual([done.status, done.stderr], [0, '']);
-  const locked = done.stdout.split('\n').filter((line) => /Keychain did not answer/.test(line));
-  assert.equal(locked.length, 1, done.stdout);
-  assert.match(locked[0], /^WARN {2}the Keychain did not answer in \d+ s, so it counts as locked/);
-  const calls = existsSync(callsLog) ? readFileSync(callsLog, 'utf8').trim().split('\n').map((row) => JSON.parse(row)) : [];
-  assert.deepEqual(calls, [{ command: SECURITY, args: ['-i'], input: 'show-keychain-info\n', timeout: KEYCHAIN_PROBE_TIMEOUT_MS }], 'one call, ended at doctor\'s bound');
-  assert.ok(KEYCHAIN_PROBE_TIMEOUT_MS < SECURITY_TIMEOUT_MS, 'doctor waits less than the store\'s 20 s');
 });

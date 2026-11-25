@@ -1,6 +1,6 @@
 // Drift guard for the test environment: the suite must give the same result whatever the session that runs it holds.
-// A Claude Code session exports the owner's switches (CLAUDE_GUARD_ASK=allow turns a guard ask into an allow) and a TMPDIR deep in
-// its own scratchpad (180+ chars, inside claude-<uid>, which the guard frees and the 160-char shown paths cut). These cases prove
+// A Claude Code session exports the owner's switches (CLAUDE_* variables that change what a tool does) and a TMPDIR deep in
+// its own scratchpad (180+ chars, inside claude-<uid>, which 160-char shown paths cut). These cases prove
 // cleanEnv/hookEnv drop the switches, that no test spawns with the raw session env, that makeTempDir leaves a long session TMPDIR,
 // that a long-run child under cleanEnv shows no desktop note (CLAUDE_LONG_RUN_DESKTOP_NOTES=off, also when the session exports it
 // on), and that with the switch removed its note reaches the quiet stand-in, never the real osascript / notify-send.
@@ -16,13 +16,10 @@ import { hookEnv } from './hook-env.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const TESTS = resolve('tests');
-const GUARD = resolve('home/hooks/pre-bash-guard.mjs');
 const LONG_RUN = resolve('home/tools/long-run/long-run.mjs');
 const QUIET_TOOLS_LOG_ENV = 'CS_TEST_QUIET_TOOLS_LOG'; // tests/clean-env.mjs; written out so this file loads where that export is missing
-const PROJECT = resolve('/work/proj');
 const OWNER_SWITCHES = { CLAUDE_GUARD_ASK: 'allow', CLAUDE_GUARD_TRIM: '0', CLAUDE_POST_EDIT_TRUST_FORMAT: '1', CLAUDE_SOME_NEW_SWITCH: 'on', CLAUDECODE: '1' };
-const ASKED_COMMAND = 'rm -rf ~/x'; // destructive, not outward: CLAUDE_GUARD_ASK=allow would turn its ask into a silent allow
-const SHOWN_PATH_CUT = 160; // doctor's shownFolder and the writer gate's quotedLine cut a path at 160 chars
+const SHOWN_PATH_CUT = 160; // a path shown to the owner is cut at 160 chars (notify-note.mjs MAX_TEXT_CHARS)
 const CLAUDE_TREE_FOLDER = /^claude-\d+$/; // Claude Code's per-user temp tree, which holds every session's scratchpad
 const SESSION_FOLDERS = ['claude-501', '-Users-someone-Desktop-a-project-folder-with-a-rather-long-name', '195936cb-dd2f-42b3-b605-1ab5fad96518',
   'scratchpad', 'tw-hermetic', 'tmp-a']; // the shape of a real session's TMPDIR below its temp root
@@ -49,19 +46,6 @@ test('cleanEnv and hookEnv drop every CLAUDE_* switch and CLAUDECODE, keep PATH,
     assert.equal(extra.PATH, 'extra-path');
     assert.equal(extra.CLAUDE_GUARD_ASK, 'extra-ask');
   });
-});
-
-test('a guard spawned with hookEnv still asks natively while the session exports CLAUDE_GUARD_ASK=allow', () => {
-  const run = withSessionEnv({ CLAUDE_GUARD_ASK: 'allow' }, () => spawnSync(process.execPath, [GUARD], {
-    input: JSON.stringify({ cwd: PROJECT, session_id: 's1', tool_input: { command: ASKED_COMMAND } }),
-    encoding: 'utf8',
-    env: hookEnv({ CLAUDE_PROJECT_DIR: PROJECT }),
-  }));
-  assert.equal(run.status, 0, run.stderr);
-  assert.notEqual(run.stdout, '', 'the switch reached the guard: it allowed without asking');
-  const output = JSON.parse(run.stdout).hookSpecificOutput;
-  assert.equal(output.permissionDecision, 'ask');
-  assert.match(output.permissionDecisionReason, /^DESTRUCTIVE: /);
 });
 
 // Each pattern copies the whole session env into a child's env. This file is not scanned: it holds the allowed lines as data.

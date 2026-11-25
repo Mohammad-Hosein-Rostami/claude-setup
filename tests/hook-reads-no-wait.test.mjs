@@ -76,13 +76,6 @@ console.log(agentFileWrites('scout', { HOME: ${JSON.stringify(home)}, CLAUDE_PRO
   assert.equal(runChild(code, { env: { STAT_AS_FILE: fifo, STAT_REGULAR: regular } }), 'false');
 });
 
-test('question-rejected watch reads nothing from a FIFO transcript and answers false at once', { skip: SKIP }, () => {
-  const { fifo } = fifoBox('question-rejected-');
-  const code = `const { watchTerminalRejection } = await import(${JSON.stringify(hookUrl('lib/question-rejected.mjs'))});
-console.log(watchTerminalRejection(${JSON.stringify(fifo)})());`;
-  assert.equal(runChild(code), 'false');
-});
-
 test('post-edit reports a FIFO package.json as unreadable at once', { skip: SKIP }, () => {
   const dir = makeTempDir('post-edit-');
   makeFifo(join(dir, 'package.json'));

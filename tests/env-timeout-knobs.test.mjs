@@ -1,5 +1,5 @@
-// Tests of the timeout knobs (home/tools/long-run/lib/env-ms.mjs msFromEnv and the three waits it sets: driver.mjs CONTROL_POLL_MS,
-// process-tree.mjs SWEEP_GRACE_MS, scripts/doctor-accounts.mjs KEYCHAIN_PROBE_TIMEOUT_MS): only a positive whole number of
+// Tests of the timeout knobs (home/tools/long-run/lib/env-ms.mjs msFromEnv and the two waits it sets: driver.mjs CONTROL_POLL_MS,
+// process-tree.mjs SWEEP_GRACE_MS): only a positive whole number of
 // milliseconds is taken, anything else keeps the production value. A knob is read when its module loads, so each case imports the
 // module in a child node process whose environment it sets; the child runs in a temporary HOME, USERPROFILE and TMPDIR.
 import assert from 'node:assert/strict';
@@ -14,16 +14,13 @@ const urlOf = (relative) => new URL(relative, import.meta.url).href;
 const ENV_MS_URL = urlOf('../home/tools/long-run/lib/env-ms.mjs');
 const DRIVER_URL = urlOf('../home/tools/long-run/lib/driver.mjs');
 const PROCESS_TREE_URL = urlOf('../home/tools/long-run/lib/process-tree.mjs');
-const DOCTOR_URL = urlOf('../scripts/doctor-accounts.mjs');
 
 const CONTROL_POLL_KNOB = 'CLAUDE_LONG_RUN_CONTROL_POLL_MS';
 const SWEEP_GRACE_KNOB = 'CLAUDE_LONG_RUN_SWEEP_GRACE_MS';
-const KEYCHAIN_PROBE_KNOB = 'CLAUDE_DOCTOR_KEYCHAIN_PROBE_TIMEOUT_MS';
-const ALL_KNOBS = [CONTROL_POLL_KNOB, SWEEP_GRACE_KNOB, KEYCHAIN_PROBE_KNOB];
+const ALL_KNOBS = [CONTROL_POLL_KNOB, SWEEP_GRACE_KNOB];
 
 // The production waits.
 const DEFAULT_CONTROL_POLL_MS = 2000;
-const DEFAULT_KEYCHAIN_PROBE_MS = 3000;
 const DEFAULT_TERM_GRACE_MS = 3000;
 
 const SHORT_KNOB_MS = 250;
@@ -63,12 +60,11 @@ async function runChild(script, knobs = {}) {
   return JSON.parse(stdout.trim().split('\n').at(-1));
 }
 
-/** The three waits as a child reads them with `knobs` in its environment. */
+/** The two waits as a child reads them with `knobs` in its environment. */
 const readWaits = (knobs) => runChild(`
   const { CONTROL_POLL_MS } = await import(${JSON.stringify(DRIVER_URL)});
   const { TERM_GRACE_MS } = await import(${JSON.stringify(PROCESS_TREE_URL)});
-  const { KEYCHAIN_PROBE_TIMEOUT_MS } = await import(${JSON.stringify(DOCTOR_URL)});
-  console.log(JSON.stringify({ CONTROL_POLL_MS, TERM_GRACE_MS, KEYCHAIN_PROBE_TIMEOUT_MS }));
+  console.log(JSON.stringify({ CONTROL_POLL_MS, TERM_GRACE_MS }));
 `, knobs);
 
 test('msFromEnv returns the fallback for an unset, empty, non-numeric, zero, negative, fractional or unsafe value', async () => {
@@ -98,17 +94,12 @@ test('msFromEnv returns a positive whole number of milliseconds as it is', async
 
 test('with no knob set the waits keep their production values (regression)', async () => {
   const waits = await readWaits({});
-  assert.deepEqual(waits, { CONTROL_POLL_MS: DEFAULT_CONTROL_POLL_MS, TERM_GRACE_MS: DEFAULT_TERM_GRACE_MS, KEYCHAIN_PROBE_TIMEOUT_MS: DEFAULT_KEYCHAIN_PROBE_MS });
+  assert.deepEqual(waits, { CONTROL_POLL_MS: DEFAULT_CONTROL_POLL_MS, TERM_GRACE_MS: DEFAULT_TERM_GRACE_MS });
 });
 
 test('the control poll knob sets CONTROL_POLL_MS', async () => {
   const { CONTROL_POLL_MS } = await readWaits({ [CONTROL_POLL_KNOB]: String(SHORT_KNOB_MS) });
   assert.equal(CONTROL_POLL_MS, SHORT_KNOB_MS);
-});
-
-test('the keychain probe knob sets KEYCHAIN_PROBE_TIMEOUT_MS', async () => {
-  const { KEYCHAIN_PROBE_TIMEOUT_MS } = await readWaits({ [KEYCHAIN_PROBE_KNOB]: String(SHORT_KNOB_MS) });
-  assert.equal(KEYCHAIN_PROBE_TIMEOUT_MS, SHORT_KNOB_MS);
 });
 
 test('the sweep grace knob leaves TERM_GRACE_MS at its production value', async () => {
@@ -121,22 +112,10 @@ test('a hostile value for every knob keeps every production wait', async () => {
     const waits = await readWaits(Object.fromEntries(ALL_KNOBS.map((name) => [name, hostile])));
     assert.deepEqual(
       waits,
-      { CONTROL_POLL_MS: DEFAULT_CONTROL_POLL_MS, TERM_GRACE_MS: DEFAULT_TERM_GRACE_MS, KEYCHAIN_PROBE_TIMEOUT_MS: DEFAULT_KEYCHAIN_PROBE_MS },
+      { CONTROL_POLL_MS: DEFAULT_CONTROL_POLL_MS, TERM_GRACE_MS: DEFAULT_TERM_GRACE_MS },
       `knobs set to ${JSON.stringify(hostile)}`,
     );
   }
-});
-
-test('keychainProbeRunner gives the spawn the keychain probe knob as its timeout', async () => {
-  const { timeout, calls } = await runChild(`
-    const { keychainProbeRunner } = await import(${JSON.stringify(DOCTOR_URL)});
-    const optionsSeen = [];
-    const fakeSpawn = (command, args, options) => { optionsSeen.push(options); return { status: 0, stdout: '', stderr: '' }; };
-    keychainProbeRunner(fakeSpawn)('list-keychains');
-    console.log(JSON.stringify({ timeout: optionsSeen[0]?.timeout, calls: optionsSeen.length }));
-  `, { [KEYCHAIN_PROBE_KNOB]: String(SHORT_KNOB_MS) });
-  assert.equal(calls, 1);
-  assert.equal(timeout, SHORT_KNOB_MS);
 });
 
 test('sweepDescendants sends SIGKILL to a process that ignores SIGTERM after the sweep grace knob, not after 3 s', POSIX_ONLY, async () => {
