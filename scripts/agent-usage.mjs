@@ -7,8 +7,8 @@
 //   --json     one JSON object { since, project, runs, rules, skippedLines, unreadable } instead of the text
 // Reads: <config dir>/projects/<key>/<session>/subagents/*.jsonl (the agent type from the .meta.json beside each) and
 //   <config dir>/projects/<key>/<session>.jsonl (the main session, the boss). <config dir> is CLAUDE_CONFIG_DIR, else ~/.claude.
-// Output: a summary line, the table (one row per agent type), then one line per rule `M<n> <what>: <number>`. A number with no
-//   runs behind it prints `no runs`, never 0%.
+// Output: a summary line, the table (one row per agent type; per-run columns are means, like the plan's baseline, report words
+//   a median), then one line per rule `M<n> <what>: <number>`. A number with no runs behind it prints `no runs`, never 0%.
 // Exit: 0, also when nothing matched (a zero table and `no runs since <iso>`); 2 on a bad or unknown flag or an unknown project.
 // Exports: main(argv, env, nowMs) -> exit code.
 // Invariants: reads only and prints counts only, never transcript text. A line that is not JSON is skipped and counted; a file
@@ -33,6 +33,7 @@ const OPTIONS = { since: { type: 'string' }, project: { type: 'string' }, json: 
 
 const median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)] ?? 0;
 const sum = (values) => values.reduce((total, value) => total + value, 0);
+const mean = (values) => (values.length === 0 ? 0 : Math.round(sum(values) / values.length));
 const share = (count, of) => ({ count, of, text: of === 0 ? 'no runs' : `${count} of ${of} (${Math.round((100 * count) / of)}%)` });
 const tokens = (count) => (count >= 1e6 ? `${(count / 1e6).toFixed(1)}M` : `${(count / 1e3).toFixed(1)}k`);
 
@@ -41,8 +42,8 @@ function tableRows(agents) {
   return [...Map.groupBy(agents, (agent) => agent.type)].map(([type, list]) => {
     const each = (pick) => list.map((agent) => pick(agent.run));
     return {
-      type, runs: list.length, coldStart: median(each((run) => run.cold ?? 0)), contextPerRun: median(each((run) => run.context)),
-      turnsPerRun: median(each((run) => run.turns)), bashPerRun: median(each((run) => run.bash)),
+      type, runs: list.length, coldStart: mean(each((run) => run.cold ?? 0)), contextPerRun: mean(each((run) => run.context)),
+      turnsPerRun: mean(each((run) => run.turns)), bashPerRun: mean(each((run) => run.bash)),
       backgroundShells: sum(each((run) => run.backgroundStarts)), taskStops: sum(each((run) => run.stops)),
       sleepCommands: sum(each((run) => run.sleeps)), reportWords: median(each((run) => run.words)),
     };
@@ -61,8 +62,8 @@ function rulesOneToFive(runsOf, boss) {
   const lexStarts = boss.flatMap((run) => run.starts).filter((start) => start.type === 'lex');
   const raisedLex = lexStarts.filter((start) => RAISED_EFFORTS.has(start.effort));
   const tess = runsOf('tess');
-  const tessBash = median(tess.map((run) => run.bash));
-  const tessContext = median(tess.map((run) => run.context));
+  const tessBash = mean(tess.map((run) => run.bash));
+  const tessContext = mean(tess.map((run) => run.context));
   return {
     M1: { label: `dev runs with > ${MANY_EDITS} own Edit/Write calls and no dev-part start`, ...share(manyEdits.length, dev.length) },
     M2: { label: 'tess-simple runs ending in verdict: not reviewed', ...share(notReviewed.length, simple.length) },
@@ -72,7 +73,7 @@ function rulesOneToFive(runsOf, boss) {
     },
     M4: { label: 'lex starts with effort xhigh or max', ...share(raisedLex.length, lexStarts.length) },
     M5: {
-      label: 'tess own Bash per run and context read per run (medians)', bash: tessBash, context: tessContext,
+      label: 'tess own Bash per run and context read per run (means)', bash: tessBash, context: tessContext,
       text: tess.length === 0 ? 'no runs' : `${tessBash} Bash, ${tokens(tessContext)} over ${tess.length} runs`,
     },
   };
