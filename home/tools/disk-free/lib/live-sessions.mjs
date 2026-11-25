@@ -70,8 +70,13 @@ function sessionOf(file) {
   }
 }
 
-/** Map pid -> start (epoch ms) of the given processes from one `ps` call in UTC; empty where ps cannot tell (see the header). */
-function processStarts(pids) {
+/**
+ * Map pid -> start (epoch ms) of the given processes from one `ps` call in UTC; empty where ps cannot tell (see the header).
+ * Also used by long-run's run lock (long-run/lib/run-store.mjs) to tell a lock's taker from a reused pid.
+ * @param {number[]} pids live pids.
+ * @returns {Map<number, number>} the pids ps listed with a start time in lstart shape.
+ */
+export function processStarts(pids) {
   const starts = new Map();
   const ps = PS_PATHS.find((path) => existsSync(path)); // none on Windows
   if (pids.length === 0 || ps === undefined) return starts;
