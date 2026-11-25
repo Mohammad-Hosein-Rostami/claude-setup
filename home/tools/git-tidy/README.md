@@ -42,7 +42,7 @@ One line per item, `<kind> <subject> <detail>`, findings first, then hints (kind
 | `merged-tag <tag> <hash> patch-equal` | a `backup/` tag that is not on the base's history but whose work is all on the base by the same test: a temporary backup made before a history clean-up. A tag that is an ancestor of the base (a release tag) is never reported |
 | `superseded-copy <name> <hash> all its work is in <B>` | an older copy of a re-done lane: it is in a family with B (same name once `-<n>`, `-fix`, `-fixes`, `-v<n>`, `-redo` are cut off, or the same tip) and its tip is an ancestor of B, or every `git patch-id --verbatim` of `base..<name>` is in `base..B` (`--verbatim`: a whitespace-only change is a different patch) and merging `<name>` into B changes nothing (`git merge-tree --write-tree` gives B's own tree); a branch with a merge commit only by the ancestor proof. B is never itself a copy; between branches that cover each other the newest committer date stays, then the one checked out in a worktree, then the name. The newest of the family is named by `unlanded-lane?` |
 | `agent-leftover <name> ...` | a `worktree-agent-*` (subagent) or `worktree-wf_*` (workflow agent) branch every commit of which is on the base or on a branch that is not an agent branch, and that no existing worktree has checked out (the Agent tool leaves one behind). It replaces the `merged-branch` line of the same branch |
-| `folded-branch <name> <hash> folded into <B> (landed <UTC time>)` | every commit of the branch that the base lacks is in the history of B, a lane that landed (from the landing log, "Landing log" below): reachable from B's tip or reflog positions since B's newest reset, or, with no merge commit among the rest, with a `git patch-id --verbatim` B's history had. B is gone, so a fold that was rewritten later (fixup, autosquash, a rebase with conflicts, a cherry-pick) is still proven. Not reported for a branch that is a copy already |
+| `folded-branch <name> <hash> folded into <B> (landed <UTC time>)` | every commit of the branch that the base lacks is in the history of B, a lane that landed (from the landing log, "Landing log" below) and whose landed tip is still on the base: reachable from B's tip or the reflog positions B kept (since its newest reset, and not past a step that may have dropped a commit), or, with no merge commit among the rest, making exactly a change B's history made (the same `git patch-id --verbatim` and the same files before and after: a patch id alone leaves out line numbers). B is gone, so a fold that was rewritten later (fixup, autosquash, an amend, a cherry-pick) is still proven. Not reported for a branch that is a copy already |
 | `merged-worktree <path> branch <name>` | a linked worktree whose branch is a `merged-branch` |
 | `stale-worktree <path> folder missing` | a registered worktree whose folder is gone |
 | `dirty-base <path> <n> changed tracked files: ...` | the folder where the base is checked out has uncommitted changes to tracked files (untracked and ignored files do not count); edits belong in a lane worktree |
@@ -101,7 +101,7 @@ and prints why. With `--apply`, in this order, each fact read again from git rig
    An `agent-leftover` that is on the base is a merged branch for prune.
 
 5. Folded branches (`folded-branch`) go the copy way too, with these differences: the proof is the landing record (read again
-   right before the removal: the branch has not moved and the record still proves it); the reflog check counts a commit as safe
+   right before the removal: the branch has not moved, the landed tip is still on the base and the record still proves it); the reflog check counts a commit as safe
    when it is in that landing's history; and the worktree's recent use keeps it only when the use came after the landed lane's
    last commit (or the lane has no commit of its own yet): a worktree last used before that commit was left behind when the work
    moved on. Each deleted branch is printed `deleted <name> (was <hash>, folded into <B>)`.
@@ -113,13 +113,18 @@ A failure of one item does not stop the others; the run ends with exit code 1 if
 ## Landing log
 
 `<git common dir>/cs-tidy-log.jsonl`, one JSON object per line, written by `lib/landed-log.mjs`. `tools/land` appends
-`{"landed": {branch, tip, shas, patchIds, lastCommitMs, base, landedTip, landedAt}}` right after its fast-forward: the
-landed lane's tip and reflog positions down to its newest reset, read before anything moved it, and the verbatim patch ids of
-the commits they reach (null over 500 commits). Deleting a branch deletes its reflog, so this record is the only proof left
+`{"landed": {branch, tip, shas, patchIds, changeIds, lastCommitMs, base, landedTip, landedAt}}` right after its
+fast-forward: the landed lane's tip and reflog positions, read before anything moved it, and the verbatim patch ids and
+change ids (a hash of each commit's raw diff: files, modes and content before and after) of the commits they reach (both null
+over 500 commits). The positions go down to the newest reset and stop at the newest reflog step that may have dropped a
+commit: a step counts only when the new position descends from the old one, has its parents (an amend), or merging the old
+one into it changes nothing (`git merge-tree`: a rebase or autosquash that kept every change). A `rebase --onto` or a `drop`
+that left a folded commit out ends the history there, so that branch stays. Deleting a branch deletes its reflog, so this record is the only proof left
 of what was folded into it. `prune --apply` appends `{"deleted": {branch, sha, reason, at}}`; restore with
 `git branch <name> <sha>` while git still keeps the commit (`gc.pruneExpire`, 2 weeks by default). Records older than 30
-days are not read; past 1 MiB the file is rewritten without them. A line that does not parse or does not have the shape is
-skipped, never taken as proof; a missing log means no folded proofs. Positions `git gc` has removed are left out of a
+days are not read; past 1 MiB the file is rewritten without them. Each line is parsed on its own: one that does not parse
+or does not have the shape is skipped, never taken as proof, and a record appended after a torn last line starts a new line;
+a landing whose landed tip is no longer on the base (the landing was undone) proves nothing; a missing log means no folded proofs. Positions `git gc` has removed are left out of a
 proof. Anyone who can write this file can delete branches directly, so it adds no new power.
 
 ## land

@@ -83,12 +83,16 @@ landed lane deletes its reflog, the only record of the fold.
 
 So before anything moves the lane, `land` reads its history: its tip and its reflog positions down to its newest reset
 (`reset:` or `branch: Reset to`; older positions do not count, since the folded work may have been dropped on purpose
-there), plus the `git patch-id --verbatim` of every commit they reach that the base lacks (none over 500 commits: ancestry
-only). Right after the fast-forward it appends that record to `<git common dir>/cs-tidy-log.jsonl`. A branch is
-`folded-branch` when every commit it has that the base lacks is reachable from one landing's positions, or (no merge
-commit among the rest) has a patch id that landing had. Records are read for 30 days, so a branch kept today (a dirty
-worktree, recent use) is still proven at the next sweep. A record that cannot be written is printed and the landing
-stands: those branches then stay, as before.
+there) and not past a step that may have dropped a commit (a `rebase --onto` or `drop` that left one out: a step counts
+only when the new position descends from the old one, is an amend of it, or merging the old one into it changes nothing),
+plus the `git patch-id --verbatim` and the exact change (files, modes and content before and after) of every commit they
+reach that the base lacks (none over 500 commits: ancestry only). Right after the fast-forward it appends that record to
+`<git common dir>/cs-tidy-log.jsonl`. A branch is `folded-branch` when the landing's landed tip is still on the base and
+every commit the branch has that the base lacks is reachable from that landing's positions, or (no merge commit among the
+rest) makes exactly a change that landing had: a matching patch id alone is no proof. When in doubt the branch stays and is
+listed under `left:`. Records are read for 30 days, so a branch kept today (a dirty worktree, recent use) is still proven at
+the next sweep. A record that cannot be written, or a clean-up that fails (a landing log that cannot be read), is printed on
+stderr and the landing stands with exit 0: the other branches then stay, as before.
 
 A folded branch's worktree is kept when it was used in the last 60 minutes after the lane's last commit (someone may still
 work there); used before that commit, it was left behind, and its recent use does not keep it. A read-only agent that touched
@@ -97,7 +101,7 @@ nothing in it since that commit is the risk that remains.
 Every branch the sweep (or `git-tidy prune --apply`) deletes is appended to the same log, `{"deleted": {"branch", "sha",
 "reason", "at"}}`, and printed as `deleted <b> (was <sha>...)`. Restore one with `git branch <b> <sha>` within 2 weeks: git
 keeps unreachable commits that long by default (`gc.pruneExpire`). The log lives inside `.git`, never in a commit; a line that
-does not parse is skipped, never taken as proof; past 1 MiB it is rewritten without the records older than 30 days.
+does not parse is skipped on its own, never taken as proof (a record after a torn last line starts a new line); past 1 MiB it is rewritten without the records older than 30 days.
 
 With a test, these lines come first (the overlap lines only when files overlap):
 

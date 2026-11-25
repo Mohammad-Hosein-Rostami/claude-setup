@@ -44,7 +44,11 @@ runs `git-tidy prune --apply` over the repository and prints `left:`. Prune gets
 - The proof comes from landed lanes only; a branch inside a live lane is a hint and is never deleted.
 - A reset ends the proof: positions older than the landed lane's newest `reset:` or `branch: Reset to` entry do not count,
   because the folded work may have been dropped on purpose there.
-- Cherry-picks count through patch ids (`git patch-id --verbatim` of the landed history).
+- A reflog step that may have dropped a commit ends the proof too: a step counts only when the new position descends from
+  the old one, is an amend of it, or merging the old one into it changes nothing (`git merge-tree`).
+- Cherry-picks count when they make exactly the change of a commit of the landed history: the same `git patch-id --verbatim`
+  and the same files before and after (a patch id alone leaves out line numbers).
+- A landing proves nothing once its landed tip is no longer on the base (the landing was undone).
 - A folded branch's worktree used in the last 60 minutes after the lane's last commit is kept; one last used before that
   commit was left behind, so its recent use does not keep it. A dirty, locked or untracked worktree, ignored files that exist
   only there, commits that exist only in a reflog and the not-started rule keep it as before.
@@ -56,7 +60,8 @@ runs `git-tidy prune --apply` over the repository and prints `left:`. Prune gets
 - Good: every land leaves the repository tidy or names what stays and why, with no extra step.
 - Bad: land takes a little longer (one prune). A branch folded into a lane that was later reset, with no other proof, stays
   on purpose. One more file inside `.git`.
-- A rebase that drops folded commits without a reset entry (`rebase -i` with `drop`) is not seen as a reset: such a branch
-  counts as folded.
+- A rebase that drops folded commits without a reset entry (`rebase -i` with `drop`, `rebase --onto`) ends the proof, so such
+  a branch stays. An amend counts as an edit, as a later commit would: an amend that undoes a folded tip commit still proves it.
+- A cherry-pick onto content that differs (the base changed the same file elsewhere) is not proven and stays.
 - Reversal signal: a deletion that had to be restored from the log, or a land clean-up over 5 s. Then narrow the proof to
   ancestry of the landed lane's tip only.

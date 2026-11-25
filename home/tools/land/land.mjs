@@ -19,9 +19,10 @@
 //   it, and a base that moved meanwhile is refused. A rebase that stops is aborted, so the lane is left as it was.
 // - Never pushes and never forces: a locked worktree is unlocked, then removed with `git worktree remove`; the branch goes with
 //   `git branch -d`. Git runs without a shell and without the variables that pick a repository (../git-tidy/lib/git.mjs).
-// - The lane's history (its reflog since its newest reset) is read before anything moves it and recorded in the landing log
-//   (../git-tidy/lib/landed-log.mjs) right after the fast-forward, before any removal: deleting the branch deletes its reflog,
-//   the only proof of what was folded into it. A record that cannot be written is printed; the landing stands.
+// - The lane's history (its reflog since its newest reset, up to a step that may have dropped a commit) is read before anything
+//   moves it and recorded in the landing log (../git-tidy/lib/landed-log.mjs) right after the fast-forward, before any removal:
+//   deleting the branch deletes its reflog, the only proof of what was folded into it. A record that cannot be written, or a
+//   clean-up that fails (a landing log that cannot be read), is printed on stderr; the landing stands and exits 0.
 import { realpathSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { UsageError, gitFlag, gitText, runGit } from '../git-tidy/lib/git.mjs';
@@ -156,12 +157,16 @@ function saveLanding(dir, history, details) {
   }
 }
 
-/** The clean-up of the other branches (sweep.mjs); an unexpected failure says the lane itself has landed. */
+/**
+ * The clean-up of the other branches (sweep.mjs). The lane has landed by then, so a failure (a landing log that cannot be read,
+ * git failing) does not fail the land: it is printed on stderr and the clean-up is skipped, which keeps every other branch.
+ */
 function sweepAfter(checkout, branch, tip) {
   try {
     return sweepRepo(checkout);
   } catch (error) {
-    throw new LandRefusal(`${branch} landed on ${checkout.base} at ${tip} and was removed, but the clean-up of other branches stopped: ${error.message}`);
+    console.error(`land: ${branch} landed on ${checkout.base} at ${tip} and was removed; the clean-up of other branches was skipped: ${firstLine(error.message)}`);
+    return [];
   }
 }
 
