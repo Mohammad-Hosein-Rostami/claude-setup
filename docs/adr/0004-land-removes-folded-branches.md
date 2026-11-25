@@ -53,9 +53,15 @@ comparison needs nothing switched off.
   `git update-ref --stdin` transaction that also verifies the base still points at that commit, and each worktree removal
   checks it first; a base that moved (another land, a reset) stops the sweep, and everything not yet removed is kept with
   the reason. A proof is about the tip commit that was read, which the delete also verifies.
-- A worktree with a file marked assume-unchanged or skip-worktree (`git ls-files -v`: a lowercase tag or `S`) is kept:
-  `git status` does not show edits there, and removing the worktree would lose them. `land` itself refuses such a lane or
-  base checkout for the same reason.
+- A worktree with an assume-unchanged file, or a skip-worktree file that exists on disk (`git ls-files -v`: a lowercase tag,
+  or `S`), is kept: `git status` does not show edits there, and removing the worktree would lose them. `land` itself refuses
+  such a lane or base checkout for the same reason. A sparse checkout's skip-worktree files outside its patterns are not on
+  disk, hold no edit, and do not count, so a clean sparse checkout lands.
+- A worktree with a git repository inside an ignored folder (`git clean -ffdx -n` lists it, `-fdx -n` does not) is kept:
+  its commits may be the only copy. Untracked files and ignored files outside the rebuildable folders keep it too.
+- A stale worktree entry (its folder is gone) is removed one at a time with `git worktree remove`, never `git worktree
+  prune`. It stays when its HEAD reflog holds commits found nowhere else; when no branch holds its HEAD, that commit first
+  becomes the branch `stale-head/<entry id>`, named under `left:`, so it stays reachable.
 
 - The sweep holds the rule everywhere: older copies and agent leftover branches whose work is on another branch, not on the
   base, are kept and named under `left:` (prune's `onlyOnBase`). The standalone `git-tidy prune --apply` a person runs by

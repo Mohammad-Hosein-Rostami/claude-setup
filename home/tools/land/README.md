@@ -27,7 +27,8 @@ to see: land it with `--test`.
 Steps, in order; nothing changes until every check has passed:
 
 1. Checks: the base checkout has a branch checked out, no unfinished rebase or merge, no changed or untracked file and no file
-   marked assume-unchanged or skip-worktree (git status does not show edits there); the branch exists and is not the base; when
+   marked assume-unchanged, or skip-worktree and on disk (git status does not show edits there; a clean sparse checkout
+   passes); the branch exists and is not the base; when
    the branch has a worktree, that worktree is clean in the same way and is not the main worktree.
 2. Overlap: the base's sha is read once; the files both the base and the lane changed since their merge base (a rename counts
    as both paths) decide whether a test must run. A lane with no commit in common with the base is refused; so is a needed
@@ -47,20 +48,23 @@ Steps, in order; nothing changes until every check has passed:
    A base that moved since step 2 is refused; after a passing test that leaves the lane at the tested sha, and the next `land`
    compares it with the moved base.
 6. Clean-up: a locked worktree is unlocked, then removed with `git worktree remove` (ignored files in it, such as notes or
-   `node_modules`, go with it); the branch is deleted with `git branch -d`.
+   `node_modules`, go with it); the branch is deleted with `git branch -d`. A git repository inside an ignored folder of the
+   worktree stops the clean-up first (the landing stands, exit 1): its commits may be the only copy.
 7. Sweep (`sweep.mjs`): git-tidy's `prune --apply` over the whole repository, with all its safety checks
    (`../git-tidy/README.md`, "prune"), held to the one rule: only branches whose content is on the base go ("Folded
    branches" below), each with its clean worktree. Older copies and agent leftover branches whose work is on another branch,
    not on the base, are kept (`its work is in <B>, not all on <base>`); the standalone `git-tidy prune --apply` still removes
-   them. A dirty, locked or recently used worktree (a file marked assume-unchanged or skip-worktree counts as dirty), a branch
+   them. A dirty, locked or recently used worktree (an assume-unchanged file, a skip-worktree file on disk or a git repository
+   inside an ignored folder counts as dirty), a branch
    that moved, or any doubt keeps the branch, with the reason. The sweep compares with one base commit; a base that moves
    meanwhile stops it, and the rest is kept (`<base> moved during the clean-up ...; stopped, nothing more removed`). A git
    older than 2.40 (no `git merge-tree --stdin`) skips the sweep with one stderr line; the landing stands, exit 0. An unfinished rebase or merge in any worktree skips the sweep (`cleanup skipped: <reason>`); a later
    `land` or `git-tidy prune --apply` does it. A deletion log that is not safe to write stops the sweep before it removes
    anything: one stderr line, exit 0. Then `left:` names every branch still there: `in <B> (lands with it)` (all its commits
    are in the live branch B: a stacked lane, a folded test branch), `kept: <reason>`, `on <base> (<state>), not removed`
-   (merged, but the sweep was skipped), `idle <h> h, ahead <n>` (no commit for 2 hours or more) or `active, ahead <n>`; at
-   most 20 lines, then `+N more`.
+   (merged, but the sweep was skipped), `idle <h> h, ahead <n>` (no commit for 2 hours or more) or `active, ahead <n>`, then
+   each stale worktree entry the sweep kept (`<path> (stale worktree entry): kept: <reason>`); a stale entry's HEAD that no
+   branch held is kept as the branch `stale-head/<entry id>`, listed like any branch; at most 20 lines, then `+N more`.
 
 Output on success, one line per step:
 

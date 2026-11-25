@@ -74,12 +74,16 @@ holders are worktrees in the plan is planned for removal too.
 Principle: it removes only what is provably on the base AND leaves no only-copy of anything behind. When in doubt it keeps
 and prints why. With `--apply`, in this order, each fact read again from git right before it is acted on:
 
-1. `git worktree prune`, for stale entries (a locked one is kept).
+1. Stale entries (a worktree whose folder is gone), each with `git worktree remove -- <path>` on its own, never `git worktree
+   prune`. One is kept when it is locked or its HEAD reflog holds commits found nowhere else. When no branch holds its HEAD,
+   that commit first becomes the branch `stale-head/<entry id>` (created, never moved), so it stays reachable:
+   `removed stale-worktree <path> folder missing; its HEAD <sha> is kept as branch stale-head/<id>`.
 2. Each merged worktree is kept (`kept ...: <reason>`) when any of these holds, else `git worktree remove` (never `--force`):
    it is locked; it is the folder the command runs from or contains the shell's current folder; its branch is no longer
    merged; it has any `git status --porcelain` output (untracked files included, whatever `status.showUntrackedFiles` says)
-   or git status fails; a tracked file is marked assume-unchanged or skip-worktree (`git ls-files -v`; git status does not show
-   edits there); it holds ignored files (not OS clutter: `.DS_Store`, `Thumbs.db`, `desktop.ini`, `._*`) outside `node_modules`, `dist`, `build`, `out`, `coverage`, `.next`,
+   or git status fails; a tracked file is marked assume-unchanged, or skip-worktree and exists on disk (`git ls-files -v`; git
+   status does not show edits there; a sparse checkout's files outside its patterns are not on disk and do not count); it
+   holds a git repository inside an ignored folder (`git clean -ffdx -n` lists it, `-fdx -n` skips it); it holds ignored files (not OS clutter: `.DS_Store`, `Thumbs.db`, `desktop.ini`, `._*`) outside `node_modules`, `dist`, `build`, `out`, `coverage`, `.next`,
    `.turbo`, `.cache`, `.nx`, `test-results`, `playwright-report`, `.vite` (up to 5 paths are printed, `+N more`);
    its branch reflog or its HEAD reflog holds commits that are on no other ref (branch, tag, remote-tracking), not on the base
    and not landed there (a pre-rebase copy of a landed commit does not count, nor a commit of another branch the worktree
@@ -232,7 +236,8 @@ node_modules) stay warm, and no folder is left behind:
   deletes the branch and keeps the folder (`lane folder <path> detached at <sha> (kept for the next lane)`, JSON `detached`).
 
 Free means: a linked worktree of this repository, unlocked, HEAD detached at a commit on the base, no unfinished operation, no
-`index.lock` or `HEAD.lock`, `git status` (untracked files included) empty, no file marked assume-unchanged or skip-worktree.
+`index.lock` or `HEAD.lock`, `git status` (untracked files included) empty, no file marked assume-unchanged, and no
+skip-worktree file on disk.
 Everything else is busy and is never switched,
 cleaned or removed: untracked or uncommitted files, a commit not on the base, a rebase in progress, a git lock, a folder holding a
 branch (also one a crashed claim switched but did not lock), and a folder at `lane-<n>` that is not a worktree of this repository.

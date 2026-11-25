@@ -17,6 +17,7 @@ The parts of the `git-tidy` tool. `../git-tidy.mjs` is the command; see `../READ
 | `land.mjs` | `land`: rebase, PASS check, fast-forward, cleanup |
 | `check.mjs` | merge commits and the findings and hints of `check` |
 | `prune.mjs` | the plan and the re-checked removal of `prune` |
+| `prune-stale.mjs` | prune's step for stale worktree entries: keep one that holds work, keep its HEAD on a `stale-head/<id>` branch, remove one entry at a time |
 | `pinned-base.mjs` | the base commit one `prune --apply` compares with, and whether the base branch moved away from it |
 | `report.mjs` | text and JSON output, the exit codes of `prune` and `land` |
 | `ui-plan-check.mjs` | `land`'s UI step: the check plan of the rebased diff and its proof (`ui-proof check --plan`), the row pointer it proved |
