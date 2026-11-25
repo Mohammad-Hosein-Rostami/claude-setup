@@ -26,7 +26,7 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   - `tess` runs the quality checks in the background, by the table under "Quality checks" in `home/CLAUDE.md`: a risky change
     (security, data, money, concurrency, gate such as the setup's guards, large) waits for tess before it lands; other code changes get
     one background check at the end of the job; docs and text only get none; and anything you ask for runs at once. tess (Opus)
-    plans and judges; its helpers do the work: `dev-run` (the runs, the full suite through the `suite` queue), `tess-edge`
+    plans and judges; its helpers do the work: `tess-run` (the runs, the full suite through the `suite` queue), `tess-edge`
     (edge cases), `tess-simple` (needless complexity), `tess-review` (reviews the code against lex's spec) and `tess-write`
     (writes the missing tests in its own worktree, one per area; tess then proves each one can fail).
   - `max` (the ship agent; Opus, high) starts rarely: when you call it, or after a job's last land when lex's plan names a

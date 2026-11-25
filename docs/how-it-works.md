@@ -41,7 +41,7 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 6. Tests, type check, lint and reviews run by the "Quality checks" table in `home/CLAUDE.md`: dev's report names the change's
    risk (`node ~/.claude/tools/risk/risk.mjs`), a risky change waits for `tess` before it lands, other code changes get one
    background `tess` run at the end of the job, docs and text only get none, and what you ask for runs at once. dev and its
-   helpers run no tests; tess hands the runs to `dev-run` (full suites, installs and builds through the `suite run` queue, a
+   helpers run no tests; tess hands the runs to `tess-run` (full suites, installs and builds through the `suite run` queue, a
    full suite once per tree), edge cases to `tess-edge`, the simplicity review to `tess-simple`, a review to `tess-review` and
    missing tests to `tess-write`, and keeps the verdict. No check runs by itself when an agent stops; no hook calls the risk
    command.

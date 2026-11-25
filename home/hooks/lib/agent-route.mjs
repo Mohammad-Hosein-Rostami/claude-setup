@@ -19,7 +19,7 @@ const BOSS_BUILT_INS = ['claude-code-guide', 'statusline-setup'];
 const HELPER_OWNERS = {
   'lex-scout': 'lex', 'lex-web': 'lex',
   'dev-part': 'dev', 'dev-docs': 'dev', 'dev-ui': 'dev', 'dev-pixel': 'dev', 'pixel-qa': 'dev', 'dev-debug': 'dev', 'dev-run': 'dev',
-  'tess-review': 'tess', 'tess-write': 'tess', 'tess-simple': 'tess', 'tess-edge': 'tess',
+  'tess-review': 'tess', 'tess-write': 'tess', 'tess-simple': 'tess', 'tess-edge': 'tess', 'tess-run': 'tess',
 };
 
 /**

@@ -54,7 +54,7 @@ Start every helper the plan needs in one message, each with the repo or worktree
 never Fable. You run only the few commands a helper would cost more for (`git rev-parse`, the risk command, worktree set-up).
 Wait for every helper's result (its notice) before the verdict.
 
-- `dev-run` (Haiku): the runs. Related tests (node:test repos: `node ~/.claude/tools/suite/suite.mjs related --base <base> --tip
+- `tess-run` (Haiku): the runs. Related tests (node:test repos: `node ~/.claude/tools/suite/suite.mjs related --base <base> --tip
   <tip>`), the full suite and its base run through the `suite run` queue with `--cache` (`--fresh` and 20 runs for a flaky check),
   typecheck, lint, build and audits: the project's own commands (qa-plan step 4), in the folder of "Where checks run". Brief:
   the folder and the exact commands.
@@ -84,12 +84,12 @@ Wait for every helper's result (its notice) before the verdict.
 - A flaky result (passes and fails with no change) is reported with its failure rate over 20 runs, not as a pass.
 - A command you run yourself that ends within 3 minutes runs in the foreground with an explicit Bash `timeout`: 600000 for an
   install or a long run, 60000 for a probe. A command that may run over 3 minutes runs with `run_in_background: true` and a
-  `timeout` (at most 2 h), started and waited for as `~/.claude/agents/dev-run.md` says, never polled or sleep-looped. Logs go
+  `timeout` (at most 2 h), started and waited for as `~/.claude/agents/tess-run.md` says, never polled or sleep-looped. Logs go
   to files; read only the summary and the failing lines.
 
 ## e2e
 
-`qa: e2e` runs the real end-to-end scenarios: only when the owner asks or for a final pass, never per lane. One `dev-run` call
+`qa: e2e` runs the real end-to-end scenarios: only when the owner asks or for a final pass, never per lane. One `tess-run` call
 in the background with `timeout` 7200000 runs `node tests/e2e/run.mjs --all --out <detail dir>` in the main checkout at the
 landed sha. It is the one check that uses the installed `~/.claude` on purpose: the harness gives every child a scratch repo,
 `cleanEnv()`, and quiet and scripted dialog tools. Copy each scenario's `check | expected | observed | PASS/FAIL` line unchanged
@@ -98,7 +98,7 @@ apply.
 
 ## Verify tess-write's tests
 
-The checker never grades its own tests, so tess-write writes them and your own `dev-run` call proves them:
+The checker never grades its own tests, so tess-write writes them and your own `tess-run` call proves them:
 
 1. Each new test runs on the tip. A gap test must pass. A repro test must fail with the claimed message.
 2. The new tests run against the base sources: in the base copy, `git checkout test/<topic> -- <test files>`, then run them. A
@@ -125,5 +125,5 @@ each for **Not run** and **Caveats** ("none" when empty).
 
 ## Helpers you may start
 
-- `dev-run`, `tess-edge`, `tess-simple`, `tess-review` and `tess-write`, only as above; nothing else. Only the boss starts `lex`
+- `tess-run`, `tess-edge`, `tess-simple`, `tess-review` and `tess-write`, only as above; nothing else. Only the boss starts `lex`
   and `dev`: ask with `needs: <agent> to <task>, blocks: <what>` as home/CLAUDE.md says, and go on with what does not depend on it.

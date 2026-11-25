@@ -65,8 +65,8 @@ export function check(ctx) {
     checkLine('dev started a dev-part with a files: line', 'at least 1', `${devParts.length} dev-part start(s), ${devParts.filter((start) => FILES_LINE.test(start.prompt)).length} with files:`,
       devParts.some((start) => FILES_LINE.test(start.prompt))),
     checkLine('no test-runner command in dev or dev-part Bash', LIMITS.maxTestRunnerCommands, listed(runners), runners.length <= LIMITS.maxTestRunnerCommands),
-    checkLine('tess started dev-run and tess-simple', 'dev-run and tess-simple', listed([...new Set(tessStarts)]),
-      tessStarts.includes('dev-run') && tessStarts.includes('tess-simple')),
+    checkLine('tess started tess-run and tess-simple', 'tess-run and tess-simple', listed([...new Set(tessStarts)]),
+      tessStarts.includes('tess-run') && tessStarts.includes('tess-simple')),
     checkLine('main was moved by land, in a straight line, the lane cleaned up', 'main moved, land ran, no merge commit, no other branch, one worktree',
       failedReads.length > 0 ? `git reads failed: ${failedReads.join('; ')}`
         : `main ${mainNow.slice(0, 12)} (was ${String(ctx.notes.mainBefore).slice(0, 12)}), land ${landed ? 'ran' : 'not seen'}, merges ${merges ? merges.split('\n').length : 0}, branches ${listed(branches)}, worktrees ${worktrees}`,

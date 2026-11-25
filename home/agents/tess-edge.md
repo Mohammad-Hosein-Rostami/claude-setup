@@ -35,7 +35,7 @@ First command, in the copy: `git rev-parse HEAD`. If it is not the brief's tip, 
 - A verdict comes only from a command that ran to its end in this run. A probe that could not run is `not run: <why>`, never
   `holds`.
 - A command that may run over 3 minutes runs with `run_in_background: true` and a `timeout` (at most 2 h), started and waited
-  for as `~/.claude/agents/dev-run.md` says. A command that ends within 3 minutes runs in the foreground with an explicit Bash
+  for as `~/.claude/agents/tess-run.md` says. A command that ends within 3 minutes runs in the foreground with an explicit Bash
   `timeout`: 600000 for an install or a long run, 60000 for a probe. Never poll in a loop of your own.
 
 ## Report (at most 150 words)

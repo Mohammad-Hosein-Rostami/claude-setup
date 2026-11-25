@@ -1,7 +1,8 @@
-// Tests that the one way to wait that the guard's sleep-loop advice names (lib/wait-advice.mjs) lives in home/agents/dev-run.md only:
+// Tests that the one way to wait that the guard's sleep-loop advice names (lib/wait-advice.mjs) lives in home/agents/dev-run.md and its
+// copy for tess, tess-run.md, only:
 // a command over 3 min starts with run_in_background and a timeout of at most 2 h in the start form, its completion notice (or a
 // Monitor) is the wait, and every background command and monitor is stopped before the final report. Every other long-running agent
-// points to dev-run.md instead of carrying a copy; no agent text tells an agent to poll or sleep-loop or promises a wake-up; and
+// points to its side's runner (tess's agents to tess-run.md, the rest to dev-run.md) instead of carrying a copy; no agent text tells an agent to poll or sleep-loop or promises a wake-up; and
 // docs/catalog.md describes the guard.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,8 +17,10 @@ const AGENT_FILES = readdirSync(fileURLToPath(new URL('../home/agents/', import.
 const agentText = (name) => oneLine(read(`home/agents/${name}.md`));
 // The agents that run builds, tests or loops that can pass 3 minutes.
 const LONG_RUNNERS = ['dev', 'dev-part', 'dev-ui', 'dev-pixel', 'dev-debug', 'dev-run', 'tess', 'tess-write', 'tess-edge', 'pixel-qa'];
-const RECIPE_HOLDER = 'dev-run';
-const RECIPE_POINTER = 'started and waited for as `~/.claude/agents/dev-run.md` says';
+// dev's runner holds the recipe, and tess's runner is its copy (owner, 2026-11-25); tess and its helpers point to tess-run.md
+const RECIPE_HOLDERS = ['dev-run', 'tess-run'];
+const TESS_SIDE = ['tess', 'tess-write', 'tess-edge'];
+const recipePointer = (name) => `started and waited for as \`~/.claude/agents/${TESS_SIDE.includes(name) ? 'tess-run' : 'dev-run'}.md\` says`;
 // A shell still running at the final report keeps the agent listed as running (lib/wait-advice.mjs), so the agents and the advice
 // say the same line.
 const STOP_BEFORE_REPORT = 'Never end your turn or report while a background command or monitor you started still runs: wait on its notice, or stop it with TaskStop (load it with ToolSearch select:TaskStop if it is not loaded).';
@@ -42,26 +45,27 @@ test('each long-running agent starts a command over 3 minutes in the background 
   }
 });
 
-test('the guard\'s start form is in dev-run.md, and every other long-running agent points to dev-run.md instead of a copy', () => {
-  assert.ok(agentText(RECIPE_HOLDER).includes(`at most 2 h) as \`${WAIT_START_FORM}\``), 'dev-run: the start form');
-  for (const name of LONG_RUNNERS.filter((runner) => runner !== RECIPE_HOLDER)) {
+test('the guard\'s start form is in dev-run.md and tess-run.md, and every other long-running agent points to one of them instead of a copy', () => {
+  for (const holder of RECIPE_HOLDERS) assert.ok(agentText(holder).includes(`at most 2 h) as \`${WAIT_START_FORM}\``), `${holder}: the start form`);
+  for (const name of LONG_RUNNERS.filter((runner) => !RECIPE_HOLDERS.includes(runner))) {
     const text = agentText(name);
-    assert.ok(text.includes(RECIPE_POINTER), `${name}: the pointer to dev-run.md`);
+    assert.ok(text.includes(recipePointer(name)), `${name}: the pointer to its runner`);
     assert.ok(!text.includes(WAIT_START_FORM), `${name}: no copy of the start form`);
   }
 });
 
-test('dev-run.md holds the wait recipe: the completion notice, a Monitor for anything else, no poll, and the foreground case', () => {
-  const text = agentText(RECIPE_HOLDER);
-  assert.match(text, /A command that may run over 3 minutes, while you have other work, runs with `run_in_background: true`/);
-  assert.match(text, /Keep working while it runs, wait on its completion notice, then read the log once\./);
-  assert.match(text, /To wait for anything else \(a file, a log line, a server\), use the Monitor tool with a command that prints a line on success and on failure and then exits, or send the check loop itself with `run_in_background: true`: its exit is the notice\./);
-  assert.match(text, /Never poll the log or wait in a sleep loop\./);
-  assert.match(text, /A command whose result is all that is left runs in the foreground with `timeout` 600000 instead; one that needs longer is reported as not run\./);
+test('dev-run.md and tess-run.md hold the wait recipe: the completion notice, a Monitor for anything else, no poll, and the foreground case', () => {
+  for (const text of RECIPE_HOLDERS.map(agentText)) {
+    assert.match(text, /A command that may run over 3 minutes, while you have other work, runs with `run_in_background: true`/);
+    assert.match(text, /Keep working while it runs, wait on its completion notice, then read the log once\./);
+    assert.match(text, /To wait for anything else \(a file, a log line, a server\), use the Monitor tool with a command that prints a line on success and on failure and then exits, or send the check loop itself with `run_in_background: true`: its exit is the notice\./);
+    assert.match(text, /Never poll the log or wait in a sleep loop\./);
+    assert.match(text, /A command whose result is all that is left runs in the foreground with `timeout` 600000 instead; one that needs longer is reported as not run\./);
+  }
 });
 
-test('the wait recipe is in dev-run.md only: no other agent file carries a second copy of a wait loop', () => {
-  const others = AGENT_FILES.filter((file) => file !== `${RECIPE_HOLDER}.md`);
+test('the wait recipe is in dev-run.md and tess-run.md only: no other agent file carries a second copy of a wait loop', () => {
+  const others = AGENT_FILES.filter((file) => !RECIPE_HOLDERS.includes(file.replace(/\.md$/, '')));
   assert.ok(others.length >= LONG_RUNNERS.length, 'the agent files were read');
   for (const file of others) {
     const text = oneLine(read(`home/agents/${file}`));
@@ -133,6 +137,6 @@ test('the catalog rows name timeout with the 2-h maximum, and the advice row nam
   assert.ok(adviceRow.includes(`started as \`${WAIT_START_FORM}\`, only while the agent has other work: it keeps working and waits on the completion notice, then reads the log once`), 'the row names the start form, then the notice');
   assert.match(adviceRow, /anything else \(a file, a log line, a server\) is waited for with Claude Code's `Monitor` tool/);
   assert.match(adviceRow, /An agent never ends its turn or reports while a background command or monitor it started still runs: it waits on the notice or stops it with TaskStop/);
-  assert.match(adviceRow, /The agents that run long commands point to the same recipe in `home\/agents\/dev-run\.md`\./);
+  assert.match(adviceRow, /The agents that run long commands point to the same recipe in `home\/agents\/dev-run\.md`, tess and its helpers to its copy in `home\/agents\/tess-run\.md`\./);
   assert.match(adviceRow, /`\$\(\.\.\.\)` and backtick bodies are not looked into/);
 });

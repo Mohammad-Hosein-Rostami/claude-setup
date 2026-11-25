@@ -41,6 +41,8 @@ const PLAN = {
   'pixel-qa': { model: SONNET, effort: 'high', skills: ['figma-pixel-perfect'] },
   'dev-debug': { model: OPUS, effort: 'xhigh', skills: ['root-cause-debug'] },
   'dev-run': { model: HAIKU, effort: 'high', skills: [] },
+  // owner, 2026-11-25: tess's own copy of dev-run
+  'tess-run': { model: HAIKU, effort: 'high', skills: [] },
   // team-split plan: tess manages its helpers on Opus, and its test writer runs on Sonnet
   tess: { model: OPUS, effort: 'high', skills: ['qa-plan'] },
   'tess-review': { model: OPUS, effort: 'high', skills: ['review-checklist'] },
@@ -124,8 +126,8 @@ test('tess runs in the background; no other agent does', () => {
 
 // omitClaudeMd and autoCompactWindow are documented subagent frontmatter fields (code.claude.com/docs/en/sub-agents.md);
 // the window is a plain integer, since frontmatter reads `200k` as 200.
-test('only lex-scout, lex-web, dev-run, dev-part, dev-docs, tess-simple and tess-edge skip CLAUDE.md, and each carries the global rules it needs', () => {
-  const skipping = ['lex-scout', 'lex-web', 'dev-run', 'dev-part', 'dev-docs', 'tess-simple', 'tess-edge'];
+test('only lex-scout, lex-web, dev-run, tess-run, dev-part, dev-docs, tess-simple and tess-edge skip CLAUDE.md, and each carries the global rules it needs', () => {
+  const skipping = ['lex-scout', 'lex-web', 'dev-run', 'tess-run', 'dev-part', 'dev-docs', 'tess-simple', 'tess-edge'];
   for (const name of NAMES) assert.equal(field(name, 'omitClaudeMd') === 'true', skipping.includes(name), name);
   for (const name of skipping) {
     const text = agent(name);
@@ -138,8 +140,8 @@ test('only lex-scout, lex-web, dev-run, dev-part, dev-docs, tess-simple and tess
   assert.match(agent('dev-run'), /Never push, publish or delete/);
 });
 
-test('dev-run, tess and lex-web compact at 200000 tokens; no other agent sets a window', () => {
-  const lowered = ['dev-run', 'tess', 'lex-web'];
+test('dev-run, tess-run, tess and lex-web compact at 200000 tokens; no other agent sets a window', () => {
+  const lowered = ['dev-run', 'tess-run', 'tess', 'lex-web'];
   for (const name of NAMES) assert.equal(field(name, 'autoCompactWindow'), lowered.includes(name) ? '200000' : '', name);
 });
 

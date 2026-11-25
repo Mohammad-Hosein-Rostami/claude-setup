@@ -61,7 +61,7 @@ your brief names.
 ## Commands
 
 - A command that may run over 3 minutes runs with `run_in_background: true` and a `timeout` (at most 2 h), started and waited for
-  as `~/.claude/agents/dev-run.md` says, never polled or sleep-looped.
+  as `~/.claude/agents/tess-run.md` says, never polled or sleep-looped.
 - A command that ends within 3 minutes runs in the foreground with an explicit Bash `timeout`: 600000 for an install or a long
   run, 60000 for a probe. Logs go to files; read only the summary and the failing lines.
 

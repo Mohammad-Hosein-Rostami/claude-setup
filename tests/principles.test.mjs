@@ -84,13 +84,13 @@ test('lex.md attacks its own plan once and probes a platform fact before decidin
 });
 
 const COMMAND_AGENTS = ['dev', 'dev-part', 'dev-run', 'tess', 'tess-write', 'tess-edge'];
-// Each command agent's own no-polling line: dev-run holds the wait recipe, the others point to it.
+// Each command agent's own no-polling line: dev-run holds the wait recipe, the others point to it (tess's agents to its copy, tess-run).
 const NO_POLL_LINE = {
   dev: 'Never poll in a loop of your own.',
   'dev-part': 'Never poll in a loop of your own.',
   'dev-run': 'Never poll the log or wait in a sleep loop.',
-  tess: 'started and waited for as `~/.claude/agents/dev-run.md` says, never polled or sleep-looped.',
-  'tess-write': 'started and waited for as `~/.claude/agents/dev-run.md` says, never polled or sleep-looped.',
+  tess: 'started and waited for as `~/.claude/agents/tess-run.md` says, never polled or sleep-looped.',
+  'tess-write': 'started and waited for as `~/.claude/agents/tess-run.md` says, never polled or sleep-looped.',
   'tess-edge': 'Never poll in a loop of your own.',
 };
 // The command agents that do not load home/CLAUDE.md carry its stop-before-report rule themselves.

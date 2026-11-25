@@ -2,7 +2,7 @@
 // `for|while|until ... sleep N` loop (N >= 5 s) or one long `sleep` (>= 30 s) is bounced once with the better way to wait. A quality rule,
 // not a safety rule: lib/bounce-once.mjs denies the first send with this text and lets the identical retry run, never the owner.
 // Exports: WAIT_ADVICE (the text, classed exactly in lib/reason-classes.mjs), WAIT_START_FORM (the start command the text and
-// home/agents/dev-run.md name, so tests can hold them equal), waitAdvice(command) -> [] | [WAIT_ADVICE],
+// home/agents/dev-run.md and tess-run.md name, so tests can hold them equal), waitAdvice(command) -> [] | [WAIT_ADVICE],
 // withoutWaitAdvice(verdict) -> verdict (the hook uses it for a call sent with `run_in_background: true`: that wait needs no advice).
 // Reads the command like the other guard rules (lib/shell-words.mjs segments): heredoc bodies are dropped, a
 // quoted word (`echo "for i; do sleep 9; done"`) is one word, so text that only mentions sleep never counts. The sleep must be a command
