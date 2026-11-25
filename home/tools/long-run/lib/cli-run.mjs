@@ -144,15 +144,16 @@ function switchAccount(paths, to, write) {
  * The writes of a resume before its driver starts: the job reload, the folder claim, the cleared control files and, with
  * `--account`, the switch. With `--account` they run under the run lock: a driver that started since resume's first check (a
  * plain resume in the gap the store read leaves) would keep its steps on the old account and its limit wait, so the lock
- * refuses and nothing is written, the owner's pause and stop files included.
+ * refuses and nothing is written, the owner's pause and stop files included. Any live pid in the lock refuses (keepLivePid):
+ * where ps cannot tell a starting driver from a reused pid, a plain resume (the beat rule) takes a crashed run over first.
  * @throws {RunBusy} with the pause command when the lock is held.
  */
 function prepareResume(paths, { flags, switchTo, write }) {
   if (switchTo !== undefined) {
     try {
-      acquireLock(paths);
+      acquireLock(paths, new Date(), { keepLivePid: true });
     } catch (error) {
-      if (error instanceof RunBusy) throw new RunBusy(pauseFirst(paths.runId, switchTo));
+      if (error instanceof RunBusy) throw new RunBusy(`run ${paths.runId} looks live: a live process holds its lock. If it runs, pause it first: long-run pause ${paths.runId}, then resume --account ${switchTo}; if it crashed, run long-run resume ${paths.runId} first, then switch`);
       throw error;
     }
   }

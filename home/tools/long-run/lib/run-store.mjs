@@ -8,7 +8,8 @@
 //   this host, or a heartbeat older than STALE_BEAT_MS: a reused pid is caught by the beat age), unless ps shows that the process
 //   the lock names is the live process that took it, whatever the age of the lock or the beat (a starting driver has no beat
 //   yet; a driver after a sleep has an old one); where ps cannot tell (Windows, a lock without a start) the beat rule alone
-//   decides; a release removes the lock only while it still names this process. Nothing here holds a token.
+//   decides (unless the caller asks to keep any live pid's lock: `resume --account`); a release removes the lock only while it
+//   still names this process. Nothing here holds a token.
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
@@ -144,12 +145,13 @@ const START_TOLERANCE_MS = 2000;
 const lockText = () => `${process.pid} ${hostname()} ${Math.round(Date.now() - process.uptime() * MS_PER_SECOND)}\n`;
 
 /**
- * The pid of the live process on this host that took the lock, when ps shows its start matches the one the lock records; else
- * null. driverAlive misses a live driver that has not written its first beat yet, or whose beat is old after a sleep; breaking
- * its lock would leave it running beside a second driver. Where the start cannot be compared (Windows, a lock without a
- * start), null leaves the choice to driverAlive's beat rule, so a crashed run whose pid was reused can still be taken over.
+ * The pid of the live process on this host that the lock names, when it must keep the lock; else null. driverAlive misses a
+ * live driver that has not written its first beat yet, or whose beat is old after a sleep; breaking its lock would leave it
+ * running beside a second driver. `keepLivePid` keeps the lock for any live pid. Without it the pid must also be the lock's
+ * taker by its ps start; where the start cannot be compared (Windows, a lock without a start), null leaves the choice to
+ * driverAlive's beat rule, so a crashed run whose pid was reused can still be taken over.
  */
-function liveLockHolder(lockPath) {
+function liveLockHolder(lockPath, keepLivePid) {
   let text;
   try {
     text = readFileSync(lockPath, 'utf8');
@@ -160,6 +162,7 @@ function liveLockHolder(lockPath) {
   const [pidText, host, startText] = text.trim().split(' ');
   const pid = Number(pidText);
   if (host !== hostname() || !isPidAlive(pid)) return null;
+  if (keepLivePid) return pid;
   if (startText === undefined) return null;
   const startMs = processStarts([pid]).get(pid);
   const isTaker = startMs !== undefined && Math.abs(startMs - Number(startText)) <= START_TOLERANCE_MS;
@@ -170,9 +173,11 @@ function liveLockHolder(lockPath) {
  * Takes the run's driver lock.
  * @param {Record<string, string>} paths runPaths().
  * @param {Date} now the current time.
- * @throws {RunBusy} when a live driver holds it, or ps shows the process that took it still runs on this host (liveLockHolder).
+ * @param {{keepLivePid?: boolean}} options `keepLivePid`: never break a lock whose pid is alive on this host, even where ps
+ *   cannot tell it from a reused pid (`resume --account`: a refusal is safe, a second driver is not).
+ * @throws {RunBusy} when a live driver holds it, or the process the lock names must keep it (liveLockHolder).
  */
-export function acquireLock(paths, now = new Date()) {
+export function acquireLock(paths, now = new Date(), { keepLivePid = false } = {}) {
   const text = lockText();
   try {
     writeFileSync(paths.lock, text, { flag: 'wx', mode: PRIVATE_FILE_MODE });
@@ -181,7 +186,7 @@ export function acquireLock(paths, now = new Date()) {
     if (error.code !== 'EEXIST') throw error;
   }
   if (driverAlive(paths, now)) throw new RunBusy(`run ${paths.runId} is busy: its driver runs (pid ${readJson(paths.driver)?.pid})`);
-  const holder = liveLockHolder(paths.lock);
+  const holder = liveLockHolder(paths.lock, keepLivePid);
   if (holder !== null) throw new RunBusy(`run ${paths.runId} is busy: pid ${holder} holds its lock`);
   rmSync(paths.lock, { force: true });
   try {

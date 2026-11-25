@@ -174,7 +174,8 @@ When a run stops (a pause, a stop, a reboot, a crash or a killed driver) while a
   --account <name>`. It prints `account <old> -> <new>` and records an `account-switched` event; `summary.md` names both
   accounts. Each unfinished step continues its own session on the new account, and a limit wait of the old account ends.
   Done steps keep the old name in their journal. The first start of each step on the new account writes its whole history
-  into that account's prompt cache once. A running or limit-waiting run is refused with exit 4.
+  into that account's prompt cache once. A running or limit-waiting run is refused with exit 4, and so is a run whose lock
+  names any live process (a crashed run whose pid was reused: run a plain `long-run resume <run>` first, then switch).
 - After a reboot, unfinished runs continue by themselves (autostart on); paused and stopped runs wait for you.
 
 ## How you control runs from a Claude session
