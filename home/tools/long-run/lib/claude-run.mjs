@@ -5,7 +5,8 @@
 // Invariants: the prompt goes on stdin, never argv; the token is only in the child env (claude-child.mjs childEnv drops every
 //   billing variable, CLAUDE_CODE_RETRY_WATCHDOG* and CLAUDECODE); every stdout and stderr line is scrubbed of the token and any
 //   token-shaped text before it is written; no `--bare`, no permission flag, no `--max-turns` (owner decisions O2, O4); the exit
-//   code alone never makes a step done; an unknown result subtype is `crash`; an ended boss's descendants that outlive it are
+//   code alone never makes a step done; an unknown result subtype is `crash`; a boss that has given its result line is never
+//   ended for a safe-point reason (tell, account switch), so its verdict is kept; an ended boss's descendants that outlive it are
 //   ended too (process-tree.mjs) before `done` resolves, so a driver that exits right after leaves none of them running.
 import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, openSync, writeSync } from 'node:fs';
@@ -64,8 +65,9 @@ function openLog(path) {
   };
 }
 
-const isSafePoint = (event) => event?.type === 'result'
-  || (event?.type === 'user' && Array.isArray(event.message?.content) && event.message.content.some((part) => part?.type === 'tool_result'));
+// The end of a tool use. The final `result` line is not one: a boss that gave its result is ending by itself with its verdict,
+// and ending it there would turn that verdict into `told` or `switched` and start a finished step again.
+const isSafePoint = (event) => event?.type === 'user' && Array.isArray(event.message?.content) && event.message.content.some((part) => part?.type === 'tool_result');
 
 function parseLine(line) {
   try {
@@ -130,10 +132,11 @@ export function startClaude({ args, prompt, cwd, env, token, added, logBase, pla
     state.timers.push(setTimeout(() => { state.endedHow = 'SIGTERM'; ender.signal('SIGTERM'); }, killAfter.term));
     state.timers.push(setTimeout(() => { state.endedHow = platform === 'win32' ? 'taskkill /F' : 'SIGKILL'; ender.signal('SIGKILL'); }, killAfter.kill));
   };
+  // A verdict that has already arrived wins: a message or an account switch then applies to the next start.
   const endAtSafePoint = (reason, maxMs = SAFE_POINT_MAX_MS) => {
-    if (state.safePoint !== null) return;
+    if (state.safePoint !== null || state.result !== null) return;
     state.safePoint = reason;
-    state.timers.push(setTimeout(() => end(reason), maxMs));
+    state.timers.push(setTimeout(() => { if (state.result === null) end(reason); }, maxMs));
   };
   createInterface({ input: child.stdout }).on('line', (raw) => {
     const line = scrub(raw, token);

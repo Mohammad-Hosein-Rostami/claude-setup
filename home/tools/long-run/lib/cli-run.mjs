@@ -171,11 +171,13 @@ export async function resumeCommand({ runId, flags, env, root, write }) {
   // User text: checked before it reaches a path or the store.
   if (switchTo !== undefined && !NAME_PATTERN.test(switchTo)) throw new UsageError('--account takes an account name: 1 to 32 characters of a-z, 0-9, _ and -, starting with a letter or a digit');
   const paths = openRun(root, runId);
+  const busy = () => new RunBusy(switchTo === undefined ? `run ${runId} is running; pause or stop it first, or use tell to steer a step` : pauseFirst(runId, switchTo));
   const state = runState(paths);
   if (state === 'done' || state === 'abandoned') throw new Refusal(`run ${runId} is ${state}; use rerun --from <step>`);
   const reply = replyOf(flags);
   if (HOLD_ONLY.includes(reply.action) && readJson(paths.driver)?.status !== 'held') {
     // Only a held step takes these; on any other run they would start its boss again instead (audit Job A, the abandon bug).
+    if (driverAlive(paths)) throw busy();
     throw new Refusal(`run ${runId} holds no step (it is ${state}); --${reply.action} applies to a held step only. Leave it ${state} (it spends nothing) or continue it with long-run resume ${runId}`);
   }
   // The new account passes the start check and must have a token in the store; the token is read only to prove that, and dropped.
@@ -183,8 +185,8 @@ export async function resumeCommand({ runId, flags, env, root, write }) {
   else accountToken(switchTo, { env });
   if (!flags.force) refuseOpenSessions(paths, readRunJob(paths), env);
   const reloaded = flags['reload-job'] ? planReload(paths, flags['reload-job']) : null;
-  // The one liveness check, last before the first write: from here to the run.json write only a few file calls run.
-  if (driverAlive(paths)) throw new RunBusy(switchTo === undefined ? `run ${runId} is running; pause or stop it first, or use tell to steer a step` : pauseFirst(runId, switchTo));
+  // The one liveness check, last before the first write: from here to the run.json write only the folder claim runs.
+  if (driverAlive(paths)) throw busy();
   prepareResume(paths, { reloaded, switchTo, write });
   writeJson(join(paths.dir, 'resume.json'), reply);
   write(`resuming ${runId} (${reply.action}${reply.item ? ` for ${reply.item}` : ''})`);
