@@ -26,8 +26,8 @@ One file: `node --test tests/land.test.mjs`. The `ui-check` tool has its own tes
 
 ## Watch out for
 
-- A test that starts a hook must open no real dialog on your screen and write nothing to `~/.claude`: put a fake dialog tool on
-  `PATH`, and import `pin-home.mjs` first, because the hook libraries read `HOME` when their modules load.
+- A test that starts a hook must write nothing to `~/.claude`: import `pin-home.mjs` first, because the hook libraries read `HOME`
+  when their modules load. `clean-env.mjs` puts inert desktop-note and dialog tools first on `PATH`, so no test shows a real one.
 - Run the suite from a plain shell, not from inside a git hook: a hook sets `GIT_*` variables, and a test that runs `git` in a temp folder would then write into this repo.
 - A speed target ("decides in under 500 ms") is measured as the fastest of 3 runs (`timing.mjs`: `fastestCpuMs` for work inside the test process, `fastestMs` only when a child process is timed), never one run: the suite runs files in parallel and one run can be slowed by the machine. Keep the threshold; do not raise it.
 - A file of slow synchronous tests (each runs a tool through spawnSync) can run them side by side with `worker-tests.mjs`: each body runs in a worker thread, and the file must end with `await runNamedBody();` (a test whose body never ran fails; `worker-tests.test.mjs` checks that).

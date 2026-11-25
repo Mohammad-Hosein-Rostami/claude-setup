@@ -1,15 +1,15 @@
 // The one environment every spawned hook, tool or script gets in a test. Exports: OUR_SWITCH, QUIET_TOOLS, QUIET_TOOLS_LOG_ENV,
 // quietToolsDir(), cleanEnv(extra).
-// Why: a test run from a Claude Code session inherits the owner's switches (CLAUDE_GUARD_ASK=allow, CLAUDE_GUARD_TRIM,
-// CLAUDE_POST_EDIT_TRUST_FORMAT, CLAUDE_PERMISSION_TIMEOUT_S, ...) and the session's own markers (CLAUDE_CODE_SESSION_ID,
-// CLAUDECODE, ...); a child that reads them answers differently there than in a plain terminal (allow where a test expects ask).
+// Why: a test run from a Claude Code session inherits the owner's switches (CLAUDE_POST_EDIT_TRUST_FORMAT, ...) and the
+// session's own markers (CLAUDE_CODE_SESSION_ID, CLAUDECODE, ...); a child that reads them answers differently there than in a
+// plain terminal.
 // A test that needs one passes it in `extra`. cleanEnv adds one switch back after the strip: CLAUDE_LONG_RUN_DESKTOP_NOTES=off,
 // so a long-run child shows no desktop note on any platform (Windows has no stand-in for powershell.exe). tests/hook-env.mjs
 // builds hookEnv on it; tests/pin-home.mjs drops the same names from the test process itself, for modules a test imports.
-// Quiet tools: a dialog tool a test reaches would show a real dialog, and a long-run child run without the switch above (a test
-// that removes it on purpose) would show a real desktop note (osascript / notify-send / powershell.exe). On POSIX this module
-// puts inert stand-ins of those tools first on process.env.PATH when it loads, so every PATH a test builds from
-// process.env.PATH (and cleanEnv's) finds them before the real ones, after a test's own fakes (e.g. tests/fake-dialog-tool.mjs).
+// Quiet tools: a long-run child run without the switch above (a test that removes it on purpose) would show a real desktop note
+// (osascript / notify-send / powershell.exe). On POSIX this module puts inert stand-ins of those tools first on process.env.PATH
+// when it loads, so every PATH a test builds from process.env.PATH (and cleanEnv's) finds them before the real ones, after a
+// test's own fakes.
 // Invariants: process.env changes only in PATH, once, at load; `extra` wins over everything; the quiet-tools folder is this
 // user's own (owner-only, no symlink) or this module throws.
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, utimesSync, writeFileSync } from 'node:fs';
@@ -21,9 +21,8 @@ import { TEST_TEMP_PREFIX, testTempRoot } from './temp-dir-helpers.mjs';
 export const OUR_SWITCH = /^CLAUDE(?:_|CODE$)/;
 
 /**
- * Each tool and its exit code. osascript and PowerShell exit 0 with no output: a note counts as shown, a dialog reads as
- * "unavailable" (lib/timed-ask.mjs parseDialogResult), so the hook falls back to the native ask. zenity reads its exit code
- * (0 allow, 1 deny, 5 timeout), so it exits 2, which is "unavailable" too.
+ * Each tool and its exit code. osascript, notify-send and PowerShell exit 0 with no output: a note counts as shown. zenity exits 2
+ * (an error), so a caller that reads its exit code as an answer takes it as "unavailable".
  */
 export const QUIET_TOOLS = { osascript: 0, 'notify-send': 0, powershell: 0, 'powershell.exe': 0, zenity: 2 };
 /** When set (a test's own file), each quiet tool appends `<tool> <args>` there, so a test can see it was reached. */
