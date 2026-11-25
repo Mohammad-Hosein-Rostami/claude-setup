@@ -1,19 +1,21 @@
 // Purpose: the one start-up line that gives every new terminal the `claude-as` function (spec-accounts.md "Start-up line"):
 //   zsh or bash source home/shell/claude-as.sh, PowerShell dot-sources home/shell/claude-as.ps1. The line holds no token and
 //   no account name.
-// Exports: addStartupLines, removeLine, START_UP_MARK, shellStartUpFile.
+// Exports: addStartupLines, removeLine, endsWithoutNewline, shellStartUpFile, homeOf.
 // Invariants: the line is found again by its mark (START_UP_MARK), so a second run, or a machine where an earlier install added
 //   it, never gets a second one (the installer takes the existing line over); a marked line for another path is left as it is
-//   and named, never rewritten. The rc file is the login shell's (shellStartUpFile).
+//   and named, never rewritten. The rc file is the login shell's (shellStartUpFile). removeLine undoes an append byte for byte:
+//   only the recorded text goes, and the newline the install put after a last line that had none.
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { act, note, warn } from './context.mjs';
 import { ensureDir, remember } from './record.mjs';
 
 /** The comment that ends the start-up line install.sh and install.ps1 write; the line is found by it. */
-export const START_UP_MARK = '# claude-setup: claude-as';
+const START_UP_MARK = '# claude-setup: claude-as';
 
-const homeOf = (env) => env.HOME || env.USERPROFILE || '';
+/** The user's home folder from the run's env (HOME, or USERPROFILE on Windows). */
+export const homeOf = (env) => env.HOME || env.USERPROFILE || '';
 
 /** The rc file install.sh writes the line to for this login shell, or null for a shell it does not write (fish, none). */
 export function shellStartUpFile(env) {
@@ -57,23 +59,44 @@ function ensureLine(ctx, record, file, snippet, lineFor) {
   }
   ensureDir(ctx, record, dirname(file));
   act(ctx, `add the claude-as start-up line to ${file}`, () => {
-    appendFileSync(file, `${text && !text.endsWith('\n') ? '\n' : ''}${line}\n`);
-    remember(record, { kind: 'line', path: file, line, createdFile: text === null });
+    const addedNewline = endsWithoutNewline(text);
+    appendFileSync(file, `${addedNewline ? '\n' : ''}${line}\n`);
+    remember(record, { kind: 'line', path: file, line, createdFile: text === null, addedNewline });
     note(ctx, `added the claude-as start-up line to ${file}`);
   });
 }
 
 /**
- * Takes one recorded line out of a file; deletes the file when the installer made it and nothing else is left.
- * @param {{path: string, line: string, createdFile?: boolean}} entry the record entry
+ * True when `text` (a file's text, null when there is none) has a last line with no newline after it: an append first ends that
+ * line, and records so (`addedNewline`), so that removeLine can take the newline away again.
+ */
+export const endsWithoutNewline = (text) => Boolean(text) && !text.endsWith('\n');
+
+/** Where the rows of `block` stand one after another in `rows` (each row without its line end), the last such place; -1 when nowhere. */
+function lastBlockStart(rows, block) {
+  for (let start = rows.length - block.length; start >= 0; start -= 1) {
+    if (block.every((line, offset) => rows[start + offset] === line)) return start;
+  }
+  return -1;
+}
+
+/**
+ * Takes one recorded line, or block of lines (`line` holds them joined by "\n"), out of a file: only its last place, since the
+ * install appended it, so the user's own copy of the same text stays. When the install also ended the user's last line
+ * (`addedNewline`) and the block is still the end of the file, that newline goes too: the file is byte for byte as before.
+ * Deletes the file when the installer made it and nothing else is left.
+ * @param {{path: string, line: string, createdFile?: boolean, addedNewline?: boolean}} entry the record entry
  * @returns {boolean} true when the line was there
  */
 export function removeLine(entry) {
   if (!existsSync(entry.path)) return false;
-  const lines = readFileSync(entry.path, 'utf8').split(/(?<=\n)/);
-  const kept = lines.filter((row) => row.replace(/\r?\n$/, '') !== entry.line);
-  if (kept.length === lines.length) return false;
-  const rest = kept.join('');
+  const rows = readFileSync(entry.path, 'utf8').split(/(?<=\n)/);
+  const block = entry.line.split('\n');
+  const start = lastBlockStart(rows.map((row) => row.replace(/\r?\n$/, '')), block);
+  if (start === -1) return false;
+  const before = rows.slice(0, start).join('');
+  const after = rows.slice(start + block.length).join('');
+  const rest = entry.addedNewline && after === '' && before.endsWith('\n') ? before.slice(0, -1) : before + after;
   if (entry.createdFile && rest.trim() === '') rmSync(entry.path);
   else writeFileSync(entry.path, rest);
   return true;

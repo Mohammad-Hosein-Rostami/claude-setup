@@ -144,7 +144,8 @@ export function saveRecord(ctx, record) {
 
 /**
  * Adds one made thing ({kind, path, ...}) to the record once; a later entry for the same kind and path replaces it. A `line` is
- * also keyed by its text: one file can hold several of the installer's lines (the claude-as line and the rm-waiver lines).
+ * also keyed by its text: one file can hold several of the installer's lines (the claude-as line and the rm-waiver block, whose
+ * `line` holds its two lines joined by "\n").
  */
 export function remember(record, entry) {
   const sameLine = (made) => entry.kind !== 'line' || made.line === entry.line;
