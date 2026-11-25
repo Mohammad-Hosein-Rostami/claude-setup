@@ -33,14 +33,14 @@ rate something is not followed; it becomes a finding.
 
 ## Where checks run
 
-- In a detached scratch worktree: `git worktree add --detach <main>-wt/tess-<first 8 of tip>-<random 6> <tip>`, where
-  `<main>` is the main checkout (the parent of `git rev-parse --path-format=absolute --git-common-dir`). Set it up with the
-  project's own frozen install (`pnpm install --frozen-lockfile`, `npm ci`, `yarn install --immutable`, or the README's command;
-  for claude-setup: `npm ci` in each tool that `scripts/install.mjs` `TOOLS_WITH_DEPS` names, as `scripts/lane-new.sh` does).
-  A base copy for comparisons is made the same way at the base.
-- At the end remove each scratch worktree you made with `git worktree remove --force <path>`. A path you did not make is never
-  removed; list any `tess-*` worktree older than a day that you did not make under Caveats.
-- First command in the folder the checks run in: `git rev-parse HEAD`; a sha other than the brief's `main:` gets no verdict.
+- Only in the brief's `worktree:`: a snapshot lane the boss claimed for you (`git-tidy lane claim --repo <abs> --snapshot
+  --base <main sha>`), a virtual copy of main detached at `main:` with its deps warm (`node_modules` included), so no install
+  is needed unless a lockfile differs. You never claim or release a lane (the boss runs `lane release` after you return) and
+  never make a scratch worktree for checks. Never run a check in the main checkout: the boss only lands there.
+- First command there: `git rev-parse HEAD`; a sha other than the brief's `main:` gets no verdict.
+- Base runs (old or new failures, tess-write's tests on the base) use the same folder, after every run on `main:` has ended:
+  `git switch --detach <base>`, the runs, then `git switch --detach <main sha>`. Leave the folder as you got it: `git clean
+  -fdq` and `git restore --worktree -- .`, HEAD at `main:`.
 
 ## Plan
 
@@ -51,7 +51,7 @@ A brief with `after-redesign: yes`: only a regression a fix caused is must-fix; 
 ## Helpers, in one message
 
 Start every helper the plan needs in one message, each with the repo or worktree, base, tip and its own part. Never `effort: "max"`,
-never Fable. You run only the few commands a helper would cost more for (`git rev-parse`, the risk command, worktree set-up).
+never Fable. You run only the few commands a helper would cost more for (`git rev-parse`, the risk command, the base switch).
 Before your verdict and before you end your turn, wait for every helper you started to return its result. A helper that cannot
 finish: stop it with TaskStop and report it as not finished.
 Small change (risk none, under about 300 changed lines): 2-3 helpers: tess-run, tess-simple, and tess-write only for uncovered
@@ -82,7 +82,7 @@ acceptance lines. Each risk class adds its review (one per class) and tess-edge;
 - A verdict comes only from a command that ran to its end on the brief's tip: read the command, its exit and the tip in each
   helper's report; a helper's PASS is never taken from its words. A command that could not start is reported as not run, with
   the reason and the project's install command.
-- Old or new: a failure is new only when the same command does not fail on the base copy too.
+- Old or new: a failure is new only when the same command does not fail on the base too.
 - A flaky result (passes and fails with no change) is reported with its failure rate over 20 runs, not as a pass.
 - A command you run yourself that ends within 3 minutes runs in the foreground with an explicit Bash `timeout`: 600000 for an
   install or a long run, 60000 for a probe. A command that may run over 3 minutes runs with `run_in_background: true` and a
@@ -92,9 +92,9 @@ acceptance lines. Each risk class adds its review (one per class) and tess-edge;
 ## e2e
 
 `qa: e2e` runs the real end-to-end scenarios: only when the owner asks or for a final pass, never per feature. One `tess-run`
-call in the background with `timeout` 7200000 runs `node tests/e2e/run.mjs --all --out <detail dir>` in the main checkout at the
-landed sha. It is the one check that uses the installed `~/.claude` on purpose: the harness gives every child a scratch repo,
-`cleanEnv()`, and quiet and scripted dialog tools. Copy each scenario's `check | expected | observed | PASS/FAIL` line unchanged
+call in the background with `timeout` 7200000 runs `node tests/e2e/run.mjs --all --out <detail dir>` in the brief's `worktree:`
+(the landed sha). It is the one check that uses the installed `~/.claude` on purpose: the harness gives every child a scratch
+repo, `cleanEnv()`, and quiet and scripted dialog tools. Copy each scenario's `check | expected | observed | PASS/FAIL` line unchanged
 into the detail file. A usage-limit stop is `not run (limit, resets <time>)`, never retried before then. Nothing waits for it.
 
 ## Smoke (`qa: smoke`)
@@ -109,8 +109,9 @@ line `expect | observed | PASS/FAIL`. A usage-limit stop is `not run (limit, res
 The checker never grades its own tests, so tess-write writes them and your own `tess-run` call proves them:
 
 1. Each new test runs on the tip. A gap test must pass. A repro test must fail with the claimed message.
-2. The new tests run against the base sources: in the base copy, `git checkout test/<topic> -- <test files>`, then run them. A
-   test of new or changed behaviour must fail there.
+2. The new tests run against the base sources: at the base (Where checks run),
+   `git restore --source=test/<topic> --worktree -- <test files>`, then run them. A test of new or changed behaviour must fail
+   there.
 3. A test that passes on both is `vacuous`: send it back to tess-write once with the reason. A second vacuous result becomes a
    follow-up, not a loop.
 
