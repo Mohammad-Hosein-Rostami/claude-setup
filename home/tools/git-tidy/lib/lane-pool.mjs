@@ -2,6 +2,7 @@
 //   (its caches stay warm, since the path is the same), or adds the lowest unused lane-<n> when every folder is busy (no cap);
 //   `releaseLane` frees a folder whose lane landed; land calls `detachLandedSlot` after its fast-forward; `reclaimLanes` removes folders
 //   idle for RECLAIM_IDLE_MS. Where the main checkout can be cloned (lane-fill.mjs cloneSupport), a claim fills the folder by cloning it.
+//   A snapshot claim is a lane with no branch: it stays detached at its commit, locked as `cs-lane-pool snapshot <8>`, until release.
 // Exports: RECLAIM_IDLE_MS, KEPT_DEPENDENCY_FOLDERS, claimLane, releaseLane, detachLandedSlot, reclaimLanes (and, from lane-slots.mjs,
 //   POOL_FOLDER, poolSlots).
 // Invariants:
@@ -32,7 +33,7 @@ import { listWorktrees } from './repo.mjs';
 import { withPoolLock } from './pool-lock.mjs';
 import { cloneSupport, FILL_ENV, fillFresh, fillIgnored } from './lane-fill.mjs';
 import { deleteFillFile, emptyForRefill, readFillFile, removeStaleIndexLock, startFillFile } from './lane-fill-state.mjs';
-import { commonDirOf, contentBusyWhy, isPoolSlot, lastUsedMs, LOCK_REASON_PREFIX, poolFolderOf, poolSlots, readSlot, removalLossWhy, slotKey, staleEntryLossWhy } from './lane-slots.mjs';
+import { commonDirOf, contentBusyWhy, isPoolSlot, lastUsedMs, LOCK_REASON_PREFIX, poolFolderOf, poolSlots, readSlot, removalLossWhy, slotKey, SNAPSHOT_LABEL, staleEntryLossWhy } from './lane-slots.mjs';
 import { recordJobMade } from '../../disk-free/lib/job-made.mjs';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -50,6 +51,7 @@ const HEADS = 'refs/heads/';
 const MS_PER_HOUR = 60 * 60 * 1000;
 const SESSION_VARIABLES = ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID'];
 const CLONE_MODE = 'clone'; // cloneSupport's mode when the main checkout can be cloned into the pool
+const SHORT_SHA = 8;
 
 /** Refuses a branch name git would read as an option, a full ref or anything `check-ref-format --branch` rejects or rewrites. */
 function checkBranchName(repo, branch) {
@@ -126,22 +128,28 @@ function switchTo(folder, branch, base, exists) {
   confirmOnBranch(folder, branch);
 }
 
+/** Puts `folder` at the lane: on its branch (switchTo), or for a snapshot (no branch) detached at its target. */
+function enterLane(folder, lane) {
+  if (lane.branch === null) gitText(folder, ['switch', '--quiet', '--detach', lane.target]);
+  else switchTo(folder, lane.branch, lane.base, lane.exists);
+}
+
 const slotTree = (repo, folder) => listWorktrees(repo).find((entry) => !entry.main && slotKey(entry.path) === slotKey(folder));
 
-/** Locks the slot for `branch` after checking it is unlocked and holds `heldBranch` (null: detached, while a fill runs). */
-function lockSlot(repo, folder, branch, heldBranch = branch) {
+/** Locks the slot as `cs-lane-pool <label>` after checking it is unlocked and holds `heldBranch` (null: detached). */
+function lockSlot(repo, folder, label, heldBranch) {
   const tree = slotTree(repo, folder);
   if (tree === undefined || tree.locked || tree.branch !== heldBranch) throw new Error(`${folder} changed before its lock (locked or on another branch)`);
-  gitText(repo.dir, ['worktree', 'lock', '--reason', `${LOCK_REASON_PREFIX} ${branch}`, '--', folder]);
+  gitText(repo.dir, ['worktree', 'lock', '--reason', `${LOCK_REASON_PREFIX} ${label}`, '--', folder]);
 }
 
 /** Reuses a free slot whose facts were just read again: switch, clean (keeping unchanged dependency folders), lock. */
 function takeFreeSlot(repo, slot, lane) {
   const { keep, kept } = keptDependencies(repo, slot.folder, lane.target);
-  switchTo(slot.folder, lane.branch, lane.base, lane.exists); // ends by reading HEAD again, right before the clean
+  enterLane(slot.folder, lane); // a branch switch ends by reading HEAD again, right before the clean
   // one -f: git clean keeps a git repository inside an ignored folder (-ff would delete it with its commits)
   gitText(slot.folder, ['clean', '-fdxq', ...keep.flatMap((name) => ['-e', name])]);
-  lockSlot(repo, slot.folder, lane.branch);
+  lockSlot(repo, slot.folder, lane.label, lane.branch);
   return { folder: slot.folder, slot: slot.slot, created: false, kept };
 }
 
@@ -149,18 +157,21 @@ function takeFreeSlot(repo, slot, lane) {
 function createSlot(repo, folder, slotName, lane, staleEntry) {
   if (staleEntry) gitText(repo.dir, ['worktree', 'remove', '--', folder]); // a missing folder: only its entry goes
   gitText(repo.dir, ['worktree', 'add', '--quiet', '--detach', '--', folder, lane.target]);
-  switchTo(folder, lane.branch, lane.base, lane.exists);
-  lockSlot(repo, folder, lane.branch);
+  enterLane(folder, lane);
+  lockSlot(repo, folder, lane.label, lane.branch);
   return { folder, slot: slotName, created: true, kept: [] };
 }
+
+/** Writes the slot's fill file for the lane: its `branch` field holds the lane's label (a snapshot's `snapshot <8>`). */
+const startFill = (repo, slotName, lane) => startFillFile(commonDirOf(repo), slotName, { branch: lane.label, target: lane.target });
 
 /** Clone mode: reuses a free slot as takeFreeSlot does, but detached at the target; the fill brings its ignored files back. */
 function takeFreeSlotToFill(repo, slot, lane) {
   const { keep, kept } = keptDependencies(repo, slot.folder, lane.target);
-  const fillFile = startFillFile(commonDirOf(repo), slot.slot, lane);
+  const fillFile = startFill(repo, slot.slot, lane);
   gitText(slot.folder, ['switch', '--quiet', '--detach', lane.target]);
   gitText(slot.folder, ['clean', '-fdxq', ...keep.flatMap((name) => ['-e', name])]); // one -f, as in takeFreeSlot
-  lockSlot(repo, slot.folder, lane.branch, null);
+  lockSlot(repo, slot.folder, lane.label, null);
   // what the clean kept (the dependency folders, a git repository inside an ignored folder) is never cloned over
   const pending = { lane, fillFile, fill: 'ignored', except: ignoredEntries(slot.folder), notes: [] };
   return { folder: slot.folder, slot: slot.slot, created: false, kept, pending };
@@ -168,10 +179,10 @@ function takeFreeSlotToFill(repo, slot, lane) {
 
 /** Clone mode: adds `lane-<number>` as an empty worktree detached at the target (`--no-checkout`), locked, for fillFresh. */
 function createSlotToFill(repo, folder, slotName, lane, staleEntry) {
-  const fillFile = startFillFile(commonDirOf(repo), slotName, lane);
+  const fillFile = startFill(repo, slotName, lane);
   if (staleEntry) gitText(repo.dir, ['worktree', 'remove', '--', folder]); // a missing folder: only its entry goes
   gitText(repo.dir, ['worktree', 'add', '--quiet', '--no-checkout', '--detach', '--', folder, lane.target]);
-  lockSlot(repo, folder, lane.branch, null);
+  lockSlot(repo, folder, lane.label, null);
   return { folder, slot: slotName, created: true, kept: [], pending: { lane, fillFile, fill: 'fresh', except: [], notes: [] } };
 }
 
@@ -182,7 +193,7 @@ function createSlotToFill(repo, folder, slotName, lane, staleEntry) {
  */
 function takeBrokenSlot(repo, slot, lane) {
   const tree = slotTree(repo, slot.folder);
-  const fillFile = startFillFile(commonDirOf(repo), slot.slot, lane);
+  const fillFile = startFill(repo, slot.slot, lane);
   const notes = [`${slot.slot} was broken (${slot.why}): emptied and filled again`];
   removeStaleIndexLock(slot.folder); // the dead fill may have been killed inside a git command
   if (tree.branch !== null) {
@@ -190,7 +201,7 @@ function takeBrokenSlot(repo, slot, lane) {
     if (isNotStarted(repo, tree.branch)) notes.push(deleteReleasedBranch(repo, tree.branch));
   }
   if (tree.locked) gitText(repo.dir, ['worktree', 'unlock', '--', slot.folder]);
-  lockSlot(repo, slot.folder, lane.branch, null);
+  lockSlot(repo, slot.folder, lane.label, null);
   return { folder: slot.folder, slot: slot.slot, created: false, kept: [], pending: { lane, fillFile, fill: 'refill', except: [], notes } };
 }
 
@@ -209,15 +220,16 @@ function firstStillIn(repo, slots, state) {
   return null;
 }
 
-function claimUnderLock(repo, branch, base, cloning) {
+/** `lane`: `{ branch, base, label }`, branch null for a snapshot (several snapshots of one commit may fill at once). */
+function claimUnderLock(repo, { branch, base, label }, cloning) {
   const worktrees = listWorktrees(repo);
-  const holder = worktrees.find((entry) => entry.branch === branch);
+  const holder = branch === null ? undefined : worktrees.find((entry) => entry.branch === branch);
   if (holder !== undefined) throw new UsageError(`branch ${branch} is checked out in ${holder.path}: work there, or land or release it first`);
   const slots = poolSlots(repo);
-  const filling = slots.find((slot) => slot.state === 'filling' && slot.fillFile.branch === branch);
+  const filling = branch === null ? undefined : slots.find((slot) => slot.state === 'filling' && slot.fillFile.branch === branch);
   if (filling !== undefined) throw new UsageError(`branch ${branch} is being filled in ${filling.folder} (${filling.why}): wait for that claim to end`);
-  const tip = branchTip(repo, branch);
-  const lane = { branch, base, exists: tip !== null, target: tip ?? base };
+  const tip = branch === null ? null : branchTip(repo, branch);
+  const lane = { branch, base, label, exists: tip !== null, target: tip ?? base };
   const [reuse, create] = cloning ? [takeFreeSlotToFill, createSlotToFill] : [takeFreeSlot, createSlot];
   const free = firstStillIn(repo, slots, 'free');
   if (free !== null) return reuse(repo, free, lane);
@@ -247,16 +259,16 @@ function endFill(repo, { folder, slot }, { lane, fillFile }) {
   const tree = slotTree(repo, folder);
   const head = gitText(folder, ['rev-parse', '--verify', 'HEAD^{commit}']);
   const unchanged = found?.pid === fillFile.pid && found.startedAt === fillFile.startedAt
-    && tree?.lockReason === `${LOCK_REASON_PREFIX} ${lane.branch}` && tree.branch === null && head === lane.target;
+    && tree?.lockReason === `${LOCK_REASON_PREFIX} ${lane.label}` && tree.branch === null && head === lane.target;
   if (!unchanged) throw new Error(`${folder} changed during its fill (its fill file, lock, branch or HEAD), so it is not handed out`);
-  switchTo(folder, lane.branch, lane.base, lane.exists); // the same commit: no file is written
+  enterLane(folder, lane); // the same commit: no file is written
   deleteFillFile(commonDir, slot);
 }
 
 /** Clone mode: the fill outside the lock, then the end step under it; returns the claim's `fill` field. */
 function fillAndEnd(repo, claimed, pending, why) {
   const filled = runFill(repo, claimed.folder, pending);
-  withPoolLock(commonDirOf(repo), `claim ${pending.lane.branch} end`, () => endFill(repo, claimed, pending));
+  withPoolLock(commonDirOf(repo), `claim ${pending.lane.label} end`, () => endFill(repo, claimed, pending));
   return { mode: filled.mode, entries: filled.entries, seconds: filled.seconds, repaired: filled.repaired, warnings: [...pending.notes, ...filled.warnings], why };
 }
 
@@ -265,28 +277,31 @@ const checkoutFill = ({ mode, why }) => ({ mode, entries: 0, seconds: 0, repaire
 
 /**
  * Hands the lane `branch` a pool folder of `repo`, switched to the branch (made at `base` when new) and locked; in clone mode filled
- * by cloning the main checkout first (see the header).
+ * by cloning the main checkout first (see the header). A snapshot gets a folder the same way but stays detached at `base`, with no
+ * branch, locked as `cs-lane-pool snapshot <8 of base>` until `releaseLane` (a frozen copy of one commit, such as tess tests on).
  * @param {object} repo openRepo's result
- * @param {{ branch: string, base: string, env?: NodeJS.ProcessEnv }} lane `base`: full sha a new branch starts at; `env`: HOME and
- *   session id of the job-made record, and GIT_TIDY_LANE_FILL (lane-fill.mjs cloneSupport)
- * @returns {{ folder: string, slot: string, created: boolean, kept: string[], branch: string, base: string, fill: object, record: string }}
- *   `kept`: dependency folders left in place; `fill`: `{ mode: 'clone'|'checkout', entries, seconds, repaired, warnings, why }` (why:
- *   cloneSupport's reason; warnings: the fill's, and a broken slot's refill); `record`: the job-made outcome
- * @throws {UsageError} bad branch name or sha, branch checked out in another folder or being filled there (named), no main worktree;
- *   PoolBusy; Error when git or the fill fails (the folder is then not handed out)
+ * @param {{ branch?: string|null, base: string, env?: NodeJS.ProcessEnv, snapshot?: boolean }} lane `base`: full sha a new branch
+ *   starts at, or the snapshot's commit; `env`: HOME and session id of the job-made record, and GIT_TIDY_LANE_FILL (cloneSupport)
+ * @returns {{ folder: string, slot: string, created: boolean, kept: string[], branch: string|null, base: string, snapshot: boolean,
+ *   fill: object, record: string }} `kept`: dependency folders left in place; `fill`: `{ mode: 'clone'|'checkout', entries, seconds,
+ *   repaired, warnings, why }` (why: cloneSupport's reason; warnings: the fill's, and a broken slot's refill); `record`: job-made outcome
+ * @throws {UsageError} bad branch name or sha, a snapshot with a branch, branch checked out in another folder or being filled there
+ *   (named), no main worktree; PoolBusy; Error when git or the fill fails (the folder is then not handed out)
  */
-export function claimLane(repo, { branch, base, env = process.env }) {
-  checkBranchName(repo, branch);
-  refuseBaseBranch(repo, branch);
+export function claimLane(repo, { branch = null, base, env = process.env, snapshot = false }) {
+  if (snapshot && branch !== null) throw new UsageError('--snapshot takes no --branch: a snapshot stays detached at --base');
+  if (!snapshot) checkBranchName(repo, branch);
+  if (!snapshot) refuseBaseBranch(repo, branch);
   checkBase(repo, base);
+  const label = snapshot ? `${SNAPSHOT_LABEL} ${base.slice(0, SHORT_SHA)}` : branch;
   const worktrees = listWorktrees(repo);
   const pool = poolFolderOf(repo, worktrees); // UsageError when there is no main worktree folder
   mkdirSync(pool, { recursive: true }); // cloneSupport reads the pool's volume; the first worktree add would make it anyway
   const support = cloneSupport(worktrees[0].path, pool, env);
   const cloning = support.mode === CLONE_MODE;
-  const { pending, ...claimed } = withPoolLock(commonDirOf(repo), `claim ${branch}`, () => claimUnderLock(repo, branch, base, cloning));
+  const { pending, ...claimed } = withPoolLock(commonDirOf(repo), `claim ${label}`, () => claimUnderLock(repo, { branch, base, label }, cloning));
   const fill = cloning ? fillAndEnd(repo, claimed, pending, support.why) : checkoutFill(support);
-  return { ...claimed, branch, base, fill, record: recordFolder(env, claimed.folder, 'made', 'git-tidy lane claim') };
+  return { ...claimed, branch, base, snapshot, fill, record: recordFolder(env, claimed.folder, 'made', 'git-tidy lane claim') };
 }
 
 /** Why the lane in `tree` may not be released (unfinished work, branch not landed), or null. */

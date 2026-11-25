@@ -238,6 +238,13 @@ node_modules) stay warm, and no folder is left behind:
   14 a git command or the fill failed (the folder is not handed out). `--json` prints
   `{ folder, slot, created, kept, branch, base, fill, record, ready, installs }`, with `fill` as
   `{ mode, entries, seconds, repaired, warnings, why }` (`mode` is `clone` or `checkout`; `why` says why).
+- `lane claim --repo <abs> --snapshot --base <40-hex sha> [--json]`: a snapshot, a frozen copy of one commit (the boss claims one
+  per tess at the commit a round landed, so tess tests on it while main moves on). It gets a folder and is filled exactly like a
+  lane (clone fill or checkout, then the installs), but stays detached at `--base`: no branch is made, and its lock is
+  `cs-lane-pool snapshot <first 8 of the sha>`. `--snapshot` with `--branch` is a usage error (exit 2); the other exit codes are a
+  claim's. Output and `--json` are a claim's plus `snapshot: true` (in `--json`, `snapshot` is false for a lane and `branch` is null
+  for a snapshot). `lane list` shows it as `busy snapshot <8>` and no claim takes it; `lane release` frees it once its tree is
+  clean (unlock, nothing to delete), and `lane reclaim` then treats it like any free folder.
 - `lane list --repo <abs> [--json]`: one line per folder, `lane-<n> free|busy|missing|filling|broken <why>`: `filling <branch>
   pid <n>` while a claim fills it, `broken the fill of <branch> by pid <n> stopped` when that claim died or its fill failed. In
   `--json` each slot also has `fillFile` (the fill file's `{ pid, branch, target, startedAt }`, or null).

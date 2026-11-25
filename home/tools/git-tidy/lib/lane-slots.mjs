@@ -1,8 +1,8 @@
 // Purpose: read a repository's lane folder pool: the folders `<main worktree>/.claude/worktrees/lane-<n>` and, for each, whether it is
 //   free for the next lane, busy (with why), missing (a worktree entry whose folder is gone), filling (a claim is filling it) or
 //   broken (the claim that filled it is gone).
-// Exports: POOL_FOLDER, LOCK_REASON_PREFIX, poolFolderOf, commonDirOf, slotKey, isPoolSlot, contentBusyWhy, poolSlots, readSlot, lastUsedMs,
-//   removalLossWhy, nestedRepositoryWhy, nestedRepositoryPaths, entryIdOf, staleIndexWhy, staleEntryLossWhy.
+// Exports: POOL_FOLDER, LOCK_REASON_PREFIX, SNAPSHOT_LABEL, poolFolderOf, commonDirOf, slotKey, isPoolSlot, contentBusyWhy, poolSlots,
+//   readSlot, lastUsedMs, removalLossWhy, nestedRepositoryWhy, nestedRepositoryPaths, entryIdOf, staleIndexWhy, staleEntryLossWhy.
 // Invariants: reads only. Every fact comes from git through runGit (no shell, `-z` lists, full shas) or lstat, and a fact that cannot
 //   be read makes the folder busy, never free (fail closed). Slot paths are compared as real paths (realpathSync.native), case-folded on
 //   win32 and darwin. A folder at a slot path that is not a worktree of this repository, or where git finds another worktree root (its
@@ -25,6 +25,8 @@ import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
 export const POOL_FOLDER = join('.claude', 'worktrees');
 /** `git worktree lock --reason "cs-lane-pool <branch>"`: the lock a claim puts on the folder it hands out. */
 export const LOCK_REASON_PREFIX = 'cs-lane-pool';
+export const SNAPSHOT_LABEL = 'snapshot'; // a snapshot claim (no branch, detached) locks with `cs-lane-pool snapshot <8 of its sha>`
+const SNAPSHOT_LOCK = `${LOCK_REASON_PREFIX} ${SNAPSHOT_LABEL} `;
 const FOLDED = process.platform === 'win32' || process.platform === 'darwin';
 const SLOT_NAME = new RegExp('^lane-([1-9][0-9]{0,5})$', FOLDED ? 'i' : ''); // `Lane-2` is the same folder on a case-folding disk
 const GIT_LOCK_FILES = ['index.lock', 'HEAD.lock'];
@@ -104,7 +106,7 @@ export function contentBusyWhy(repo, tree) {
 
 /** Why a registered, present worktree is busy, or null when it is free. */
 function busyWhy(repo, tree) {
-  if (tree.locked) return `locked${tree.lockReason ? ` (${tree.lockReason})` : ''}`;
+  if (tree.locked) return (tree.lockReason ?? '').startsWith(SNAPSHOT_LOCK) ? tree.lockReason.slice(LOCK_REASON_PREFIX.length + 1) : `locked${tree.lockReason ? ` (${tree.lockReason})` : ''}`;
   if (tree.branch !== null) return `holds branch ${tree.branch}, not locked (a claim stopped before its lock, or it was switched by hand)`;
   if (!tree.detached) return 'its HEAD is neither a branch nor detached';
   return contentBusyWhy(repo, tree);

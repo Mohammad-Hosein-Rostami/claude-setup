@@ -2,9 +2,10 @@
 //   print text lines or one JSON object, return the exit code.
 // Exports: LANE_USAGE, runLaneCommand.
 // Exit codes: claim 0 claimed and ready, 1 claimed but an install failed (the "lane not ready" lines; the folder is not handed out),
-//   2 usage (bad sha, a branch that fails check-ref-format, a branch checked out or being filled in another folder: named), 4 the pool
-//   lock stayed held by another live claim, 14 a git command or the clone fill failed (the folder is not handed out). list 0.
-//   release 0 detached, 3 refused (why). reclaim 0, 1 a removal failed.
+//   2 usage (bad sha, a branch that fails check-ref-format, --snapshot with --branch, a branch checked out or being filled in another
+//   folder: named), 4 the pool lock stayed held by another live claim, 14 a git command or the clone fill failed (the folder is not
+//   handed out). A snapshot claim (--snapshot) has the same codes. list 0. release 0 detached, 3 refused (why). reclaim 0, 1 a
+//   removal failed.
 //   Every command: 2 usage, 4 pool lock busy, 14 git failed.
 // Invariants: --repo and --folder are absolute paths; only lane-pool.mjs writes; a job-made record that could not be written is one stderr
 //   line (the folder is then not swept by the job-leftover sweep, the safe side).
@@ -16,6 +17,7 @@ import { PoolBusy } from './pool-lock.mjs';
 import { openRepo } from './repo.mjs';
 
 export const LANE_USAGE = 'usage: git-tidy.mjs lane claim --repo <abs> --branch <name> --base <40-hex sha> [--json]\n'
+  + '       git-tidy.mjs lane claim --repo <abs> --snapshot --base <40-hex sha> [--json]\n'
   + '       git-tidy.mjs lane list --repo <abs> [--json]\n'
   + '       git-tidy.mjs lane release --repo <abs> --folder <abs lane folder> [--json]\n'
   + '       git-tidy.mjs lane reclaim --repo <abs> [--json]';
@@ -29,16 +31,18 @@ const CLI = fileURLToPath(new URL('../git-tidy.mjs', import.meta.url));
 
 function parseLaneArgs([command, ...rest]) {
   if (!Object.hasOwn(NEEDS, command ?? '')) throw new UsageError(LANE_USAGE);
-  const options = { command, json: false, repo: null, branch: null, base: null, folder: null };
+  const options = { command, json: false, snapshot: false, repo: null, branch: null, base: null, folder: null };
   for (let i = 0; i < rest.length; i++) {
     const name = FLAGS[rest[i]];
     if (rest[i] === '--json') options.json = true;
+    else if (rest[i] === '--snapshot' && command === 'claim') options.snapshot = true;
     else if (name !== undefined && NEEDS[command].includes(name)) {
       if (rest[i + 1] === undefined || rest[i + 1].startsWith('--')) throw new UsageError(`${rest[i]} needs a value. ${LANE_USAGE}`);
       options[name] = rest[++i];
     } else throw new UsageError(`unknown argument ${JSON.stringify(rest[i])} for lane ${command}. ${LANE_USAGE}`);
   }
-  const missing = NEEDS[command].filter((name) => options[name] === null);
+  // a snapshot has no branch (claimLane refuses --snapshot with --branch)
+  const missing = NEEDS[command].filter((name) => options[name] === null && !(options.snapshot && name === 'branch'));
   if (missing.length > 0) throw new UsageError(`lane ${command} needs ${missing.map((name) => `--${name}`).join(', ')}. ${LANE_USAGE}`);
   for (const name of ['repo', 'folder']) {
     if (options[name] !== null && !ABSOLUTE_PATH.test(options[name])) throw new UsageError(`--${name} must be an absolute path, got ${JSON.stringify(options[name])}`);
@@ -57,7 +61,7 @@ function warnRecord(record) {
 function notReadyLines(repoDir, claimed, failed) {
   return [
     `lane not ready: ${failed.command} failed in ${failed.dir}: ${failed.why}`,
-    `  worktree: ${claimed.folder} (branch ${claimed.branch})`,
+    `  worktree: ${claimed.folder} (${claimed.snapshot ? `snapshot, detached at ${claimed.base}` : `branch ${claimed.branch}`})`,
     `  to finish:  cd ${shellWord(installFolder(claimed.folder, failed.dir))} && ${failed.command}`,
     `  to release: node ${shellWord(CLI)} lane release --repo ${shellWord(repoDir)} --folder ${shellWord(claimed.folder)}`,
   ];
@@ -71,7 +75,7 @@ const fillLine = (fill) => (fill.mode === 'checkout' ? `fill: checkout (${fill.w
 const installedText = (install) => `${install.command} in ${install.dir}${install.outcome === 'cloned' ? ' (from the deps cache)' : ''}`;
 
 function runClaim(repo, options) {
-  const claimed = claimLane(repo, { branch: options.branch, base: options.base });
+  const claimed = claimLane(repo, { branch: options.branch, base: options.base, snapshot: options.snapshot });
   warnRecord(claimed.record);
   claimed.fill.warnings.forEach((warning) => console.error(`git-tidy: fill warning: ${warning}`));
   const prep = prepareLane(claimed.folder);
@@ -82,7 +86,7 @@ function runClaim(repo, options) {
     console.error(notReadyLines(options.repo, claimed, failed).join('\n'));
     return EXIT.notReady;
   }
-  if (!options.json) console.log([`lane: ${claimed.folder}`, `kept: ${claimed.kept.length > 0 ? claimed.kept.join(', ') : 'none'}`, `installed: ${installed.length > 0 ? installed.join(', ') : 'none'}`, fillLine(claimed.fill)].join('\n'));
+  if (!options.json) console.log([`lane: ${claimed.folder}`, `kept: ${claimed.kept.length > 0 ? claimed.kept.join(', ') : 'none'}`, `installed: ${installed.length > 0 ? installed.join(', ') : 'none'}`, fillLine(claimed.fill), ...(claimed.snapshot ? ['snapshot: true'] : [])].join('\n'));
   return EXIT.ok;
 }
 
