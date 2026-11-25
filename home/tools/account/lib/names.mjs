@@ -21,7 +21,7 @@ export class AccountError extends Error {
  */
 export const NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const TOKEN_SHAPE = 'sk-ant-[A-Za-z0-9_-]{10,500}';
-/** A token: the whole string, one line (the shape of home/hooks/lib/secrets.mjs, with a length cap). */
+/** A token: the whole string, one line, with a length cap. */
 export const TOKEN_PATTERN = new RegExp(`^${TOKEN_SHAPE}$`);
 const TOKEN_ANYWHERE = /sk-ant-[A-Za-z0-9_-]{10,}/;
 // The line the owner is used to pasting: `export CLAUDE_CODE_OAUTH_TOKEN="..."`, with or without export and quotes.

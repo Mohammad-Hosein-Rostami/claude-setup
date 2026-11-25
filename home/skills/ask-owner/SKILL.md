@@ -61,15 +61,14 @@ Bad -> good:
 
 ## If the box times out
 
-Each question gets its own timed dialog (hook `question-popup.mjs`; the mechanics are in `docs/daily-use.md` "Long or
-unattended runs"). Three outcomes:
-- The owner answers (in the dialog or in the terminal): that answer stands.
-- No answer in the question's own wait (2 min), or "Use recommended": its "(Recommended)" option is taken, else its first; a
-  timeout answer arrives marked UNCONFIRMED. For a small, reversible choice take it, keep going, and say which one you took in the
-  next message.
+An unanswered question takes the recommended option. There is no popup: the question is Claude Code's own terminal question,
+which auto-continues after `askUserQuestionTimeout` (10 min; Claude Code offers 60 s, 5 min, 10 min or never, not 2 min) and
+tells you nobody answered (the mechanics are in `docs/daily-use.md` "Long or unattended runs"). Outcomes:
+- The owner answers in the terminal: that answer stands.
+- No answer: take its "(Recommended)" option, else its first, and mark it UNCONFIRMED. For a small, reversible choice take it,
+  keep going, and say which one you took in the next message.
 - A strategic, big or deleting change never goes ahead on a timeout: make "wait for the owner" its recommended option, so a
   timeout pauses only that part; every other piece of work goes on.
-- With no GUI (ssh) the terminal question stays and auto-continues after 10 min, the same way.
 So an unattended boss asks only real owner calls and logs each default it takes.
 
 Because a timeout takes the recommended option, that option must be safe with nobody there (for a strategic, big or deleting

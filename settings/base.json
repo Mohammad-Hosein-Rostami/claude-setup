@@ -3,7 +3,6 @@
     "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
     "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "400000",
     "BASH_DEFAULT_TIMEOUT_MS": "300000",
-    "CLAUDE_QUESTION_TIMEOUT_S": "120",
     "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-5-5",
     "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "3",
     "CLAUDE_CODE_DISABLE_WORKFLOWS": "1",
@@ -20,18 +19,6 @@
   "model": "opus",
   "autoContinueAtUsageLimit": true,
   "hooks": {
-    "PermissionRequest": [
-      {
-        "matcher": "AskUserQuestion",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/question-popup.mjs\"",
-            "timeout": 800
-          }
-        ]
-      }
-    ],
     "SessionStart": [
       {
         "matcher": "startup|resume",
@@ -72,28 +59,6 @@
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/post-edit.mjs\"",
             "timeout": 20
-          }
-        ]
-      },
-      {
-        "matcher": "AskUserQuestion",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/question-answered.mjs\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "PostToolUseFailure": [
-      {
-        "matcher": "AskUserQuestion",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/question-answered.mjs\"",
-            "timeout": 5
           }
         ]
       }

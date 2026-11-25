@@ -6,16 +6,9 @@ dependencies. Each file starts with a comment that lists its exports.
 
 ## What is here
 
-Asking and remembering (the question popup, `question-popup.mjs`):
-- `timed-ask.mjs`: the timed dialog (osascript, PowerShell or zenity).
-- `timed-ask-text.mjs`: the dialog's text for `timed-ask.mjs`: masked, visible values, detail lines, the timeout rule.
-- `timed-ask-async.mjs`: the same dialog as a promise that an abort signal (or `closeLiveDialogs`, run when the hook is stopped) can close; used by the question popups.
-- `question-reply.mjs`: AskUserQuestion for `question-popup.mjs`, one popup per question with its own wait.
-- `question-answered.mjs`: the mark that the owner answered a question in the terminal (hashes of session, agent and question texts only), so the open popup closes.
+Notes and per-session state:
 - `notify-note.mjs`: the texts and terminal sequences of `notify.mjs` (a question note shows the marker's short header: `a question (Scope)`) and the effective channel.
-- `question-rejected.mjs`: notices in the session transcript that the owner turned the question down in the terminal ("Chat about this", Esc), which runs no tool and leaves no mark, so the open popup closes.
-- `secrets.mjs`: masks the literal secrets in a dialog's text (`maskSecrets`).
-- `session-store.mjs`: small per-session files (`asking-marker.mjs`, `question-answered.mjs` and others). It checks the folder and file
+- `session-store.mjs`: small per-session files (`asking-marker.mjs` and others). It checks the folder and file
   with lstat, never follows a link or waits on a FIFO, and cleans up only its own old files.
 - `session-lock.mjs`: `withSessionLock` makes hooks that record at the same moment take turns, so none drops another's record
   (built on `session-store.mjs`). The lock holds `<pid> <random token>` and is removed only by the run that holds it; a lock is
@@ -25,7 +18,7 @@ Asking and remembering (the question popup, `question-popup.mjs`):
   linked back. If the stale lock's holder releases in that instant and two callers take the name, the moved lock is deleted: a lock
   is not guaranteed to survive a take-over. A caller may name the lock file (`lockFile`).
 - `plain-file.mjs`: the one safe open (no waiting, no link followed, regular files only, no append to a hard-linked file, a size cap) for the session transcript and the other files the hooks and tools read or append.
-- `asking-marker.mjs`: the small file `~/.claude/state/asking/<session>.json` that says a question or permission prompt waits for the owner; one writer here, read by the status line, `notify.mjs` and the board. It holds the first question's short header label (`header`, cut and cleaned by `cleanHeader` at `MAX_HEADER_CHARS` by the writer and by `readAsking`: control, format (bidi overrides and isolates, zero-width) and line-separator characters and `;` are dropped (`UNSAFE_TEXT`, also used for every note text); a marker without one reads as empty) and no question text. It expires by age.
+- `asking-marker.mjs`: the small file `~/.claude/state/asking/<session>.json` that says a question or permission prompt waits for the owner; read by the status line, `notify.mjs` and the board. No hook writes it since the question popup was removed (2026-11-25), so the readers find none. It holds the first question's short header label (`header`, cut and cleaned by `cleanHeader` at `MAX_HEADER_CHARS` by the writer and by `readAsking`: control, format (bidi overrides and isolates, zero-width) and line-separator characters and `;` are dropped (`UNSAFE_TEXT`, also used for every note text); a marker without one reads as empty) and no question text. It expires by age.
 
 Other hooks:
 - `diagnostics.mjs`: used by `post-edit.mjs` (parses a failed format run into `file:line RULE-ID message` lines). `format-trust.mjs`: used by `post-edit.mjs` (whether a project's `format` script may run: `CLAUDE_POST_EDIT_TRUST_FORMAT=1` for the project, else only one plain call of a known formatter, as its binary). `edit-log.mjs`: the per-user hook temp root (`tempRoot`, `checkedTempRoot`) that `team-switch.mjs` keeps its notice markers in.
@@ -46,7 +39,7 @@ Tests live in `tests/` (one folder up from `home/`, at the repo root). Run all o
 
     node --test tests/*.test.mjs
 
-Never run a bare `node --test`. One file at a time works too, for example `node --test tests/timed-ask.test.mjs`.
+Never run a bare `node --test`. One file at a time works too, for example `node --test tests/post-edit.test.mjs`.
 
 ## Watch out for
 

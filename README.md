@@ -10,7 +10,7 @@ repo. `settings.json` is generated from `settings/` (it holds machine paths).
 | `home/CLAUDE.md` | Short global rules: language, who does what (boss, lex, dev, tess, max), questions, git, safety |
 | `home/rules`, `home/standards` | One-line rules (path-scoped) and the longer reference behind them |
 | `home/skills`, `home/agents` | Skills and agents (the Opus session is the boss and delegates; `lex` plans, `dev` builds, `tess` checks, reviews and writes tests by risk, `max` rarely prepares a ship; Haiku helpers look up and run commands) |
-| `home/hooks`, `home/statusline.mjs` | Hooks (post-edit formatter, question popup, session-start notes), status line |
+| `home/hooks`, `home/statusline.mjs` | Hooks (post-edit formatter, notifications, session-start notes), status line |
 | `home/tools/ui-check` | Figma baseline pull, visual compare, responsive and column checks |
 | `settings/`, `plugins/` | Settings layers (base, OS, local) and the plugin list |
 | `tests/`, `tools/` | Repo tests (`node:test`), Brewfile and Windows tool script |
@@ -20,7 +20,7 @@ repo. `settings.json` is generated from `settings/` (it holds machine paths).
 Install on a new machine (macOS or Linux; needs git, Node 22+ and jq), in the folder you keep repos in:
 
     git clone <this repo> claude-setup && cd claude-setup
-    scripts/install.sh               # links, start-up line, settings.json (your own kept as the first layer), plugins, tool deps
+    scripts/install.sh               # links, start-up lines, settings.json (your own kept as the first layer), plugins, tool deps
 
 To check the install, ask `tess` for a setup check.
 

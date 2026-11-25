@@ -67,7 +67,7 @@ Keep extra usage off in claude.ai so nothing can bill credits.
 ## Questions
 - `lex` asks at the start of a job. Any other agent that needs you stops and returns a `questions:` block: each question in
   plain words, what it blocks, 2-4 options with the recommended one first, and a preview when the choice is a layout.
-- The boss asks them as popups in one batch and sends your answers back to the agent.
+- The boss asks them in one batch in the terminal and sends your answers back to the agent.
 - A question with no answer in time: a small, reversible choice takes the recommended option; a big or deleting one waits for
   you. Agents have full access, so there are no permission prompts to answer; `max` still runs an outward step (push,
   publish, deploy) only on an `owner-command:` line.
@@ -75,17 +75,10 @@ Keep extra usage off in claude.ai so nothing can bill credits.
 ## Long or unattended runs
 - Run long or unattended sessions in a plain terminal app (or tmux), not an editor's built-in terminal: closing or
   reloading the editor window ends every session in it. Resume with `claude --model <m> --effort <e> -c`.
-- A question (AskUserQuestion) gets one timed dialog per question, one after the other (hook `question-popup.mjs`; the
-  dialog shows the question, its options with the recommended one first and what happens with no answer), each with its own
-  wait: with no answer in 2 minutes (`CLAUDE_QUESTION_TIMEOUT_S`, 120 s; from 5 questions on less, 114 s for 5, so all popups
-  end before the terminal question auto-continues after 10 minutes) or on "Use recommended" it takes that question's
-  "(Recommended)" option, else its first. An answer taken on timeout arrives with the note "No answer in 2 min: this option
-  was taken by default, not chosen by the owner (UNCONFIRMED)"; a click on "Use recommended" arrives with none. Enter on
-  question 1 means "Use recommended"; on questions 2..N Enter means "Answer in terminal", so a keypress meant for the terminal
-  never answers. "Answer in terminal" (or Esc) opens the normal question; answering it there, or turning it down there, closes
-  the open dialog.
-  With no GUI (ssh, no display) the terminal question stays and auto-continues after 10 minutes (`askUserQuestionTimeout`
-  "10m"; the CLI also takes one or five minutes, or never), a timer that does not count down while that terminal window is
+- A question (AskUserQuestion) is Claude Code's own terminal question; there is no popup (it was removed on 2026-11-25: its
+  PermissionRequest hook kept Claude Code from waiving the dangerous-rm prompt). Left unanswered it auto-continues after 10
+  minutes (`askUserQuestionTimeout` "10m"; the CLI also takes one or five minutes, or never, but not two), Claude is told
+  nobody answered and takes the "(Recommended)" option, marked UNCONFIRMED. The timer that does not count down while that terminal window is
   focused and starts again after any keypress; it never starts in a background session, in screen reader mode or while the
   session is connected to Remote Control (those questions wait for an answer). The recommended option is chosen to be safe
   with nobody there. For a big or deleting change the recommended option is "wait for the owner", so a timeout pauses only

@@ -167,8 +167,8 @@ When a run stops (a pause, a stop, a reboot, a crash or a killed driver) while a
   removed when it has no uncommitted, untracked or ignored file, no assume-unchanged file or skip-worktree file on disk (git
   status does not show edits there) and no commit that is not on the step folder's HEAD or a remote; any other is kept and named in `summary.md`. Any other worktree that appeared during the step (another session's
   lane, say) is only listed, never removed. Branches are never deleted.
-- A question (AskUserQuestion) inside a headless step shows the question popup on the desktop and waits up to 2 minutes before
-  it takes the recommended option, so a step can stall that long while nobody watches.
+- A question (AskUserQuestion) inside a headless step has no popup to answer it (removed on 2026-11-25): Claude Code offers the
+  tool in a `-p` run only when the run has a permission host to receive it, so a step should not count on asking.
 
 ## How you control a run
 

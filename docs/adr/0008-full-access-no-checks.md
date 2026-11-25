@@ -45,6 +45,10 @@ C.
   rebased tip (`land --test`) when both sides changed the same files; check the staged changes and the commit message by hand
   before each commit.
 - The unwiring comes first: settings stop naming a hook before its file is deleted.
+- Update 2026-11-25 (owner): the question popup went too. Bypass mode still asked before a dangerous `rm`; only
+  `CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1` in the launch environment waives that, and Claude Code turns the waiver
+  off while any PermissionRequest hook exists. The installer now writes the variable into the shell start-up files, and an
+  unanswered question takes the recommended option when the terminal question auto-continues (`askUserQuestionTimeout`).
 
 A loses on driver 1. B ignores the owner's later words about the suite queue and the doctor report.
 
