@@ -15,7 +15,7 @@
 //                          --update points them back at this checkout.
 //   --claude-version <v>   install Claude Code <v> (the phase pin, 2.1.326 or newer) and prove it answers, else put the old
 //                          binary back (scripts/install/cli.mjs)
-//   --dry-run              print each change instead of making it, plus the git hooksPath it would set and the settings layers it
+//   --dry-run              print each change instead of making it, plus the git hooksPath it would unset and the settings layers it
 //                          would merge; changes nothing (no file, no git config, no lock).
 //   --uninstall            remove what the install record names, move the moved notes back and put the backed-up files back
 //                          (scripts/install/uninstall.mjs); personal/ stays.
@@ -30,7 +30,7 @@ import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { InstallError, makeContext, note, parseArgs, samePath } from './install/context.mjs';
+import { InstallError, makeContext, note, parseArgs, samePath, warn } from './install/context.mjs';
 import { ensureDir, loadRecord, lockInstall, saveRecord } from './install/record.mjs';
 import { linkHomeItems, removeRetiredLinks } from './install/links.mjs';
 import { removeRetiredState } from './install/retired-state.mjs';
@@ -55,13 +55,30 @@ export const TOOLS_WITH_DEPS = ['ui-check', 'env-names', 'long-run'];
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-function enableGitHooks(ctx) {
-  if (ctx.dryRun) {
-    console.log('would set: git config core.hooksPath .githooks');
+const RETIRED_HOOKS_PATH = '.githooks'; // the commit-hook folder earlier installs set; the hooks were removed (guard-removal plan, 2026-11-25)
+
+/**
+ * Unsets the repo's core.hooksPath when an earlier install set it to .githooks, so git stops looking for the removed commit
+ * hooks. Any other value is the owner's own and is only named. Reading the value changes nothing, so --dry-run reads it too.
+ * @param {object} ctx the run context
+ * @returns {void}
+ */
+function retireGitHooks(ctx) {
+  const git = (...args) => spawnSync('git', ['-C', ctx.repo, 'config', '--local', ...args], { encoding: 'utf8' });
+  const current = git('--get', 'core.hooksPath');
+  if (current.status !== 0) return; // not set: nothing to undo
+  const value = current.stdout.trim();
+  if (value !== RETIRED_HOOKS_PATH) {
+    note(ctx, `git hooksPath left as it is (${value}): not the one this setup set`);
     return;
   }
-  const run = spawnSync('git', ['-C', ctx.repo, 'config', 'core.hooksPath', '.githooks'], { encoding: 'utf8' });
-  if (run.status === 0) note(ctx, 'git hooksPath = .githooks');
+  if (ctx.dryRun) {
+    console.log(`would unset: git config core.hooksPath (${RETIRED_HOOKS_PATH})`);
+    return;
+  }
+  const unset = git('--unset', 'core.hooksPath');
+  if (unset.status === 0) note(ctx, `git hooksPath unset (was ${RETIRED_HOOKS_PATH})`);
+  else warn(`could not unset git core.hooksPath (${unset.stderr.trim()}); run: git config --unset core.hooksPath`);
 }
 
 function install(ctx, record) {
@@ -76,7 +93,7 @@ function install(ctx, record) {
   removeRetiredLinks(ctx, record, LINKS);
   removeRetiredState(ctx, record);
   addStartupLines(ctx, record);
-  enableGitHooks(ctx);
+  retireGitHooks(ctx);
   if (ctx.claudeVersion) installClaude(ctx); // before the plugin commands, which use the new CLI
   if (!ctx.noPlugins) tools.installPlugins(ctx);
   // Settings after plugins; tool dependencies after settings (header).

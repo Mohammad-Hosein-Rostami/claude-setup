@@ -1,7 +1,9 @@
 // Purpose: the one-time cleanup of the state that removed parts of this setup left in ~/.claude (lex-dev-tess plan, 2026-11-24):
 //   the recall index, checkpoints and usage log, the ask queue, the estimate tables and caches, the done-check ledger and runs,
 //   the commit-gate and call-window logs, the session-mode files, the last-seen costs, the ui-proof-gate blocks, the stop-gate
-//   blocks, the agent-budget denials and the MCP discovery verdicts.
+//   blocks, the agent-budget denials and the MCP discovery verdicts; then (guard-removal plan, 2026-11-25) the removed guards'
+//   stores: the Bash guard's remembered allows, answers and bounces, the agent-start record and writer launches, the suite
+//   queue's state and the guard decision log with its rotation files.
 // Exports: RETIRED_STATE (paths relative to ~/.claude), removeRetiredState(ctx, record).
 // Invariants (P15): only the paths in RETIRED_STATE are looked at; one is moved only when lstat shows a real folder or file
 //   owned by the user who runs the install (no uid check on Windows, which has none); a link there is never followed or moved,
@@ -31,6 +33,18 @@ export const RETIRED_STATE = Object.freeze([
   'state/stop-blocks', // the removed stop-gate's block counts
   'state/budget-denied', // an older agent-budget's denial markers; no code reads or writes them
   'state/mcp-discover-verdicts.json', // the removed MCP discovery's verdicts
+  // Guard removal (2026-11-25), as the removed code at 77318f8c names them:
+  'state/guard-allowed', // the Bash guard's allowed literals (lib/allowed-literals.mjs)
+  'state/guard-answered', // the Bash guard's answered commands (lib/answered-commands.mjs)
+  'state/guard-bounced', // the bounce-once digests, also the agent brief gates' (lib/bounce-once.mjs)
+  'state/main-agents', // the agent-start route and cap record (lib/main-agents-store.mjs)
+  'state/agent-writers', // the writer launch records (lib/agent-launches.mjs, lib/writer-agents.mjs)
+  'state/suite', // the suite queue's lock and cache (tools/suite)
+  'logs/guard.jsonl', // the guard decision log (lib/guard-log.mjs)
+  'logs/guard.1.jsonl', // its one rotated copy
+  'logs/guard.1.jsonl.part', // a rotation killed half-way leaves these two temp names
+  'logs/guard.jsonl.new',
+  'logs/.guard.rotate-lock', // the rotation lock
 ]);
 
 const lstatOrNull = (path) => {
