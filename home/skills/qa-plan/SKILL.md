@@ -43,3 +43,17 @@ Write the plan into the detail file before the first check runs.
 
 Done-gate: the plan names every check with its command or `not run (why)`, the acceptance map has no blank line, and the
 edge-case list names what each probe touches.
+
+## Which tess work a change gets (the boss routes by this)
+
+| Change | tess work (`qa:`) | When | Landing |
+|---|---|---|---|
+| docs, comments or text only, `risk: none` | none | - | lands |
+| code, `risk: none` (dependency and non-pixel UI too) | `checks` (+ `deps`, `ui` by kind); tess-write fills untested acceptance lines | once per job, after its last landing, over base..main; nothing waits | lands at once |
+| risky: security, data, money, concurrency, gate, large | `full`: full suite, build, review, edge cases | at once on dev's tip, dev's worktree held | on `landing: ok` |
+| the owner asks (test, review, write tests, check X) | what was asked | at once | as asked |
+| a Claude-facing feature first works (dev's `smoke:` line) | `qa: smoke`: 1-3 real Claude tries, recorded | at once | nothing waits |
+| pixel work | none: dev-pixel and pixel-qa; its logic code follows the rows above | - | - |
+
+tess's brief: `qa:`, `repo:`, `base:`, `tip:`, `spec:`, `acceptance:`, `risk:`, `landing-waits:`; a held worktree adds `worktree:`
+and `hold: yes` (the boss neither lands nor reuses it until tess returns).

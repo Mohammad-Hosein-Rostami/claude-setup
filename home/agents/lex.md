@@ -68,8 +68,9 @@ tasks `after-redesign: yes`.
      (`helpers: dev-part <part> [opus] | lex-scout <question>`) with the files each part owns. Tasks that need nothing from
      each other run in parallel. Each task names
      `risk:` (the classes it will touch: security, data, money, concurrency, gate, large, or none) and `qa:` (the tess work from
-     the routing table in CLAUDE.md; `e2e` only for a final pass the owner asks for). A task that first makes a Claude-facing
-     feature work (a hook, agent, skill, setting, or a tool that starts `claude`) names `qa: smoke` and its trigger command.
+     the routing in CLAUDE.md, whose full table is in `qa-plan`; `e2e` only for a final pass the owner asks for). A task that
+     first makes a Claude-facing feature work (a hook, agent, skill, setting, or a tool that starts `claude`) names `qa: smoke`
+     and its trigger command.
    - Acceptance criteria: each a command with the exit it must return, else the observable behaviour; for behaviour no test
      covers, how the owner checks it. Cover every caller of a changed interface, the install and docs lines the change makes
      stale, and for UI the owner's real width.

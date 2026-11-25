@@ -4,7 +4,7 @@ description: Use when writing or changing docs or text a person reads - README, 
 ---
 
 Rules: X1-X11 (`~/.claude/standards/docs.md`), the Documents table and the no-AI test in `~/.claude/standards/readability.md`,
-C34.
+C34. Project documents are written for people and never mention AI.
 
 1. Find what the change makes stale: grep the changed names, commands and flags in `*.md`, help texts and string files. Could a
    developer with no AI find, run and change it from these docs alone?
