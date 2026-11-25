@@ -37,8 +37,8 @@ One line per item, `<kind> <subject> <detail>`, findings first, then hints (kind
 | `merge-commit <hash> <subject>` | a merge commit reachable from `HEAD` or the base that the base's upstream does not have; with no upstream, every merge commit on the base and on `base..HEAD` |
 | `merged-branch <name> <hash> ancestor` | the branch tip is on the base (a branch created and never committed to also lands here) |
 | `tangled-ref <ref> <n> merge commits ...` | a local branch or a `backup/` tag (full ref name; not the base, not the current branch) that still reaches a merge commit no remote-tracking ref has (with no remote: that the base lacks). Old tangled history stays visible in `git log --graph --all` through such refs |
-| `merged-branch <name> <hash> patch-equal` | every non-merge commit has an equal patch on the base (a rebase or cherry-pick that landed) AND merging the branch into the base would change nothing (`git merge-tree --write-tree` gives the base's own tree). Patch ids ignore whitespace and skip merge commits, so the second proof is what keeps a branch that differs only in indentation, or holds a hand-made change in a merge, from being called merged |
-| `merged-branch <name> <hash> content-equal` | the one content proof for every other branch: merging it into the base changes nothing (`git merge-tree --write-tree` gives the base's own tree, checked for all unmerged branches in one `git merge-tree --stdin` call, `--allow-unrelated-histories` so an orphan branch is compared too), so all its content is already on the base, though no commit or patch of it is (a lane squashed into one commit, a test branch whose lane landed it as it is, a commit and its revert). Reflogs and patch ids alone never make a branch merged: a fold the lane changed later (a fixup, an amend, a removal) stays `unmerged-branch?` |
+| `merged-branch <name> <hash> patch-equal` | every non-merge commit has an equal patch on the base (a rebase or cherry-pick that landed) AND merging the branch into the base would change nothing (`git merge-tree --write-tree` gives the base's own tree, and the blob check below holds). Patch ids ignore whitespace and skip merge commits, so the second proof is what keeps a branch that differs only in indentation, or holds a hand-made change in a merge, from being called merged |
+| `merged-branch <name> <hash> content-equal` | the one content proof for every other branch: merging it into the base changes nothing (`git merge-tree --write-tree` gives the base's own tree, checked for all unmerged branches in one `git merge-tree --stdin` call), and a blob check that merges nothing holds: every path the branch changed since its merge base is the same blob on the base as on its tip (`git diff-tree`, which runs no merge driver or attribute, so `merge=ours` or `merge=union` cannot fake it; an orphan branch or one with more than one merge base is never content-equal). So all its content is already on the base, though no commit or patch of it is (a lane squashed into one commit, a test branch whose lane landed it as it is, a commit and its revert). Reflogs and patch ids alone never make a branch merged: a fold the lane changed later (a fixup, an amend, a removal) stays `unmerged-branch?` |
 | `merged-tag <tag> <hash> patch-equal` | a `backup/` tag that is not on the base's history but whose work is all on the base by the same test: a temporary backup made before a history clean-up. A tag that is an ancestor of the base (a release tag) is never reported |
 | `superseded-copy <name> <hash> all its work is in <B>` | an older copy of a re-done lane: it is in a family with B (same name once `-<n>`, `-fix`, `-fixes`, `-v<n>`, `-redo` are cut off, or the same tip) and its tip is an ancestor of B, or every `git patch-id --verbatim` of `base..<name>` is in `base..B` (`--verbatim`: a whitespace-only change is a different patch) and merging `<name>` into B changes nothing (`git merge-tree --write-tree` gives B's own tree); a branch with a merge commit only by the ancestor proof. B is never itself a copy; between branches that cover each other the newest committer date stays, then the one checked out in a worktree, then the name. The newest of the family is named by `unlanded-lane?` |
 | `agent-leftover <name> ...` | a `worktree-agent-*` (subagent) or `worktree-wf_*` (workflow agent) branch every commit of which is on the base or on a branch that is not an agent branch, and that no existing worktree has checked out (the Agent tool leaves one behind). It replaces the `merged-branch` line of the same branch |
@@ -78,7 +78,8 @@ and prints why. With `--apply`, in this order, each fact read again from git rig
 2. Each merged worktree is kept (`kept ...: <reason>`) when any of these holds, else `git worktree remove` (never `--force`):
    it is locked; it is the folder the command runs from or contains the shell's current folder; its branch is no longer
    merged; it has any `git status --porcelain` output (untracked files included, whatever `status.showUntrackedFiles` says)
-   or git status fails; it holds ignored files (not OS clutter: `.DS_Store`, `Thumbs.db`, `desktop.ini`, `._*`) outside `node_modules`, `dist`, `build`, `out`, `coverage`, `.next`,
+   or git status fails; a tracked file is marked assume-unchanged or skip-worktree (`git ls-files -v`; git status does not show
+   edits there); it holds ignored files (not OS clutter: `.DS_Store`, `Thumbs.db`, `desktop.ini`, `._*`) outside `node_modules`, `dist`, `build`, `out`, `coverage`, `.next`,
    `.turbo`, `.cache`, `.nx`, `test-results`, `playwright-report`, `.vite` (up to 5 paths are printed, `+N more`);
    its branch reflog or its HEAD reflog holds commits that are on no other ref (branch, tag, remote-tracking), not on the base
    and not landed there (a pre-rebase copy of a landed commit does not count, nor a commit of another branch the worktree
@@ -90,7 +91,10 @@ and prints why. With `--apply`, in this order, each fact read again from git rig
    courtesy guard, not a lock.
 3. Each merged branch that is not checked out in any remaining worktree and whose reflog holds nothing that is not on the
    base: deleted with `git update-ref -d refs/heads/<name> <tip read a moment ago>`, so a branch that moved since is kept,
-   printing `deleted <name> (was <full hash>)`. Its `branch.<name>.*` config section goes too. A branch name is always passed
+   printing `deleted <name> (was <full hash>)`. The apply reads the base's commit once, after it found the candidates, and
+   every proof compares with that commit; the delete is one `git update-ref --stdin` transaction that also verifies the base
+   still points there, and each worktree removal checks it first. A base that moved (another land, a reset) stops the run:
+   everything not yet removed is kept (`<base> moved during the clean-up (from <sha> to <sha>); stopped, nothing more removed`). Its `branch.<name>.*` config section goes too. A branch name is always passed
    as a full ref, so a tag with the same name is never confused with it.
 
 4. Copies (`superseded-copy`, `agent-leftover`) go the same way (their worktree first, then the branch) with the same safeties, and these
@@ -228,7 +232,8 @@ node_modules) stay warm, and no folder is left behind:
   deletes the branch and keeps the folder (`lane folder <path> detached at <sha> (kept for the next lane)`, JSON `detached`).
 
 Free means: a linked worktree of this repository, unlocked, HEAD detached at a commit on the base, no unfinished operation, no
-`index.lock` or `HEAD.lock`, `git status` (untracked files included) empty. Everything else is busy and is never switched,
+`index.lock` or `HEAD.lock`, `git status` (untracked files included) empty, no file marked assume-unchanged or skip-worktree.
+Everything else is busy and is never switched,
 cleaned or removed: untracked or uncommitted files, a commit not on the base, a rebase in progress, a git lock, a folder holding a
 branch (also one a crashed claim switched but did not lock), and a folder at `lane-<n>` that is not a worktree of this repository.
 Folder paths are compared as real paths, case-folded on Windows and macOS.

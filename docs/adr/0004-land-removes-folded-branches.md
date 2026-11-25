@@ -41,6 +41,22 @@ deleted only when ONE content proof holds: its tip is an ancestor of the base, o
 `content-equal`). Patch ids (`patch-equal`) only name the state of a branch that also passes `merge-tree`. Reflogs and
 landed history are never a reason to delete; they only give the `in <B> (lands with it)` hint of `left:`.
 
+A merge runs the repository's merge drivers and attributes (`merge=ours`, `merge=union`, `merge.default`), which can drop the
+branch's change and still give the base's tree. So every merge proof also needs a check that merges nothing: each path the
+branch changed since its merge base (`git diff-tree --merge-base <base> <tip>`) is the same blob on the base as on the tip
+(not listed by `git diff-tree <base> <tip>`). Plumbing diff-tree runs no driver, attribute or textconv. No merge base (an
+orphan branch) or more than one (criss-cross merges) proves nothing, so such a branch is kept. We chose this over running
+merge-tree without attributes: `.git/info/attributes` and `merge.default` cannot be switched off for one call, while a blob
+comparison needs nothing switched off.
+
+- The proofs of one sweep compare with one base commit, read once the candidates are found. Each branch delete is one
+  `git update-ref --stdin` transaction that also verifies the base still points at that commit, and each worktree removal
+  checks it first; a base that moved (another land, a reset) stops the sweep, and everything not yet removed is kept with
+  the reason. A proof is about the tip commit that was read, which the delete also verifies.
+- A worktree with a file marked assume-unchanged or skip-worktree (`git ls-files -v`: a lowercase tag or `S`) is kept:
+  `git status` does not show edits there, and removing the worktree would lose them. `land` itself refuses such a lane or
+  base checkout for the same reason.
+
 - The sweep holds the rule everywhere: older copies and agent leftover branches whose work is on another branch, not on the
   base, are kept and named under `left:` (prune's `onlyOnBase`). The standalone `git-tidy prune --apply` a person runs by
   hand keeps main's copy rule.
@@ -51,8 +67,8 @@ landed history are never a reason to delete; they only give the `in <B> (lands w
   can be restored with `git branch <name> <sha>` within 2 weeks (`gc.pruneExpire`). A branch whose record cannot be written
   is kept. The log is opened only as a regular file (no symbolic link, no FIFO); anything else in its place stops the whole
   clean-up before it removes anything, with one stderr line, and the land still exits 0.
-- The batch form `git merge-tree --stdin` checks every unmerged branch in one git call; `--allow-unrelated-histories` lets an
-  orphan branch be compared too (it is content-equal only when all its files are on the base as they are).
+- The batch form `git merge-tree --stdin` checks every unmerged branch in one git call (`--allow-unrelated-histories`, so an
+  orphan branch does not abort the batch); only the branches it proves get the two diff-tree calls of the blob check.
 
 ## Consequences
 

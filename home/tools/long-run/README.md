@@ -150,8 +150,8 @@ When a run stops (a pause, a stop, a reboot, a crash or a killed driver) while a
   history but restarts its last tool call), to start a new one only when SendMessage fails, to check each worktree first and
   never start a duplicate. Values from the stream are cut and quoted, so they read as data.
 - **Worktrees and half-made work stay on disk.** At the end of a run, a worktree an agent of the step named in its result is
-  removed when it has no uncommitted, untracked or ignored file and no commit that is not on the step folder's HEAD or a
-  remote; any other is kept and named in `summary.md`. Any other worktree that appeared during the step (another session's
+  removed when it has no uncommitted, untracked or ignored file, no file marked assume-unchanged or skip-worktree (git status
+  does not show edits there) and no commit that is not on the step folder's HEAD or a remote; any other is kept and named in `summary.md`. Any other worktree that appeared during the step (another session's
   lane, say) is only listed, never removed. Branches are never deleted.
 - Each permission prompt inside a headless step shows the timed dialog on the desktop and waits up to 2 minutes before it goes
   ahead, so a step can stall that long while nobody watches.

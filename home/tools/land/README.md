@@ -26,8 +26,9 @@ to see: land it with `--test`.
 
 Steps, in order; nothing changes until every check has passed:
 
-1. Checks: the base checkout has a branch checked out, no unfinished rebase or merge and no changed or untracked file; the branch
-   exists and is not the base; when the branch has a worktree, that worktree is clean too and is not the main worktree.
+1. Checks: the base checkout has a branch checked out, no unfinished rebase or merge, no changed or untracked file and no file
+   marked assume-unchanged or skip-worktree (git status does not show edits there); the branch exists and is not the base; when
+   the branch has a worktree, that worktree is clean in the same way and is not the main worktree.
 2. Overlap: the base's sha is read once; the files both the base and the lane changed since their merge base (a rename counts
    as both paths) decide whether a test must run. A lane with no commit in common with the base is refused; so is a needed
    test for a branch with no worktree to run it in.
@@ -51,7 +52,9 @@ Steps, in order; nothing changes until every check has passed:
    (`../git-tidy/README.md`, "prune"), held to the one rule: only branches whose content is on the base go ("Folded
    branches" below), each with its clean worktree. Older copies and agent leftover branches whose work is on another branch,
    not on the base, are kept (`its work is in <B>, not all on <base>`); the standalone `git-tidy prune --apply` still removes
-   them. A dirty, locked or recently used worktree, a branch that moved, or any doubt keeps the branch, with the reason. A git
+   them. A dirty, locked or recently used worktree (a file marked assume-unchanged or skip-worktree counts as dirty), a branch
+   that moved, or any doubt keeps the branch, with the reason. The sweep compares with one base commit; a base that moves
+   meanwhile stops it, and the rest is kept (`<base> moved during the clean-up ...; stopped, nothing more removed`). A git
    older than 2.40 (no `git merge-tree --stdin`) skips the sweep with one stderr line; the landing stands, exit 0. An unfinished rebase or merge in any worktree skips the sweep (`cleanup skipped: <reason>`); a later
    `land` or `git-tidy prune --apply` does it. A deletion log that is not safe to write stops the sweep before it removes
    anything: one stderr line, exit 0. Then `left:` names every branch still there: `in <B> (lands with it)` (all its commits
@@ -85,7 +88,9 @@ old branch then has commits the base never got, so no ancestry or `git cherry` t
 
 One content proof decides (decision record `docs/adr/0004-land-removes-folded-branches.md`): a branch is deleted only when
 its tip is an ancestor of the base, or `git merge-tree --write-tree <base> <branch>` prints exactly the base's tree, so
-merging it would change nothing and all its content is already on the base (`content-equal`). A fold that landed as it is,
+merging it would change nothing and all its content is already on the base (`content-equal`). Because a merge runs merge
+drivers and attributes (`merge=ours`, `merge=union`) that can drop the branch's change, a blob check that merges nothing must
+hold too: every path the branch changed since its merge base is the same blob on the base as on its tip. A fold that landed as it is,
 in other commits (a squash, a plain cherry-pick), goes. A fold the lane changed later (the folded commit fixed up or
 amended, a file removed again, a commit dropped by `rebase --onto`) stays and is named under `left:`: look at it, then
 delete it by hand with `git branch -D`. Reflogs and patch ids never delete a branch on their own.
