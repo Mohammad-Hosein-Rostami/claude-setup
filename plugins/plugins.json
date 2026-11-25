@@ -9,6 +9,10 @@
       "source": "github:anthropics/claude-plugins-official"
     },
     {
+      "name": "openai-codex",
+      "source": "github:openai/codex-plugin-cc"
+    },
+    {
       "name": "gitkraken",
       "source": "installed by the GitKraken app; do not copy files",
       "optional": true
@@ -17,7 +21,8 @@
   "enabled": [
     "frontend-design@anthropic-plugin-directory",
     "typescript-lsp@claude-plugins-official",
-    "figma@claude-plugins-official"
+    "figma@claude-plugins-official",
+    "codex@openai-codex"
   ],
   "disabled": [
     "playwright@anthropic-plugin-directory",

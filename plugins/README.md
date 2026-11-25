@@ -8,6 +8,16 @@ each plugin is on, off, or on per project. The ids are `<plugin>@<marketplace>`.
 `frontend-design@anthropic-plugin-directory`, `typescript-lsp@claude-plugins-official` and `figma@claude-plugins-official`
 are on in every session. No reason beyond that is recorded.
 
+`codex@openai-codex` (OpenAI's Codex plugin, from `openai/codex-plugin-cc`) is on in every session: its `/codex:*` commands
+ask Codex for a second review or hand it a task. It needs the `codex` CLI, logged in, on each machine; how to use it is in
+[docs/daily-use.md](../docs/daily-use.md), "Codex". Its review gate (a Stop hook that blocks Claude from stopping until a
+Codex review passes) stays off, because this setup has no hook that blocks Claude
+([docs/adr/0008-full-access-no-checks.md](../docs/adr/0008-full-access-no-checks.md)). The plugin keeps the gate off unless
+`/codex:setup --enable-review-gate` is run in a repository, and nothing in this setup runs that. The plugin has no setting
+for it in `settings.json`: the choice is stored per repository in the plugin's own data folder, and
+`/codex:setup --disable-review-gate` turns it off again. The Stop hook itself is always registered; with the gate off it
+only prints a note when a Codex task is still running.
+
 ## Off everywhere, on per project
 
 `superdesign@anthropic-plugin-directory` and `miro@claude-plugins-official` are off in every session to keep the skill list
@@ -31,7 +41,7 @@ short. A project that needs one turns it on in its own `.claude/settings.local.j
 
 ## Marketplaces
 
-`anthropic-plugin-directory`, `claude-plugins-official` and `gitkraken`. `plugins.json` says where each one comes from.
+`anthropic-plugin-directory`, `claude-plugins-official`, `openai-codex` and `gitkraken`. `plugins.json` says where each one comes from.
 
 ## What the installer does with plugins
 

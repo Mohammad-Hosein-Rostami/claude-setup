@@ -138,6 +138,24 @@ History stays one straight line: no merge commits, no branch merged into another
 - The two commands: `node ~/.claude/tools/git-tidy/git-tidy.mjs check` (what is left to clean) and `... prune --apply`.
 - Agents never push unless you ask.
 
+## Codex
+The install turns on OpenAI's Codex plugin (`codex@openai-codex`), so you can ask Codex for a second opinion from a Claude
+Code session. You start each command yourself; the agents (`lex`, `dev`, `tess`) do not use Codex.
+- `/codex:review`: a read-only Codex review of your uncommitted changes, or of the branch with `--base main`.
+- `/codex:adversarial-review`: a read-only review that challenges the design; add focus text, such as
+  `look for race conditions`.
+- `/codex:rescue`: hands a task to Codex (investigate a bug, try a fix) through the `codex:codex-rescue` agent.
+- `/codex:transfer`: carries the current session over to Codex and prints a `codex resume <id>` command.
+- `/codex:status`, `/codex:result` and `/codex:cancel`: follow, read or stop a Codex job started with `--background`.
+- `/codex:setup`: checks that Codex is installed and logged in.
+
+Codex use counts against the usage limits of the ChatGPT plan that `codex` is logged in with.
+
+Each machine needs this once: install the `codex` CLI (`npm install -g @openai/codex`), run `codex login`, then run
+`/codex:setup` in a Claude Code session. The review gate (a Stop hook that keeps Claude from stopping until a Codex review
+passes) stays off: do not run `/codex:setup --enable-review-gate`. Why, and where the plugin keeps that choice:
+[plugins/README.md](../plugins/README.md).
+
 ## Keeping context
 - Auto-compaction runs at a 400000-token window (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`); the status line shows the
   context size. Run `/compact` at a natural seam, not mid-step.
