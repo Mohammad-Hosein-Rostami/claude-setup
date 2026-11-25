@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { once } from 'node:events';
+import { fileURLToPath } from 'node:url';
 import { resumeCommand } from '../home/tools/long-run/lib/cli-run.mjs';
 import { RunBusy, driverAlive, isPidAlive, readJson, runPaths } from '../home/tools/long-run/lib/run-store.mjs';
 import { cli, killRunProcesses, makeSandbox, readCalls, waitFor } from './long-run-helpers.mjs';
@@ -13,7 +14,7 @@ import { cli, killRunProcesses, makeSandbox, readCalls, waitFor } from './long-r
 const TO = 'acct-b';
 const SETUP_WAIT_MS = 30000;
 const CHILD_WAIT_MS = 10000;
-const STARTING_DRIVER = new URL('./long-run-account-switch-lock-driver.mjs', import.meta.url);
+const STARTING_DRIVER = fileURLToPath(new URL('./long-run-account-switch-lock-driver.mjs', import.meta.url));
 const NO_LOCK = 'none';
 
 class StopBeforeDriver extends Error {}
@@ -35,7 +36,7 @@ test('resume --account while a driver holds the lock but has not yet written dri
     assert.equal(existsSync(paths.lock), false, 'setup: the paused driver left no lock');
 
     // The starting driver: lock taken, driver.json still the paused driver's.
-    helper = spawn(process.execPath, [STARTING_DRIVER.pathname, box.root, paths.runId], { env: box.env, stdio: ['pipe', 'pipe', 'inherit'] });
+    helper = spawn(process.execPath, [STARTING_DRIVER, box.root, paths.runId], { env: box.env, stdio: ['pipe', 'pipe', 'inherit'] });
     let said = '';
     helper.stdout.on('data', (chunk) => { said += chunk; });
     await waitFor(() => said.includes('locked'), CHILD_WAIT_MS, 'setup: the starting driver took the lock');
