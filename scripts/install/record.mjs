@@ -142,9 +142,13 @@ export function saveRecord(ctx, record) {
   writeFileSync(path, text);
 }
 
-/** Adds one made thing ({kind, path, ...}) to the record once; a later entry for the same kind and path replaces it. */
+/**
+ * Adds one made thing ({kind, path, ...}) to the record once; a later entry for the same kind and path replaces it. A `line` is
+ * also keyed by its text: one file can hold several of the installer's lines (the claude-as line and the rm-waiver lines).
+ */
 export function remember(record, entry) {
-  const index = record.made.findIndex((made) => made.kind === entry.kind && samePath(made.path, entry.path));
+  const sameLine = (made) => entry.kind !== 'line' || made.line === entry.line;
+  const index = record.made.findIndex((made) => made.kind === entry.kind && samePath(made.path, entry.path) && sameLine(made));
   if (index === -1) record.made.push(entry);
   else record.made[index] = { ...record.made[index], ...entry };
 }

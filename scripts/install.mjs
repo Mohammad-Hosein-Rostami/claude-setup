@@ -11,8 +11,8 @@
 //                          track (or deleted in a pull) into it; link ~/.claude/project-notes to personal/project-notes, write ~/.claude/CLAUDE.md (the marker line and
 //                          @ imports of home/CLAUDE.md and personal/CLAUDE.md; scripts/install/personal.mjs), docs/catalog.md
 //                          (git-ignored, from scripts/catalog.mjs; a problem there is only a warning), the claude-as
-//                          start-up line, settings.json, plugins, tool dependencies; safe to repeat (a second run changes
-//                          nothing). --update is the same run, by name. A repo path an @ import line cannot carry (a space,
+//                          start-up line, the dangerous-rm waiver lines (scripts/install/rm-waiver.mjs), settings.json,
+//                          plugins, tool dependencies; safe to repeat (a second run changes nothing). --update is the same run, by name. A repo path an @ import line cannot carry (a space,
 //                          @, #, a quote, a non-ASCII letter) stops it with exit 1 before anything changes. It also unsets git's
 //                          core.hooksPath when that is still the .githooks an earlier install set. settings.json is built from
 //                          the machine's own earlier settings (first layer, new machine only), settings/base.json, <os>.json
@@ -46,6 +46,7 @@ import { linkHomeItems, removeRetiredLinks } from './install/links.mjs';
 import { removeRetiredState } from './install/retired-state.mjs';
 import { PERSONAL_ITEMS, checkImportPath, installPersonal } from './install/personal.mjs';
 import { addStartupLines } from './install/startup.mjs';
+import { addRmWaiverLines } from './install/rm-waiver.mjs';
 import { buildSettings, isNewMachine } from './install/settings.mjs';
 import { tagRoot } from './install/pin.mjs';
 import { uninstall } from './install/uninstall.mjs';
@@ -135,6 +136,7 @@ function install(ctx, record) {
   removeRetiredLinks(ctx, record, LINKS);
   removeRetiredState(ctx, record);
   addStartupLines(ctx, record);
+  addRmWaiverLines(ctx, record);
   retireGitHooks(ctx);
   if (ctx.claudeVersion) installClaude(ctx); // before the plugin commands, which use the new CLI
   if (!ctx.noPlugins) tools.installPlugins(ctx);

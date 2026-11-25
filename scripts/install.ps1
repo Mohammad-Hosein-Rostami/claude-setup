@@ -4,7 +4,8 @@
 # Usage: powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-Update [-To <tag>]] [-Uninstall] [-DryRun] [-NoPlugins]
 #          [-NoTools] [-ClaudeVersion <x.y.z>]
 # Invariants: holds no install step of its own; it passes the PowerShell profile path ($PROFILE.CurrentUserAllHosts), which only
-#   PowerShell knows, so install.mjs can add the claude-as start-up line there. The exit code is install.mjs's.
+#   PowerShell knows, so install.mjs can add the claude-as start-up line and the dangerous-rm waiver line there. The exit code
+#   is install.mjs's.
 # NOT VERIFIED: written on a Mac; the owner's Windows run (phase 7 r9-windows) is its first run.
 param([switch]$Update, [string]$To = '', [switch]$Uninstall, [switch]$DryRun, [switch]$NoPlugins, [switch]$NoTools,
   [string]$ClaudeVersion = '')
