@@ -4,7 +4,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { buildCatalog } from '../scripts/catalog.mjs';
 
+const REPO_DIR = fileURLToPath(new URL('..', import.meta.url));
 const read = (relative) => readFileSync(fileURLToPath(new URL(`../${relative}`, import.meta.url)), 'utf8');
 
 // The owner's own language (Persian) is in personal/CLAUDE.md; the shared text keeps the user's-language rule and its compaction line.
@@ -15,10 +17,9 @@ test('home/CLAUDE.md names user-language replies, the compaction language and th
   assert.match(text, /When compacting, keep the goal, the owner's constraints and language/);
   assert.doesNotMatch(text, /Persian/i, 'one person\'s language is personal');
   assert.match(text, /Confirm every outward-facing action \(push, publish, deploy, PR merge, prod-host writes\)\./);
-  // max ships: it prepares the outward step and runs it only on the owner's own words; while any max runs, an outward ask needs a
-  // click (the guard's timed ask enforces it)
-  assert.match(text, /`max` prepares them \(release notes, deploy and rollback plans, exact commands\) and stops; it runs one only on an\s+`owner-command:` line \(the owner's chat words\)\./);
-  assert.match(text, /Permission prompts \(any tool, risky ones too\) go ahead as Allow after 2 minutes unless denied;\s+while any `max` runs, an outward one needs a click\./);
+  // max ships: it prepares the outward step and runs it only on the owner's own words (the timed-allow click rule left with the
+  // permission hook, 40087aca)
+  assert.match(text, /`max` prepares them and stops; it runs one only on an `owner-command:` line \(the owner's chat words\)\./);
   assert.match(text, /No secrets in code, logs, commits or command lines/);
 });
 
@@ -27,16 +28,10 @@ test('home/CLAUDE.md names user-language replies, the compaction language and th
 test('home/CLAUDE.md routes shipping to max, never from a long-run step, and only the boss starts lex, dev, tess and max', () => {
   const text = read('home/CLAUDE.md').replace(/\s+/g, ' ');
   assert.ok(text.includes('Shipping to real users (release, deploy, showcase, incident) -> `max` on the owner\'s call, or after a job\'s last land only if lex\'s plan names a `ship:` target or the owner asked for one; never from a long-run step.'), 'the max routing sentence');
-  assert.ok(text.includes('- Only the boss starts `lex`, `dev`, `tess` and `max`, and it starts no helper (the guard denies both); research goes through `lex`.'), 'the boss-starts line');
+  assert.ok(text.includes('- Only the boss starts `lex`, `dev`, `tess` and `max`, never a helper.'), 'the boss-starts line');
 });
 
-// The plan capped home/CLAUDE.md at 7464 bytes (the landed 7014 plus 450 for the max lanes).
-const CLAUDE_MD_MAX_BYTES = 7464;
-
-test('home/CLAUDE.md stays at or under the plan\'s cap of 7464 bytes', () => {
-  const bytes = Buffer.byteLength(read('home/CLAUDE.md'));
-  assert.ok(bytes <= CLAUDE_MD_MAX_BYTES, `${bytes} bytes`);
-});
+// The size cap of home/CLAUDE.md is pinned by size-caps.test.mjs (the one cap).
 
 test('home/CLAUDE.md keeps the usage-limit bullet (L22)', () => {
   assert.match(read('home/CLAUDE.md'), /At a usage limit, tell the owner the reset time\s+and never retry before it\./);
@@ -53,11 +48,11 @@ test('home/CLAUDE.md and docs/daily-use.md name no estimate, status row, done-ch
   }
 });
 
-// The UI skills are preloaded by the dev-ui and dev-pixel agent files (lex-dev-tess plan); the global text keeps the pixel bar.
-test('home/CLAUDE.md keeps the pixel-perfect bar and the dev-pixel compare loop as part of its job', () => {
-  const claude = read('home/CLAUDE.md');
-  assert.match(claude, /Pixel-perfect work: no sacrifice of\s+its checks, models or effort/);
-  assert.match(claude, /The compare loop of `dev-pixel` is part of its job/);
+// The UI skills are preloaded by the dev-ui and dev-pixel agent files (lex-dev-tess plan); the global text keeps the pixel bar and
+// the compare loop is dev-pixel's own job (it left home/CLAUDE.md at the size trim).
+test('home/CLAUDE.md keeps the pixel-perfect bar and dev-pixel keeps the compare loop as part of its job', () => {
+  assert.match(read('home/CLAUDE.md'), /Pixel-perfect work: no sacrifice of\s+its checks, models or effort/);
+  assert.match(read('home/agents/dev-pixel.md'), /The compare loop is your job/);
 });
 
 test('accuracy rules live in the shared files', () => {
@@ -66,9 +61,10 @@ test('accuracy rules live in the shared files', () => {
 });
 
 test('no setup document tells sessions to run every agent or job as a workflow', () => {
-  const files = ['home/CLAUDE.md', 'docs/daily-use.md', 'docs/catalog.md', 'home/hooks/README.md'];
+  // docs/catalog.md is generated and git-ignored (ADR 0009), so its text is built from the files, not read from disk.
+  const texts = { 'home/CLAUDE.md': read('home/CLAUDE.md'), 'docs/daily-use.md': read('docs/daily-use.md'), 'docs/catalog.md': buildCatalog(REPO_DIR).text, 'home/hooks/README.md': read('home/hooks/README.md') };
   const everythingIsAWorkflow = /Workflows always|everything that runs (is|must be) a workflow|every agent runs (inside a workflow|in one)|instead of single (sub)?agents|not as single agents|every job that runs agents (goes through|shows in)|(parallelism|sets), workflows and report brevity/i;
-  for (const file of files) assert.doesNotMatch(read(file), everythingIsAWorkflow, `${file} still says workflows for everything`);
+  for (const [file, text] of Object.entries(texts)) assert.doesNotMatch(text, everythingIsAWorkflow, `${file} still says workflows for everything`);
 });
 
 // The lead texts that sent landing to land-lane were removed (lex-dev-tess plan); daily use lands through the land script and
