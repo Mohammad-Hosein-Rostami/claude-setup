@@ -1,16 +1,15 @@
-// Shared reads for the Agent hooks and their libs: how a deny text quotes an untrusted value, how a file's start is read safely, and
-// how the nearest git root and its git folder are found without running git.
-// - quotedValue: a value as a deny text quotes it (agent-model-guard.mjs, agent-budget.mjs, ui-brief-gate.mjs).
-// - readFileHead: the start of a regular file through a handle checked again after the open (ui-brief-gate.mjs reads its matrix with
-//   it; agent-pins.mjs and agent-file-walk.mjs read agent files).
+// Shared reads for the hook libs: how a file's start is read safely, and how the nearest git root and its git folder are found
+// without running git.
+// - readFileHead: the start of a regular file through a handle checked again after the open (agent-file-walk.mjs reads agent files
+//   with it).
 // - nearestGitEntry, gitDirOf, sharedGitDir, isInside, MAX_PARENT_LEVELS: the nearest folder at or above a path holding an entry
 //   named exactly `.git` (at most MAX_PARENT_LEVELS up), the git folder it stands for, and the folder a linked worktree shares
-//   (agent-folders.mjs, agent-pins.mjs, project-note-key.mjs, project-setup-scan.mjs, writer-agents.mjs).
+//   (agent-folders.mjs, project-note-key.mjs, project-setup-scan.mjs, format-trust.mjs).
 // No program ever runs: a `.git` folder is the git folder; a `.git` file is followed to its `gitdir:` (and a linked worktree's
 // `commondir`); a `.git` link, FIFO or device, or a UNC or device path in a git file, gives none. Git files are read only as regular
 // files (never through a link, a FIFO never blocks), only up to their cap, and never printed.
-// Exports: quotedValue(value), readFileHead(path, maxBytes, flags?) -> text | undefined, isInside(path, project), UNPRINTABLE,
-// BACKTICK, nearestGitEntry, gitDirOf, sharedGitDir, MAX_PARENT_LEVELS. Invariants: bounded work (at most MAX_PARENT_LEVELS + 1
+// Exports: readFileHead(path, maxBytes, flags?) -> text | undefined, isInside(path, project), nearestGitEntry, gitDirOf, sharedGitDir,
+// MAX_PARENT_LEVELS. Invariants: bounded work (at most MAX_PARENT_LEVELS + 1
 // folders looked at, reads of capped size).
 import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -21,24 +20,8 @@ const MAX_PATH_FILE_BYTES = 4096; // a `.git` file or a `commondir` holds one pa
 const GITDIR_PREFIX = 'gitdir: '; // the first line of a `.git` file; its path is relative to the folder holding the file
 // A UNC or device path (\\host\share, //host/share): on Windows a lookup reaches the network and may send the user's credentials
 const NETWORK_PATH = /^[\\/]{2}/;
-export const UNPRINTABLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu; // control and format characters (bidi marks included) and line separators
-export const BACKTICK = /`/g; // what would close a Markdown code span a deny text quotes a value in
-const MAX_QUOTED_CHARS = 200; // how much of a value a deny text quotes
-const MAX_QUOTED_SOURCE_CHARS = 4096; // PATH_MAX on Linux: only this much of a value is cleaned, so a huge one costs little
 const READ_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0); // a FIFO swapped in after a stat never blocks (POSIX only)
 const NO_FOLLOW = constants.O_NOFOLLOW ?? 0; // POSIX only; on Windows the lstat check before the open stands alone
-
-/**
- * A value from a brief or a record as a deny text quotes it, mostly inside a Markdown code span: without control, format and separator
- * characters, every backtick turned into `'` (a backtick would close the span and put the value's own words in the reason as prose),
- * cut to MAX_QUOTED_CHARS (then "...").
- * @param {string} value the untrusted text (a MATRIX path, an agent type or id); only its first MAX_QUOTED_SOURCE_CHARS are cleaned
- * @returns {string} the quotable text
- */
-export function quotedValue(value) {
-  const printable = value.slice(0, MAX_QUOTED_SOURCE_CHARS).replace(UNPRINTABLE, '').replace(BACKTICK, "'");
-  return printable.length > MAX_QUOTED_CHARS ? `${printable.slice(0, MAX_QUOTED_CHARS)}...` : printable;
-}
 
 /**
  * The start of a regular file, read through a handle that is checked again after the open.

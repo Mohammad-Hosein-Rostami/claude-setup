@@ -1,5 +1,5 @@
-// Small state files keyed by an id, safe against planted links and special files. The Bash guard's lib/bounce-once.mjs
-// (guard-bounced) keeps one JSON file per session id in its own folder under ~/.claude/state.
+// Small state files keyed by an id, safe against planted links and special files. Each caller keeps one JSON file per session id in
+// its own folder (lib/asking-marker.mjs, for example, under ~/.claude/state).
 // Exports: isSessionId(session), readSessionFile(dir, session, maxBytes) -> text | null | undefined,
 // writeSessionFile(dir, session, text, options?) -> boolean; for lib/session-lock.mjs: lstatOrNull, isPrivateFile, sameNode, privateFolder,
 // READ_FLAGS, CREATE_FLAGS, FILE_MODE, TEMP_NAME_BYTES.
@@ -8,7 +8,7 @@
 // Invariants:
 // - Before any read, write or cleanup, lstat checks that the folder is a real folder and the session file a regular file, both owned by
 //   this user (Windows has no owner check). A link, a FIFO, a socket, a device, a folder where the file should be, a file where the folder
-//   should be, or another owner makes the store unusable: no read, no write, no cleanup, and the caller asks as if nothing were stored.
+//   should be, or another owner makes the store unusable: no read, no write, no cleanup, and the caller acts as if nothing were stored.
 // - A read opens with O_NOFOLLOW and O_NONBLOCK (POSIX) and checks the open handle again (fstat), so a path swapped after the lstat is
 //   caught and a FIFO never blocks. A write creates a new temp file (random name, O_EXCL, O_NOFOLLOW, 0600) and renames it over the
 //   session file only while the folder is still the one checked. A missing folder is created 0700; an existing one keeps its mode.
