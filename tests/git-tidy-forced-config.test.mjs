@@ -1,27 +1,32 @@
 // Tests for the config git-tidy forces on every git call (FORCED_CONFIG in home/tools/git-tidy/lib/git.mjs): core.fsmonitor is
 // off whatever the caller's GIT_CONFIG_PARAMETERS or GIT_CONFIG_COUNT say, and the caller's own entries stay. runGit reads
-// process.env, so each test swaps it for a clean one (withEnv). Every repo, HOME and hook script is a cs-test temp folder.
+// process.env, so each test runs it in a child whose env is CLEAN_ENV plus the case's own (runGitWith). Every repo, HOME and hook script is a cs-test temp folder.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { runGit } from '../home/tools/git-tidy/lib/git.mjs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { CLEAN_ENV, git, makeRepo } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
+const RUN_GIT_MODULE = pathToFileURL(fileURLToPath(new URL('../home/tools/git-tidy/lib/git.mjs', import.meta.url))).href;
 const GIT_FAILED_STATUS = 128; // git's exit code for "unable to parse command-line config"
 
-/** Runs `body` with process.env replaced by CLEAN_ENV plus `extra` (runGit starts from process.env); restores it afterwards. */
-function withEnv(extra, body) {
-  const saved = { ...process.env };
-  for (const name of Object.keys(process.env)) delete process.env[name];
-  Object.assign(process.env, CLEAN_ENV, extra);
-  try {
-    return body();
-  } finally {
-    for (const name of Object.keys(process.env)) delete process.env[name];
-    Object.assign(process.env, saved);
-  }
+/**
+ * runGit in a child process whose env is CLEAN_ENV plus `extra` (runGit starts from its own process.env, and a test never copies
+ * or swaps the session env); returns the `{ status, stdout, stderr }` runGit gave there.
+ */
+function runGitWith(extra, repo, args) {
+  const driver = `import { runGit } from ${JSON.stringify(RUN_GIT_MODULE)};
+    const [cwd, args] = JSON.parse(process.argv[1]);
+    process.stdout.write(JSON.stringify(runGit(cwd, args)));`;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', driver, JSON.stringify([repo, args])], {
+    encoding: 'utf8',
+    env: { ...CLEAN_ENV, ...extra },
+  });
+  assert.equal(child.status, 0, child.stderr);
+  return JSON.parse(child.stdout);
 }
 
 /** A repo whose config names a `core.fsmonitor` hook that touches `marker` when git runs it; `program` is the hook's path. */
@@ -42,20 +47,20 @@ function repoWithFsmonitorHook() {
 test("runGit's core.fsmonitor is false although the caller's GIT_CONFIG_PARAMETERS and the repository say true", () => {
   const repo = makeRepo();
   git(repo, 'config', 'core.fsmonitor', 'true');
-  const effective = withEnv({ GIT_CONFIG_PARAMETERS: "'core.fsmonitor'='true'" }, () => runGit(repo, ['config', '--get', 'core.fsmonitor']));
+  const effective = runGitWith({ GIT_CONFIG_PARAMETERS: "'core.fsmonitor'='true'" }, repo, ['config', '--get', 'core.fsmonitor']);
   assert.deepEqual([effective.status, effective.stdout.trim()], [0, 'false']);
 });
 
 test("runGit never runs the fsmonitor hook that the repository and the caller's GIT_CONFIG_PARAMETERS name", () => {
   const { repo, marker, program } = repoWithFsmonitorHook();
-  const status = withEnv({ GIT_CONFIG_PARAMETERS: `'core.fsmonitor'='${program}'` }, () => runGit(repo, ['status', '--porcelain']));
+  const status = runGitWith({ GIT_CONFIG_PARAMETERS: `'core.fsmonitor'='${program}'` }, repo, ['status', '--porcelain']);
   assert.equal(status.status, 0, status.stderr);
   assert.ok(!existsSync(marker), 'the hook ran');
 });
 
 test("runGit never runs the fsmonitor hook when the caller's GIT_CONFIG_COUNT is -1 (git refuses, nothing is switched back on)", () => {
   const { repo, marker } = repoWithFsmonitorHook();
-  const status = withEnv({ GIT_CONFIG_COUNT: '-1' }, () => runGit(repo, ['status', '--porcelain']));
+  const status = runGitWith({ GIT_CONFIG_COUNT: '-1' }, repo, ['status', '--porcelain']);
   assert.equal(status.status, GIT_FAILED_STATUS, 'git fails on a count below 0 instead of ignoring it');
   assert.ok(!existsSync(marker), 'the hook ran');
 });
@@ -66,6 +71,6 @@ test("runGit keeps the caller's GIT_CONFIG_COUNT entries and GIT_CONFIG_PARAMETE
     GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'user.name', GIT_CONFIG_VALUE_0: 'A', GIT_CONFIG_KEY_1: 'x.y', GIT_CONFIG_VALUE_1: 'B',
     GIT_CONFIG_PARAMETERS: "'x.z'='C'",
   };
-  const seen = withEnv(caller, () => ['user.name', 'x.y', 'x.z', 'core.fsmonitor'].map((key) => runGit(repo, ['config', '--get', key]).stdout.trim()));
+  const seen = ['user.name', 'x.y', 'x.z', 'core.fsmonitor'].map((key) => runGitWith(caller, repo, ['config', '--get', key]).stdout.trim());
   assert.deepEqual(seen, ['A', 'B', 'C', 'false']);
 });
