@@ -161,9 +161,12 @@ function depsCacheDirOf(lane, env) {
   return cloneSupport(mainField.slice(WORKTREE_FIELD.length), commonDir, env).mode === 'clone' ? commonDir : null;
 }
 
-/** The first git repository (lane-relative, no trailing slash) inside a node_modules below `dir`, or undefined. */
+/**
+ * The first git repository (lane-relative) inside a node_modules below `dir`, or undefined. git C-quotes a path with non-ASCII or
+ * special characters (`"node_modules/d\303\251p"`); the quotes are dropped so its node_modules segment still counts.
+ */
 function nestedRepositoryInModules(lane, dir) {
-  return nestedRepositoryPaths(lane).map((path) => path.replace(/\/$/, ''))
+  return nestedRepositoryPaths(lane).map((path) => path.replace(/^"(.*)"$/, '$1').replace(/\/$/, ''))
     .find((path) => isWithin(dir, path) && path.slice(dir === '.' ? 0 : dir.length + 1).split('/').includes(DEPENDENCY_FOLDER));
 }
 
