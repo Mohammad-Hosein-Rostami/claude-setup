@@ -20,9 +20,10 @@ import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { accessSync, constants, lstatSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { delimiter, isAbsolute, join, relative, sep } from 'node:path';
-import { gitText, runGit } from './git.mjs';
+import { gitText } from './git.mjs';
 import { cloneFromCache, depsKey, pruneCache, saveToCache } from './lane-deps.mjs';
 import { cloneSupport } from './lane-fill.mjs';
+import { nestedRepositoryPaths } from './nested-repository.mjs';
 import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
 
 /** In this order: a folder holding two lockfiles is installed by the first that matches. */
@@ -162,14 +163,12 @@ function depsCacheDirOf(lane, env) {
 
 /**
  * Why no cache clone or install may replace node_modules below `dir`: a git repository inside one of them, which it would delete,
- * or a list of repositories git cannot give (fail closed); null when there is none. `ls-files -z --others` with no exclude option
- * lists every untracked path, ignored ones too, and a nested repository as its folder with a trailing slash. `-z` prints each path
- * as it is: git clean's "Would skip repository" line C-quotes a non-ASCII or special name (`"pk\303\251/..."`) and is translated.
+ * or a list of repositories git cannot give (fail closed); null when there is none (nested-repository.mjs lists them).
  */
 function modulesRepositoryWhy(lane, dir) {
-  const listed = runGit(lane, ['ls-files', '-z', '--others']);
-  if (listed.status !== 0) return `git cannot list the untracked files (${listed.stderr.split('\n')[0]}), so a git repository inside node_modules, which the install would delete, cannot be ruled out`;
-  const repository = listed.stdout.split('\0').filter((path) => path.endsWith('/')).map((path) => path.slice(0, -1))
+  const repositories = nestedRepositoryPaths(lane);
+  if (repositories === null) return 'git cannot list the untracked files, so a git repository inside node_modules, which the install would delete, cannot be ruled out';
+  const repository = repositories.map((path) => path.slice(0, -1)) // its trailing slash
     .find((path) => isWithin(dir, path) && path.slice(dir === '.' ? 0 : dir.length + 1).split('/').includes(DEPENDENCY_FOLDER));
   return repository === undefined ? null : `${repository} is a git repository inside node_modules; the install would delete it: move it out first`;
 }

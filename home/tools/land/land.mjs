@@ -31,7 +31,7 @@ import { realpathSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { UsageError, gitFlag, gitText, runGit } from '../git-tidy/lib/git.mjs';
 import { detachLandedSlot } from '../git-tidy/lib/lane-pool.mjs';
-import { nestedRepositoryPaths, nestedRepositoryWhy } from '../git-tidy/lib/lane-slots.mjs';
+import { nestedRepositoryPaths, nestedRepositoryWhy } from '../git-tidy/lib/nested-repository.mjs';
 import { listWorktrees, openRepo } from '../git-tidy/lib/repo.mjs';
 import { appendLandEntry, readLandEntries } from './ledger.mjs';
 import { LandRefusal, firstLine, refuseUnclean } from './refusal.mjs';
@@ -147,7 +147,7 @@ function fastForward({ dir, base }, branch, { baseSha, tip }) {
 function refuseNestedRepository({ base }, branch, worktree, tip) {
   const nested = nestedRepositoryWhy(worktree.path);
   if (nested === null) return;
-  const repositories = nestedRepositoryPaths(worktree.path).map((path) => join(worktree.path, path));
+  const repositories = (nestedRepositoryPaths(worktree.path) ?? []).map((path) => join(worktree.path, path));
   const named = repositories.length > 0 ? repositories.join(', ') : nested;
   throw new LandRefusal(`${branch} landed on ${base} at ${tip}; its worktree ${worktree.path} is kept because ${named} may hold the only copy of its commits (a git repository inside an ignored folder): move it out of the worktree, then run land ${branch} again`);
 }

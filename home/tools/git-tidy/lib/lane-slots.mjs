@@ -2,7 +2,7 @@
 //   free for the next lane, busy (with why), missing (a worktree entry whose folder is gone), filling (a claim is filling it) or
 //   broken (the claim that filled it is gone).
 // Exports: POOL_FOLDER, LOCK_REASON_PREFIX, SNAPSHOT_LABEL, poolFolderOf, commonDirOf, slotKey, isPoolSlot, contentBusyWhy, poolSlots,
-//   readSlot, lastUsedMs, removalLossWhy, nestedRepositoryWhy, nestedRepositoryPaths, entryIdOf, staleIndexWhy, staleEntryLossWhy.
+//   readSlot, lastUsedMs, removalLossWhy, entryIdOf, staleIndexWhy, staleEntryLossWhy.
 // Invariants: reads only. Every fact comes from git through runGit (no shell, `-z` lists, full shas) or lstat, and a fact that cannot
 //   be read makes the folder busy, never free (fail closed). Slot paths are compared as real paths (realpathSync.native), case-folded on
 //   win32 and darwin. A folder at a slot path that is not a worktree of this repository, or where git finds another worktree root (its
@@ -17,6 +17,7 @@
 import { existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { UsageError, gitText, runGit } from './git.mjs';
+import { nestedRepositoryWhy } from './nested-repository.mjs';
 import { reflogOnlyCommits } from './reflog.mjs';
 import { HIDDEN_FILES_WHY, changedFileCount, hiddenFileCount, inProgressOperation, listWorktrees } from './repo.mjs';
 import { isPidAlive, readFillFile } from './lane-fill-state.mjs';
@@ -207,7 +208,6 @@ export function lastUsedMs(folder) {
 // No branch goes with a pool folder's removal; `HEAD` can never be a branch name, so reflogOnlyCommits excludes no real branch.
 const NO_BRANCH_REMOVED = 'HEAD';
 const MAX_GITDIR_FILE_BYTES = 4096;
-const SHOWN_PATHS = 5;
 
 /** Why a reflog forbids the removal (prune's rule: commits on no ref, not on the base, not landed), or null. */
 function reflogLossWhy(repo, reflog) {
@@ -215,35 +215,6 @@ function reflogLossWhy(repo, reflog) {
   if (found.unreadable) return 'its HEAD reflog cannot be read';
   if (found.truncated) return 'its HEAD reflog has more than 200 entries, not checked';
   return found.count > 0 ? `its HEAD reflog holds ${found.count} commits found nowhere else` : null;
-}
-
-const SKIP_REPOSITORY = 'Would skip repository ';
-
-/** The git repositories nested in `folder` that `git clean -fdx` skips (paths relative to it), [] when git fails. */
-export function nestedRepositoryPaths(folder) {
-  const result = runGit(folder, ['clean', '-fdx', '-n']);
-  if (result.status !== 0) return [];
-  return result.stdout.split('\n').filter((line) => line.startsWith(SKIP_REPOSITORY)).map((line) => line.slice(SKIP_REPOSITORY.length));
-}
-
-/** The paths `git clean <args> -n` would remove in `folder`, or null when git fails. */
-function wouldRemove(folder, args) {
-  const result = runGit(folder, ['clean', ...args, '-n']);
-  if (result.status !== 0) return null;
-  const prefix = 'Would remove ';
-  return new Set(result.stdout.split('\n').filter((line) => line.startsWith(prefix)).map((line) => line.slice(prefix.length)));
-}
-
-/**
- * Why a git repository inside an ignored folder forbids removing `folder` (`-ffdx` would take it, `-fdx` keeps it), or null.
- * Exported for prune, whose worktree removal has the same risk.
- */
-export function nestedRepositoryWhy(folder) {
-  const all = wouldRemove(folder, ['-ffdx']);
-  const kept = wouldRemove(folder, ['-fdx']);
-  if (all === null || kept === null) return 'git clean cannot list its ignored files';
-  const holders = [...all].filter((path) => !kept.has(path));
-  return holders.length === 0 ? null : `a git repository inside an ignored folder (${holders.slice(0, SHOWN_PATHS).join(', ')})`;
 }
 
 /**

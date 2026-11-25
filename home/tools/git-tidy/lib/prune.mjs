@@ -16,7 +16,7 @@ import { branchState, isMerged } from './branches.mjs';
 import { copyCandidates, isStillCopy } from './copies.mjs';
 import { checkDeletionLog, recordDeletion } from './deletion-log.mjs';
 import { UsageError, runGit } from './git.mjs';
-import { nestedRepositoryWhy } from './lane-slots.mjs';
+import { nestedRepositoryWhy } from './nested-repository.mjs';
 import { findLeftovers } from './leftovers.mjs';
 import { baseMoved, pinBase } from './pinned-base.mjs';
 import { pruneStale } from './prune-stale.mjs';

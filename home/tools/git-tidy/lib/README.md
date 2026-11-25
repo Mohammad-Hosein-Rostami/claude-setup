@@ -27,6 +27,7 @@ The parts of the `git-tidy` tool. `../git-tidy.mjs` is the command; see `../READ
 | `lane-fill-state.mjs` | a slot's fill file `cs-lane-fill/lane-<n>.json` in the git common dir (who fills it, for which branch), and emptying a broken slot for its refill |
 | `lane-fill.mjs` | fill a lane folder by clones of the main checkout (`cp -c`, or `cp --reflink=always` on Linux), the skip list, the repair; whether cloning works here (`GIT_TIDY_LANE_FILL=checkout` turns it off) |
 | `pool-lock.mjs` | the one pool lock per repository (stale when its pid is gone or over 120 s old) |
+| `nested-repository.mjs` | the git repositories nested in a folder (`ls-files -z --others`), which a removal, `clean -ffdx` or an install would delete; shared by the pool, prune, land and lane-prep |
 | `lane-prep.mjs` | the installs a claimed folder needs, from its tracked lockfiles |
 | `lane-deps.mjs` | the deps cache `cs-lane-deps/<key>/node_modules` in the git common dir: clone before an install, save after one, prune |
 | `lane-cli.mjs` | the `lane` command: arguments, output, exit codes |
