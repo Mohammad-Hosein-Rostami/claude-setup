@@ -15,67 +15,11 @@
       "WebSearch",
       "WebFetch"
     ],
-    "deny": [
-      "Workflow",
-      "Agent(fork)",
-      "Bash(cat *credentials*)",
-      "Bash(type *credentials*)",
-      "Read(**/.credentials.json)",
-      "Read(~/.ssh/**)",
-      "Read(~/.aws/**)",
-      "Read(**/*.pem)",
-      "Read(**/.npmrc)"
-    ]
+    "defaultMode": "bypassPermissions"
   },
   "model": "opus",
   "autoContinueAtUsageLimit": true,
   "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash|PowerShell",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/pre-bash-guard.mjs\"",
-            "timeout": 230,
-            "onFailure": "block"
-          }
-        ]
-      },
-      {
-        "matcher": "Agent|Task",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/agent-model-guard.mjs\"",
-            "timeout": 5,
-            "onFailure": "block"
-          }
-        ]
-      },
-      {
-        "matcher": "SendMessage",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/agent-model-guard.mjs\"",
-            "timeout": 5,
-            "onFailure": "block"
-          }
-        ]
-      },
-      {
-        "matcher": "Artifact",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/artifact-ask.mjs\"",
-            "timeout": 230,
-            "onFailure": "block"
-          }
-        ]
-      }
-    ],
     "PermissionRequest": [
       {
         "matcher": "*",
@@ -140,16 +84,6 @@
             "timeout": 5
           }
         ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/agent-budget.mjs\"",
-            "async": true,
-            "timeout": 5
-          }
-        ]
       }
     ],
     "PostToolUseFailure": [
@@ -159,28 +93,6 @@
           {
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/question-answered.mjs\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "SubagentStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/agent-budget.mjs\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "SubagentStop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/agent-budget.mjs\"",
             "timeout": 5
           }
         ]

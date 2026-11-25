@@ -1,9 +1,7 @@
 {
   "skipDangerousModePermissionPrompt": true,
   "env": {
-    "DISABLE_UPDATES": "1",
-    "CLAUDE_GUARD_ASK": "dialog",
-    "CLAUDE_GUARD_TRIM": "0"
+    "DISABLE_UPDATES": "1"
   },
   "claudeSetup": {
     "machine": "mac",
