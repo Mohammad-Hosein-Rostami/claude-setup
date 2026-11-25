@@ -212,10 +212,17 @@ test('--mark-tess writes the job marks file as { feature: { sha, at } } and the 
   assert.ok(shown[0].endsWith(`since tess round at ${sha.slice(0, SHORT_SHA)}`), shown[0]);
 });
 
-test('--mark-tess with a sha that is not 40 hex characters is exit 2 and writes no marks file', () => {
+test('--mark-tess with a sha that is not 40 hex characters is refused by the tick (exit 2, names --sha, no marks file); the full sha is accepted', () => {
   const { repo } = poolRepo();
   const home = makeHome();
-  const result = tick(home, ['--repo', repo, '--plan', writePlan(repo), '--mark-tess', FEATURE, '--sha', headOf(repo).slice(0, SHORT_SHA)]);
-  assert.equal(result.status, EXIT_USAGE, result.stdout);
-  assert.equal(existsSync(marksFile(home)), false);
+  const plan = writePlan(repo);
+  const sha = headOf(repo);
+  const refused = tick(home, ['--repo', repo, '--plan', plan, '--mark-tess', FEATURE, '--sha', sha.slice(0, SHORT_SHA)]);
+  assert.equal(refused.status, EXIT_USAGE, refused.stdout);
+  assert.match(refused.stderr, /^board tick: --mark-tess needs .*--sha <full 40-character main sha>/);
+  assert.equal(refused.stdout, '');
+  assert.equal(existsSync(marksFile(home)), false, 'a refused mark writes nothing');
+  const accepted = tick(home, ['--repo', repo, '--plan', plan, '--mark-tess', FEATURE, '--sha', sha]);
+  assert.equal(accepted.status, EXIT_SHOWN, accepted.stderr);
+  assert.equal(JSON.parse(readFileSync(marksFile(home), 'utf8'))[FEATURE].sha, sha, 'the same call with the full sha writes the mark');
 });
