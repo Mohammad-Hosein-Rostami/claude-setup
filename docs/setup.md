@@ -89,7 +89,7 @@ code apply at once.
 Nothing blocks reading them: agents have full access, `settings/base.json` has no read rules, and `~/.ssh`, `~/.aws`, `*.pem` and `.npmrc` can be read too. Printing or committing a secret is still against the rules in `CLAUDE.md`, and the check by hand before a commit (gitleaks) looks for one.
 
 ## Questions
-A question to you (AskUserQuestion) is Claude Code's own terminal question, with no popup. `askUserQuestionTimeout` (`"10m"` in `settings/base.json`; CLI 2.1.330 accepts only `60s`, `5m`, `10m`, `never`) auto-continues an unanswered one after 10 minutes, and Claude then takes the recommended option (`docs/daily-use.md`, "Long or unattended runs").
+A question to you (AskUserQuestion) is Claude Code's own terminal question, with no popup. `askUserQuestionTimeout` (`"5m"` in `settings/base.json`; CLI 2.1.330 accepts only `60s`, `5m`, `10m`, `never`) auto-continues an unanswered one after 5 minutes, and Claude then takes the recommended option (`docs/daily-use.md`, "Long or unattended runs").
 
 ## No prompt before a dangerous rm
 Bypass mode still asks before an `rm` Claude Code cannot rule out as dangerous. The installer adds `export CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1`, with a comment line, to `~/.zshenv` (zsh) or `~/.bashrc` (bash, Git Bash) and the PowerShell profile, which waives that prompt. Claude Code reads the variable only when it starts, so after the install or a sync start each session again from a new terminal. At start-up it then says the variable is set; if it says the variable "has no effect in this session", a PermissionRequest hook or a deny or ask rule on Bash, Edit or Read (from a project or a plugin) is turning the waiver off.

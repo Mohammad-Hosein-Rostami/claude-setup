@@ -35,7 +35,7 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 4. Agents have full access: commands run with no permission prompt, and no hook checks a command first. A dangerous `rm` runs
    without a prompt too, because the installer sets `CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1` in the shell start-up
    files (restart Claude Code from a new terminal to pick it up). A question for you is Claude Code's own terminal question;
-   left unanswered it auto-continues after 10 minutes and Claude takes the recommended option.
+   left unanswered it auto-continues after 5 minutes and Claude takes the recommended option.
 5. After each edit, `post-edit.mjs` runs the project's formatter.
 6. Tests, type check, lint and reviews run by the table "Which tess work a change gets" in the `qa-plan` skill (`home/CLAUDE.md`,
    "Quality checks", sums it up): dev's report names the change's

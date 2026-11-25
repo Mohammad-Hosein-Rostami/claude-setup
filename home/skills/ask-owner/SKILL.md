@@ -62,7 +62,7 @@ Bad -> good:
 ## If the box times out
 
 An unanswered question takes the recommended option. There is no popup: the question is Claude Code's own terminal question,
-which auto-continues after `askUserQuestionTimeout` (10 min; Claude Code offers 60 s, 5 min, 10 min or never, not 2 min) and
+which auto-continues after `askUserQuestionTimeout` (5 min; Claude Code offers 60 s, 5 min, 10 min or never, not 2 min) and
 tells you nobody answered (the mechanics are in `docs/daily-use.md` "Long or unattended runs"). Outcomes:
 - The owner answers in the terminal: that answer stands.
 - No answer: take its "(Recommended)" option, else its first, and mark it UNCONFIRMED. For a small, reversible choice take it,

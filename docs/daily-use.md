@@ -76,8 +76,8 @@ Keep extra usage off in claude.ai so nothing can bill credits.
 - Run long or unattended sessions in a plain terminal app (or tmux), not an editor's built-in terminal: closing or
   reloading the editor window ends every session in it. Resume with `claude --model <m> --effort <e> -c`.
 - A question (AskUserQuestion) is Claude Code's own terminal question; there is no popup (it was removed on 2026-11-25: its
-  PermissionRequest hook kept Claude Code from waiving the dangerous-rm prompt). Left unanswered it auto-continues after 10
-  minutes (`askUserQuestionTimeout` "10m"; the CLI also takes one or five minutes, or never, but not two), Claude is told
+  PermissionRequest hook kept Claude Code from waiving the dangerous-rm prompt). Left unanswered it auto-continues after 5
+  minutes (`askUserQuestionTimeout` "5m"; the CLI also takes one or ten minutes, or never, but not two), Claude is told
   nobody answered and takes the "(Recommended)" option, marked UNCONFIRMED. The timer does not count down while that
   terminal window is focused and starts again after any keypress; it never starts in a background session, in screen reader mode or while the
   session is connected to Remote Control (those questions wait for an answer). The recommended option is chosen to be safe
