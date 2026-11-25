@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { scanDeploy } from '../home/tools/env-names/lib/deploy-names.mjs';
-import { everythingPrinted, run } from './env-names-fixtures.mjs';
+import { everythingPrinted, everythingPrintedAsync, run, runAsync } from './env-names-fixtures.mjs';
 
 const composeFile = (entries) => `services:\n  a:\n    environment:\n${entries.map((entry) => `      ${entry}`).join('\n')}\n`;
 const gitlabFile = (entries) => `variables:\n${entries.map((entry) => `  ${entry}`).join('\n')}\n`;
@@ -45,10 +45,37 @@ async function printedFor(path, content, extra = {}) {
   return { text, notRead };
 }
 
+// The layout tests run up to this many projects side by side: each project is ~5 CLI starts that wait on nothing but node.
+const PROJECTS_AT_ONCE = 4;
+
+/** printedFor through the async runner: the same CLI calls with the same arguments. */
+async function printedForAsync(path, content) {
+  const { dir, text } = await everythingPrintedAsync({ [path]: content });
+  const notRead = JSON.parse((await runAsync(['list', dir, '--json'])).stdout).notRead.filter((entry) => entry.path === path);
+  return { text, notRead };
+}
+
+/** printedForAsync of every [path, content] in `cases`, at most PROJECTS_AT_ONCE at a time, in the order of `cases`. */
+async function printedForAll(cases) {
+  const results = new Array(cases.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < cases.length) {
+      const index = next++;
+      results[index] = await printedForAsync(...cases[index]);
+    }
+  };
+  await Promise.all(Array.from({ length: PROJECTS_AT_ONCE }, worker));
+  return results;
+}
+
 test('invalid layouts: the marker word is absent from text, --json, snapshot and diff, and the names left out are counted', async () => {
-  for (const [label, layout] of Object.entries(INVALID_LAYOUTS)) {
-    for (const [path, , build] of FILES) {
-      const { text, notRead } = await printedFor(path, build([...layout, 'AFTER_ENTRY: 1']));
+  const cases = Object.values(INVALID_LAYOUTS).flatMap((layout) => FILES.map(([path, , build]) => [path, build([...layout, 'AFTER_ENTRY: 1'])]));
+  const printed = await printedForAll(cases);
+  let at = 0;
+  for (const [label] of Object.entries(INVALID_LAYOUTS)) {
+    for (const [path] of FILES) {
+      const { text, notRead } = printed[at++];
       assert.doesNotMatch(text, /zqx/i, `${label} in ${path}`);
       assert.doesNotMatch(text, /AFTER_ENTRY/, `${label} in ${path}: a name of an untrusted file needs code that reads it`);
       assert.match(notRead.map((entry) => entry.reason).join(), /\d+ names not shown \(.*parser reports a problem/, `${label} in ${path}`);
@@ -57,11 +84,14 @@ test('invalid layouts: the marker word is absent from text, --json, snapshot and
 });
 
 test('valid layouts: the real keys print, the words of values never do, nothing is counted as left out', async () => {
+  const cases = Object.values(VALID_LAYOUTS).flatMap(({ lines }) => FILES.map(([path, , build]) => [path, build([...lines, 'AFTER_ENTRY: 1'])]));
+  const printed = await printedForAll(cases);
+  let at = 0;
   for (const [label, { lines, names, values }] of Object.entries(VALID_LAYOUTS)) {
     for (const [path, kind, build] of FILES) {
       const content = build([...lines, 'AFTER_ENTRY: 1']);
       assert.deepEqual(scanDeploy(kind, content).mentions.map((mention) => mention.name), [...names, 'AFTER_ENTRY'], `${label} in ${path}`);
-      const { text, notRead } = await printedFor(path, content);
+      const { text, notRead } = printed[at++];
       for (const word of values) assert.doesNotMatch(text, new RegExp(word), `${label} in ${path}`);
       assert.deepEqual(notRead, [], `${label} in ${path}`);
     }

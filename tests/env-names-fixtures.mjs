@@ -1,14 +1,16 @@
 // Shared helpers for the env-names tests: temp project folders built from a {path: content} map, the CLI runner, and the
-// planted marker values. Exports: CLI, MARKERS, makeProject(files), run(args, cwd), leaked(text), everythingPrinted(files).
+// planted marker values. Exports: CLI, MARKERS, makeProject(files), run(args, cwd), runAsync(args, cwd), leaked(text),
+// everythingPrinted(files), everythingPrintedAsync(files).
 // Invariant: every value planted in a fixture contains one of MARKERS, so `leaked(output)` finds any value that escaped.
 // Fails at import, with one line, when the tool's yaml dependency is missing.
 // Markers are made-up words, never a real secret format (the pre-commit hook runs gitleaks).
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { yamlParserInstalled } from '../home/tools/env-names/lib/deploy-yaml-names.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { cleanEnv } from './clean-env.mjs';
 
 // A worktree without `npm ci` would fail dozens of tests one by one; stop at the first import with the one fix instead.
 if (!yamlParserInstalled) {
@@ -42,10 +44,35 @@ export function run(args, cwd) {
   return { ...result, all: `${result.stdout}${result.stderr}` };
 }
 
+/**
+ * `run` that does not block, so a test can run the CLI for independent projects side by side (the CLI's own work is the same).
+ * @returns {Promise<{status: number|null, stdout: string, stderr: string, all: string}>}
+ */
+export function runAsync(args, cwd) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [CLI, ...args], { cwd, env: cleanEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (status) => resolve({ status, stdout, stderr, all: `${stdout}${stderr}` }));
+  });
+}
+
 /** Everything the tool prints for a project: list text, list --json, the saved snapshot, and diff text and --json, as one string. */
 export async function everythingPrinted(files) {
   const dir = await makeProject(files);
   const snapshot = join(makeTempDir('sibling-'), `printed-${Math.random().toString(36).slice(2)}.json`);
   const outputs = [run(['list', dir, '--save', snapshot]), run(['list', dir, '--json']), run(['diff', snapshot, dir]), run(['diff', snapshot, dir, '--json'])];
+  return { dir, text: `${outputs.map((out) => out.all).join('\n')}\n${await readFile(snapshot, 'utf8')}` };
+}
+
+/** everythingPrinted through runAsync: the same four calls, one after the other (the diff reads the saved snapshot). */
+export async function everythingPrintedAsync(files) {
+  const dir = await makeProject(files);
+  const snapshot = join(makeTempDir('sibling-'), `printed-${Math.random().toString(36).slice(2)}.json`);
+  const outputs = [];
+  for (const args of [['list', dir, '--save', snapshot], ['list', dir, '--json'], ['diff', snapshot, dir], ['diff', snapshot, dir, '--json']]) outputs.push(await runAsync(args));
   return { dir, text: `${outputs.map((out) => out.all).join('\n')}\n${await readFile(snapshot, 'utf8')}` };
 }
