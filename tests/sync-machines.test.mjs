@@ -2,7 +2,8 @@
 // Exports: none (node:test file).
 // Invariants: expected values come from the spec (lane sync-script) and the fixes of branch sync-target-version-probe: one alarmed
 //   ssh line per remote command with the PATH export inside the quotes, a stale target checked after its install, the removed
-//   --row refused with exit 2 (audit R7), a hostile name refused with exit 2, a verify failure with exit 3 and nothing sent, never a push.
+//   --row refused with exit 2 (audit R7), a hostile name refused with exit 2, a verify failure with exit 3 and nothing sent, never a push,
+//   no doctor step (rows report the install exit), and one run at a time (the lock of a killed sync is taken over, e1e226c7).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -18,7 +19,6 @@ const FLOOR = '2.1.326';
 const PATH_EXPORT = 'export PATH="$HOME/.volta/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin:$PATH";';
 const ALARM = (seconds) => `perl -e 'alarm ${seconds}; exec @ARGV or die "exec: $!"'`;
 const SSH_OPTIONS = '-o BatchMode=yes -o ConnectTimeout=30'; // ssh_config(5): no password or host-key question, 30 s to connect
-const HEAD_SHA = 'a'.repeat(40);
 
 /** The fake ssh answers by the script it is given; FAKE_* variables pick the answer. It logs each call to $FAKE_LOG. */
 const FAKE_SSH = `#!/usr/bin/env node
@@ -32,7 +32,7 @@ if (script.includes('== pin')) {
   console.log('== version\\n' + env.FAKE_VERSION + ' (Claude Code)\\n== settings\\n"autoUpdatesChannel": "latest",\\n== shell env\\nDISABLE_UPDATES=' + (env.FAKE_PIN_BEFORE ?? '1'));
   console.log('== pin\\n' + (env.FAKE_PIN_JSON ?? '{"cliVersion":""}'));
 } else if (script.includes('git pull')) {
-  console.log('== version\\n' + (env.FAKE_VERSION_AFTER ?? env.FAKE_VERSION) + ' (Claude Code)\\n== settings\\n"autoUpdatesChannel": "latest",\\n== shell env\\nDISABLE_UPDATES=' + (env.FAKE_PIN_AFTER ?? '1') + '\\n== head\\n' + '${HEAD_SHA}');
+  console.log('== version\\n' + (env.FAKE_VERSION_AFTER ?? env.FAKE_VERSION) + ' (Claude Code)\\n== settings\\n"autoUpdatesChannel": "latest",\\n== shell env\\nDISABLE_UPDATES=' + (env.FAKE_PIN_AFTER ?? '1') + '\\n== head\\n' + env.FAKE_HEAD);
 }
 `;
 
@@ -50,10 +50,10 @@ function setup({ targets = undefined, cliVersion = '', dirty = false } = {}) {
   const repo = join(root, 'repo');
   const home = join(root, 'home');
   for (const dir of [join(repo, 'scripts'), join(repo, 'settings'), join(repo, 'home', 'tools', 'git-tidy'), join(home, '.claude')]) mkdirSync(dir, { recursive: true });
-  // On POSIX the repo's two scripts are hard links of shared files and the tools one shared folder: a new executable is slow to
+  // On POSIX the repo's script is a hard link of a shared file and the tools one shared folder: a new executable is slow to
   // start. The dirty case writes its own install.sh (it changes the file, and the run stops at verify before any script runs).
   // Shared tools are POSIX only, so win32 writes every file of its own, as before.
-  const scripts = { 'doctor.sh': `#!/bin/sh\nCLAUDE_FLOOR=${FLOOR}\nexit 0\n`, 'install.sh': '#!/bin/sh\nexit 0\n' };
+  const scripts = { 'install.sh': '#!/bin/sh\nexit 0\n' };
   for (const [name, body] of Object.entries(scripts)) {
     if (OWN_FILES || (dirty && name === 'install.sh')) writeExecutable(join(repo, 'scripts', name), body);
     else hardLinkSharedTool(join(repo, 'scripts', name), body);
@@ -76,13 +76,13 @@ function setup({ targets = undefined, cliVersion = '', dirty = false } = {}) {
   git('add', '-A');
   git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'x');
   if (dirty) writeFileSync(join(repo, 'scripts', 'install.sh'), '#!/bin/sh\nexit 0 # changed\n');
-  return { root, repo, bin, home, log: join(root, 'calls.log') };
+  return { root, repo, bin, home, log: join(root, 'calls.log'), head: git('rev-parse', 'HEAD').stdout.trim() };
 }
 
 function run(fixture, args, env = {}) {
   const result = spawnSync('node', [SCRIPT, '--repo', fixture.repo, '--json', ...args], {
     encoding: 'utf8',
-    env: cleanEnv({ PATH: `${fixture.bin}:${process.env.PATH}`, HOME: fixture.home, TMPDIR: fixture.root, FAKE_LOG: fixture.log, FAKE_VERSION: FLOOR, ...env }),
+    env: cleanEnv({ PATH: `${fixture.bin}:${process.env.PATH}`, HOME: fixture.home, TMPDIR: fixture.root, FAKE_LOG: fixture.log, FAKE_VERSION: FLOOR, FAKE_HEAD: fixture.head, ...env }),
   });
   const calls = existsSync(fixture.log) ? readFileSync(fixture.log, 'utf8') : '';
   const rows = result.stdout.split('\n').filter((line) => line.startsWith('[')).at(-1);
@@ -93,22 +93,22 @@ test('every machine synced: exit 0, one row each, alarmed ssh lines with the exp
   const fixture = setup({ targets: [{ name: 'pc', ssh: 'me@pc.local' }] });
   const result = run(fixture, []);
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.deepEqual(result.rows.map((row) => [row.machine, row.synced, row.doctorExit]), [['mac', true, 0], ['pc', true, 0]]);
-  assert.equal(result.rows[1].sha, HEAD_SHA);
+  assert.deepEqual(result.rows.map((row) => [row.machine, row.synced, row.installExit]), [['mac', true, 0], ['pc', true, 0]]);
+  assert.equal(result.rows[1].sha, fixture.head);
   assert.ok(result.stdout.includes(`${ALARM(120)} ssh ${SSH_OPTIONS} me@pc.local '${PATH_EXPORT} echo "== version"`), 'version read');
   assert.ok(result.stdout.includes(`${ALARM(540)} ssh ${SSH_OPTIONS} me@pc.local '${PATH_EXPORT} cd "`), 'pull and install');
-  assert.ok(result.stdout.includes(`${ALARM(300)} ssh ${SSH_OPTIONS} me@pc.local '${PATH_EXPORT} cd "`), 'doctor');
+  assert.doesNotMatch(result.stdout, /doctor/, 'sync has no doctor step');
   assert.match(result.stdout, /perl -e 'alarm 300; exec @ARGV or die "exec: \$!"' scp -o BatchMode=yes -o ConnectTimeout=30 \S+\.bundle \S+ me@pc\.local:\/tmp\//);
   assert.match(result.calls, /git pull --ff-only \/tmp\/\S+\.bundle main/);
   assert.doesNotMatch(result.calls, /git push/);
 });
 
-test('every ssh and scp that runs never waits for a password and times out on connect (the 3 ssh calls and the scp of a target)', () => {
+test('every ssh and scp that runs never waits for a password and times out on connect (the 2 ssh calls and the scp of a target)', () => {
   const fixture = setup({ targets: [{ name: 'pc', ssh: 'me@pc.local' }] });
   const result = run(fixture, []);
   assert.equal(result.status, 0, result.stdout + result.stderr);
   const calls = result.calls.split('\n').filter((line) => /^(ssh|scp) /.test(line));
-  assert.deepEqual(calls.map((line) => line.split(' ')[0]), ['ssh', 'scp', 'ssh', 'ssh'], 'version read, bundle copy, pull and install, doctor');
+  assert.deepEqual(calls.map((line) => line.split(' ')[0]), ['ssh', 'scp', 'ssh'], 'version read, bundle copy, pull and install');
   for (const call of calls) assert.ok(call.includes(SSH_OPTIONS), `missing options: ${call.slice(0, 80)}`);
   const lines = result.stdout.split('\n').filter((line) => / (ssh|scp) /.test(line));
   assert.equal(lines.length, calls.length, 'every printed ssh or scp line is a call');
@@ -178,12 +178,34 @@ test('a claude version that changed during the install fails that machine', () =
   assert.match(result.rows.find((row) => row.machine === 'pc').problem, /after the install, but was/);
 });
 
-test('a bundle file already in use stops the run with exit 2', () => {
+const lockPathOf = (fixture) => join(fixture.root, 'sync-machines.lock');
+const exitedPid = () => spawnSync(process.execPath, ['-e', '']).pid; // a pid that ran and ended
+
+test('the leftover files of a killed sync are removed and the run goes on', () => {
   const fixture = setup({ targets: [{ name: 'pc', ssh: 'pc' }] });
-  writeFileSync(join(fixture.root, 'sync-sync-pc.bundle'), '');
-  const result = spawnSync('node', [SCRIPT, '--repo', fixture.repo], { encoding: 'utf8', env: cleanEnv({ PATH: `${fixture.bin}:${process.env.PATH}`, HOME: fixture.home, TMPDIR: fixture.root, FAKE_LOG: fixture.log, FAKE_VERSION: FLOOR }) });
-  assert.equal(result.status, 2);
-  assert.match(result.stderr, /exists/);
+  const leftovers = [join(fixture.root, 'sync-sync-pc.bundle'), join(fixture.root, 'sync-local-shared.json')];
+  for (const file of leftovers) writeFileSync(file, 'leftover');
+  const result = run(fixture, []);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  for (const file of leftovers) assert.equal(existsSync(file), false, `${file} is removed after the run`);
+});
+
+test('the lock of a killed sync (its pid runs no more) is taken over, and the lock is gone after the run', () => {
+  const fixture = setup({ targets: [{ name: 'pc', ssh: 'pc' }] });
+  writeFileSync(lockPathOf(fixture), String(exitedPid()));
+  const result = run(fixture, []);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(existsSync(lockPathOf(fixture)), false, 'the run released its lock');
+});
+
+test('a second sync while one runs (its lock holds a running pid) exits 2 and sends nothing', () => {
+  const fixture = setup({ targets: [{ name: 'pc', ssh: 'pc' }] });
+  writeFileSync(lockPathOf(fixture), String(process.pid));
+  const result = spawnSync('node', [SCRIPT, '--repo', fixture.repo], { encoding: 'utf8', env: cleanEnv({ PATH: `${fixture.bin}:${process.env.PATH}`, HOME: fixture.home, TMPDIR: fixture.root, FAKE_LOG: fixture.log, FAKE_VERSION: FLOOR, FAKE_HEAD: fixture.head }) });
+  assert.equal(result.status, 2, result.stdout + result.stderr);
+  assert.match(result.stderr, /another sync runs/);
+  assert.equal(readFileSync(lockPathOf(fixture), 'utf8'), String(process.pid), 'the running sync keeps its lock');
+  assert.doesNotMatch(readFileSync(fixture.log, 'utf8'), /scp|git pull/);
 });
 
 test('the script holds no git push', () => {
