@@ -17,7 +17,7 @@ import { msFromEnv } from './env-ms.mjs';
 
 /** How long a tree gets between SIGTERM and SIGKILL: time for a test runner or a shell to clean up, short enough for a stop. */
 export const TERM_GRACE_MS = 3 * 1000;
-// The grace sweepDescendants gives a boss's leftovers: TERM_GRACE_MS, or the knob's positive ms (tests; `land` and `suite`
+// The grace sweepDescendants gives a boss's leftovers: TERM_GRACE_MS, or its knob (env-ms.mjs, tests; `land` and `suite`
 // never sweep, so their grace stays TERM_GRACE_MS).
 const SWEEP_GRACE_MS = msFromEnv('CLAUDE_LONG_RUN_SWEEP_GRACE_MS', TERM_GRACE_MS);
 // How often a tree that got SIGTERM is checked for whether it is gone.

@@ -260,7 +260,8 @@ for a Node in use, C replaces only `lib/graph.mjs`.
   test spends tokens, installs a launchd agent or a scheduled task, or sends a push.
 - Timeout knobs, for tests only: `CLAUDE_LONG_RUN_CONTROL_POLL_MS` (how often the driver reads the control files, default
   2000) and `CLAUDE_LONG_RUN_SWEEP_GRACE_MS` (the grace before SIGKILL for a boss's leftover processes, default 3000). A knob
-  is named `CLAUDE_<TOOL>_<CONSTANT>` after the constant it sets (`lib/env-ms.mjs`); only a positive whole number of
-  milliseconds is taken, anything else (text, 0, negative, a fraction) keeps the default. `scripts/doctor-accounts.mjs` has
-  one too: `CLAUDE_DOCTOR_KEYCHAIN_PROBE_TIMEOUT_MS` (default 3000).
+  is named `CLAUDE_<TOOL>_<CONSTANT>` after the constant it sets (`lib/env-ms.mjs`); only a whole number of milliseconds
+  from 1 to 2147483647 (2^31-1, Node's longest timer) is taken, anything else (text, 0, negative, a fraction, a larger
+  number) keeps the default. `scripts/doctor-accounts.mjs` has one too: `CLAUDE_DOCTOR_KEYCHAIN_PROBE_TIMEOUT_MS` (default
+  3000).
 - Rollback: `autostart off`, `schedule remove` for each schedule, then remove this folder; `~/.claude/state/long-run/` stays.

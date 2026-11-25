@@ -39,7 +39,7 @@ const LINES_SHOWN = 5; // line numbers named per file; the rest are counted
 const LOCKED_TEXT = 'the Keychain is locked'; // the store's message for security exit 36 (keychain-store.mjs)
 const SECURITY_EXIT_LOCKED = 36; // keychain-store.mjs EXIT_LOCKED: "User interaction is not allowed" (an ssh session)
 const KEYCHAIN_PROBE = 'show-keychain-info'; // the default keychain's settings: needs it unlocked, reads no item
-/** How long doctor waits for its one Keychain call; an open Keychain answers in well under a second (technical default), or the knob's positive ms (tests). */
+/** How long doctor waits for its one Keychain call; an open Keychain answers in well under a second (technical default), or its knob (env-ms.mjs, tests). */
 export const KEYCHAIN_PROBE_TIMEOUT_MS = msFromEnv('CLAUDE_DOCTOR_KEYCHAIN_PROBE_TIMEOUT_MS', 3000);
 const FORCED_MODEL = 'CLAUDE_CODE_SUBAGENT_MODEL_FORCE';
 const FABLE = /fable/i;

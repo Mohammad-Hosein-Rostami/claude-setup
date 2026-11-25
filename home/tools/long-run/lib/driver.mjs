@@ -28,7 +28,7 @@ import { notify } from './notify.mjs';
 import { formatWhen, writeSummary } from './view.mjs';
 import { msFromEnv } from './env-ms.mjs';
 
-/** The driver reads the control files this often (spec 7.8): 2 s, or the knob's positive ms (tests). */
+/** The driver reads the control files this often (spec 7.8): 2 s, or its knob (env-ms.mjs, tests). */
 export const CONTROL_POLL_MS = msFromEnv('CLAUDE_LONG_RUN_CONTROL_POLL_MS', 2 * 1000);
 /** The heartbeat in driver.json (a beat older than 120 s means the driver is gone). */
 export const BEAT_MS = 30 * 1000;
