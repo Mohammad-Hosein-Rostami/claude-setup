@@ -16,13 +16,13 @@ export const PRUNE_KINDS = new Set(['superseded-copy', 'agent-leftover', 'merged
 export const COPY_KINDS = new Set(['superseded-copy', 'agent-leftover']);
 export const UNLANDED = 'unlanded-lane?';
 export const OPEN_LANE = 'unmerged-branch?';
-// command-scope config beats the repository's own: the child's git never starts a program the repository names
-export const CHILD_GIT_CONFIG = {
-  GIT_CONFIG_COUNT: '3',
-  GIT_CONFIG_KEY_0: 'core.fsmonitor', GIT_CONFIG_VALUE_0: 'false',
-  GIT_CONFIG_KEY_1: 'safe.bareRepository', GIT_CONFIG_VALUE_1: 'explicit',
-  GIT_CONFIG_KEY_2: 'log.showSignature', GIT_CONFIG_VALUE_2: 'false',
-};
+// command-scope config beats the repository's own: the child's git never starts a program the repository names. Appended to
+// GIT_CONFIG_PARAMETERS after the caller's own: git reads it after GIT_CONFIG_COUNT and the last value wins, so no caller
+// setting switches these back on (as FORCED_CONFIG in tools/git-tidy/lib/git.mjs).
+export const CHILD_GIT_CONFIG = "'core.fsmonitor'='false' 'safe.bareRepository'='explicit' 'log.showSignature'='false'";
+const childEnv = (env) => ({
+  ...env, GIT_CONFIG_PARAMETERS: env.GIT_CONFIG_PARAMETERS ? `${env.GIT_CONFIG_PARAMETERS} ${CHILD_GIT_CONFIG}` : CHILD_GIT_CONFIG,
+});
 
 export const listOf = (items, kinds) => items.filter(({ kind }) => kinds.has(kind)).slice(0, MAX_LISTED);
 export const plainText = (text) => String(text).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, MAX_TEXT_CHARS);
@@ -47,7 +47,7 @@ export function slimVerdict({ base, findings, hints }, removable) {
 /** `git-tidy <args> --json` as a child: its parsed report, 'timeout', or undefined (one stderr line) when it cannot be read. */
 export function runTidyChild(args, timeoutMs, env, okStatuses) {
   const result = spawnSync(process.execPath, [GIT_TIDY, ...args], {
-    encoding: 'utf8', timeout: timeoutMs, killSignal: 'SIGKILL', env: { ...env, ...CHILD_GIT_CONFIG }, maxBuffer: 64 << 20,
+    encoding: 'utf8', timeout: timeoutMs, killSignal: 'SIGKILL', env: childEnv(env), maxBuffer: 64 << 20,
   });
   if (result.error?.code === 'ETIMEDOUT') return 'timeout';
   if (result.error || !okStatuses.includes(result.status)) {
