@@ -87,7 +87,8 @@ function rebaseLane(repo, branch, laneFolder) {
     }
   } finally {
     rmSync(parent, { recursive: true, force: true });
-    runGit(repo.dir, ['worktree', 'prune']);
+    // Its own entry only, if the removal above failed: `git worktree prune` would drop every stale entry of the repository.
+    runGit(repo.dir, ['worktree', 'remove', '--force', '--', folder]);
   }
 }
 

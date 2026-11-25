@@ -2,11 +2,11 @@
 //   step's first start, how much work each holds, and the end-of-run removal of the ones that hold none.
 // Exports: WORKTREES_MAX, listWorktrees, newWorktrees, worktreeState, commitsSince, removeIfEmpty.
 // Invariants: reads git only (`worktree list --porcelain`, `status --porcelain`, `rev-list`), except removeIfEmpty, which removes
-//   a worktree only when it has no uncommitted, untracked or ignored file, no file marked assume-unchanged or skip-worktree, and no commit that is not on the step folder's HEAD or a
-//   remote, and only
-//   with a plain `git worktree remove` (git itself refuses a dirty one); a branch is never deleted; worktrees that existed before
-//   the step's first start and the run's own lane worktrees (`long-run/<run>/...`) are never listed as made by a step.
+//   a worktree only when it has no uncommitted, untracked or ignored file, no file marked assume-unchanged or skip-worktree on
+//   disk, and no commit that is not on the step folder's HEAD or a remote, and only with a plain `git worktree remove` (git
+//   itself refuses a dirty one); a branch is never deleted; worktrees that existed before the step's first start and the run's own lane worktrees (`long-run/<run>/...`) are never listed as made by a step.
 import { spawnSync } from 'node:child_process';
+import { HIDDEN_FILES_WHY, hiddenFileCount } from '../../git-tidy/lib/repo.mjs';
 
 /** At most this many worktrees are kept per step journal. */
 export const WORKTREES_MAX = 50;
@@ -66,7 +66,7 @@ export function commitsSince(folder, base) {
 
 /**
  * Removes a worktree a step made when it holds no work of its own: no uncommitted, untracked or ignored file, no file marked
- * assume-unchanged or skip-worktree, and no commit
+ * assume-unchanged or skip-worktree on disk (repo.mjs hiddenFileCount), and no commit
  * that is not on the step folder's HEAD or a remote-tracking branch. Unlocks it first when it is locked (Claude Code locks agent worktrees).
  * @param {{path: string}} worktree
  * @param {string} folder the step folder (its HEAD is where finished work lands).
@@ -77,12 +77,9 @@ export function removeIfEmpty(worktree, folder) {
   const status = git(worktree.path, ['status', '--porcelain', '--untracked-files=all', '--ignored']);
   if (status.status !== 0) return 'gone';
   if (status.stdout.trim() !== '') return 'kept: uncommitted, untracked or ignored files';
-  // git status skips files marked assume-unchanged (lowercase tag) or skip-worktree (`S`), so their edits would go unseen.
-  const flags = git(worktree.path, ['ls-files', '-v', '-z']);
-  if (flags.status !== 0) return `kept: git ls-files failed (${flags.stderr.trim().slice(0, 120)})`;
-  if (flags.stdout.split('\0').some((entry) => entry !== '' && (entry[0] === 'S' || entry[0] !== entry[0].toUpperCase()))) {
-    return 'kept: files marked assume-unchanged or skip-worktree (git status does not show their edits)';
-  }
+  const hidden = hiddenFileCount(worktree.path); // edits git status skips
+  if (hidden === null) return 'kept: git ls-files failed';
+  if (hidden > 0) return `kept: ${hidden} files ${HIDDEN_FILES_WHY}`;
   const folderHead = git(folder, ['rev-parse', '--verify', 'HEAD']);
   const landed = folderHead.status === 0 ? [folderHead.stdout.trim()] : [];
   const own = git(worktree.path, ['rev-list', '--count', 'HEAD', '--not', '--remotes', ...landed]);

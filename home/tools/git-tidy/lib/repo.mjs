@@ -144,21 +144,38 @@ export function changedFileCount(path) {
   return result.stdout.split('\n').filter((line) => line !== '').length;
 }
 
-// `git ls-files -v` tags an assume-unchanged entry in lowercase and a skip-worktree one with `S` (`s` when both).
-const isHiddenTag = (tag) => tag === 'S' || (tag !== tag.toUpperCase());
+// `git ls-files -v` tags an assume-unchanged entry in lowercase (`s` when also skip-worktree) and a skip-worktree one `S`.
+const SKIP_WORKTREE_TAG = 'S';
+const TAG_LENGTH = 2; // the tag letter and a space
+const isAssumeUnchangedTag = (tag) => tag !== tag.toUpperCase();
+const NOT_ON_DISK = new Set(['ENOENT', 'ENOTDIR']);
+
+// True when `file` exists (a link counts as itself, not its target).
+function isOnDisk(file) {
+  try {
+    lstatSync(file);
+    return true;
+  } catch (error) {
+    if (NOT_ON_DISK.has(error.code)) return false;
+    throw error;
+  }
+}
 
 /** What the files hiddenFileCount counts are, for a reason or a refusal. */
 export const HIDDEN_FILES_WHY = 'marked assume-unchanged or skip-worktree (git status does not show their edits)';
 
 /**
- * Number of tracked files in the worktree at `path` marked assume-unchanged or skip-worktree: git status skips them, so an
- * edit there is invisible to changedFileCount, and removing the worktree (or checking out over it) would lose it. Null when git
- * cannot say (callers treat null as "has some").
+ * Number of tracked files in the worktree at `path` whose edits git status skips: every assume-unchanged file, and every
+ * skip-worktree file that exists on disk. A sparse checkout's skip-worktree files outside its patterns are not on disk, so
+ * they hold no edit and are not counted. Removing the worktree (or checking out over it) would lose such an edit. Null when
+ * git cannot say (callers treat null as "has some").
  */
 export function hiddenFileCount(path) {
   const result = runGit(path, ['ls-files', '-v', '-z']);
   if (result.status !== 0) return null;
-  return result.stdout.split('\0').filter((entry) => entry !== '' && isHiddenTag(entry[0])).length;
+  const entries = result.stdout.split('\0').filter((entry) => entry !== '');
+  return entries.filter((entry) => isAssumeUnchangedTag(entry[0])
+    || (entry[0] === SKIP_WORKTREE_TAG && isOnDisk(join(path, entry.slice(TAG_LENGTH))))).length;
 }
 
 /**

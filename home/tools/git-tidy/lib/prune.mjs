@@ -1,24 +1,25 @@
 // Purpose: `git-tidy prune`: remove the worktrees and branches whose work is already on the base, the older copies of a re-done
 //   lane and the leftover branches of workflow agents (lib/copies.mjs), and nothing else.
 // Exports: pruneRepo, deleteBranch (exported so a test can move a branch between the check and the delete), refuseUnsafeApply (land asks it first).
-// Invariants: the only writes are `git worktree prune`, `git worktree remove` (never --force), `git update-ref -d` with the
-//   old value and the removal of the branch's config section, and only with apply. Principle: remove only what is provably
-//   on the base AND leaves no only-copy behind (uncommitted, untracked or ignored files, commits that live in a reflog only).
-//   Before EACH removal the facts are read again from git, so what was true when the candidates were found is never
-//   trusted. A plan (no apply) trusts the candidates it was just given, which saves re-reading hundreds of branches.
-//   Anything not proven is kept, with the reason. Order: stale entries, worktrees, branches (a branch is free once its
-//   worktree is gone). Every branch is written to the deletion log (deletion-log.mjs) with its sha before it is deleted, so it
-//   can be restored; one that cannot be written is kept. An apply whose log is unsafe (not a regular file) removes nothing.
-//   With `onlyOnBase` (land's sweep) copies are never removed: their work is on another branch, not on the base.
-//   An apply pins the base to the commit it points at once the candidates are found (pinBase): every proof compares with that
-//   commit, each branch delete is one transaction that also checks the base still points there, and each worktree removal
-//   checks it first. A base that moved stops the run: everything not yet removed is kept, with the reason.
+// Invariants: the only writes are `git worktree remove` (never --force; a stale entry one at a time, never `worktree prune`),
+//   the delete of a branch ref at its old value (`git update-ref`) and of its config section, and the `stale-head/<id>`
+//   branch that keeps a stale entry's HEAD when no branch holds it (prune-stale.mjs), and only with apply.
+//   Principle: remove only what is provably on the base AND leaves no only-copy behind (uncommitted, untracked, ignored or
+//   hidden files, a nested repository, commits that live in a reflog or a stale entry only). Before EACH removal the facts
+//   are read again from git; a plan (no apply) trusts the candidates it was just given. Anything not proven is kept, with
+//   the reason. Order: stale entries, worktrees, branches (a branch is free once its worktree is gone). Every branch is
+//   written to the deletion log (deletion-log.mjs) before it is deleted; one that cannot be written is kept, and an apply
+//   whose log is unsafe removes nothing. With `onlyOnBase` (land's sweep) copies are kept: their work is not on the base.
+//   An apply pins the base to one commit once the candidates are found (pinned-base.mjs) and stops, keeping the rest, when
+//   the base branch moves: a branch delete verifies it in the same update-ref transaction, other removals check it first.
 import { branchState, isMerged } from './branches.mjs';
 import { copyCandidates, isStillCopy } from './copies.mjs';
 import { checkDeletionLog, recordDeletion } from './deletion-log.mjs';
 import { UsageError, runGit } from './git.mjs';
+import { nestedRepositoryWhy } from './lane-slots.mjs';
 import { findLeftovers } from './leftovers.mjs';
-import { baseMovedReason, pinBase } from './pinned-base.mjs';
+import { baseMoved, pinBase } from './pinned-base.mjs';
+import { pruneStale } from './prune-stale.mjs';
 import { branchReflogs, isNotStarted, reflogOnlyCommits } from './reflog.mjs';
 import { isBackupTag } from './tags.mjs';
 import {
@@ -32,8 +33,6 @@ const NOT_STARTED = `not started yet (no commit of its own), used in the last ${
 const NOT_A_COPY = 'it is no longer a copy of a newer branch';
 const item = (action, kind, subject, detail) => ({ action, kind, subject, detail });
 const HEADS = 'refs/heads/';
-// Why the run stops (its pinned base moved), or null; once set it stays, so everything after it is kept for that reason.
-const baseMoved = (ctx) => (ctx.stopped ??= baseMovedReason(ctx.repo));
 
 // Where verdicts read their facts: with apply, git is asked again each time; a plan reads the worktree list once and
 // takes branch states from the candidates it was given.
@@ -91,8 +90,8 @@ function ignoredReason(path) {
 const liftsRecentRule = (includeRecent, branch) => (Array.isArray(includeRecent) ? includeRecent.includes(branch) : includeRecent === true);
 
 // What the worktree holds that removal would destroy, or that says it is in use: unfinished operation, uncommitted or
-// untracked files, files whose edits git status hides (assume-unchanged, skip-worktree), ignored files, commits only in a
-// reflog, recent use. A copy's worktree may hold a live agent, so --include-recent never lifts the recent-use rule for it.
+// untracked files, files whose edits git status hides (assume-unchanged, skip-worktree), ignored files, a git repository
+// inside an ignored folder, commits only in a reflog, recent use. A copy's worktree may hold a live agent, so --include-recent never lifts the recent-use rule for it.
 function contentReason(ctx, tree, copy) {
   const operation = inProgressOperation(tree.path);
   if (operation !== null) return `a ${operation} is not finished there`;
@@ -102,7 +101,7 @@ function contentReason(ctx, tree, copy) {
   const hidden = hiddenFileCount(tree.path);
   if (hidden === null) return 'git cannot list its files, treated as hiding edits';
   if (hidden > 0) return `${hidden} files ${HIDDEN_FILES_WHY}`;
-  const reasons = [ignoredReason(tree.path), reflogReason(holderRepo(ctx.repo, copy), [ctx.branchReflog(tree.branch), { cwd: tree.path, ref: 'HEAD' }], tree.branch)];
+  const reasons = [ignoredReason(tree.path), nestedRepositoryWhy(tree.path), reflogReason(holderRepo(ctx.repo, copy), [ctx.branchReflog(tree.branch), { cwd: tree.path, ref: 'HEAD' }], tree.branch)];
   const found = reasons.find((reason) => reason !== null);
   if (found) return found;
   if (liftsRecentRule(ctx.includeRecent, tree.branch) && !copy) {
@@ -162,29 +161,6 @@ function branchVerdict(ctx, candidate, gone) {
   return { remove: true, tip: state.tip, state: state.state };
 }
 
-function pruneStale(ctx, candidates, gone) {
-  const { repo, apply } = ctx;
-  const items = [];
-  const removable = [];
-  for (const candidate of candidates) {
-    const tree = ctx.worktrees().find((entry) => entry.path === candidate.path && !entry.main);
-    if (!tree) continue;
-    if (!tree.missing) items.push(item('keep', 'stale-worktree', tree.path, 'its folder is back'));
-    else if (tree.locked) items.push(item('keep', 'stale-worktree', tree.path, 'locked; unlock it with `git worktree unlock` first'));
-    else removable.push(tree.path);
-  }
-  if (apply && removable.length > 0) runGit(repo.dir, ['worktree', 'prune']);
-  const stillListed = new Set(ctx.worktrees().map((entry) => entry.path));
-  for (const path of removable) {
-    if (!apply) {
-      gone.add(path); // a plan must predict that its branch becomes free once the entry is pruned
-      items.push(item('remove', 'stale-worktree', path, 'folder missing'));
-    } else if (stillListed.has(path)) items.push(item('failed', 'stale-worktree', path, 'git worktree prune left it listed'));
-    else items.push(item('removed', 'stale-worktree', path, 'folder missing'));
-  }
-  return items;
-}
-
 function pruneWorktree(ctx, candidate, gone) {
   const { repo, apply } = ctx;
   const kind = ctx.copies.has(candidate.branch) ? 'copy-worktree' : 'merged-worktree';
@@ -201,10 +177,9 @@ function pruneWorktree(ctx, candidate, gone) {
   return result.status === 0 ? item('removed', kind, candidate.path, detail) : item('failed', kind, candidate.path, result.stderr);
 }
 
-// Compare-and-delete: update-ref fails when the branch no longer points at the tip the verdict was made for, and, with a
-// pinned base (pinBase), when the base no longer points at the commit the proofs compared with (one transaction, so
-// nothing is deleted then). A branch's config section (`branch.<name>.*`, set by upstream tracking) is removed too, as
-// `git branch -D` would.
+// Compare-and-delete: update-ref fails when the branch no longer points at the verdict's tip or, with a pinned base, when
+// the base no longer points at the commit the proofs compared with (one transaction). A branch's config section
+// (`branch.<name>.*`, set by upstream tracking) is removed too, as `git branch -D` would.
 export function deleteBranch(repo, name, tip) {
   const ref = `${HEADS}${name}`;
   const deleted = repo.baseSha === undefined
@@ -264,14 +239,13 @@ export function refuseUnsafeApply(repo) {
 }
 
 /**
- * Plans (apply false) or performs (apply true) the removal of stale and merged worktrees and merged branches.
- * `leftovers` are the candidates (from findLeftovers); each is re-checked right before it is acted on, so candidates
- * found earlier may be out of date. `includeRecent` (true, or an array of lane names that it applies to) lifts only the "used in the last 60 minutes" rule, and not for a lane with no commit of
- * its own yet (see isNotStarted): that one stays protected while its worktree was used. `onlyOnBase` (land's sweep) keeps every
- * copy (superseded-copy, agent-leftover not on the base) with the reason, so only branches whose content is on the base go. Returns items
- * `{ action, kind, subject, detail }` with action `remove`/`keep` for a plan and `removed`/`deleted`/`kept`/`failed` for an
- * apply. An apply pins the base (pinBase) and stops, keeping the rest, once the base moves. Throws UsageError when apply meets
- * an unfinished operation, an ambiguous base or a deletion log that is not safe to write.
+ * Plans (apply false) or performs (apply true) the removal of stale and merged worktrees and merged branches. `leftovers` are
+ * the candidates (from findLeftovers); each is re-checked right before it is acted on. `includeRecent` (true, or the lane
+ * names it applies to) lifts only the "used in the last 60 minutes" rule, never for a lane with no commit of its own yet
+ * (isNotStarted). `onlyOnBase` (land's sweep) keeps every copy (superseded-copy, agent-leftover not on the base) with the
+ * reason. An apply pins the base (pinBase) and stops, keeping the rest, once the base moves. Returns items `{ action, kind,
+ * subject, detail }`: `remove`/`keep` for a plan, `removed`/`deleted`/`kept`/`failed` for an apply. Throws UsageError when
+ * apply meets an unfinished operation, an ambiguous base or a deletion log that is not safe to write.
  */
 export function pruneRepo(unpinned, { apply, includeRecent = false, onlyOnBase = false, leftovers = findLeftovers(unpinned) }) {
   if (apply) {

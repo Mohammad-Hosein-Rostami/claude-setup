@@ -1,7 +1,7 @@
 // Purpose: read a repository's lane folder pool: the folders `<main worktree>/.claude/worktrees/lane-<n>` and, for each, whether it is
 //   free for the next lane, busy (with why) or missing (a worktree entry whose folder is gone).
 // Exports: POOL_FOLDER, LOCK_REASON_PREFIX, poolFolderOf, commonDirOf, slotKey, isPoolSlot, contentBusyWhy, poolSlots, readSlot, lastUsedMs,
-//   removalLossWhy, staleEntryLossWhy.
+//   removalLossWhy, nestedRepositoryWhy, entryIdOf, staleEntryLossWhy.
 // Invariants: reads only. Every fact comes from git through runGit (no shell, `-z` lists, full shas) or lstat, and a fact that cannot
 //   be read makes the folder busy, never free (fail closed). Slot paths are compared as real paths (realpathSync.native), case-folded on
 //   win32 and darwin. A folder at a slot path that is not a worktree of this repository is busy and is never touched by any caller.
@@ -182,8 +182,11 @@ function wouldRemove(folder, args) {
   return new Set(result.stdout.split('\n').filter((line) => line.startsWith(prefix)).map((line) => line.slice(prefix.length)));
 }
 
-/** Why a git repository inside an ignored folder forbids removing `folder` (`-ffdx` would take it, `-fdx` keeps it), or null. */
-function nestedRepositoryWhy(folder) {
+/**
+ * Why a git repository inside an ignored folder forbids removing `folder` (`-ffdx` would take it, `-fdx` keeps it), or null.
+ * Exported for prune, whose worktree removal has the same risk.
+ */
+export function nestedRepositoryWhy(folder) {
   const all = wouldRemove(folder, ['-ffdx']);
   const kept = wouldRemove(folder, ['-fdx']);
   if (all === null || kept === null) return 'git clean cannot list its ignored files';
@@ -202,7 +205,7 @@ export function removalLossWhy(repo, folder) {
 }
 
 /** The id of the worktree entry (`<common dir>/worktrees/<id>`) whose gitdir file points into `folder`, or null. */
-function entryIdOf(repo, folder) {
+export function entryIdOf(repo, folder) {
   const entries = join(commonDirOf(repo), 'worktrees');
   const key = slotKey(folder);
   const ids = existsSync(entries) ? readdirSync(entries) : [];

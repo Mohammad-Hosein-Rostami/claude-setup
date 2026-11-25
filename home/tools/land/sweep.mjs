@@ -1,6 +1,7 @@
 // Purpose: the clean-up `land` runs once the lane has landed and its own branch is gone: git-tidy's `prune --apply` over the
 //   whole repository (branches whose content is all on the base, with all of prune's safety checks; copies of another branch are
-//   kept with the reason), then the `left:` block, one line per branch still there and why.
+//   kept with the reason), then the `left:` block, one line per branch still there and why, and per stale worktree entry
+//   prune kept.
 // Exports: sweepRepo.
 // Invariants: removes only what prune proves; a prune that refuses (an unfinished rebase or merge in some worktree) removes
 //   nothing and prints `cleanup skipped: <reason>`; a deletion log that is not safe to write stops it before anything is removed
@@ -54,10 +55,13 @@ function keptReasons(repo, items) {
   return reasons;
 }
 
-// The `left:` block: every branch but the base, at most MAX_LEFT_SHOWN lines, then `+N more`.
+// The `left:` block: every branch but the base, then each stale worktree entry prune kept, at most MAX_LEFT_SHOWN lines,
+// then `+N more`.
 function leftLines(repo, items, now) {
   const states = findLeftovers(repo).states;
-  if (states.length === 0) return ['left: none'];
+  const staleRows = items.filter(({ action, kind }) => action === 'kept' && kind === 'stale-worktree')
+    .map(({ subject, detail }) => `  ${plain(subject)} (stale worktree entry): kept: ${plain(detail)}`);
+  if (states.length === 0 && staleRows.length === 0) return ['left: none'];
   const reasons = keptReasons(repo, items);
   const holders = inLaneHolders(repo, states.filter(({ state }) => state === 'unmerged').map(({ name }) => name), states);
   const dates = commitDates(repo);
@@ -68,9 +72,9 @@ function leftLines(repo, items, now) {
     const hours = Math.floor((now - (dates.get(name) ?? 0) * MS_PER_SECOND) / MS_PER_HOUR);
     return hours >= UNLANDED_AFTER_HOURS ? `idle ${hours} h, ahead ${ahead}` : `active, ahead ${ahead}`;
   };
-  const shown = states.slice(0, MAX_LEFT_SHOWN).map((state) => `  ${state.name}: ${why(state)}`);
-  const more = states.length > MAX_LEFT_SHOWN ? [`  +${states.length - MAX_LEFT_SHOWN} more`] : [];
-  return ['left:', ...shown, ...more];
+  const rows = [...states.map((state) => `  ${state.name}: ${why(state)}`), ...staleRows];
+  const more = rows.length > MAX_LEFT_SHOWN ? [`  +${rows.length - MAX_LEFT_SHOWN} more`] : [];
+  return ['left:', ...rows.slice(0, MAX_LEFT_SHOWN), ...more];
 }
 
 /**

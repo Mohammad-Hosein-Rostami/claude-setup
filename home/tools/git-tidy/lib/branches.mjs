@@ -17,8 +17,8 @@ import { gitText, runGit } from './git.mjs';
 const HEADS = 'refs/heads/';
 /** The state of a branch whose commits differ from the base's but whose content is all on the base. */
 export const CONTENT_EQUAL = 'content-equal';
-// Options of the content proof: names only for conflicts, no messages, and a branch with no history in common still merges
-// (an orphan branch whose files are all on the base is content-equal; any other one is not).
+// Options of the content proof: names only for conflicts, no messages, and a branch with no history in common still merges,
+// so an orphan branch does not abort the batch (changesOnBase never proves an orphan: it has no merge base).
 const CONTENT_MERGE = ['merge-tree', '--stdin', '--name-only', '--no-messages', '--allow-unrelated-histories'];
 const MIN_GIT = { major: 2, minor: 40 }; // the first git whose merge-tree reads --stdin
 const GIT_VERSION = /^git version (\d+)\.(\d+)/;
