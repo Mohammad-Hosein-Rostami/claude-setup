@@ -19,6 +19,11 @@ Collecting (run only by the detached refresh):
 - `read-part.mjs`: a bounded read of a plain file (never a link, a folder or a FIFO, never more than a set number of bytes), also for a repository's own files.
 - `cache-file.mjs`: the refresher's own cache files per session (transcript cursors, git cache).
 
+The boss's sync (`tick`, run by hand after every agent report and every land):
+- `tick.mjs`: the `tick` command: main's state, the lanes in flight, overlaps and strays among their files, the plan's queue,
+  features due for tess and a suggested next step.
+- `tick-plan.mjs`: reads and checks the plan's pieces.json, and reads and writes the job's tess marks.
+
 Drawing: the status line is 2 rows when calm and at most 5 when busy (alert, agents summary, git, lanes and session). Colour
 marks a state only, never an agent or a branch.
 - `cells.mjs`: the cells every row is drawn with: glyphs, state colours, durations, clocks, row labels, fitting parts to a width.

@@ -1,6 +1,7 @@
 # board
 
-The status line's engine: a detached refresh writes each session's board file, and `show` prints it as plain lines.
+The status line's engine: a detached refresh writes each session's board file, `show` prints it as plain lines, and `tick` is
+the boss's sync of main, its lanes and the plan.
 
 The engine behind the status line: which agents run, what waits on the owner and the git state of the session's worktrees, in
 one small file the status line reads (`~/.claude/state/board/<session>.json`, at most 48 KB). Node 22, no dependencies.
@@ -23,9 +24,75 @@ agent <id> <type> <running|done|quiet N min> branch <branch|-> folder <worktree|
 
 One `agent` line per agent, in the board's order; with no agents only the `board` line prints. `stale N s` is the board's own
 mark: its last refresh went over its budget and kept data N seconds old (see [The refresh](#the-refresh)); anything else is
-`fresh`, so read the time for the age. No lane lines yet: they wait for a change of the work model (owner decision).
+`fresh`, so read the time for the age. The lanes are `tick`'s (below).
 Exit 0 shown, 1 no board file for the session (it prints the `refresh --force` command that writes one), 2 usage (a missing or
 malformed session id, an unknown command).
+
+## The tick command
+
+The boss runs `tick` after every agent report and after every land; nothing runs it by itself. It reads only, apart from one
+forced refresh of the session's board (for the agents) and `--mark-tess`:
+
+```sh
+node ~/.claude/tools/board/board.mjs tick --repo <abs main checkout> [--plan <abs pieces.json>] [--session <id>] [--json]
+node ~/.claude/tools/board/board.mjs tick --repo <abs> --plan <abs> --mark-tess <feature> --sha <40-hex>
+```
+
+The lines (`lib/tick.mjs`), every branch name, path and agent name cleaned of control characters; `queue` and `features` print
+only with `--plan`, `ledger` only when the land ledger has lines it cannot parse or cannot be read at all:
+
+```text
+main <sha> <clean|dirty>, <one line|not one line> (git-tidy check 0|1: <count> <kind>, ...)[, <n> landed since tess round at <sha>]
+folders <n> <state>, ...
+lane <branch> <type> <agent id> <running|done|quiet N min>|no agent +<n> commits <clean|~<n> changed|changes ?> [ready to land|needs rebase (main moved)] [folder <state>]
+overlap <lane or piece> x <lane>: <file>, <file>, <file>, +<n> more
+stray <lane>: <files> (not in its files)
+queue <piece> startable | <piece> after <piece>, ... | <piece> overlaps <lane>
+features landed, not checked: <feature> <landed>/<pieces> (risk <risk>), ... -> tess due at 3 (now <n>)|tess due now (<why>)
+ledger <n> bad lines skipped
+ledger unreadable (<why>): no piece counts as landed
+next: land <lane>; claim <piece>; tess on <feature>; dev <n>/3, tess <n>/3
+```
+
+- **main**: the branch `--repo` names as its base (origin/HEAD, else main, master or develop), with `git-tidy check`'s findings by
+  kind: `dirty` is a `dirty-base` finding, `not one line` a merge commit or a tangled branch. Any finding is exit 1. With
+  `--plan` it ends with the plan's pieces landed since the newest tess mark (`<n> landed and no tess round yet` before the first).
+- **lane**: each lane pool folder that holds a branch (`git-tidy lane list`; `folders` counts the pool's folders by state, as
+  `lane list` gives it; `folders none` with no pool folder). Its files are `git diff --name-only <main>...<branch>` (as
+  plumbing) plus the changed and untracked files in its folder; its agent is the board agent on that branch. `ready to land`: the agent is done (or none is on the board),
+  the lane has commits and its folder is clean. A lane outside the pool is not shown.
+- **overlap**: two lanes share a file, or a piece whose `after` pieces have all landed declares a file a lane changed (that piece
+  is not startable). **stray**: a lane `lane/<piece id>` changed a file its piece does not declare. Either is exit 1; such a lane
+  lands after the other one, with `land --test`.
+- **queue**: the plan's pieces not landed and not in a lane. A piece is landed when the land ledger
+  (`~/.claude/tools/land/ledger.mjs`) holds a land of `lane/<piece id>`.
+- **features**: the features fully landed and not checked, and every risky one (`risk` not `none`) with a landed piece and no
+  tess mark since: no new piece should touch its files until tess returns. A feature is checked when its tess mark is newer than
+  its newest land. tess is due when a risky feature is listed, when 3 features are fully landed and not checked, or when the
+  plan's last piece has landed.
+- **next**: only a suggestion: land one ready lane, claim startable pieces while fewer than 3 lanes are in flight, start tess
+  when it is due. While main has a finding it says to fix main first and start no new piece.
+
+`--mark-tess <feature> --sha <40-hex>` records that tess was started on that feature at that main sha (it must be on main), and
+prints `marked <feature> for tess at <sha>`. The marks are in `~/.claude/state/board/jobs/<job>.json` as
+`{ "<feature>": { "sha": "<40-hex>", "at": "<ISO>" } }`, written through a temp file and a rename; delete the file to forget
+them. `--json` prints every fact as one JSON object (lanes with their files, folders with why, features, tess status).
+
+Exit 0 shown; 1 findings (an overlap, a stray, a `git-tidy check` finding on main); 2 usage: a bad flag, a `--repo` that is not
+a git repository, a missing or bad plan or marks file (the message names what is wrong), or a git failure.
+
+### pieces.json
+
+lex writes it next to the plan; the tick reads it with `--plan`. Ids (`job`, features, pieces) are letters, digits, `-` and `_`
+(at most 64, starting with a letter or digit); `files` are repository-relative paths; `after` is optional:
+
+```json
+{ "job": "<slug>", "repo": "<abs>", "base": "<40-hex>",
+  "features": [{ "id": "login", "risk": "none | security,data,...", "spec": "<plan path>#<section>" }],
+  "pieces": [{ "id": "login-1", "feature": "login", "files": ["<repo-relative path>"], "after": ["<piece id>"] }] }
+```
+
+A piece's branch is `lane/<piece id>`. No two pieces that can run at the same time share a file; the tick shows it when they do.
 
 ## The status line rows
 
@@ -127,4 +194,4 @@ The board holds no job, step or estimate facts and no `where` tree (plan 2026-11
 
 Not yet shown: the tidy-gate verdict, and which agent a question comes from (the asking marker holds no agent).
 
-Files: `board.mjs` (the `refresh` and `show` commands), `lib/` (see `lib/README.md`).
+Files: `board.mjs` (the `refresh`, `show` and `tick` commands), `lib/` (see `lib/README.md`).
