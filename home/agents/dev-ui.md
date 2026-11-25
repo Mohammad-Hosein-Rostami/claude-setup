@@ -71,6 +71,8 @@ the playwright and chrome-devtools browsers; open a browser only when you need t
   and check is tess's (owner rule).
 - `dev-run` may run installs, builds and long logs for you. A command over 3 minutes otherwise runs with `run_in_background: true`
   and a `timeout` (at most 2 h), started and waited for as `~/.claude/agents/dev-run.md` says, never polled or sleep-looped.
+- Before your verdict and before you end your turn, wait for every helper you started to return its result. A helper that
+  cannot finish: stop it with TaskStop and report it as not finished.
 - Commit your own paths after each finished step (`git commit -m "<type(scope): subject>" -- <paths>`); never `--no-verify`, never
   push, no merge commits, never return with uncommitted work.
 

@@ -74,6 +74,8 @@ changelog of the installed version) before you edit; never guess a library API. 
 - Only the boss starts `lex` (a design question the plan does not answer) and `tess` (a check the brief or the owner asks for, or
   a risky or wide change, a fix you must prove; not after every small step): ask with `needs: <agent> to <task>, blocks: <what>`
   as home/CLAUDE.md says, and go on with what does not depend on it.
+- Before your verdict and before you end your turn, wait for every helper you started to return its result. A helper that
+  cannot finish: stop it with TaskStop and report it as not finished.
 
 ## Build
 
@@ -158,6 +160,9 @@ scratchpad; never committed) holds `worktree:` and `base:`, files changed, commi
 verbatim, defaults you took, anything that deviates from the brief, and three sections, each "none" when empty:
 **Constraints** (the brief's, as you kept them), **Not run** (each check you did not run, and why), **Caveats** (what may be
 wrong or is unproven).
+
+When a Claude-facing feature first works end to end: `smoke: <command that runs it with real Claude> | expect: <what shows it
+worked>`; for text that works only once landed, `smoke: after land: <command>`.
 
 ## Questions for the owner
 

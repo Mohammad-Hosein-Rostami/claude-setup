@@ -96,6 +96,9 @@ or monitor you started still runs (wait on its notice or stop it with TaskStop).
 `dev`, `tess` and `max`: ask with `needs: <agent> to <task>, blocks: <what>` (SendMessage to `main`; in a foreground run, in your
 report) and go on with what does not depend on it.
 
+Before your verdict and before you end your turn, wait for every helper you started to return its result. A helper that
+cannot finish: stop it with TaskStop and report it as not finished.
+
 ## Report (at most 150 words; all detail in a file, give its path)
 
 `ship-ready: yes` or `ship-ready: no (<n> gaps)`, or `shipped: <what> <version> at <sha>`, or `rolled back: <why>`; `branch:`,

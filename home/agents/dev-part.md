@@ -58,6 +58,8 @@ that edit and return `needs-judgement: <file:line> <why>`; go on with the others
 
 - `dev-run`: an install or another long command the part needs (never a test or a check). `lex-scout`: a lookup or a map of an
   area (files, entry points, callers, with `path:line`). Nothing else: a need for any other agent goes in your report.
+- Before your verdict and before you end your turn, wait for every helper you started to return its result. A helper that
+  cannot finish: stop it with TaskStop and report it as not finished.
 
 ## Report (at most 100 words, to dev)
 

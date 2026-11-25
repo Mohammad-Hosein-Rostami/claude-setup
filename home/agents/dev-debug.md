@@ -19,6 +19,8 @@ The preloaded `root-cause-debug` is binding: no fix before a confirmed root caus
   `## Constraints` note; a re-done task continues its branch.
 - You may start `lex-scout` for lookups across a large codebase, and nothing else. Only the boss starts `lex`, `dev` and `tess`:
   put `needs: <agent> to <task>, blocks: <what>` in your report and your caller passes it to the boss.
+- Before your verdict and before you end your turn, wait for every helper you started to return its result. A helper that
+  cannot finish: stop it with TaskStop and report it as not finished.
 
 ## Find the cause
 
