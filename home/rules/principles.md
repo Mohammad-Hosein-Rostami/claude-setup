@@ -1,16 +1,15 @@
 ---
-paths: ["**/*.mjs","**/*.cjs","**/*.sh","**/.githooks/**","**/settings/*.json"]
+paths: ["**/*.mjs","**/*.cjs","**/*.sh","**/settings/*.json"]
 ---
-# Principles for tools, hooks, CI and settings: P1-P16
+# Principles for tools, hooks, CI and settings: P1-P16 (there is no P4; the other ids keep their numbers)
 
 Lessons of past review rounds (85 defects, 88 review notes), one row each, so a writer meets them while building; `from:` names
 a sharpened part's past defect class. A brief names the ids that fit its files. They are plain design guidance: ask each question of your own change while you build; nothing is answered back at hand-off.
 
 id | areas | principle | question to ask yourself
-P1 | hooks, guards, anything run by a timeout | One total deadline below the hook timeout (a timed-out hook is cancelled, not blocked); each subprocess has a timeout that kills its process group; no super-linear regex on hostile text; a hostile file system (FIFO, link, /dev/zero, short read) fails closed (from: hook stalls, quadratic scans, orphans) | Does every read, regex and subprocess end before the hook timeout, and does a FIFO, link or short read deny, not hang or allow?
+P1 | hooks, anything run by a timeout | One total deadline below the hook timeout (a timed-out hook is cancelled, not blocked); each subprocess has a timeout that kills its process group; no super-linear regex on hostile text; a hostile file system (FIFO, link, /dev/zero, short read) fails closed (from: hook stalls, quadratic scans, orphans) | Does every read, regex and subprocess end before the hook timeout, and does a FIFO, link or short read deny, not hang or allow?
 P2 | git in hooks and tools | Plumbing with pinned output flags (`-z`, full 40-hex shas), only in repos with provenance (a planted repo's config runs); copy proof is a verbatim patch-id plus merge-tree; land the tested sha, never a moving ref (from: planted repos, short shas) | Does each git call use plumbing, fixed flags, a full sha and a trusted repo, and land the tested sha?
 P3 | gates and land | Fail closed on empty, missing or writer-reported gate input; an error is never read as empty, absent or passed; an exit-0 caller proves the CLI ran; a missing or failed agent report is incomplete; the aggregate lists failed members; no ignored result (C9) (from: errors read as nothing) | If this input is empty, missing, an error or the writer's, does the gate stop and show a failed member?
-P4 | guards and permission exemptions | An exemption is a small allowlist grammar matched on the raw undecoded text; anything else asks | Is every exemption an allowlist on the raw text, so anything unlisted asks?
 P5 | code reading branch names, subjects, file names or other untrusted text | Untrusted text is quoted, refused or capped before it reaches a command, a dialog or the context | Is every untrusted string quoted, refused or capped before a command, dialog or prompt uses it?
 P6 | writers and readers of one store | The writer's size cap equals the reader's, both in bytes (from: string-length caps) | Do the writer and the reader of this store use one named cap in bytes?
 P7 | locks, shared stores, temp names | Lock names, store keys and temp names are unique per run (own namespace); a release checks it still owns the lock, a stale break never takes a live holder, every tool mode takes the lock (from: lock steals) | Is every name unique to this run, and can a slow, killed or parallel run steal another's write?

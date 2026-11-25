@@ -61,7 +61,7 @@ Bad -> good:
 
 ## If the box times out
 
-Each question gets its own timed dialog (hook `permission-timed-allow.mjs`; the mechanics are in `docs/daily-use.md` "Long or
+Each question gets its own timed dialog (hook `question-popup.mjs`; the mechanics are in `docs/daily-use.md` "Long or
 unattended runs"). Three outcomes:
 - The owner answers (in the dialog or in the terminal): that answer stands.
 - No answer in the question's own wait (2 min), or "Use recommended": its "(Recommended)" option is taken, else its first; a

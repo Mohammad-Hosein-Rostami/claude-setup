@@ -14,8 +14,8 @@ node ~/.claude/tools/long-run/long-run.mjs status             # one line per run
 Install: `scripts/install.sh` (macOS, Linux) or `scripts/install.ps1` (Windows) runs `npm ci` here (the tool is in
 `TOOLS_WITH_DEPS` of `scripts/install.mjs`). It stays on npm with `package-lock.json`: `npm ci` runs better-sqlite3's install
 script (a prebuilt binary, no compiler), which pnpm would skip. After a Node upgrade that changes the native ABI the next install
-reinstalls it (the install stamp holds the ABI); until then `check` and `start` refuse with that fix, and `doctor.sh` checks
-it with `long-run.mjs check --deps`.
+reinstalls it (the install stamp holds the ABI); until then `check` and `start` refuse with that fix, and `long-run.mjs check --deps`
+tests it.
 
 ## Commands
 
@@ -25,7 +25,7 @@ running (pause or stop it first) or the folder is used by another live run.
 | Command | What it does |
 |---|---|
 | `check <job.json>` | validate, resolve the account and the models, load the SQLite module; print the plan; no tokens |
-| `check --deps` | only load LangGraph and the SQLite module (an in-memory database); prints `ok` or the fix (doctor) |
+| `check --deps` | only load LangGraph and the SQLite module (an in-memory database); prints `ok` or the fix |
 | `start <job.json> [--foreground]` | check, freeze the job into the run folder, start the driver (`<run>/driver.log`); prints `started <run-id>` |
 | `status [<run>] [--json]` | all runs, one line each; one run: a line per step and per running, paused or taken-over session |
 | `watch <run> [<step>]` | follow the live log as readable lines; Ctrl-C ends only the watching |
@@ -159,8 +159,8 @@ When a run stops (a pause, a stop, a reboot, a crash or a killed driver) while a
   removed when it has no uncommitted, untracked or ignored file, no assume-unchanged file or skip-worktree file on disk (git
   status does not show edits there) and no commit that is not on the step folder's HEAD or a remote; any other is kept and named in `summary.md`. Any other worktree that appeared during the step (another session's
   lane, say) is only listed, never removed. Branches are never deleted.
-- Each permission prompt inside a headless step shows the timed dialog on the desktop and waits up to 2 minutes before it goes
-  ahead, so a step can stall that long while nobody watches.
+- A question (AskUserQuestion) inside a headless step shows the question popup on the desktop and waits up to 2 minutes before
+  it takes the recommended option, so a step can stall that long while nobody watches.
 
 ## How you control a run
 
@@ -249,8 +249,8 @@ for a Node in use, C replaces only `lib/graph.mjs`.
   account names and paths are validated before they reach a path or a command.
 - Runaway: only the loop guards and the holds after repeated failure; no usage credits (an account without credits recorded
   off is refused), never Fable, never an API key, no `--bare`. A job with many or long steps spends what it needs.
-- Popups in `-p`: each waits 2 minutes, then goes ahead, a push included; AskUserQuestion takes the recommended option after 2
-  minutes. A step can therefore push or publish with nobody watching.
+- Full access in `-p`: no command asks for permission, so a step can push or publish with nobody watching. AskUserQuestion
+  takes the recommended option after 2 minutes.
 - Two writers on one transcript: `resume` after a takeover refuses while the session looks open (its transcript changed in the
   last 60 s, or a running process has the session id in its command line) unless `--force`.
 
@@ -284,6 +284,5 @@ for a Node in use, C replaces only `lib/graph.mjs`.
   2000) and `CLAUDE_LONG_RUN_SWEEP_GRACE_MS` (the grace before SIGKILL for a boss's leftover processes, default 3000). A knob
   is named `CLAUDE_<TOOL>_<CONSTANT>` after the constant it sets (`lib/env-ms.mjs`); only a whole number of milliseconds
   from 1 to 2147483647 (2^31-1, Node's longest timer), written in digits only, is taken; anything else (text, a sign, a
-  space, a fraction, `1e3`, `0x10`, 0, a larger number) keeps the default. `scripts/doctor-accounts.mjs` has one too:
-  `CLAUDE_DOCTOR_KEYCHAIN_PROBE_TIMEOUT_MS` (default 3000).
+  space, a fraction, `1e3`, `0x10`, 0, a larger number) keeps the default.
 - Rollback: `autostart off`, `schedule remove` for each schedule, then remove this folder; `~/.claude/state/long-run/` stays.

@@ -91,11 +91,10 @@ changelog of the installed version) before you edit; never guess a library API. 
   (`BASE: test/<topic>`) makes its failing tests pass and never edits those tests; tess runs them. When BRANCH is a lane that
   has not landed, fast-forward the lane to `test/<topic>`, delete `test/<topic>` and fix on the lane: a lane lands under its own
   name.
-- An install the work needs runs through the machine-wide `suite run` queue (`node ~/.claude/tools/suite/suite.mjs run --
-  <command>`, never `--cache`), or goes to `dev-run`. A command that may run over 3 minutes runs with `run_in_background: true`
-  and a `timeout` (at most 2 h), started and waited for as `~/.claude/agents/dev-run.md` says. A command that ends within 3
-  minutes runs in the foreground with an explicit Bash `timeout`: 600000 for an install or a long run, 60000 for a probe. Never
-  poll in a loop of your own.
+- An install the work needs runs directly or goes to `dev-run`. A command that may run over 3 minutes runs with
+  `run_in_background: true` and a `timeout` (at most 2 h), started and waited for as `~/.claude/agents/dev-run.md` says. A
+  command that ends within 3 minutes runs in the foreground with an explicit Bash `timeout`: 600000 for an install or a long
+  run, 60000 for a probe. Never poll in a loop of your own.
 - A conflict between the plan and what the code needs is reported as `contract-dispute: <step> <why>`, never silently redesigned.
 - Before returning, read your diff against the brief once.
 
@@ -145,7 +144,7 @@ Readability (C31-C36, `~/.claude/standards/readability.md`)
 
 Work
 - C24 Your report is at most 150 words; file:line evidence and all detail go in the detail file (Report). C25 Never stop for context size; compaction carries the run on.
-- C30 In Bash, write the command word out (no `$VAR` as the command); secrets by env or file.
+- C30 Secrets by env or file.
 
 ## Report (at most 150 words; all detail in a file, give its path)
 

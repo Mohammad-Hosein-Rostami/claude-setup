@@ -22,14 +22,13 @@ named, with "size not measured in time". The Docker builder cache has no folder,
 
 ## Where it runs
 
-- `scripts/doctor.sh` (`check_disk_free`): `FAIL` makes doctor exit 1, `WARN` is a warning.
 - By hand before a big build (`node ~/.claude/tools/disk-free/disk-free.mjs`): below the fail threshold, stop before any git or agent
   work. A check that could not run (exit 2) counts as a refusal too, so a broken check never lets a build start unseen.
 
 ## Test hooks
 
 `DISK_FREE_DF_OUTPUT` replaces the `df -Pk` text, `DISK_FREE_CLAUDE_TMP` the session-folder root and `DISK_FREE_DU_TIMEOUT_MS` the 30 s
-total measuring limit. Tests: `tests/disk-free.test.mjs`, `tests/doctor-disk.test.mjs`.
+total measuring limit. Tests: `tests/disk-free.test.mjs`.
 
 ## disk-clean: removing what piles up
 
@@ -52,12 +51,11 @@ The bound of each store this setup or Claude Code fills (2026-11-21):
 | ----- | ----- | ------- |
 | scratchpads `/private/tmp/claude-<uid>/...` | 3 days idle (30 for an unknown session; an empty folder 3) | disk-clean `session-folders` |
 | `cs-test-*` and clone folders in a kept (running or recent) session's scratchpad | 2 days idle | disk-clean `session-scratch` |
-| `~/.claude/logs/guard.jsonl` | 5 MB, then moved to `guard.1.jsonl` (one old file kept) | the guard's log writer (`hooks/lib/guard-log.mjs`) |
 | test temp folders | 1 day | disk-clean `test-temp` |
 | hook counters in the temp folder | 3 days | disk-clean `hook-state` |
 | `~/.cache/figma` | 30 days idle | disk-clean `figma-pulls` |
-| stores of removed parts (recall index, estimate, done-check, commit-gate, ask queue, checkpoint and job files, 2026-11-24) | removed once | `scripts/install.sh` (its one-time cleanup of known old paths, `scripts/install/retired-state.mjs`) |
-| transcripts, tool results, file history | `cleanupPeriodDays` (default 30; doctor prints it, and the `claude purge --all --dry-run` size) | Claude Code itself: disk-clean adds no rule there |
+| stores of removed parts (recall index, estimate, done-check, commit-gate, ask queue, checkpoint and job files, 2026-11-24; Bash-check, agent-start and suite-queue state and the decision log, 2026-11-25) | removed once | `scripts/install.sh` (its one-time cleanup of known old paths, `scripts/install/retired-state.mjs`) |
+| transcripts, tool results, file history | `cleanupPeriodDays` (default 30; `claude purge --all --dry-run` prints the size) | Claude Code itself: disk-clean adds no rule there |
 | lane worktrees | until landed | `git-tidy prune` only (Claude Code's own cleanup keeps unpushed worktrees) |
 
 Never removed: the folder of the current session (`--session`, `$CLAUDE_CODE_SESSION_ID`, else `$CLAUDE_SESSION_ID`), the session with the newest transcript, a running
@@ -92,7 +90,7 @@ On Windows there is no uid: the owner and mode checks are skipped and a root mus
 
 Folders are read with `opendir`, one entry at a time, and walks keep one open folder per level (caps: 2 million entries, 64 levels, then the folder counts as busy and is kept),
 so a temp folder with a million entries does not fill the memory. A dry run stops looking after `--scan-ms` (default 30 s, checked inside every rule loop) and
-sizes stop at `--budget-ms` (default 20 s); either makes the totals "partial" (doctor prints "or more"); `--apply` has no scan limit. The flags `--claude-tmp`,
+sizes stop at `--budget-ms` (default 20 s); either makes the totals "partial" (the report prints "or more"); `--apply` has no scan limit. The flags `--claude-tmp`,
 `--projects`, `--tmp`, `--sessions` and `--figma-cache` replace the roots (tests use fake ones); `DISK_FREE_CLAUDE_TMP` replaces the first. `--now` may not be later
 than the clock (a future time would shorten every age). The usage error, the home-folder line and an unexpected error are escaped like the report.
 Exit 0 ok, 1 something could not be removed, 2 usage.
@@ -104,13 +102,12 @@ and the `NOT removed` and `SKIPPED` lists stop at 10 lines each, followed by "..
 `--apply` takes a run lock (`~/.claude/state/disk-clean.run.lock`, see `lib/lock-file.mjs`; one older than 6 hours is a killed run's): a second run at the same time does nothing and says so.
 The session registry files are read with `O_NOFOLLOW` and `O_NONBLOCK`, at most 64 KiB, and only plain files count.
 
-Where it runs: the SessionStart(startup) hook `home/hooks/disk-clean-start.mjs` starts `--apply --all-lines` in the background at most once per 24 h (the check and the stamp write hold a lock file made with `O_EXCL`, a stale one is broken by one process only; the stamp, lock and log are opened with `O_NOFOLLOW` and never block on a FIFO; the child gets only `HOME`, `TMPDIR`, `CLAUDE_CONFIG_DIR` and a few other names, no tokens; with `CLAUDE_CONFIG_DIR` set the child skips the session-folders and temp-projects rules and prints 2 `SKIPPED` lines), and `doctor.sh`
-prints the dry-run total as INFO (WARN above 2 GB).
+Where it runs: the SessionStart(startup) hook `home/hooks/disk-clean-start.mjs` starts `--apply --all-lines` in the background at most once per 24 h (the check and the stamp write hold a lock file made with `O_EXCL`, a stale one is broken by one process only; the stamp, lock and log are opened with `O_NOFOLLOW` and never block on a FIFO; the child gets only `HOME`, `TMPDIR`, `CLAUDE_CONFIG_DIR` and a few other names, no tokens; with `CLAUDE_CONFIG_DIR` set the child skips the session-folders and temp-projects rules and prints 2 `SKIPPED` lines).
 
-## with-run-tmp: a suite run that leaves nothing behind
+## with-run-tmp: a test run that leaves nothing behind
 
 `node ~/.claude/tools/disk-free/with-run-tmp.mjs [--shell] -- <command>` runs the command with `TMPDIR`, `TMP` and `TEMP` set to a fresh `cs-run-*` folder
 (children and grandchildren inherit it) and removes the folder when the command passes, fails or gets SIGINT/SIGTERM/SIGHUP. Nothing calls it automatically any more (the
 check parts that did were removed on 2026-11-22); wrap a test run in it by hand when you want one that leaves nothing behind. Tests make their own folders with `makeTempDir` from `tests/temp-dir-helpers.mjs` (prefix `cs-test-`,
-removed when the test process ends); a guard test fails when a test file calls `mkdtemp` itself. Hard kills (SIGKILL) leave one `cs-run-*` folder that `disk-clean` removes after a day.
+removed when the test process ends); a test fails when a test file calls `mkdtemp` itself. Hard kills (SIGKILL) leave one `cs-run-*` folder that `disk-clean` removes after a day.
 Tests: `tests/disk-clean.test.mjs`, `tests/disk-clean-live-scratch.test.mjs`, `tests/disk-clean-safety.test.mjs`, `tests/disk-clean-start.test.mjs`, `tests/with-run-tmp.test.mjs`, `tests/temp-dir-helpers.test.mjs`.

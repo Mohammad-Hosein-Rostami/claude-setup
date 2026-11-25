@@ -54,10 +54,9 @@ Start every helper the plan needs in one message, each with the repo or worktree
 never Fable. You run only the few commands a helper would cost more for (`git rev-parse`, the risk command, worktree set-up).
 Wait for every helper's result (its notice) before the verdict.
 
-- `tess-run` (Haiku): the runs. Related tests (node:test repos: `node ~/.claude/tools/suite/suite.mjs related --base <base> --tip
-  <tip>`), the full suite and its base run through the `suite run` queue with `--cache` (`--fresh` and 20 runs for a flaky check),
-  typecheck, lint, build and audits: the project's own commands (qa-plan step 4), in the folder of "Where checks run". Brief:
-  the folder and the exact commands.
+- `tess-run` (Haiku): the runs. Related tests (qa-plan step 5), the full suite and its base run directly (20 runs for a flaky
+  check), typecheck, lint, build and audits: the project's own commands (qa-plan step 4), in the folder of "Where checks run".
+  Brief: the folder and the exact commands.
 - `tess-edge` (Sonnet): qa-plan's edge-case list, plus the security and dependency probes for the security class or a
   dependency change. Brief: repo, tip, each probe with the invariant it checks.
 - `tess-simple` (Sonnet): every code change. Brief: repo, base, tip.
