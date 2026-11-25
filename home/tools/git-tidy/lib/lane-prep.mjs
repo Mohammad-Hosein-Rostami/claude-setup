@@ -12,7 +12,10 @@
 //   A lockfile that is a link, or over MAX_LOCKFILE_BYTES, is refused (not ready), never followed.
 //   The deps cache is never used in the main checkout, so its node_modules is never replaced by a clone, nor where lane-fill.mjs
 //   cloneSupport says cloning is not possible (GIT_TIDY_LANE_FILL=checkout turns it off); where it is used, each prepareLane prunes
-//   it once.
+//   it once. Nor is it used for a lockfile folder with a tracked package.json below it whose nearest lockfile folder is that one
+//   (a workspace or a `file:` link): one install there writes several node_modules, and the cache holds only the folder's own.
+//   Before a cache clone or an install replaces node_modules, a git repository inside a node_modules under the folder fails the
+//   install (not ready): the install would delete it.
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { accessSync, constants, lstatSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
@@ -20,6 +23,7 @@ import { delimiter, isAbsolute, join, relative, sep } from 'node:path';
 import { gitText } from './git.mjs';
 import { cloneFromCache, depsKey, pruneCache, saveToCache } from './lane-deps.mjs';
 import { cloneSupport } from './lane-fill.mjs';
+import { nestedRepositoryPaths } from './lane-slots.mjs';
 import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
 
 /** In this order: a folder holding two lockfiles is installed by the first that matches. */
@@ -31,6 +35,7 @@ export const LOCKFILE_INSTALLS = Object.freeze([
 /** `<folder>/node_modules/.cs-lane-prep.json`: `{ lockfile, sha256 }` of the lockfile that node_modules was installed from. */
 export const PREP_MARKER = '.cs-lane-prep.json';
 const DEPENDENCY_FOLDER = 'node_modules';
+const PACKAGE_MANIFEST = 'package.json';
 const MAX_LOCKFILE_BYTES = 64 * 1024 * 1024;
 const MAX_MARKER_BYTES = 4096;
 const INSTALL_TIMEOUT_MS = 15 * 60 * 1000; // a cold npm ci of a big tree; a timeout is a failure, never ready
@@ -68,17 +73,32 @@ export function programOnPath(env, program, lane) {
   return null;
 }
 
-/** The installs the tip of `lane` needs: `[{ dir, lockfile, program, args }]`, one per folder, root first. */
+const nameOf = (path) => path.slice(path.lastIndexOf('/') + 1);
+const dirOf = (path) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '.');
+const depthOf = (dir) => (dir === '.' ? 0 : dir.split('/').length);
+/** True when `path` (a repository-relative folder or file) is `dir` or lies below it. */
+const isWithin = (dir, path) => dir === '.' || path === dir || path.startsWith(`${dir}/`);
+
+/** The deepest of `lockfileDirs` that holds `dir`: the lockfile folder whose install writes `dir`'s node_modules. */
+const nearestLockfileDir = (dir, lockfileDirs) => lockfileDirs.filter((lockfileDir) => isWithin(lockfileDir, dir))
+  .reduce((nearest, lockfileDir) => (nearest === undefined || depthOf(lockfileDir) > depthOf(nearest) ? lockfileDir : nearest), undefined);
+
+/**
+ * The installs the tip of `lane` needs: `[{ dir, lockfile, program, args, shared }]`, one per folder, root first. shared: a tracked
+ * package.json lies below `dir` with `dir` as its nearest lockfile folder, so the install writes more than `dir`'s own node_modules.
+ */
 function plannedInstalls(lane) {
-  const listed = gitText(lane, ['ls-files', '-z', '--', ...LOCKFILE_INSTALLS.map(({ lockfile }) => `:(glob)**/${lockfile}`)]).split('\0');
+  const patterns = [...LOCKFILE_INSTALLS.map(({ lockfile }) => lockfile), PACKAGE_MANIFEST].map((name) => `:(glob)**/${name}`);
+  const listed = gitText(lane, ['ls-files', '-z', '--', ...patterns]).split('\0').filter((entry) => entry !== '' && !entry.split('/').includes(DEPENDENCY_FOLDER));
+  const isManifest = (path) => nameOf(path) === PACKAGE_MANIFEST;
   const byDir = new Map();
-  for (const path of listed.filter((entry) => entry !== '' && !entry.split('/').includes(DEPENDENCY_FOLDER))) {
-    const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '.';
-    byDir.set(dir, [...(byDir.get(dir) ?? []), path.slice(path.lastIndexOf('/') + 1)]);
-  }
+  for (const path of listed.filter((entry) => !isManifest(entry))) byDir.set(dirOf(path), [...(byDir.get(dirOf(path)) ?? []), nameOf(path)]);
+  const lockfileDirs = [...byDir.keys()];
+  const manifestDirs = listed.filter(isManifest).map(dirOf);
   return [...byDir.entries()].sort(([a], [b]) => (a === '.' ? -1 : b === '.' ? 1 : a < b ? -1 : a > b ? 1 : 0)).map(([dir, names]) => {
     const install = LOCKFILE_INSTALLS.find(({ lockfile }) => names.includes(lockfile));
-    return { dir, ...install };
+    const shared = manifestDirs.some((manifestDir) => manifestDir !== dir && nearestLockfileDir(manifestDir, lockfileDirs) === dir);
+    return { dir, ...install, shared };
   });
 }
 
@@ -141,6 +161,12 @@ function depsCacheDirOf(lane, env) {
   return cloneSupport(mainField.slice(WORKTREE_FIELD.length), commonDir, env).mode === 'clone' ? commonDir : null;
 }
 
+/** The first git repository (lane-relative, no trailing slash) inside a node_modules below `dir`, or undefined. */
+function nestedRepositoryInModules(lane, dir) {
+  return nestedRepositoryPaths(lane).map((path) => path.replace(/\/$/, ''))
+    .find((path) => isWithin(dir, path) && path.slice(dir === '.' ? 0 : dir.length + 1).split('/').includes(DEPENDENCY_FOLDER));
+}
+
 /** Brings one lockfile's folder up to date: from its marker, from the deps cache, or by an install; `{ outcome, why? }`. */
 function prepareFolder(lane, install, { env, timeoutMs, cacheDir }) {
   const folder = join(lane, install.dir);
@@ -148,12 +174,15 @@ function prepareFolder(lane, install, { env, timeoutMs, cacheDir }) {
   if (hash.why !== undefined) return { outcome: 'failed', why: hash.why };
   const marker = markerOf(folder);
   if (marker?.lockfile === install.lockfile && marker.sha256 === hash.sha256) return { outcome: 'up to date' };
+  const repository = nestedRepositoryInModules(lane, install.dir);
+  if (repository !== undefined) return { outcome: 'failed', why: `${repository} is a git repository inside node_modules; the install would delete it: move it out first` };
   const key = depsKey({ dir: install.dir, lockfile: install.lockfile, sha256: hash.sha256 });
-  if (cacheDir !== null && cloneFromCache(cacheDir, key, folder) === 'cloned') return { outcome: 'cloned' };
+  const useCache = cacheDir !== null && !install.shared; // the cache holds only this folder's node_modules (see the header)
+  if (useCache && cloneFromCache(cacheDir, key, folder) === 'cloned') return { outcome: 'cloned' };
   const why = runInstall(lane, install, env, timeoutMs);
   if (why !== null) return { outcome: 'failed', why };
   writeMarker(folder, { lockfile: install.lockfile, sha256: hash.sha256 });
-  if (cacheDir !== null) saveToCache(cacheDir, key, folder);
+  if (useCache) saveToCache(cacheDir, key, folder);
   return { outcome: 'installed' };
 }
 
