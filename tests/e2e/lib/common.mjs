@@ -1,6 +1,6 @@
 // Check lines every scenario gets, and small readers the scenarios share. Exports: loaded(ctx, session), loadedAll(ctx),
-// agentsOf(ctx, type), gitOut(ctx, args, cwd), sessionLines(ctx), noFableLine(ctx), timeLine(ctx, minutes), commonLines(ctx, minutes),
-// textOf(session).
+// agentsOf(ctx, type), GIT_FAILED, gitOut(ctx, args, cwd), readFailed(text), sameRead(a, b), readText(a, b), sessionLines(ctx),
+// noFableLine(ctx), timeLine(ctx, minutes), commonLines(ctx, minutes), textOf(session).
 // Why: plan section 10 (empty is not clean): a `claude` that exits early, a run with no result, a missing transcript or a
 // scenario past its wall-clock budget is a FAIL line of its own, so a scenario's specific checks can never pass on nothing; and
 // no scenario may run a Fable model anywhere (owner rule), so every scenario with a claude run gets that line.
@@ -25,10 +25,25 @@ export function loadedAll(ctx) {
 /** @returns {object[]} every subagent of the given type in the scenario's sessions */
 export const agentsOf = (ctx, type) => loadedAll(ctx).flatMap((session) => session.agents.filter((agent) => agent.type === type));
 
-/** @returns {string} a git command's trimmed stdout ('' when it failed) */
+/** How gitOut's text starts when git failed: never a real output, never '' (a failed read must not look like "no refs"). */
+export const GIT_FAILED = '(git failed';
+
+/** @returns {string} a git command's trimmed stdout, or `(git failed: ...)` naming the command when it did not exit 0 */
 export function gitOut(ctx, args, cwd = ctx.repo) {
   const out = ctx.git(args, { cwd });
-  return out.code === 0 ? out.stdout.trim() : '';
+  return out.code === 0 ? out.stdout.trim() : `${GIT_FAILED}: git ${args.join(' ')}: exit ${out.code ?? 'none'} ${String(out.stderr ?? '').trim().slice(0, 120)})`;
+}
+
+/** @returns {boolean} true when a read is missing or failed (GIT_FAILED: gitOut's, leaks.mjs's git status) */
+export const readFailed = (text) => typeof text !== 'string' || text.startsWith(GIT_FAILED);
+
+/** @returns {boolean} both reads worked and gave the same text (two failed reads are never "the same") */
+export const sameRead = (a, b) => !readFailed(a) && !readFailed(b) && a === b;
+
+/** @returns {string} the observed text of a comparison: each failed read, else unchanged or changed */
+export function readText(a, b) {
+  const failed = [a, b].filter(readFailed).map((text) => (typeof text === 'string' ? text : 'not read'));
+  return failed.length > 0 ? failed.join('; ') : a === b ? 'unchanged' : 'changed';
 }
 
 /** @returns {string} the run's final result text */

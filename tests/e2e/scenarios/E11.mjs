@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { checkLine, LIMITS } from '../lib/checks.mjs';
 import { leakSnapshot, resolveTools, WATCHED_TOOLS } from '../lib/leaks.mjs';
 import { guardLines } from '../lib/logs.mjs';
+import { readText, sameRead } from '../lib/common.mjs';
 
 export const id = 'E11';
 export const title = 'leaks: shims only, the real setup unchanged, guard lines of the run only';
@@ -38,8 +39,9 @@ export function check(ctx) {
   return [
     checkLine(`${WATCHED_TOOLS.join(', ')} resolve to the run's shims`, 'every one under the run bin or the quiet tools',
       notShim.join('; ') || Object.values(tools).join(', '), Object.keys(tools).length === WATCHED_TOOLS.length && notShim.length === 0),
-    checkLine('the real checkout git status is unchanged', 'the same as before the run', before?.gitStatus === after?.gitStatus ? `unchanged (${before?.gitStatus.split('\n').filter(Boolean).length ?? 0} lines)` : 'changed',
-      before !== null && after !== undefined && before.gitStatus === after.gitStatus),
+    checkLine('the real checkout git status is unchanged', 'the same as before the run (both reads work)',
+      sameRead(before?.gitStatus, after?.gitStatus) ? `unchanged (${before.gitStatus.split('\n').filter(Boolean).length} lines)` : readText(before?.gitStatus, after?.gitStatus),
+      sameRead(before?.gitStatus, after?.gitStatus)),
     checkLine('the real ~/.claude/state/long-run listing is unchanged', 'the same as before the run', before?.longRun === after?.longRun ? 'unchanged' : 'changed',
       before !== null && after !== undefined && before.longRun === after.longRun),
     checkLine("the run's guard log lines carry only the run's session ids", `only the ${sessionIds.size} session id(s) of the run`,

@@ -2,7 +2,7 @@
 // landed; the checks judge by transcripts and git, never by what an agent says it did (plan section 10, trust).
 // Exports the scenario interface (run.mjs): id, title, model, minutes, needsShims, setup(ctx), run(ctx), check(ctx).
 import { backgroundShellsLeft, bossFileCalls, checkLine, LIMITS, longSleeps, reportWords, startsOf, testRunnerCommands, unmetNeeds } from '../lib/checks.mjs';
-import { gitOut, loadedAll } from '../lib/common.mjs';
+import { gitOut, loadedAll, readFailed } from '../lib/common.mjs';
 import { makeLibrary } from '../lib/repo.mjs';
 import { finalText, toolCalls } from '../lib/transcripts.mjs';
 
@@ -25,10 +25,12 @@ export function setup(ctx) {
 export async function run(ctx) {
   ctx.notes.mainBefore = gitOut(ctx, ['rev-parse', 'main']);
   const job = await ctx.claudeUntil({ name: 'job', prompt: PROMPT, model },
-    (session) => session.result !== null && gitOut(ctx, ['rev-parse', 'main']) !== ctx.notes.mainBefore);
+    (session) => moved(ctx.notes.mainBefore, gitOut(ctx, ['rev-parse', 'main'])) && session.result !== null);
   ctx.notes.job = { mode: job.mode, rounds: job.rounds, done: job.done };
 }
 
+/** @returns {boolean} both reads of main worked and they differ */
+const moved = (before, now) => !readFailed(before) && !readFailed(now) && now !== before;
 const listed = (items) => (items.length === 0 ? 'none' : items.slice(0, 8).join('; '));
 
 export function check(ctx) {
@@ -43,8 +45,11 @@ export function check(ctx) {
   const tessStarts = ofType('tess').flatMap((agent) => startsOf(agent.lines)).filter((start) => !start.denied).map((start) => start.type);
   const mainNow = gitOut(ctx, ['rev-parse', 'main']);
   const merges = gitOut(ctx, ['rev-list', '--merges', 'main']);
-  const branches = gitOut(ctx, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']).split('\n').filter((name) => name && name !== 'main');
-  const worktrees = gitOut(ctx, ['worktree', 'list', '--porcelain']).split('\n').filter((line) => line.startsWith('worktree ')).length;
+  const refs = gitOut(ctx, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']);
+  const trees = gitOut(ctx, ['worktree', 'list', '--porcelain']);
+  const failedReads = [ctx.notes.mainBefore, mainNow, merges, refs, trees].filter(readFailed).map(String);
+  const branches = refs.split('\n').filter((name) => name && name !== 'main');
+  const worktrees = trees.split('\n').filter((line) => line.startsWith('worktree ')).length;
   const landed = [{ lines: boss }, ...agents].some((agent) => toolCalls(agent.lines).some((call) => call.name === 'Bash' && LAND_CALL.test(String(call.input.command ?? '')) && /landed/.test(call.result?.text ?? '')));
   const repoDirs = [ctx.repo, ctx.dir];
   const fileCalls = bossFileCalls(boss, repoDirs);
@@ -63,8 +68,9 @@ export function check(ctx) {
     checkLine('tess started dev-run and tess-simple', 'dev-run and tess-simple', listed([...new Set(tessStarts)]),
       tessStarts.includes('dev-run') && tessStarts.includes('tess-simple')),
     checkLine('main was moved by land, in a straight line, the lane cleaned up', 'main moved, land ran, no merge commit, no other branch, one worktree',
-      `main ${mainNow.slice(0, 12)} (was ${String(ctx.notes.mainBefore ?? '').slice(0, 12)}), land ${landed ? 'ran' : 'not seen'}, merges ${merges ? merges.split('\n').length : 0}, branches ${listed(branches)}, worktrees ${worktrees}`,
-      mainNow !== '' && mainNow !== ctx.notes.mainBefore && landed && merges === '' && branches.length === 0 && worktrees === 1),
+      failedReads.length > 0 ? `git reads failed: ${failedReads.join('; ')}`
+        : `main ${mainNow.slice(0, 12)} (was ${String(ctx.notes.mainBefore).slice(0, 12)}), land ${landed ? 'ran' : 'not seen'}, merges ${merges ? merges.split('\n').length : 0}, branches ${listed(branches)}, worktrees ${worktrees}`,
+      failedReads.length === 0 && moved(ctx.notes.mainBefore, mainNow) && landed && merges === '' && branches.length === 0 && worktrees === 1),
     checkLine('boss Read/Edit/Write/Grep/Glob on repo files', LIMITS.maxBossFileCalls, listed(fileCalls), fileCalls.length <= LIMITS.maxBossFileCalls),
     checkLine('background shells left at a subagent report', LIMITS.maxBackgroundShellsLeft, listed(shellsLeft), agents.length > 0 && shellsLeft.length <= LIMITS.maxBackgroundShellsLeft),
     checkLine(`subagent sleeps of ${LIMITS.longSleepSeconds} s or more`, LIMITS.maxLongSleeps, listed(sleeps), agents.length > 0 && sleeps.length <= LIMITS.maxLongSleeps),

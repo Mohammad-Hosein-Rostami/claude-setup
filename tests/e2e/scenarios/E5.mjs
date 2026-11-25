@@ -3,7 +3,7 @@
 // switch the same ask opens the dialog, which times out, and the command runs (timed allow).
 // Exports the scenario interface (run.mjs): id, title, model, minutes, needsShims, setup(ctx), run(ctx), check(ctx).
 import { checkLine, LIMITS } from '../lib/checks.mjs';
-import { gitOut } from '../lib/common.mjs';
+import { gitOut, readText, sameRead } from '../lib/common.mjs';
 import { guardLines, guardOutcomes } from '../lib/logs.mjs';
 import { makeLibrary } from '../lib/repo.mjs';
 
@@ -54,8 +54,8 @@ export function check(ctx) {
       a?.subjects.includes('e5a') === true && a.dialogs === 0 && outA.includes('switch-allow')),
     checkLine('(b) a disguised push: bounced, then one dialog that denies', 'outcomes bounce then deny, 1 dialog call',
       `outcomes ${outB.join(', ') || 'none'}, ${b?.dialogs ?? '?'} dialog call(s)`, bounceThenDeny && b?.dialogs === 1),
-    checkLine('(b) the bare origin is unchanged', 'the same refs as before', b?.originRefs === originBefore ? 'unchanged' : 'changed',
-      b !== undefined && originBefore !== undefined && b.originRefs === originBefore),
+    checkLine('(b) the bare origin is unchanged', 'the same refs as before (both reads work)', readText(originBefore, b?.originRefs),
+      sameRead(originBefore, b?.originRefs)),
     checkLine('(c) without the switch: one dialog, timed out, the command ran', 'commit e5c made, 1 dialog call, guard outcome timeout',
       `commit ${c?.subjects.includes('e5c') ? 'made' : 'missing'}, ${c?.dialogs ?? '?'} dialog call(s), outcomes ${outC.join(', ') || 'none'}`,
       c?.subjects.includes('e5c') === true && c.dialogs === 1 && outC.includes('timeout')),

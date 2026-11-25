@@ -3,10 +3,12 @@
 // Why (plan section 9): the real checkout's `git status --porcelain` and the real `~/.claude/state/long-run` listing must be the
 // same after the run; the real guard log must hold no line of the run's sessions; the dialog, note and sound tools must resolve to
 // the run's shims on the children's PATH (so the real ones cannot have run).
-// Invariants: reads only (git status, a folder listing, a log); a part that cannot be read is recorded as such, so a comparison
-// of two unreadable snapshots is still equal but says so in its observed text.
+// Invariants: reads only (git status, a folder listing, a log); a part that cannot be read is recorded as such: a git status
+// that failed starts with GIT_FAILED, so E11 counts it as a FAIL even when both snapshots failed the same way; a long-run folder
+// that does not exist is the same before and after.
 import { readdirSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { GIT_FAILED } from './common.mjs';
 import { runQuick } from './spawn.mjs';
 import { readJsonl } from './transcripts.mjs';
 
@@ -32,7 +34,7 @@ export function leakSnapshot({ realHome, realRepo }) {
   try { longRun = readdirSync(join(realHome, '.claude', 'state', 'long-run')).sort().join('\n'); } catch (error) { longRun = `(unreadable: ${error.code})`; }
   const guard = readJsonl(join(realHome, '.claude', 'logs', 'guard.jsonl'));
   return {
-    gitStatus: status.code === 0 ? status.stdout : `(git status failed: ${status.stderr.trim().slice(0, 120)})`,
+    gitStatus: status.code === 0 ? status.stdout : `${GIT_FAILED}: git status: exit ${status.code ?? 'none'} ${status.stderr.trim().slice(0, 120)})`,
     longRun, realGuardSessions: new Set(guard.map((line) => String(line.session ?? ''))),
   };
 }

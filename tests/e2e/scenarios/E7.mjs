@@ -5,7 +5,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkLine, LIMITS } from '../lib/checks.mjs';
-import { gitOut } from '../lib/common.mjs';
+import { gitOut, readFailed, sameRead } from '../lib/common.mjs';
 import { addWorktree, commitAll, LANE_A_HEADER, LANE_B_TAIL, makeLibrary, SLUG_SOURCE } from '../lib/repo.mjs';
 
 export const id = 'E7';
@@ -40,7 +40,8 @@ export function run(ctx) {
   ctx.notes.mainAfterNoTest = gitOut(ctx, ['rev-parse', 'main']);
   ctx.notes.failing = land(ctx, 'lane/b', ['--test', FAILING_TEST]);
   ctx.notes.mainAfterFailing = gitOut(ctx, ['rev-parse', 'main']);
-  ctx.notes.laneBAfterFailing = { branch: gitOut(ctx, ['rev-parse', '--verify', '--quiet', 'refs/heads/lane/b']), worktree: existsSync(ctx.notes.laneB) };
+  // exit 0 only while the branch exists (a failed read is "gone", so the check fails rather than passes on it)
+  ctx.notes.laneBAfterFailing = { branch: ctx.git(['rev-parse', '--verify', '--quiet', 'refs/heads/lane/b']).code === 0, worktree: existsSync(ctx.notes.laneB) };
   ctx.notes.passing = land(ctx, 'lane/b', ['--test', PASSING_TEST]);
   ctx.notes.mainAfterPassing = gitOut(ctx, ['rev-parse', 'main']);
   ctx.notes.merges = gitOut(ctx, ['rev-list', '--merges', '--all']);
@@ -55,13 +56,13 @@ export function check(ctx) {
   return [
     checkLine('lane a lands', 'exit 0', said(landA), landA?.code === 0),
     checkLine('lane b without --test is refused, listing the file', `exit 1, ${FILE} listed, main unmoved`, said(noTest),
-      noTest?.code === 1 && `${noTest.stdout}${noTest.stderr}`.includes(FILE) && mainAfterNoTest === mainAfterA),
+      noTest?.code === 1 && `${noTest.stdout}${noTest.stderr}`.includes(FILE) && sameRead(mainAfterNoTest, mainAfterA)),
     checkLine('a failing --test keeps main and lane b', 'exit 1, main unmoved, lane b branch and worktree there',
-      `${said(failing)}; main ${mainAfterFailing === mainAfterA ? 'unmoved' : 'moved'}; branch ${laneBAfterFailing?.branch ? 'there' : 'gone'}; worktree ${laneBAfterFailing?.worktree ? 'there' : 'gone'}`,
-      failing?.code === 1 && mainAfterFailing === mainAfterA && Boolean(laneBAfterFailing?.branch) && laneBAfterFailing?.worktree === true),
+      `${said(failing)}; main ${sameRead(mainAfterFailing, mainAfterA) ? 'unmoved' : readFailed(mainAfterFailing) || readFailed(mainAfterA) ? 'not read' : 'moved'}; branch ${laneBAfterFailing?.branch ? 'there' : 'gone'}; worktree ${laneBAfterFailing?.worktree ? 'there' : 'gone'}`,
+      failing?.code === 1 && sameRead(mainAfterFailing, mainAfterA) && Boolean(laneBAfterFailing?.branch) && laneBAfterFailing?.worktree === true),
     checkLine('a passing --test fast-forwards main to the tested sha', 'exit 0, main = the sha the test passed on',
       `${said(passing)}; main ${String(mainAfterPassing).slice(0, 12)}, tested ${String(tested).slice(0, 12)}`,
-      passing?.code === 0 && tested !== null && mainAfterPassing === tested && landedAt === tested),
-    checkLine('no merge commit', 'none', merges ? merges.split('\n').length : 0, merges === ''),
+      passing?.code === 0 && tested !== null && sameRead(mainAfterPassing, tested) && landedAt === tested),
+    checkLine('no merge commit', 'none (the read works)', readFailed(merges) ? String(merges) : merges ? merges.split('\n').length : 0, merges === ''),
   ];
 }
