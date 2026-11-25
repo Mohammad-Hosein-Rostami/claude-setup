@@ -5,11 +5,14 @@
 //   plan, or a marks file that is not valid, throws UsageError (exit 2), never a guess. Job, feature and piece ids are safe file
 //   names (NAME, a subset of session-store.mjs isSessionId). Marks live in `<boardDir>/jobs/<job>.json` as
 //   `{ "<feature>": { "sha": "<40-hex>", "at": "<ISO>" } }` and are written through session-store.mjs: a temp file and a rename,
-//   no link followed, 0600, never swept (a job may wait more than a week).
+//   no link followed, 0600, never swept (a job may wait more than a week). A mark's read and write run under `<job>.lock` beside it
+//   (O_EXCL, disk-free/lib/lock-file.mjs), so parallel `--mark-tess` calls never drop each other's mark (concurrency R3); a lock
+//   older than MARK_LOCK_STALE_MS was left by a killed call and is broken.
 import { join } from 'node:path';
+import { releaseLock, takeLock } from '../../disk-free/lib/lock-file.mjs';
 import { UsageError, gitFlag } from '../../git-tidy/lib/git.mjs';
 import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
-import { readSessionFile, writeSessionFile } from '../../../hooks/lib/session-store.mjs';
+import { privateFolder, readSessionFile, writeSessionFile } from '../../../hooks/lib/session-store.mjs';
 import { boardDir } from './refresh.mjs';
 
 const MAX_PLAN_BYTES = 1024 * 1024;
@@ -17,6 +20,10 @@ const MAX_MARKS_BYTES = 64 * 1024;
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const FORMAT_HINT = 'see "pieces.json" in ~/.claude/tools/board/README.md';
+const MARK_LOCK_STALE_MS = 10_000; // a turn is one small read and one write: a lock this old was left by a killed --mark-tess
+const MARK_LOCK_WAIT_MS = 2_000; // the longest a --mark-tess waits for its turn
+const MARK_LOCK_RETRY_MS = 50;
+const PAUSE = new Int32Array(new SharedArrayBuffer(4)); // Atomics.wait on it is a synchronous sleep
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isName = (value) => typeof value === 'string' && NAME.test(value);
@@ -86,6 +93,7 @@ export function readPlan(path) {
 
 const marksDir = (env) => join(boardDir(env), 'jobs');
 const marksFile = (job, env) => join(marksDir(env), `${job}.json`);
+const marksLock = (job, env) => join(marksDir(env), `${job}.lock`);
 const isMark = (mark) => isObject(mark) && FULL_SHA.test(mark.sha) && typeof mark.at === 'string' && Number.isFinite(Date.parse(mark.at));
 
 /**
@@ -116,18 +124,29 @@ export function readMarks(job, env = process.env) {
  * @param {{ repo: object, plan: object, feature: string, sha: string, env?: object, nowMs?: number }} mark openRepo's result, the
  *   plan (readPlan), the feature, the full main sha tess runs on, the environment (HOME) and now (epoch ms)
  * @returns {string} the marks file written
- * @throws {UsageError} the feature is not in the plan, the sha is not on the base, the marks cannot be read (readMarks) or the
- *   file cannot be written
+ * @throws {UsageError} the feature is not in the plan, the sha is not on the base, another --mark-tess held the job's lock for
+ *   MARK_LOCK_WAIT_MS, the marks cannot be read (readMarks) or the file cannot be written
  */
 export function writeMark({ repo, plan, feature, sha, env = process.env, nowMs = Date.now() }) {
   const ids = plan.features.map((entry) => entry.id);
   if (!ids.includes(feature)) throw new UsageError(`--mark-tess ${JSON.stringify(feature)} is no feature of the plan (${ids.join(', ')})`);
   if (!gitFlag(repo.dir, ['merge-base', '--is-ancestor', sha, repo.baseRef])) throw new UsageError(`--sha ${sha} is not on ${repo.base}: tess runs on main`);
   const { job } = plan;
-  const marks = { ...readMarks(job, env), [feature]: { sha, at: new Date(nowMs).toISOString() } };
   const file = marksFile(job, env);
-  if (!writeSessionFile(marksDir(env), job, `${JSON.stringify(marks, null, 2)}\n`, { sweep: false })) {
-    throw new UsageError(`cannot write the tess marks ${file}: its folder or file is not a plain one of yours`);
+  const notPlain = `cannot write the tess marks ${file}: its folder or file is not a plain one of yours`;
+  if (privateFolder(marksDir(env)) === undefined) throw new UsageError(notPlain); // the lock file goes in it, so it must be there first
+  const lock = marksLock(job, env);
+  const deadline = Date.now() + MARK_LOCK_WAIT_MS;
+  // the real clock, not nowMs: a lock's age is measured against its file's mtime
+  while (!takeLock(lock, Date.now(), MARK_LOCK_STALE_MS)) {
+    if (Date.now() >= deadline) throw new UsageError(`another --mark-tess is writing ${file}; run it again`);
+    Atomics.wait(PAUSE, 0, 0, MARK_LOCK_RETRY_MS);
+  }
+  try {
+    const marks = { ...readMarks(job, env), [feature]: { sha, at: new Date(nowMs).toISOString() } };
+    if (!writeSessionFile(marksDir(env), job, `${JSON.stringify(marks, null, 2)}\n`, { sweep: false })) throw new UsageError(notPlain);
+  } finally {
+    releaseLock(lock);
   }
   return file;
 }

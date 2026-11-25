@@ -4,8 +4,9 @@
 // Exports: TICK_USAGE, runTick(args, loadBoard) -> exit code.
 // Facts: main from git-tidy check (runCheck); the lanes are the lane pool's folders that hold a branch (poolSlots), each with its
 //   commits and files against main (git) and its agent from the session's board (matched by branch); landed pieces from the land
-//   ledger (a land of branch `lane/<piece id>`; an unreadable ledger is one line, never exit 2); tess marks from tick-plan.mjs. Nothing comes from an agent's words.
-// Invariants: reads only; `--mark-tess` writes the job's marks file and nothing else. Every branch name, path and agent name is
+//   ledger (a land of branch `lane/<piece id>`; an unreadable ledger is one line, never exit 2); tess marks from tick-plan.mjs;
+//   features and tess status judged in tick-features.mjs (a mark covers the lands its sha holds). Nothing comes from an agent's words.
+// Invariants: reads only; `--mark-tess` writes the job's marks file (under its lock file) and nothing else. Every branch name, path and agent name is
 //   printed through cells.mjs cleanText, so no control character reaches the terminal. `next:` only suggests: the boss decides.
 //   Exit 0 shown, 1 findings (an overlap, a stray, a git-tidy check finding on main), 2 usage (a bad flag, no repository, a bad
 //   plan or marks file) and any unexpected failure (1 must only ever mean findings).
@@ -14,7 +15,8 @@ import { UsageError, gitText, runGit } from '../../git-tidy/lib/git.mjs';
 import { poolSlots } from '../../git-tidy/lib/lane-pool.mjs';
 import { openRepo } from '../../git-tidy/lib/repo.mjs';
 import { readLandEntries } from '../../land/ledger.mjs';
-import { cleanText } from './cells.mjs';
+import { cleanText, jsonText } from './cells.mjs';
+import { commitsLines, featuresLine, laneBranch, planState } from './tick-features.mjs';
 import { readMarks, readPlan, writeMark } from './tick-plan.mjs';
 
 export const TICK_USAGE = 'usage: board.mjs tick --repo <abs main checkout> [--plan <abs pieces.json>] [--session <id>] [--json]\n'
@@ -24,11 +26,8 @@ const EXIT = Object.freeze({ shown: 0, findings: 1, usage: 2 });
 const VALUE_FLAGS = Object.freeze({ '--repo': 'repo', '--plan': 'plan', '--mark-tess': 'markTess', '--sha': 'sha', '--session': 'session' });
 const ABSOLUTE_PATH = /^(\/|[A-Za-z]:[\\/])/;
 const FULL_SHA = /^[0-9a-f]{40}$/;
-const LANE_PREFIX = 'lane/';
 const MAX_DEV = 3;
 const MAX_TESS = 3;
-const TESS_DUE_AT = 3; // fully landed features not yet checked that make a tess round due
-const NO_RISK = 'none';
 const SHORT_SHA = 8;
 const AGENT_ID_CHARS = 7;
 const SHOWN_FILES = 3;
@@ -38,18 +37,12 @@ const RENAMED = /^(?:[RC]|.[RC])/; // a rename or copy (staged or in the folder)
 const NOT_ONE_LINE = new Set(['merge-commit', 'tangled-ref']);
 // cleanText reads only `ascii` from a look: these lines keep non-ASCII names as they are and carry no colour
 const PLAIN_LOOK = { ascii: false };
-// JSON.stringify leaves these raw (it escapes only U+0000-U+001F): a terminal may act on C1 controls or reorder text on bidi marks
-const RAW_IN_JSON = /[\u007f-\u009f\u2028\u2029]|\p{Cf}/gu;
 
 const clean = (text) => cleanText(text, PLAIN_LOOK);
 const short = (sha) => sha.slice(0, SHORT_SHA);
-const laneBranch = (pieceId) => `${LANE_PREFIX}${pieceId}`;
 const nulList = (text) => text.split('\0').filter((path) => path !== '');
 const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
 const sharedFiles = (first, second) => first.filter((path) => second.includes(path));
-const unicodeEscape = (char) => [...Array(char.length).keys()].map((at) => `\\u${char.charCodeAt(at).toString(16).padStart(4, '0')}`).join('');
-// they can only stand inside JSON strings, so a \u escape (both halves of a surrogate pair) keeps the JSON valid and the value exact
-const jsonText = (value) => JSON.stringify(value, null, 2).replace(RAW_IN_JSON, unicodeEscape);
 
 function parseTickArgs(args) {
   const options = { repo: null, plan: null, markTess: null, sha: null, session: null, json: false };
@@ -60,12 +53,17 @@ function parseTickArgs(args) {
     else if (args[at + 1] === undefined || args[at + 1].startsWith('--')) throw new UsageError(`${args[at]} needs a value. ${TICK_USAGE}`);
     else options[name] = args[++at];
   }
+  checkTickOptions(options);
+  return options;
+}
+
+/** The checks across flags (S6): --repo always and absolute, --plan absolute, --sha only with --mark-tess, a mark with --plan and a full sha. */
+function checkTickOptions(options) {
   if (!ABSOLUTE_PATH.test(options.repo ?? '')) throw new UsageError(`tick needs --repo <absolute path of the main checkout>. ${TICK_USAGE}`);
   if (options.plan !== null && !ABSOLUTE_PATH.test(options.plan)) throw new UsageError(`--plan must be an absolute path, got ${JSON.stringify(options.plan)}`);
   if (options.markTess === null && options.sha !== null) throw new UsageError(`--sha goes with --mark-tess. ${TICK_USAGE}`);
   const isMarkComplete = options.plan !== null && FULL_SHA.test(options.sha ?? '');
   if (options.markTess !== null && !isMarkComplete) throw new UsageError(`--mark-tess needs --plan <abs pieces.json> and --sha <full 40-character main sha>. ${TICK_USAGE}`);
-  return options;
 }
 
 /** The changed and untracked paths in a lane's folder (renames give both paths), or null when git cannot say. */
@@ -130,43 +128,6 @@ function straysOf(lanes, plan) {
   });
 }
 
-/** One feature's progress: pieces landed, and whether a tess mark is at least as new as its newest land. */
-function featureState(feature, pieces, landedAt, mark) {
-  const own = pieces.filter((piece) => piece.feature === feature.id);
-  const lands = own.map((piece) => landedAt.get(laneBranch(piece.id))).filter((at) => at !== undefined);
-  const isChecked = mark !== undefined && Date.parse(mark.at) >= Math.max(...lands);
-  return { id: feature.id, risk: feature.risk, landed: lands.length, pieces: own.length, isChecked };
-}
-
-/**
- * Whether a tess round is due (design section 1, step 5, and the owner's rule for risky features): a risky feature landed and
- * not checked, TESS_DUE_AT features fully landed and not checked, or the job's last piece landed.
- */
-function tessDue(features, isJobLanded) {
-  const unchecked = features.filter((feature) => feature.landed > 0 && !feature.isChecked);
-  const risky = unchecked.filter((feature) => feature.risk !== NO_RISK);
-  const full = unchecked.filter((feature) => feature.landed === feature.pieces);
-  let reason = null;
-  if (risky.length > 0) reason = `risky ${risky.map((feature) => feature.id).join(', ')}`;
-  else if (full.length >= TESS_DUE_AT) reason = `${full.length} features landed`;
-  else if (isJobLanded && unchecked.length > 0) reason = 'last piece landed';
-  return { reason, fullyLanded: full.length, features: unchecked.filter((feature) => feature.risk !== NO_RISK || feature.landed === feature.pieces) };
-}
-
-/** The plan's side of the tick: waiting pieces, feature progress, tess status. */
-function planState(plan, lanes, entries, marks) {
-  const landedAt = new Map(entries.map((entry) => [entry.branch, Date.parse(entry.at)])); // ledger order: a later land wins
-  const isLanded = (id) => landedAt.has(laneBranch(id));
-  const inFlight = new Set(lanes.map((lane) => lane.branch));
-  const waiting = plan.pieces.filter((piece) => !isLanded(piece.id) && !inFlight.has(laneBranch(piece.id)))
-    .map((piece) => ({ ...piece, after: piece.after.filter((id) => !isLanded(id)) }));
-  const features = plan.features.map((feature) => featureState(feature, plan.pieces, landedAt, marks[feature.id]));
-  const lastMark = Object.values(marks).sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0] ?? null;
-  const markMs = lastMark === null ? -Infinity : Date.parse(lastMark.at);
-  const landedSince = plan.pieces.filter((piece) => (landedAt.get(laneBranch(piece.id)) ?? -Infinity) > markMs).length;
-  return { waiting, features, tess: tessDue(features, plan.pieces.every((piece) => isLanded(piece.id))), lastTessSha: lastMark?.sha ?? null, landedSince };
-}
-
 /** The land ledger, or no entries and why when it cannot be read: a broken ledger must not hide main and the lanes. */
 function landLedger(repoDir) {
   try {
@@ -184,7 +145,7 @@ function tickFacts(repo, plan, board) {
   const agents = board?.agents ?? [];
   const lanes = slots.filter((slot) => slot.branch !== null).map((slot) => laneOf(repo, main.sha, slot, agents));
   const ledger = landLedger(repo.dir);
-  const work = plan === null ? null : planState(plan, lanes, ledger.entries, readMarks(plan.job));
+  const work = plan === null ? null : planState(repo, plan, lanes, ledger.entries, readMarks(plan.job));
   const overlaps = overlapsOf(lanes, work?.waiting.filter((piece) => piece.after.length === 0) ?? []);
   const tessRunning = agents.filter((agent) => agent.type === 'tess' && agent.state !== 'done').length;
   return {
@@ -235,13 +196,10 @@ function queueLine(queue) {
   return `queue ${queue.map((piece) => `${piece.id} ${state(piece)}`).join(' | ')}`;
 }
 
-function featuresLine({ tess }) {
-  const listed = tess.features.map((feature) => `${feature.id} ${feature.landed}/${feature.pieces} (risk ${clean(feature.risk)})`);
-  const due = tess.reason === null ? `tess due at ${TESS_DUE_AT} (now ${tess.fullyLanded})` : `tess due now (${tess.reason})`;
-  return `features landed, not checked: ${listed.length === 0 ? 'none' : listed.join(', ')} -> ${due}`;
-}
-
-/** The `next:` line: land one lane, claim pieces while fewer than MAX_DEV lanes run, start tess when due; never main while it fails. */
+/**
+ * The `next:` line: land one lane, claim pieces while fewer than MAX_DEV lanes run, start tess when due with the mark command at
+ * main's sha (gate R5); never main while it fails.
+ */
 function nextLine(tick) {
   const { main, lanes, overlaps, strays, queue, plan, tessRunning } = tick;
   const count = `dev ${lanes.length}/${MAX_DEV}, tess ${tessRunning}/${MAX_TESS}`;
@@ -252,7 +210,10 @@ function nextLine(tick) {
   const steps = [];
   if (land !== undefined) steps.push(`land ${clean(land.branch)}${flagged.has(land.branch) ? ' --test "<suite>" (after the other one)' : ''}`);
   queue.filter((piece) => piece.isStartable).slice(0, Math.max(0, MAX_DEV - lanes.length)).forEach((piece) => steps.push(`claim ${piece.id}`));
-  if (plan !== null && plan.tess.reason !== null && tessRunning < MAX_TESS) steps.push(`tess on ${plan.tess.features.slice(0, MAX_TESS - tessRunning).map((feature) => feature.id).join(', ')}`);
+  if (plan !== null && plan.tess.reason !== null && tessRunning < MAX_TESS) {
+    const ids = plan.tess.features.slice(0, MAX_TESS - tessRunning).map((feature) => feature.id).join(', ');
+    steps.push(`tess on ${ids} (mark each: --mark-tess <feature> --sha ${main.sha} with this --repo and --plan)`);
+  }
   return `next: ${[...steps, count].join('; ')}`;
 }
 
@@ -264,7 +225,7 @@ function tickLines(tick) {
     ...tick.lanes.map(laneLine),
     ...tick.overlaps.map((pair) => `overlap ${clean(pair.first)} x ${clean(pair.second)}: ${filesText(pair.files)}`),
     ...tick.strays.map((stray) => `stray ${clean(stray.branch)}: ${filesText(stray.files)} (not in its files)`),
-    ...(tick.plan === null ? [] : [queueLine(tick.queue), featuresLine(tick.plan)]),
+    ...(tick.plan === null ? [] : [queueLine(tick.queue), featuresLine(tick.plan), ...commitsLines(tick.plan)]),
     ...(tick.ledgerSkipped > 0 ? [`ledger ${plural(tick.ledgerSkipped, 'bad line')} skipped`] : []),
     ...(tick.ledgerUnreadable === null ? [] : [`ledger unreadable (${clean(tick.ledgerUnreadable)}): no piece counts as landed`]),
     nextLine(tick),

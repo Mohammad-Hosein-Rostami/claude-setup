@@ -1,7 +1,7 @@
 // The cells every progress surface draws with (display design 4.1): the look of the terminal (glyphs, separators, colour), bars,
-// durations, clocks, row labels, and fitting a row of parts to a width. Used by render.mjs (the status line rows).
+// durations, clocks, row labels, and fitting a row of parts to a width. Used by render.mjs (the status line rows) and tick.mjs.
 // Exports: lookOf(env, platform, columns) -> look; paint(text, state, look, bold); cleanText(text, look); cutWords(text, max, look);
-// fitParts(parts, look) -> string; partsWidth(parts, look); barText(shares, cells, look); durationText(minutes);
+// fitParts(parts, look) -> string; partsWidth(parts, look); barText(shares, cells, look); durationText(minutes); jsonText(value);
 // clockOf(ms, nowMs, timeZone); labelled(label, part, look); STATE; DONE_SHOWN_MS; WIDE_COLUMNS, LABEL_FROM_COLUMNS, LABEL_COLUMNS.
 // Colour by kind (owner decision RC14, 2026-11-22: "dont over do"; spec R18 colour table): four kinds have their own colour, each
 // meaning that kind only: `branch` (a git branch name), `bar` (a progress bar and its count), `time` (work left, finish and reset
@@ -53,6 +53,7 @@ const ASCII = { done: '#', left: '.', over: '!', now: '>', sep: ' - ', bar: ' | 
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]|[\p{Cf}--[\u200c\u200d]]/gv;
 const NOT_ASCII = /[^ -~]/gu;
 const COMBINING_MARKS = /\p{M}/gu;
+const RAW_IN_JSON = /[\u007f-\u009f\u2028\u2029]|\p{Cf}/gu; // JSON.stringify leaves these raw: a terminal may act on C1 or bidi marks
 /** The ASCII stand-ins of the characters the board's own texts use (separators, ellipsis, arrows, dashes, quotes, bar and tree marks). */
 const ASCII_STAND_IN = {
   '·': '-', '•': '*', '●': '*', '…': '...', '↑': '^', '↓': 'v', '←': '<', '→': '>', '–': '-', '—': '-', '‘': "'", '’': "'", '“': '"',
@@ -297,3 +298,7 @@ export function labelled(label, part, look) {
   const value = Array.isArray(part.spans) ? part.spans : [{ text: part.text, state: part.state }];
   return { ...part, text: `${head}${part.text}`, spans: [{ text: head, state: STATE.dim }, ...value] };
 }
+
+const unicodeEscape = (char) => [...Array(char.length).keys()].map((at) => `\\u${char.charCodeAt(at).toString(16).padStart(4, '0')}`).join('');
+/** `value` as indented JSON with RAW_IN_JSON as \u escapes: they can only stand inside strings, so the JSON stays valid and exact. */
+export const jsonText = (value) => JSON.stringify(value, null, 2).replace(RAW_IN_JSON, unicodeEscape);

@@ -22,7 +22,10 @@ Collecting (run only by the detached refresh):
 The boss's sync (`tick`, run by hand after every agent report and every land):
 - `tick.mjs`: the `tick` command: main's state, the lanes in flight, overlaps and strays among their files, the plan's queue,
   features due for tess and a suggested next step.
-- `tick-plan.mjs`: reads and checks the plan's pieces.json, and reads and writes the job's tess marks.
+- `tick-features.mjs`: the plan's side of the tick: waiting pieces, each feature's lands, which features tess has checked (a mark
+  covers the lands its sha holds), whether a round is due, and the features and `commits <feature>:` lines.
+- `tick-plan.mjs`: reads and checks the plan's pieces.json, and reads and writes the job's tess marks (one writer at a time, by a
+  lock file).
 
 Drawing: the status line is 2 rows when calm and at most 4 when busy (agents summary, git, lanes and session). Colour
 marks a state only, never an agent or a branch.
