@@ -126,9 +126,11 @@ test('only the first 64 KB of an agent file are read: a tools line after them is
 
 test('an agent file reached through a link is read', posix, () => {
   const { env, home, agent, folderOf } = setup();
-  const real = agent('real-copy', ['tools: Read'], makeTempDir('writer-agents-linked-'));
+  // The target writes: an unread link gives no answer (undefined, not a writer), so only a followed link can answer true.
+  const real = agent('real-copy', ['tools: Read, Write'], makeTempDir('writer-agents-linked-'));
   symlinkSync(real, join(folderOf(home), 'linked.md'));
-  assert.equal(isWritingAgent('linked', env), false, 'the link\'s target reads only');
+  assert.equal(agentFileWrites('linked', env), true, 'the link\'s target names Write');
+  assert.equal(isWritingAgent('linked', env), true);
 });
 
 test('a FIFO at the agent file is no answer and is never waited on', posix, () => {
