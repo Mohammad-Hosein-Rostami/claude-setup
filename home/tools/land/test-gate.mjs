@@ -26,7 +26,8 @@ function rebaseDetached({ base }, branch, worktree, baseSha) {
   const where = worktree.path;
   const detach = runGit(where, ['switch', '-q', '--detach']);
   if (detach.status !== 0) throw new LandRefusal(`cannot detach the worktree of ${branch} (${where}) to rebase it (${firstLine(detach.stderr)}); nothing changed`);
-  const result = runGit(where, ['rebase', '-q', baseSha]);
+  // --reapply-cherry-picks: keep a commit whose patch id pairs with a base commit but whose change is not there (land.mjs rebaseLane)
+  const result = runGit(where, ['rebase', '-q', '--reapply-cherry-picks', baseSha]);
   if (result.status !== 0) {
     const aborted = runGit(where, ['rebase', '--abort']).status === 0;
     const back = runGit(where, ['switch', '-q', branch]).status === 0;

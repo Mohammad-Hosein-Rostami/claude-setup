@@ -126,7 +126,10 @@ function rebaseLane({ dir, base }, branch, worktree, baseSha) {
   const laneRef = `${HEADS}${branch}`;
   if (!gitFlag(dir, ['merge-base', '--is-ancestor', baseSha, laneRef])) {
     const where = worktree?.path ?? dir;
-    const result = runGit(where, worktree ? ['rebase', '-q', baseSha] : ['rebase', '-q', baseSha, branch]);
+    // --reapply-cherry-picks: git's default drops a commit whose patch id pairs with a base commit, though its change (at another
+    // place in a file) may not be on the base; a commit whose change is already there becomes empty and is still dropped.
+    const rebase = ['rebase', '-q', '--reapply-cherry-picks', baseSha];
+    const result = runGit(where, worktree ? rebase : [...rebase, branch]);
     if (result.status !== 0) {
       const aborted = runGit(where, ['rebase', '--abort']).status === 0;
       const back = worktree || runGit(dir, ['switch', '-q', base]).status === 0;

@@ -66,7 +66,9 @@ function prepare(repo, branch) {
 
 /** Rebases the lane in `folder`; returns `{ conflict: string[] }` after aborting a conflicting rebase, or `{ conflict: null }`. */
 function rebaseIn(folder, repo, branch) {
-  const result = runGit(folder, ['rebase', `refs/heads/${repo.base}`]);
+  // --reapply-cherry-picks: git's default drops a commit whose patch id pairs with a base commit, though its change (at another
+  // place in a file) may not be on the base; a commit whose change is already there becomes empty and is still dropped.
+  const result = runGit(folder, ['rebase', '--reapply-cherry-picks', `refs/heads/${repo.base}`]);
   if (result.status === 0) return { conflict: null };
   if (inProgressOperation(folder) !== 'rebase') throw new Error(`git rebase failed: ${result.stderr.split('\n')[0]}`);
   const files = lines(gitText(folder, ['diff', '--name-only', '--diff-filter=U']));
