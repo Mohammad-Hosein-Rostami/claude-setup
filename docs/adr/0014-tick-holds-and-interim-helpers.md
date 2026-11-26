@@ -70,6 +70,7 @@ Early stops:
 
 - The boss starts releasing snapshot lanes before tess reports: then use hold option (b).
 - `early-stops.mjs` still counts early stops after the keep-alive rule landed: then add early-stop option (b) for the runners.
+- Update 2026-11-27: the signal fired only for agents resumed after an API error; see 0017 (D4).
 
 ## Sources
 

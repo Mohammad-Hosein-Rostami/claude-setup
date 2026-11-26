@@ -7,7 +7,7 @@ the brief come first; these lines hold for everyone.
 - The main session is the boss: it splits lex's plan into small pieces, starts `dev`, `tess` and rarely `max`, lands,
   checks main and asks the owner. To keep its context small it talks only to them, reads no code and plans or builds
   nothing; they report in at most 150 words, the detail in a file.
-- The round loop uses the boss's only three scripts. After every agent report and every land (never polled), tick:
+- Round loop (the boss's only three scripts): after every agent report and every land (never polled), tick:
   `node ~/.claude/tools/board/board.mjs tick --repo <abs main checkout> [--plan <abs pieces.json>]`. While fewer than 3 dev
   run, claim a lane per `startable` piece (`node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim --repo <abs> --branch
   lane/<id> --base <main sha>`), brief dev with it as `worktree:`, and `land` each report, one at a time. A failing `main`
@@ -19,12 +19,13 @@ the brief come first; these lines hold for everyone.
   job ends landed, waiting on the owner, or stopped with a reason.
 - Only the boss starts `lex`, `dev`, `tess` and `max`, never a helper. An agent asks with `needs: <agent> to <task>, blocks:
   <what>` (SendMessage to `main` from a background run, else in its report); the boss starts it, tracks who is on what and
-  sends the result back by the asker's id.
+  sends the result back by the asker's id. A `completed` notice that still waits: the agent stopped; SendMessage it
+  the helper results you got.
 - At most 3 lex, 3 dev, 3 tess and 3 max run at once; their helpers are not counted. Two lanes or helpers never change
   one file at once: each names its files; overlapping work runs in turn.
 - Only when the owner asks in chat: a long unattended job (`long-run` skill), tess `full`, or Codex (the boss adds
   `codex: yes` to that lex, dev or tess brief; else no session uses it).
-- Agent calls: ours get no `model` or `effort` (their file sets them), never a lower one; lex gets `effort: "xhigh"` for a
+- Agent calls: ours get no `model` or `effort`, never a lower one; lex gets `effort: "xhigh"` for a
   hard design or an unclear need, `"max"` only when a wrong choice is costly to undo. Built-ins name a family or full id:
   `sonnet` for general-purpose, Explore, claude-code-guide and statusline-setup, `opus` for Plan; never `inherit`, `best`,
   `default` or `opusplan`.
@@ -45,14 +46,13 @@ the brief come first; these lines hold for everyone.
 - Owner questions go through `ask-owner`: lex asks at job start; another agent stops and returns a `questions:` block.
   Owner decisions: scope, money, irreversible actions, credentials, product facts the repo lacks, real trade-offs. A
   technical choice with a sensible default is taken and named in one line.
-- Before a restart, write the `handoff` note (with `~/.claude/tools/board/board.mjs show`).
+- Before a restart, write the `handoff` note.
 
 ## Git
 - No agent makes its own folder (dev's helpers keep theirs). Writers commit only their own paths on their own branch;
   never `--no-verify`.
-- History is one straight line: rebase, then `land` (`~/.claude/tools/land`: `git merge --ff-only`, no merge commits, no
-  `update-ref`). Files changed on both sides, or a tick `overlap` or `stray`: land it last with `land --test`
-  (`git-linear-history`).
+- History is one straight line: rebase, then `land` (`merge --ff-only`; no merge commits, no `update-ref`). Files
+  changed on both sides, or a tick `overlap` or `stray`: land it last with `land --test` (`git-linear-history`).
 - Never push unless the owner asks. AI work notes (HANDOFF.md) are never committed.
 
 ## Owner standards
