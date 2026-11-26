@@ -27,6 +27,17 @@ test('a 3-step run ends done, each step one fresh session, default model claude-
   assert.equal(readJson(paths.driver).status, 'done');
 });
 
+test('every step child runs with background tasks off and a 2 h Bash ceiling, and the wrapper says so', async () => {
+  const box = makeSandbox();
+  box.script({ one: ['crash', 'done'] });
+  const paths = createRun(box, { name: 'fg', cwd: box.work('repo'), steps: [{ id: 'one', prompt: 'Do one.' }] });
+  assert.equal(await driveRun(box, paths, { clock: fakeClock() }), 'done');
+  const calls = readCalls(box);
+  assert.equal(calls.length, 2, 'a fresh start and a resumed one');
+  for (const call of calls) assert.deepEqual(call.stepEnv, { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1', BASH_MAX_TIMEOUT_MS: '7200000' });
+  assert.match(calls[0].stdin, /Background tasks are off in this session: agents and commands run until they finish/);
+});
+
 test('limit "resets 3:45pm": waits until the next 15:47 local and resumes the same session with attempts unchanged', async () => {
   const box = makeSandbox();
   box.script({ one: ['limit', 'done'] });

@@ -112,8 +112,8 @@ or `--abandon`.
 `resume --reload-job <file>` (or `rerun --reload-job`) is used; that is allowed only when the steps already finished keep their
 ids, kinds and order, and it prints which unfinished prompts changed.
 
-Each boss gets the prompt on stdin with a fixed wrapper (run id, step, the earlier steps' summaries, "wait for every agent
-you started") and must end with one line `STEP-RESULT: done`, `STEP-RESULT: blocked: <reason>` or `STEP-RESULT: needs-owner:
+Each boss gets the prompt on stdin with a fixed wrapper (run id, step, the earlier steps' summaries, "background tasks are
+off: end your reply only when every agent and command has returned") and must end with one line `STEP-RESULT: done`, `STEP-RESULT: blocked: <reason>` or `STEP-RESULT: needs-owner:
 <question>`. A missing line gets a follow-up asking for it (each counts as a start, so `maxStarts` ends the loop).
 
 ## State
@@ -221,6 +221,11 @@ Two kinds of parallel work, and they stack:
 - **Inside one boss (Claude Code's own).** One boss starts lex, dev and tess as subagents, at most 3 of each at once (their helpers are
   not counted). The boss pays its start-up once; each further subagent is cheap because it reuses the boss's cache: measured about 1.5k new cache tokens and
   $0.020 (API-price yardstick) per extra agent, plus about 20k tokens the boss reads per result.
+- **Background tasks are off in every boss.** `-p` (Claude Code 2.1.330) stops background work 10 minutes after the final
+  reply, so the runner starts each boss with `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` and `BASH_MAX_TIMEOUT_MS=7200000`. Its
+  agents and commands then run in the foreground until they finish (a command up to 2 h); agents started in one message still
+  run in parallel and return together. Monitor and MCP tasks stay in the background. A takeover by hand has no step env, so
+  background work is allowed there.
 - **Across bosses (the runner's).** The runner starts up to 3 bosses at once, each a full `claude -p` session with its own team
   of main agents. Each boss pays its own start-up: measured 75-76k input-side tokens, 29-38k of them new cache writes, about $0.12
   yardstick each. The graph itself costs no tokens.
@@ -266,7 +271,6 @@ for a Node in use, C replaces only `lib/graph.mjs`.
 ## Not verified
 
 - The `-p` result shape on a usage limit: the limit text is searched in the result, its errors and stderr.
-- Whether `-p` waits for background subagents before exiting: the prompt wrapper asks the boss to wait for every agent.
 - Agent records come from the stream shapes of Claude Code 2.1.330 (an `Agent` tool use, `task_started`, the tool result's
   `agentId`, `task_notification`); another version may name them differently. A `stopped` notification is counted as not
   finished, so an agent the boss stopped on purpose is listed too.

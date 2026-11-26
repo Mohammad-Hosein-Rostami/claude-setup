@@ -7,6 +7,7 @@
 //   (RESUME-STATE, in-flight.mjs) even after a SIGKILL of the driver; a session with no transcript is started fresh, never
 //   `--resume`d; the token is read from the store for the recorded account at each start and goes only to
 //   the child env; the usage row and the journal hold the account name and token counts, never the token; check output is scrubbed.
+//   Every child runs with background tasks off, so no agent or command of the step outlives its final reply.
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
@@ -20,7 +21,7 @@ import { openAgents, resumeStateBlock, trackAgent } from './in-flight.mjs';
 import { WORKTREES_MAX, commitsSince, listWorktrees, newWorktrees, worktreeState } from './worktrees.mjs';
 
 /** The fixed text after a step's own prompt on its first start (spec 7.3). */
-export const WRAPPER = (runId, unitId) => `You run unattended inside long-run (run ${runId}, step ${unitId}). Nobody watches this session. When an owner decision blocks you, finish what does not depend on it, then stop. Wait for every agent you start before your final message. Commit finished work. Your final message ends with exactly one line: \`STEP-RESULT: done\`, \`STEP-RESULT: blocked: <reason>\` or \`STEP-RESULT: needs-owner: <one-line question>\`.`;
+export const WRAPPER = (runId, unitId) => `You run unattended inside long-run (run ${runId}, step ${unitId}). Nobody watches this session. When an owner decision blocks you, finish what does not depend on it, then stop. Background tasks are off in this session: agents and commands run until they finish (start parallel agents in one message); end your reply only when all of them have returned. Commit finished work. Your final message ends with exactly one line: \`STEP-RESULT: done\`, \`STEP-RESULT: blocked: <reason>\` or \`STEP-RESULT: needs-owner: <one-line question>\`.`;
 
 const RESTART = 'The runner paused or restarted this session; check what is already done (git status, git log) and continue.';
 /** The follow-up of a resumed session, by the last outcome (spec 7.3, 19.2). */
@@ -33,6 +34,10 @@ export const FOLLOW_UPS = {
   'taken-over': () => 'The owner continued this step by hand and has quit. Check what is done, finish what is left, and give your STEP-RESULT line.',
 };
 const TELL = (message) => `Message from the owner, sent while you worked: ${message}. Take it into account, continue the step, and end with your STEP-RESULT line.`;
+// `-p` (Claude Code 2.1.330) stops background work 10 min after the final reply, so a step's agents and commands run in the foreground.
+const DISABLE_BACKGROUND_TASKS = '1';
+// With background off, a long command blocks the step: allow it up to 2 h (an upper bound; the Bash default timeout is unchanged).
+const BASH_MAX_TIMEOUT_MS = String(2 * 60 * 60 * 1000);
 const CHECK_TAIL_LINES = 40;
 const CHECK_KEEP_CHARS = 64 * 1024;
 const MS_PER_MINUTE = 60 * 1000;
@@ -162,7 +167,13 @@ async function runChild(ctx, unit, begun, { args, prompt, token, logBase, fresh 
   };
   await ctx.semaphore.acquire();
   try {
-    const added = { CLAUDE_ACCOUNT: begun.account, LONG_RUN_ID: ctx.runId, LONG_RUN_STEP: unit.id };
+    const added = {
+      CLAUDE_ACCOUNT: begun.account,
+      LONG_RUN_ID: ctx.runId,
+      LONG_RUN_STEP: unit.id,
+      CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: DISABLE_BACKGROUND_TASKS,
+      BASH_MAX_TIMEOUT_MS,
+    };
     const handle = startClaude({ args, prompt, cwd: begun.folder, env: ctx.env, token, added, logBase, platform: ctx.platform, killAfter: ctx.killAfter, onEvent });
     ctx.live.running(unit.id, { pid: handle.pid, handle, sessionId: begun.sessionId, folder: begun.folder, log: `${logBase}.jsonl`, account: begun.account });
     save({ pid: handle.pid });

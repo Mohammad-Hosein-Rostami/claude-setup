@@ -12,7 +12,8 @@
 // an agent's result as Claude Code names an isolated agent's worktree; the second with an untracked file in it, the third with an
 // ignored `build.log`; then a crash), worktree-other:<name> (the same at ../<name>, named by no agent, as another
 // session's lane would be, then a crash). Every call appends one JSON line to $FAKE_LR_DIR/calls.jsonl: {step, mode, args, stdin, cwd,
-// envNames, account, tokenHash, pid, start, end, ended} (`end` and `ended` on a second line kind `end`), never the token itself;
+// envNames, account, stepEnv (the values of the env the runner sets for a step's work), tokenHash, pid, start, end, ended} (`end` and
+// `ended` on a second line kind `end`), never the token itself;
 // each session writes its transcript to $CLAUDE_CONFIG_DIR/projects/fake-project/<session id>.jsonl (the open-session check).
 // The stream is real `--output-format stream-json` shapes: a system init line, assistant lines, user tool_result lines, a result line.
 import { chmodSync, writeFileSync } from 'node:fs';
@@ -40,6 +41,7 @@ const mode = modes[Math.min(n, modes.length - 1)];
 const token = process.env.CLAUDE_CODE_OAUTH_TOKEN ?? '';
 const record = (extra) => appendFileSync(join(dir, 'calls.jsonl'), JSON.stringify({ step, sessionId, pid: process.pid, ...extra }) + '\\n');
 record({ kind: 'start', mode, args, stdin, cwd: process.cwd(), envNames: Object.keys(process.env).sort(), account: process.env.CLAUDE_ACCOUNT ?? null,
+  stepEnv: { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS ?? null, BASH_MAX_TIMEOUT_MS: process.env.BASH_MAX_TIMEOUT_MS ?? null },
   tokenHash: token ? createHash('sha256').update(token).digest('hex') : null, start: Date.now() });
 const transcriptDir = join(process.env.CLAUDE_CONFIG_DIR, 'projects', 'fake-project');
 mkdirSync(transcriptDir, { recursive: true });
