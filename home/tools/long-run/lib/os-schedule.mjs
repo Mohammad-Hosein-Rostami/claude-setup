@@ -9,7 +9,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensurePrivateDir, writeFileAtomic } from '../../account/lib/private-fs.mjs';
 import { ID_PATTERN } from './job.mjs';
@@ -30,8 +30,21 @@ const XML = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos
 const escapeXml = (text) => String(text).replace(/[&<>"']/g, (char) => XML[char]);
 const home = (env) => env.HOME || env.USERPROFILE || homedir();
 
-/** The node a system entry starts: the Volta shim when present (it follows Node upgrades), else this node. */
-export const nodePath = (env = process.env) => (existsSync(join(home(env), '.volta', 'bin', 'node')) ? join(home(env), '.volta', 'bin', 'node') : process.execPath);
+/**
+ * The node a system entry starts: the first `node` (`node.exe` on Windows) on the PATH, the one the owner's terminal runs.
+ * Install builds the tools for that node, so a different one (such as a version manager's shim found by its home folder) can
+ * have another ABI and fail to load them. The PATH entry is kept as written, not resolved, so it stays valid over upgrades.
+ * @param {object} env the environment to search: `PATH`, or `Path` on Windows.
+ * @param {string} platform a `process.platform` value: picks the variable, the delimiter and the file name.
+ * @returns {string} the found path, else the node running now (`process.execPath`).
+ */
+export function nodePath(env = process.env, platform = process.platform) {
+  const isWindows = platform === 'win32';
+  const entries = ((isWindows ? env.Path : env.PATH) ?? '').split(isWindows ? ';' : ':');
+  const name = isWindows ? 'node.exe' : 'node';
+  // A relative or empty entry means the current folder, which is not where the system entry starts.
+  return entries.filter((dir) => isAbsolute(dir)).map((dir) => join(dir, name)).find((file) => existsSync(file)) ?? process.execPath;
+}
 
 /** The absolute path of long-run.mjs. */
 export const cliPath = () => join(dirname(dirname(fileURLToPath(import.meta.url))), 'long-run.mjs');
@@ -97,7 +110,7 @@ const defaults = (options) => ({ env: process.env, platform: process.platform, r
  */
 export function autostart(action, options = {}) {
   const { env, platform, runner } = defaults(options);
-  const args = [nodePath(env), cliPath(), 'resume', '--stale', '--delay', String(AUTOSTART_DELAY_SECONDS)];
+  const args = [nodePath(env, platform), cliPath(), 'resume', '--stale', '--delay', String(AUTOSTART_DELAY_SECONDS)];
   const task = `${TASK_FOLDER}\\long-run-resume`;
   if (platform === 'darwin') {
     if (action === 'on') return `autostart on: ${loadAgent(AUTOSTART_LABEL, plistText({ label: AUTOSTART_LABEL, args, path: env.PATH ?? '', runAtLoad: true }), defaults(options))}`;
@@ -137,7 +150,7 @@ export function addSchedule({ root, name, jobPath, account, at, on }, options = 
   const { env, platform, runner } = defaults(options);
   if (!ID_PATTERN.test(name)) throw new Error(`not a job name: ${name}`);
   const calendar = calendarOf(at, on);
-  const args = [nodePath(env), cliPath(), 'start', jobPath, '--schedule', name];
+  const args = [nodePath(env, platform), cliPath(), 'start', jobPath, '--schedule', name];
   ensurePrivateDir(schedulesDir(root));
   writeJson(join(schedulesDir(root), `${name}.json`), { name, job: jobPath, account, at, on, createdAt: new Date().toISOString() });
   if (platform === 'darwin') return loadAgent(`${SCHEDULE_LABEL_PREFIX}${name}`, plistText({ label: `${SCHEDULE_LABEL_PREFIX}${name}`, args, path: env.PATH ?? '', calendar }), defaults(options));

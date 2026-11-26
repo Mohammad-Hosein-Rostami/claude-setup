@@ -2,9 +2,9 @@
 // launchd agent or scheduled task is made; and of `resume --stale`, which resumes only runs whose driver died.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { AUTOSTART_LABEL, SCHEDULE_LABEL_PREFIX, addSchedule, autostart, cliPath, listSchedules, plistText, removeSchedule } from '../home/tools/long-run/lib/os-schedule.mjs';
+import { AUTOSTART_LABEL, SCHEDULE_LABEL_PREFIX, addSchedule, autostart, cliPath, listSchedules, nodePath, plistText, removeSchedule } from '../home/tools/long-run/lib/os-schedule.mjs';
 import { readJson, writeJson } from '../home/tools/long-run/lib/run-store.mjs';
 import { cli, createRun, makeSandbox, waitFor } from './long-run-helpers.mjs';
 
@@ -75,6 +75,37 @@ test('schedule (Windows): schtasks DAILY /ST, or ONCE /ST /SD for one date', () 
   assert.deepEqual(calls[0].slice(0, 8), ['schtasks', '/Create', '/TN', 'claude-setup\\long-run-nightly', '/SC', 'DAILY', '/ST', '02:30']);
   assert.deepEqual(calls[1].slice(0, 10), ['schtasks', '/Create', '/TN', 'claude-setup\\long-run-once', '/SC', 'ONCE', '/ST', '23:05', '/SD', '12/01/2026']);
   assert.match(calls[1][11], /"start" "C:\\jobs\\o\.json" "--schedule" "once"$/);
+});
+
+/** Writes an empty file `name` in a new folder `dir` under the sandbox and returns the folder. */
+function fakeNodeDir(box, dir, name) {
+  const folder = join(box.dir, dir);
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, name), '');
+  return folder;
+}
+
+test('nodePath: the first node on PATH, unresolved, even when HOME holds a version manager shim', () => {
+  const box = makeSandbox();
+  fakeNodeDir(box, join('home', '.volta', 'bin'), 'node');
+  const onPath = fakeNodeDir(box, 'node-bin', 'node');
+  const later = fakeNodeDir(box, 'later-bin', 'node');
+  const env = { HOME: box.folders.home, PATH: ['relative-bin', join(box.dir, 'empty'), onPath, later].join(':') };
+  assert.equal(nodePath(env, 'darwin'), join(onPath, 'node'));
+});
+
+test('nodePath: no node on PATH falls back to the node running now', () => {
+  const box = makeSandbox();
+  fakeNodeDir(box, join('home', '.volta', 'bin'), 'node');
+  assert.equal(nodePath({ HOME: box.folders.home, PATH: '' }, 'darwin'), process.execPath);
+  assert.equal(nodePath({ HOME: box.folders.home }, 'linux'), process.execPath);
+});
+
+test('nodePath (Windows): node.exe from Path, split by ;', () => {
+  const box = makeSandbox();
+  fakeNodeDir(box, 'plain-bin', 'node');
+  const withExe = fakeNodeDir(box, 'exe-bin', 'node.exe');
+  assert.equal(nodePath({ Path: [join(box.dir, 'plain-bin'), withExe].join(';') }, 'win32'), join(withExe, 'node.exe'));
 });
 
 test('plist text escapes XML characters', () => {
