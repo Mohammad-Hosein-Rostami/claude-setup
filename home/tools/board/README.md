@@ -39,20 +39,22 @@ node ~/.claude/tools/board/board.mjs tick --repo <abs> --plan <abs> --mark-tess 
 ```
 
 The lines (`lib/tick.mjs`), every branch name, path and agent name cleaned of control characters; `queue` and `features` print
-only with `--plan`, `ledger` only when the land ledger has lines it cannot parse or cannot be read at all:
+only with `--plan`, `tests not landed` only when a test branch is left, `ledger` only when the land ledger has lines it cannot
+parse or cannot be read at all:
 
 ```text
 main <sha> <clean|dirty>, <one line|not one line> (git-tidy check 0|1: <count> <kind>, ...)[, <n> landed since tess round at <sha>]
 tidy <n> <kind> (<subject>[, +<n> more]), ... -> node ~/.claude/tools/git-tidy/git-tidy.mjs prune <repo> --base <base>
 folders <n> <state>, ...[ (oldest <n> h)]
 lane <branch> <type> <agent id> <running|done|quiet N min>|no agent +<n> commits <clean|~<n> changed|changes ?> [ready to land|ready to land (behind main; land rebases it)|behind main] [folder <state>]
+tests not landed: <branch> +<n>[ (piece <piece>)][ (<type> <running|done|quiet N min>)], <branch> no commit (in <folder>), ..., +<n> more
 overlap <lane or piece> x <lane>: <file>, <file>, <file>, +<n> more
 stray <lane>: <files> (not in its files)
 queue <piece> startable | <piece> after <piece>, ... | <piece> overlaps <lane>
 features landed, not checked: <feature> <landed>/<pieces> (risk <risk>), ... -> tess due at 3 (now <n>)|tess due now (<why>)
 ledger <n> bad lines skipped
 ledger unreadable (<why>): no piece counts as landed
-next: land <lane>; claim <piece>[ (branch <branch>)]; tess on <feature>; dev <n>/3, tess <n>/3
+next: land <lane>; claim <piece>[ (branch <branch>)]; test branches <branch>, ...: land each one tess passed (land <branch> --repo <repo>), a failing repro gets a Fix: piece on its branch; tess on <feature>; dev <n>/3, tess <n>/3
 ```
 
 - **main**: the branch `--repo` names as its base (origin/HEAD, else main, master or develop), with `git-tidy check`'s findings
@@ -69,6 +71,11 @@ next: land <lane>; claim <piece>[ (branch <branch>)]; tess on <feature>; dev <n>
   plumbing) plus the changed and untracked files in its folder; its agent is the board agent on that branch. `ready to land`: the agent is done (or none is on the board),
   the lane has commits and its folder is clean; `(behind main; land rebases it)` when main has moved since it started.
   `behind main`: main moved and the lane is not ready yet. A lane outside the pool is not shown.
+- **tests not landed**: every `test/*` branch (tess-write's) not landed on main, at most 5, then `+<n> more`: its commits
+  beyond main, the plan piece whose `branch` it is and the board agent on it; one with no commit of its own shows the folder
+  that holds it (a tess-write folder outside the pool). Left out: a branch a pool lane holds (it is on its `lane` line), a
+  `tidy` subject, and one with no commit that no folder holds (merged: `prune` removes it). Only shown: the tick never lands
+  or deletes one, and it is no finding (exit unchanged).
 - **overlap**: two lanes share a file, or a piece whose `after` pieces have all landed declares a file a lane changed (that piece
   is not startable). **stray**: a lane on a piece's branch changed a file its piece does not declare. Either is exit 1; such a lane
   lands after the other one, with `land --test`.
@@ -79,15 +86,17 @@ next: land <lane>; claim <piece>[ (branch <branch>)]; tess on <feature>; dev <n>
   its newest land. tess (its quick look; `full` only when the owner asks) is due when a risky feature is listed, when 3
   features are fully landed and not checked, or when the plan's last piece has landed.
 - **next**: only a suggestion: land one ready lane, claim startable pieces while fewer than 3 lanes are in flight (a piece
-  with a `branch` as `claim <piece> (branch <branch>)`: claim that branch), start tess
-  when it is due. While main has a finding of its own it says to fix main first and start no new piece; a `tidy` finding never
+  with a `branch` as `claim <piece> (branch <branch>)`: claim that branch), land the test branches with commits and no plan
+  piece or live agent (at most 3 named; land each one tess's report passed, and a failing repro gets a `Fix:` piece on its
+  branch), start tess when it is due. While main has a finding of its own it says to fix main first and start no new piece; a `tidy` finding never
   does.
 
 `--mark-tess <feature> --sha <40-hex>` records that tess was started on that feature at that main sha (it must be on main), and
 prints `marked <feature> for tess at <sha>`. The marks are in `~/.claude/state/board/jobs/<job>.json` as
 `{ "<feature>": { "sha": "<40-hex>", "at": "<ISO>" } }`, written through a temp file and a rename; delete the file to forget
 them. `--json` prints every fact as one JSON object (lanes with their files, folders with why and `lockedAtMs`, features, tess
-status); `main.findings` holds main's findings only and `tidy` the side ones, each `{ "kind", "subject" }`.
+status); `main.findings` holds main's findings only and `tidy` the side ones, each `{ "kind", "subject" }`; `tests` holds the
+test branches, each `{ "branch", "commits", "folder", "piece", "agent" }` (`folder`, `piece` and `agent` null when none).
 
 Exit 0 shown; 1 findings (an overlap, a stray, a `git-tidy check` finding on main or on the `tidy` line); 2 usage: a bad flag, a `--repo` that is not
 a git repository, a missing or bad plan or marks file (the message names what is wrong), or a git failure.

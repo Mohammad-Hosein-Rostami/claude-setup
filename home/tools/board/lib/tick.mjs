@@ -1,7 +1,7 @@
 // Purpose: `board tick`, the boss's read-only sync after every agent report and every land (boss-integrator design, section 3):
-//   main's state, the side findings to tidy, one line per lane in flight, the overlaps and strays among their files, the plan's
-//   queue, the features waiting for tess and a suggested next step (the lines: tick-lines.mjs). `--mark-tess` records that tess
-//   was started on a feature.
+//   main's state, the side findings to tidy, one line per lane in flight, the test branches not landed (tick-tests.mjs), the
+//   overlaps and strays among their files, the plan's queue, the features waiting for tess and a suggested next step (the lines:
+//   tick-lines.mjs). `--mark-tess` records that tess was started on a feature.
 // Exports: TICK_USAGE, runTick(args, loadBoard) -> exit code.
 // Facts: main from git-tidy check (runCheck), split by kind: main's own findings block new work, the side ones (other refs and
 //   folders, SIDE_KINDS) only go on the `tidy` line; the lanes are the lane pool's folders that hold a branch (poolSlots), each with
@@ -22,6 +22,7 @@ import { jsonText } from './cells.mjs';
 import { pieceBranch, planState } from './tick-features.mjs';
 import { clean, short, tickLines } from './tick-lines.mjs';
 import { readMarks, readPlan, writeMark } from './tick-plan.mjs';
+import { testBranches } from './tick-tests.mjs';
 
 export const TICK_USAGE = 'usage: board.mjs tick --repo <abs main checkout> [--plan <abs pieces.json>] [--session <id>] [--json]\n'
   + '       board.mjs tick --repo <abs> --plan <abs> --mark-tess <feature> --sha <40-hex>';
@@ -150,12 +151,13 @@ function tickFacts(repo, plan, board) {
   const slots = foldersOf(repo);
   const agents = board?.agents ?? [];
   const lanes = slots.filter((slot) => slot.branch !== null).map((slot) => laneOf(repo, main.sha, slot, agents));
+  const tests = testBranches(repo, main.sha, { lanes, tidy, plan }).map((test) => ({ ...test, agent: agentOn(agents, test.branch) }));
   const ledger = landLedger(repo.dir);
   const work = plan === null ? null : planState(repo, plan, lanes, ledger.entries, readMarks(plan.job));
   const overlaps = overlapsOf(lanes, work?.waiting.filter((piece) => piece.after.length === 0) ?? []);
   const tessRunning = agents.filter((agent) => agent.type === 'tess' && agent.state !== 'done').length;
   return {
-    repo: repo.dir, main, tidy, folders: slots, lanes, overlaps, strays: plan === null ? [] : straysOf(lanes, plan), queue: queueOf(work?.waiting ?? [], overlaps),
+    repo: repo.dir, main, tidy, folders: slots, lanes, tests, overlaps, strays: plan === null ? [] : straysOf(lanes, plan), queue: queueOf(work?.waiting ?? [], overlaps),
     plan: work === null ? null : { job: plan.job, features: work.features, tess: work.tess, lastTessSha: work.lastTessSha, landedSince: work.landedSince },
     ledgerSkipped: ledger.skipped, ledgerUnreadable: ledger.unreadable, tessRunning,
   };

@@ -1,10 +1,11 @@
 // Purpose: the plain lines `board tick` prints from its facts (tick.mjs tickFacts): main, the side findings to tidy, the pool's
-//   folders, one line per lane, overlaps, strays, the plan's lines and the suggested `next:` step.
+//   folders, one line per lane, the test branches not landed, overlaps, strays, the plan's lines and the suggested `next:` step.
 // Exports: tickLines(tick) -> string[], clean(text), short(sha).
 // Invariants: pure apart from reading the clock for the snapshot age. Every branch name, path and agent name goes through
-//   cells.mjs cleanText, so no control character reaches the terminal. `next:` only suggests: the boss decides; it reads main's own
+//   cells.mjs cleanText, so no control character reaches the terminal, and through shellWord too inside a printed command. `next:` only suggests: the boss decides; it reads main's own
 //   findings only, so a side finding (on the `tidy` line) never stops a land or a claim.
 import { SNAPSHOT_LABEL } from '../../git-tidy/lib/lane-slots.mjs';
+import { shellWord } from '../../git-tidy/lib/shell-word.mjs';
 import { cleanText } from './cells.mjs';
 import { commitsLines, featuresLine } from './tick-features.mjs';
 
@@ -13,6 +14,8 @@ const MAX_TESS = 3;
 const SHORT_SHA = 8;
 const AGENT_ID_CHARS = 7;
 const SHOWN_FILES = 3;
+const SHOWN_TESTS = 5; // test branches on the `tests not landed` line
+const NAMED_TESTS = 3; // test branches the `next:` step names
 const MS_PER_HOUR = 60 * 60 * 1000;
 const BUSY = 'busy';
 const SNAPSHOT_WHY = `${SNAPSHOT_LABEL} `; // lane-slots.mjs: a snapshot claim's busy why is `snapshot <8 of its sha>`
@@ -24,7 +27,9 @@ export const clean = (text) => cleanText(text, PLAIN_LOOK);
 /** The first 8 characters of a commit hash. */
 export const short = (sha) => sha.slice(0, SHORT_SHA);
 const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
-const filesText = (files) => [...files.slice(0, SHOWN_FILES).map(clean), ...(files.length > SHOWN_FILES ? [`+${files.length - SHOWN_FILES} more`] : [])].join(', ');
+/** The first `count` of `items`, then `+<m> more` for the rest, comma-separated. */
+const firstOf = (items, count) => [...items.slice(0, count), ...(items.length > count ? [`+${items.length - count} more`] : [])].join(', ');
+const filesText = (files) => firstOf(files.map(clean), SHOWN_FILES);
 
 /** Each distinct kind of `findings` once, in first-seen order. */
 const kindsOf = (findings) => [...new Set(findings.map(({ kind }) => kind))];
@@ -85,6 +90,30 @@ function laneLine(lane) {
   return ['lane', clean(lane.branch), agent, `+${plural(lane.commits, 'commit')}`, changes, laneVerdict(lane), folder].filter((part) => part !== '').join(' ');
 }
 
+/** A test branch: its commits, plan piece and agent, or the folder that holds it when it has no commit of its own yet. */
+function testText(test) {
+  if (test.commits === 0) return `${clean(test.branch)} no commit (in ${clean(test.folder)})`;
+  const piece = test.piece === null ? '' : ` (piece ${test.piece})`;
+  const agent = test.agent === null ? '' : ` (${clean(test.agent.type)} ${agentStateText(test.agent)})`;
+  return `${clean(test.branch)} +${test.commits}${piece}${agent}`;
+}
+
+function testsLine(tests) {
+  return tests.length === 0 ? null : `tests not landed: ${firstOf(tests.map(testText), SHOWN_TESTS)}`;
+}
+
+/**
+ * The step for test branches tess left with commits and no plan piece or live agent on them: land the ones it passed, give a
+ * failing repro a `Fix:` piece. Null when there is none.
+ */
+function testsStep({ tests, repo }) {
+  const left = tests.filter((test) => test.commits > 0 && test.piece === null && (test.agent === null || test.agent.state === 'done'));
+  if (left.length === 0) return null;
+  const branch = left.length === 1 ? shellWord(clean(left[0].branch)) : '<branch>';
+  const names = firstOf(left.map((test) => clean(test.branch)), NAMED_TESTS);
+  return `test branches ${names}: land each one tess passed (land ${branch} --repo ${shellWord(clean(repo))}), a failing repro gets a Fix: piece on its branch`;
+}
+
 function queueLine(queue) {
   if (queue.length === 0) return 'queue empty';
   const state = (piece) => {
@@ -95,8 +124,8 @@ function queueLine(queue) {
 }
 
 /**
- * The `next:` line: land one lane, claim pieces while fewer than MAX_DEV lanes run, start tess when due with the mark command at
- * main's sha (gate R5); never main while it fails.
+ * The `next:` line: land one lane, claim pieces while fewer than MAX_DEV lanes run, land the test branches left, start tess when
+ * due with the mark command at main's sha (gate R5); never main while it fails.
  */
 function nextLine(tick) {
   const { main, lanes, overlaps, strays, queue, plan, tessRunning } = tick;
@@ -109,6 +138,8 @@ function nextLine(tick) {
   if (land !== undefined) steps.push(`land ${clean(land.branch)}${flagged.has(land.branch) ? ' --test "<suite>" (after the other one)' : ''}`);
   const claimText = (piece) => `claim ${piece.id}${piece.branch === null ? '' : ` (branch ${clean(piece.branch)})`}`;
   queue.filter((piece) => piece.isStartable).slice(0, Math.max(0, MAX_DEV - lanes.length)).forEach((piece) => steps.push(claimText(piece)));
+  const testsNext = testsStep(tick);
+  if (testsNext !== null) steps.push(testsNext);
   if (plan !== null && plan.tess.reason !== null && tessRunning < MAX_TESS) {
     const ids = plan.tess.features.slice(0, MAX_TESS - tessRunning).map((feature) => feature.id).join(', ');
     steps.push(`tess on ${ids} (mark each: --mark-tess <feature> --sha ${main.sha} with this --repo and --plan)`);
@@ -127,6 +158,7 @@ export function tickLines(tick) {
     ...[tidyLine(tick)].filter((line) => line !== null),
     foldersLine(tick.folders),
     ...tick.lanes.map(laneLine),
+    ...[testsLine(tick.tests)].filter((line) => line !== null),
     ...tick.overlaps.map((pair) => `overlap ${clean(pair.first)} x ${clean(pair.second)}: ${filesText(pair.files)}`),
     ...tick.strays.map((stray) => `stray ${clean(stray.branch)}: ${filesText(stray.files)} (not in its files)`),
     ...(tick.plan === null ? [] : [queueLine(tick.queue), featuresLine(tick.plan), ...commitsLines(tick.plan)]),
