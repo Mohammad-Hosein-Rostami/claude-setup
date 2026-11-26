@@ -33,6 +33,7 @@ running (pause or stop it first) or the folder is used by another live run.
 | `status [<run>] [--json]` | all runs, one line each; one run: a line per step and per running, paused or taken-over session |
 | `watch <run> [<step>]` | follow the live log as readable lines; Ctrl-C ends only the watching |
 | `live [--once] [--all]` | every run that is not done or abandoned (`--all`: those too), newest first: its state, account and steps, a limit or retry wait with its time, the short session id; redrawn every 2 s until Ctrl-C (which ends only the view); `--once` prints one frame |
+| `view [<run>] [--port N] [--no-open]` | a browser screen of the runs (`<run>`: that run only): each job as boxes with each step's state, starts, attempts, times and waits, the routes between them, and the last 15 events; refreshed every 2 s; on 127.0.0.1 only (default port 4790), read-only; Ctrl-C ends only the view |
 | `log <run> [<step>] [--tail N] [--raw]` | the last N readable lines (default 20, 0 = all); `--raw` the stream lines |
 | `pause` / `stop <run> [<step>]` | end a boss cleanly; pause keeps it ready, stop fails the step (routed by `next.failed` or held) |
 | `takeover <run> <step>` | pause the step and print the lines that open its session in a terminal |
@@ -177,6 +178,7 @@ When a run stops (a pause, a stop, a reboot, a crash or a killed driver) while a
 - See it: `long-run status` lists every run; `long-run status <run>` lists each boss session that is running, paused or taken
   over, with its step, account, session id, folder and log file. `long-run watch <run> [step]` shows a step working live.
   `long-run live` keeps every running run on screen, its steps, waits and account, redrawn every 2 s; Ctrl-C quits.
+  `long-run view` shows the same in a browser page, with each job drawn as boxes and its recent events; Ctrl-C quits.
 - Pause or stop: `long-run pause <run> [step]` stops the session cleanly and keeps it ready to continue; `long-run stop <run>
   [step]` ends it (nothing restarts it by itself). `long-run resume <run>` continues either.
 - Do a step yourself: `long-run takeover <run> <step>` pauses it and prints three lines (account, folder, `claude --resume <id>`).
@@ -265,6 +267,8 @@ for a Node in use, C replaces only `lib/graph.mjs`.
 - Full access in `-p`: no command asks for permission, so a step can push or publish with nobody watching. Where a step can
   ask at all (see "Worktrees and half-made work stay on disk"), an unanswered AskUserQuestion auto-continues after 5 minutes
   and takes the recommended option.
+- `view` binds 127.0.0.1 only, refuses a Host header other than `127.0.0.1:<port>` or `localhost:<port>`, answers GET and
+  HEAD only and writes nothing. The page shows question texts and step reasons, on this machine only.
 - Two writers on one transcript: `resume` after a takeover refuses while the session looks open (its transcript changed in the
   last 60 s, or a running process has the session id in its command line) unless `--force`.
 

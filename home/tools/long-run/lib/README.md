@@ -22,6 +22,9 @@ The modules of `long-run.mjs`. The tool's own README has the commands, the job f
 | `view.mjs` | the run status word, `status` lines and `--json` (also read by `live`), `summary.md` |
 | `watch.mjs` | readable log lines: `log --tail` and `watch` |
 | `live.mjs` | `live`: the frame of the runs and their steps, redrawn every 2 s |
+| `web-data.mjs` | `view`: the page's data, read only: each run's view, its job's routes for drawing, its last events, cleaned |
+| `web-view.mjs` | `view`: the server on 127.0.0.1 (Host check, GET and HEAD only, strict CSP), the browser start |
+| `web/` | `view`: the page (`index.html`, `view.js`, `view.css`), which polls `/api/runs` every 2 s |
 | `notify.mjs` | desktop notes and the ntfy phone push |
 | `env-ms.mjs` | timeout knobs: a wait read from a `CLAUDE_<TOOL>_<CONSTANT>` variable (1 ms to 2^31-1 ms), else its default |
 | `awake.mjs` | keep the machine from idle sleep while a driver lives |
