@@ -53,11 +53,13 @@ want shared into `settings/*.json` and re-run the installer.
 ## Sync the machines
 Run on the machine you landed on, in the repo folder, after every land, also while other lanes are still open (the targets come from the script default and `claudeSetup.syncTargets`):
 `node scripts/sync-machines.mjs --repo "$PWD"`. Add `--tag <tag>` to move the targets to a phase tag, `--targets <name,...>` to sync only
-some, `--json` for one JSON row per machine (the old `--checks` is refused with exit 2).
-- First it checks the base branch is checked out and no tracked file changed (exit 3 with `verify: <check> failed: <why>`). Open lanes do not stop it.
+some, `--json` for one JSON row per machine (the old `--base` and `--checks` are refused with exit 2).
+- It syncs the branch checked out here (main, develop or a feature branch; no option names it), and each target (the PC by default) follows it.
+- First it checks a branch is checked out (not a detached HEAD) and no tracked file changed (exit 3 with `verify: <check> failed: <why>`). Open lanes do not stop it.
 - Then every machine must run one Claude Code version and channel, at or above `CLAUDE_FLOOR` in `scripts/sync/cli-checks.mjs`, on the `cliVersion` pin of
   `settings/local.json`. A machine that does not is skipped and its row says why (a target still on an old checkout is checked again after its install).
-- Each target gets a git bundle (`scp`), a fast-forward pull, the shared local values and `scripts/install.sh`. Each machine prints one line,
+- Each target gets a git bundle (`scp`), then moves to the same branch, fast-forward only and only with no tracked change in its checkout: a pull
+  when it is on that branch, else a fetch into the branch and a switch to it. Then the shared local values and `scripts/install.sh`. Each machine prints one line,
   `<machine>: synced sha <40-hex> install <exit>`. Nothing is pushed and no project repo on a target is touched. Every ssh line is printed before it runs.
 - Exit 0: every machine synced (install exit 0, at the base tip); 1: a machine failed (rows printed); 2: bad arguments, or another sync runs (its run lock `sync-machines.lock` in the temp folder; a killed sync's lock is
   taken over and its leftover files removed); 3: verify failed.

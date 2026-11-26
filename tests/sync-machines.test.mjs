@@ -3,7 +3,9 @@
 // Invariants: expected values come from the spec (lane sync-script) and the fixes of branch sync-target-version-probe: one alarmed
 //   ssh line per remote command with the PATH export inside the quotes, a stale target checked after its install, the removed
 //   --row refused with exit 2 (audit R7), a hostile name refused with exit 2, a verify failure with exit 3 and nothing sent, never a push,
-//   no doctor step (rows report the install exit), and one run at a time (the lock of a killed sync is taken over, e1e226c7).
+//   no doctor step (rows report the install exit), one run at a time (the lock of a killed sync is taken over, e1e226c7), and
+//   the base is the checked-out branch (plan base-current-branch, piece base-6): --base refused, a target follows the branch,
+//   a detached HEAD stops at verify.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -45,8 +47,11 @@ function writeExecutable(path, body) {
   chmodSync(path, 0o755);
 }
 
-/** A repo on main with the files the script reads, stubs for the tools it runs, and a home folder with the local claude settings. */
-function setup({ targets = undefined, cliVersion = '', dirty = false } = {}) {
+/**
+ * A repo on `branch` (detached at its commit when `detached`) with the files the script reads, stubs for the tools it runs, and a
+ * home folder with the local claude settings.
+ */
+function setup({ targets = undefined, cliVersion = '', dirty = false, branch = 'main', detached = false } = {}) {
   const root = makeTempDir('sync-');
   const repo = join(root, 'repo');
   const home = join(root, 'home');
@@ -73,9 +78,10 @@ function setup({ targets = undefined, cliVersion = '', dirty = false } = {}) {
     for (const [name, body] of Object.entries(tools)) writeExecutable(join(bin, name), body);
   }
   const git = (...args) => spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
-  git('init', '-q', '-b', 'main');
+  git('init', '-q', '-b', branch);
   git('add', '-A');
   git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'x');
+  if (detached) git('checkout', '-q', '--detach');
   if (dirty) writeFileSync(join(repo, 'scripts', 'install.sh'), '#!/bin/sh\nexit 0 # changed\n');
   return { root, repo, bin, home, log: join(root, 'calls.log'), head: git('rev-parse', 'HEAD').stdout.trim() };
 }
@@ -140,9 +146,9 @@ test('a hostile target name or host is refused with exit 2 before any ssh', () =
   }
 });
 
-test('unsafe base, tag and repo are refused with exit 2', () => {
+test('unsafe tag and repo are refused with exit 2', () => {
   const fixture = setup();
-  for (const args of [['--base', "main'x"], ['--tag', 'v1;x']]) assert.equal(run(fixture, args).status, 2, args.join(' '));
+  assert.equal(run(fixture, ['--tag', 'v1;x']).status, 2);
   const odd = spawnSync('node', [SCRIPT, '--repo', '~user/repo'], { encoding: 'utf8' });
   assert.equal(odd.status, 2);
 });
@@ -152,6 +158,32 @@ test('the removed --row is refused with exit 2, naming why, before any ssh', () 
   const result = run(fixture, ['--row', '7']);
   assert.equal(result.status, 2);
   assert.match(result.stderr, /--row is gone/);
+  assert.equal(result.calls, '');
+});
+
+test('the removed --base is refused with exit 2, naming why, before any ssh', () => {
+  const fixture = setup({ targets: [{ name: 'pc', ssh: 'pc' }] });
+  const result = run(fixture, ['--base', 'main']);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /--base is gone/);
+  assert.equal(result.calls, '');
+});
+
+test('a target follows the checked-out branch: a pull when on it, else a fast-forward fetch into it and a switch', () => {
+  const fixture = setup({ targets: [{ name: 'pc', ssh: 'pc' }], branch: 'feat' });
+  const result = run(fixture, []);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const sync = result.calls.split('\n').find((line) => line.includes('git pull'));
+  assert.ok(sync.includes('git pull --ff-only /tmp/sync-sync-pc.bundle feat'), sync);
+  assert.ok(sync.includes('git fetch /tmp/sync-sync-pc.bundle feat:refs/heads/feat'), sync);
+  assert.ok(sync.includes('git switch -q feat'), sync);
+});
+
+test('a detached HEAD: exit 3, a verify line, nothing sent', () => {
+  const fixture = setup({ targets: [{ name: 'pc', ssh: 'pc' }], detached: true });
+  const result = run(fixture, []);
+  assert.equal(result.status, 3, result.stdout + result.stderr);
+  assert.match(result.stdout, /verify: base branch failed: no branch checked out/);
   assert.equal(result.calls, '');
 });
 

@@ -74,6 +74,16 @@ test('a second lane started from inside the first still lands next to the main c
   assert.equal(r.stdout.trim(), join(ctx.parent, 'claude-setup-wt', 'x2'));
 });
 
+test('with no base, the lane starts at the branch checked out in the main checkout and records it as its base', { skip }, () => {
+  const ctx = makeRepo();
+  git(ctx.repo, 'switch', '-q', '-c', 'develop');
+  git(ctx.repo, 'commit', '-q', '--allow-empty', '-m', 'on develop');
+  const r = lane(ctx, 'x');
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(git(ctx.repo, 'rev-parse', 'lane/x').stdout, git(ctx.repo, 'rev-parse', 'develop').stdout);
+  assert.equal(git(ctx.repo, 'config', '--get', 'branch.lane/x.cs-lane-base').stdout.trim(), 'develop');
+});
+
 test('refuses an existing branch, an existing folder and a bad name, and changes nothing', { skip }, () => {
   const ctx = makeRepo();
   git(ctx.repo, 'branch', 'lane/taken');

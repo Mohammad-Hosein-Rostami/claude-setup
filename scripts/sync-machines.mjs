@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 // Purpose: brings this machine and each sync target to the base tip, or the targets to a phase tag, and installs the setup.
-//   It also checks that every machine runs the same pinned Claude Code. It replaces the sync-machines workflow.
-// Usage: node scripts/sync-machines.mjs --repo <abs or ~/path> [--base <branch, default main>] [--tag <tag>] [--targets <name,...>]
-//          [--json]
+//   The base is the branch checked out in --repo (no option names it); each target follows it. It also checks that every machine
+//   runs the same pinned Claude Code. It replaces the sync-machines workflow.
+// Usage: node scripts/sync-machines.mjs --repo <abs or ~/path> [--tag <tag>] [--targets <name,...>] [--json]
 //   Run it from the repo folder on the main machine after every land: `node scripts/sync-machines.mjs --repo "$PWD"`
 //   syncs the PC (the default target `pc` over `ssh pc`). Targets come from settings/local.json `claudeSetup.syncTargets`.
-// Steps: verify (tag, base branch, no tracked changes; open lanes are not checked; the removed --checks and --row options
-//   exit 2), versions (one claude version, channel and pin on every machine, at or above CLAUDE_FLOOR (2.1.326, in
+// Steps: verify (tag, a branch checked out with a plain name, no tracked changes; open lanes are not checked; the removed --base,
+//   --checks and --row options exit 2), versions (one claude version, channel and pin on every machine, at or above CLAUDE_FLOOR (2.1.326, in
 //   scripts/sync/cli-checks.mjs), on the local.json pin), then per machine side by side: install on this machine; on a
-//   target a git bundle, a fast-forward pull (or a fetched tag), the shared local values, install, then the version and
+//   target a git bundle, the same branch fast-forward only with no tracked changes there (a pull when it is checked out, else a
+//   fetch into it and a switch to it; or a fetched tag), the shared local values, install, then the version and
 //   DISABLE_UPDATES read again. Never pushes; never touches a project repo.
 // Output: one line per machine, `<machine>: synced sha <40-hex> install <exit>` (or a JSON array with --json): { machine, synced, sha,
 //   installExit, problem }. installExit is install.sh's exit on this machine and the exit of the remote pull-and-install line on a
@@ -85,17 +86,17 @@ function runLine(machine, line, seconds) {
 }
 
 function parseArgs(argv) {
-  const flags = { '--repo': 'repo', '--base': 'base', '--tag': 'tag', '--targets': 'targets' };
-  const opts = { base: 'main', json: false };
+  const flags = { '--repo': 'repo', '--tag': 'tag', '--targets': 'targets' };
+  const opts = { json: false };
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] === '--json') opts.json = true;
+    else if (argv[index] === '--base') throw new UsageError('--base is gone: sync uses the branch checked out in --repo');
     else if (argv[index] === '--checks') throw new UsageError('--checks is gone: sync runs no suite or audit gate');
     else if (argv[index] === '--row') throw new UsageError('--row is gone: it named the STATUS row of the removed status tool');
     else if (flags[argv[index]] && argv[index + 1] !== undefined) opts[flags[argv[index]]] = argv[++index];
     else throw new UsageError(`unknown or incomplete argument ${argv[index]}`);
   }
   if (typeof opts.repo !== 'string' || !PLAIN_PATH.test(opts.repo)) throw new UsageError('--repo must be an absolute path (or ~/...) of letters, digits and . _ / + @ : ~ -');
-  if (!PLAIN_BASE.test(opts.base)) throw new UsageError('--base must be a plain branch name');
   if (opts.tag !== undefined && !PLAIN_TAG.test(opts.tag)) throw new UsageError('--tag must be a tag name');
   return { ...opts, targets: opts.targets?.split(','), localRepo: opts.repo.startsWith('~/') ? join(homedir(), opts.repo.slice(2)) : opts.repo };
 }
@@ -106,20 +107,33 @@ function remoteCheckout(repo) {
   return relative === repo ? repo : `$HOME/${relative}`;
 }
 
+/**
+ * Reads the branch checked out in --repo: the base every machine syncs to. It reaches the ssh lines, so it must be a plain name.
+ * @param {string} localRepo the repo folder on this machine
+ * @returns {Promise<{base: string, why: string}>} why is '' when the branch can be synced, else the verify failure
+ */
+async function readBase(localRepo) {
+  const { status, out } = await exec('git', ['-C', localRepo, 'branch', '--show-current']);
+  const base = out.trim();
+  if (status !== 0) return { base: '', why: `git branch --show-current exit ${status}: ${tail(out)}` };
+  if (!base) return { base, why: 'no branch checked out (detached HEAD); check out the branch to sync' };
+  return { base, why: PLAIN_BASE.test(base) ? '' : `the branch "${base}" is not a plain name (letters, digits and . _ / -)` };
+}
+
 /** The verify checks in order; each returns '' when it holds, else why not. Open lanes do not matter: sync needs only a clean base. */
-function verifyChecks({ localRepo, base, tag }) {
+function verifyChecks({ localRepo, tag }, checkedOut) {
   const git = (...args) => exec('git', ['-C', localRepo, ...args]);
   const fromStatus = (result, why) => (result.status === 0 ? '' : `${why}: ${tail(result.out)}`);
   const list = [];
   if (tag) list.push(['tag', async () => fromStatus(await git('rev-parse', '--verify', '--quiet', `refs/tags/${tag}`), `no tag ${tag}`)]);
-  list.push(['base branch', async () => { const { out } = await git('branch', '--show-current'); return out.trim() === base ? '' : `on "${out.trim()}", not ${base}`; }]);
+  list.push(['base branch', async () => checkedOut.why]);
   list.push(['tracked changes', async () => { const { out } = await git('status', '--porcelain', '--untracked-files=no'); return out.trim() ? `tracked changes: ${tail(out)}` : ''; }]);
   return list;
 }
 
 /** Runs the verify checks and stops at the first failure; returns the exit code (0 when all hold). */
-async function verify(options) {
-  for (const [name, check] of verifyChecks(options)) {
+async function verify(options, checkedOut) {
+  for (const [name, check] of verifyChecks(options, checkedOut)) {
     const why = await check();
     if (why) { console.log(`verify: ${name} failed: ${why}`); return EXIT_VERIFY; }
   }
@@ -186,7 +200,9 @@ function lockRun(lockPath) {
 }
 
 /**
- * A target: copy the bundle (under an alarm), then ONE remote script. The pull comes before merge-shared because a target that is
+ * A target: copy the bundle (under an alarm), then ONE remote script. The target follows this machine's branch: with no tracked
+ * changes there, a fast-forward pull when it is on the branch, else a fetch into the branch (git refuses one that is not a
+ * fast-forward) and a switch to it. The move comes before merge-shared because a target that is
  * behind has no local-settings.mjs until the pull (a tag target is on the previous tag, never behind, so a tag merges first);
  * the version and DISABLE_UPDATES reads come after the install, which sets the pin.
  */
@@ -201,7 +217,7 @@ async function syncTarget(ctx, target) {
   const merge = `node scripts/install/local-settings.mjs merge-shared ${remoteShared}`;
   const chain = ctx.tag
     ? `${merge} && git fetch ${remoteBundle} refs/tags/${ctx.tag}:refs/tags/${ctx.tag} && scripts/install.sh --update --to ${ctx.tag}`
-    : `[ "$(git branch --show-current)" = "${ctx.base}" ] && [ -z "$(git status --porcelain --untracked-files=no)" ] && git pull --ff-only ${remoteBundle} ${ctx.base} && ${merge} && scripts/install.sh`;
+    : `{ [ -z "$(git status --porcelain --untracked-files=no)" ] || { echo "tracked changes in the checkout: commit or undo them there"; false; }; } && if [ "$(git branch --show-current)" = "${ctx.base}" ]; then git pull --ff-only ${remoteBundle} ${ctx.base}; else git fetch ${remoteBundle} ${ctx.base}:refs/heads/${ctx.base} && git switch -q ${ctx.base}; fi && ${merge} && scripts/install.sh`;
   // A tag install links ~/.claude to a worktree of the tag and leaves the checkout's HEAD where it was (scripts/install/pin.mjs),
   // so the sha that runs there is the tag's commit.
   const installed = ctx.tag ? `refs/tags/${ctx.tag}^{commit}` : 'HEAD';
@@ -285,13 +301,15 @@ async function tipShas({ localRepo, base, tag }) {
 async function main(argv) {
   const options = parseArgs(argv);
   const { config, targets } = chooseTargets(options);
-  const verified = await verify(options);
+  const checkedOut = await readBase(options.localRepo);
+  const verified = await verify(options, checkedOut);
   if (verified !== 0) return verified;
+  const withBase = { ...options, base: checkedOut.base };
   const names = [config.machine, ...targets.map((target) => target.name)];
   const reports = await Promise.all([readLocalCli(), ...targets.map((target) => readTargetCli(options, target))]);
   const problems = cliProblems(names, reports, { floor: CLAUDE_FLOOR, localName: config.machine, pin: config.cliVersion });
-  const tips = await tipShas(options);
-  const rows = await syncAll({ ...options, targets, tips }, names, problems, reports);
+  const tips = await tipShas(withBase);
+  const rows = await syncAll({ ...withBase, targets, tips }, names, problems, reports);
   printRows(rows, options.json);
   return rows.every((row) => row.synced) ? 0 : EXIT_FAILED; // synced: installed with exit 0 and at the tip
 }
