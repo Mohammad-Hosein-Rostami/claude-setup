@@ -1,7 +1,7 @@
 # Setup on a new machine
 
 ## Prerequisites
-- `git` (on Windows, Git for Windows, which also provides Git Bash), Node 22 (volta recommended), `jq`, `ripgrep`, `gitleaks`, `gh`, the `claude` CLI.
+- `git` (on Windows, Git for Windows, which also provides Git Bash), Node 22.15 or newer (install builds the tools for the first `node` on your terminal's PATH), `jq`, `ripgrep`, `gitleaks`, `gh`, the `claude` CLI.
 - macOS: `brew bundle --file tools/Brewfile`. Windows: `powershell -ExecutionPolicy Bypass -File tools\windows-tools.ps1`
   (winget). Linux: install the same tools with your package manager.
 - A target project with `@playwright/test` and Chromium (`npx playwright install chromium`) if you use `ui-check`.

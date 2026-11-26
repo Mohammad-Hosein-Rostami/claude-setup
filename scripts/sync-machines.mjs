@@ -34,7 +34,11 @@ const EXIT_FAILED = 1;
 const EXIT_USAGE = 2;
 const EXIT_VERIFY = 3;
 // A non-interactive ssh shell on a target has a short PATH, so `claude`, `node` and `git` are not found: every remote command starts with this.
-const REMOTE_PATH_EXPORT = 'export PATH="$HOME/.volta/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin:$PATH";';
+// On macOS path_helper then reorders it as a terminal login shell does, so install builds the tools for the same node the
+// owner's terminal runs (the Volta shim first gave the wrong node ABI). Linux and Windows have no path_helper: PATH stays as set.
+// No single quote inside: the line sits in the '...' of the ssh command.
+const REMOTE_PATH_EXPORT =
+  'export PATH="$HOME/.volta/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin:$PATH"; [ -x /usr/libexec/path_helper ] && eval "$(/usr/libexec/path_helper -s)";';
 const READ_SECONDS = 120; // a remote read
 const SYNC_SECONDS = 540; // the remote pull and install
 const TRANSFER_SECONDS = 300; // the scp of the bundle over a slow link (the PC sits behind a phone relay)

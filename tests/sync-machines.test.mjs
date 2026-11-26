@@ -16,7 +16,8 @@ import { hardLinkSharedTool, sharedToolDir } from './shared-tools.mjs';
 
 const SCRIPT = fileURLToPath(new URL('../scripts/sync-machines.mjs', import.meta.url));
 const FLOOR = '2.1.326';
-const PATH_EXPORT = 'export PATH="$HOME/.volta/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin:$PATH";';
+const PATH_EXPORT =
+  'export PATH="$HOME/.volta/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin:$PATH"; [ -x /usr/libexec/path_helper ] && eval "$(/usr/libexec/path_helper -s)";';
 const ALARM = (seconds) => `perl -e 'alarm ${seconds}; exec @ARGV or die "exec: $!"'`;
 const SSH_OPTIONS = '-o BatchMode=yes -o ConnectTimeout=30'; // ssh_config(5): no password or host-key question, 30 s to connect
 
