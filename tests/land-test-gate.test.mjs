@@ -5,14 +5,16 @@
 // command is a small node script written next to the repo (outside both checkouts), so it runs the same under sh and cmd.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { CLEAN_ENV, addWorktree, commit, git, makeRepo, snapshot } from './git-tidy-helpers.mjs';
+import { CLEAN_ENV, addWorktree, commit, git, lines, makeRepo, snapshot } from './git-tidy-helpers.mjs';
+import { claim, laneEnv, poolPath } from './git-tidy-lane-pool-helpers.mjs';
 
 const LAND = fileURLToPath(new URL('../home/tools/land/land.mjs', import.meta.url));
 const LANE = 'feat/lane';
+const TEST_BRANCH = 'test/x'; // a repro branch tess made with a plain worktree, removed since
 const SHARED = 'shared.txt';
 const BASE_LINES = ['one', 'two', 'three', 'four', 'five'];
 // The lane edits the first line and the base the last, so the rebase merges both without a textual conflict.
@@ -418,7 +420,8 @@ test('a --test on a branch with no worktree is refused before anything changes; 
   const result = land([LANE, '--repo', repo, '--test', PASS], { cwd: repo });
   assert.equal(result.status, 1, result.stdout);
   assert.ok(result.stderr.includes(`the test must run on the rebased tip, in the lane's worktree, and ${LANE} has none; nothing changed`), result.stderr);
-  assert.ok(result.stderr.includes(`git worktree add <folder> ${LANE}`), result.stderr);
+  const claimStep = `node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim --repo ${realpathSync(repo)} --branch ${LANE} --base ${before[1]}, then land again`;
+  assert.ok(result.stderr.includes(`Claim a pool folder for it: ${claimStep}`), result.stderr);
   assert.deepEqual(heads(repo), before, 'neither the base nor the lane moved');
   assert.equal(git(repo, 'symbolic-ref', '--short', 'HEAD'), 'main', 'the base checkout is on the base');
   assert.equal(git(repo, 'status', '--porcelain'), '');
@@ -429,6 +432,33 @@ test('a --test on a branch with no worktree is refused before anything changes; 
   const landed = land([LANE, '--repo', plain.repo], { cwd: plain.repo });
   assert.equal(landed.status, 0, landed.stderr);
   assert.match(landed.stdout, /^landed feat\/lane on main at [0-9a-f]{40} \(1 commit\(s\)\)\ndeleted branch feat\/lane\nleft: none\n$/);
+});
+
+// U4 of the branch-drift plan: the claim the refusal advises works for an existing branch off the base, and the land after it
+// tests, lands and keeps the pool folder detached.
+test('the lane claim a --test refusal advises gives the branch a pool folder, and the next land --test lands and detaches it', () => {
+  const repo = makeRepo();
+  commit(repo, '.gitignore', '.claude/\n'); // the pool folders live in <repo>/.claude/worktrees; ignored, so the base stays clean
+  const branchTree = addWorktree(repo, 'plain', TEST_BRANCH);
+  const branchTip = commit(branchTree, 'repro.test.txt');
+  git(repo, 'worktree', 'remove', branchTree);
+  const env = laneEnv();
+  const refused = land([TEST_BRANCH, '--repo', repo, '--test', PASS], { cwd: repo, env });
+  assert.equal(refused.status, 1, refused.stdout);
+  const advised = `lane claim --repo ${realpathSync(repo)} --branch ${TEST_BRANCH} --base ${branchTip}`;
+  assert.ok(refused.stderr.includes(advised), refused.stderr);
+  assert.match(branchTip, /^[0-9a-f]{40}$/);
+
+  const claimed = claim(repo, TEST_BRANCH, branchTip, env);
+  assert.equal(claimed.status, 0, claimed.stderr);
+  const folder = poolPath(repo, 1);
+  assert.ok(lines(claimed).includes(`lane: ${folder}`), claimed.stdout);
+  const landed = land([TEST_BRANCH, '--repo', repo, '--test', PASS], { cwd: repo, env });
+  assert.equal(landed.status, 0, landed.stderr);
+  const mainNow = git(repo, 'rev-parse', 'main');
+  assert.equal(mainNow, branchTip, 'main had not moved, so it fast-forwards to the branch tip');
+  assert.ok(lines(landed).includes(`lane folder ${folder} detached at ${mainNow} (kept for the next lane)`), landed.stdout);
+  assert.equal(branchExists(repo, TEST_BRANCH), false);
 });
 
 test('a lane with no commit in common with the base is refused before anything changes', () => {

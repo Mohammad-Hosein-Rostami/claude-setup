@@ -6,10 +6,14 @@
 // - The sha that lands is the sha that was tested: a lane, worktree or base checkout that changed during the test is refused,
 //   and so is a test that edited tracked files in the worktree (what it tested would not be the commit).
 import { runGit } from '../git-tidy/lib/git.mjs';
+import { shellWord } from '../git-tidy/lib/shell-word.mjs';
 import { LandRefusal, firstLine, refuseUnclean } from './refusal.mjs';
 import { runTestCommand } from './run-test.mjs';
 
 const HEADS = 'refs/heads/';
+// The advised folder is a pool folder, not `git worktree add`: land detaches a landed pool folder and keeps it for the next lane,
+// where a plain worktree is removed. `--base` is the branch's own tip: claim keeps an existing branch as it is.
+const CLAIM_COMMAND = 'node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim'; // ~ unquoted: the shell expands it
 
 /** The full sha `ref` names in `dir`, or '' when it names nothing. */
 const shaOf = (dir, ref) => runGit(dir, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]).stdout.trim();
@@ -78,10 +82,11 @@ function testFailure({ base }, branch, worktree, { command, tip, outcome }) {
  *   branch has not moved
  */
 export async function testRebasedTip(checkout, branch, worktree, { baseSha, command, timeoutSeconds }) {
-  if (worktree === null) {
-    throw new LandRefusal(`the test must run on the rebased tip, in the lane's worktree, and ${branch} has none; nothing changed. Add one (git worktree add <folder> ${branch}), then land again`);
-  }
   const laneTip = shaOf(checkout.dir, `${HEADS}${branch}`);
+  if (worktree === null) {
+    const claim = `${CLAIM_COMMAND} --repo ${shellWord(checkout.dir)} --branch ${shellWord(branch)} --base ${laneTip}`;
+    throw new LandRefusal(`the test must run on the rebased tip, in the lane's worktree, and ${branch} has none; nothing changed. Claim a pool folder for it: ${claim}, then land again`);
+  }
   const tip = rebaseDetached(checkout, branch, worktree, baseSha);
   try {
     console.log(`testing ${tip} in ${worktree.path}: ${command}`);

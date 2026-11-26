@@ -34,8 +34,9 @@ Steps, in order; nothing changes until every check has passed:
    lane's worktree, or, for a branch with no worktree, in the base checkout (which is switched back to the base after). With a
    test, in the lane's worktree on a detached HEAD, so the branch stays where it was.
    A rebase that stops (a conflict) is aborted, so the lane is left as it was: rebase it by hand, then land again.
-3. Test, only when `--test` is given (`test-gate.mjs`, `run-test.mjs`); a branch with no worktree to run it in is refused.
-   The command runs in the lane's worktree at the rebased tip. It fails on a non-zero exit, a
+3. Test, only when `--test` is given (`test-gate.mjs`, `run-test.mjs`); a branch with no worktree to run it in is refused,
+   and the refusal gives the step that makes one: `node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim --repo <dir>
+   --branch <branch> --base <its tip sha>` (a pool folder, kept for the next lane once it lands), then land again. The command runs in the lane's worktree at the rebased tip. It fails on a non-zero exit, a
    signal or the deadline. Its whole process group is ended when it ends, at the deadline and on a Ctrl-C of `land`: SIGTERM,
    then SIGKILL to what is left after 3 s, or at once on a second Ctrl-C (Windows: `taskkill /T /F`); a process that put itself in a group of its own is out
    of reach. A failure prints its last 40

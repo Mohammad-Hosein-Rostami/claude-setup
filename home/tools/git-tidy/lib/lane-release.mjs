@@ -23,6 +23,7 @@ import { gitText, runGit } from './git.mjs';
 import { deleteBranch } from './prune.mjs';
 import { reflogOnlyCommits } from './reflog.mjs';
 import { listWorktrees } from './repo.mjs';
+import { shellWord } from './shell-word.mjs';
 import { withPoolLock } from './pool-lock.mjs';
 import { deleteFillFile } from './lane-fill-state.mjs';
 import { commonDirOf, contentBusyWhy, isPoolSlot, lastUsedMs, LOCK_REASON_PREFIX, poolFolderOf, poolSlots, readSlot, removalLossWhy, slotKey } from './lane-slots.mjs';
@@ -100,9 +101,6 @@ export function releaseLane(repo, folder) {
 
 /** git's first non-empty message line (a local copy: git-tidy imports nothing from home/tools/land). */
 const firstLine = (text) => text.split(/[\r\n]+/).find((line) => line.trim() !== '')?.trim() ?? '';
-
-/** A word a POSIX shell reads back as itself (lane-cli.mjs has the same), so a pasted step works for a path with a space or quote. */
-const shellWord = (text) => (/^[\w./:@%+=,-]+$/.test(text) ? text : `'${text.replaceAll("'", "'\\''")}'`);
 
 /** The result for a pool slot land could not free: it stays as it is (locked), and `why` ends with the `lane release` step. */
 const keptSlot = (repo, folder, why) => ({

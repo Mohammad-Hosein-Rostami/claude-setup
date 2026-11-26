@@ -31,3 +31,4 @@ The parts of the `git-tidy` tool. `../git-tidy.mjs` is the command; see `../READ
 | `lane-prep.mjs` | the installs a claimed folder needs, from its tracked lockfiles |
 | `lane-deps.mjs` | the deps cache `cs-lane-deps/<key>/node_modules` in the git common dir: clone before an install, save after one, prune |
 | `lane-cli.mjs` | the `lane` command: arguments, output, exit codes |
+| `shell-word.mjs` | `shellWord`: one word of a command a person copies, quoted for a POSIX shell (used by `lane`, `lane release` and land's advice) |

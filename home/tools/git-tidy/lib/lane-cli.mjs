@@ -16,6 +16,7 @@ import { installFolder, prepareLane } from './lane-prep.mjs';
 import { POOL_EXCLUDE_LINE } from './pool-ignore.mjs';
 import { PoolBusy } from './pool-lock.mjs';
 import { openRepo } from './repo.mjs';
+import { shellWord } from './shell-word.mjs';
 
 export const LANE_USAGE = 'usage: git-tidy.mjs lane claim --repo <abs> --branch <name> --base <40-hex sha> [--json]\n'
   + '       git-tidy.mjs lane claim --repo <abs> --snapshot --base <40-hex sha> [--json]\n'
@@ -50,9 +51,6 @@ function parseLaneArgs([command, ...rest]) {
   }
   return options;
 }
-
-/** A word a POSIX shell reads back as itself, for the lines a person copies. */
-const shellWord = (text) => (/^[\w./:@%+=,-]+$/.test(text) ? text : `'${text.replaceAll("'", "'\\''")}'`);
 
 function warnRecord(record) {
   if (record !== undefined && !WRITTEN_RECORDS.has(record)) console.error(`git-tidy: job-made record not written (${record}): the job-leftover sweep will not remove this folder`);
