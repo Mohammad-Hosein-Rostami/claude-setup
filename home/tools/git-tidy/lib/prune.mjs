@@ -18,6 +18,7 @@ import { checkDeletionLog, recordDeletion } from './deletion-log.mjs';
 import { UsageError, runGit } from './git.mjs';
 import { nestedRepositoryWhy } from './nested-repository.mjs';
 import { findLeftovers } from './leftovers.mjs';
+import { LOCK_REASON_PREFIX } from './lane-slots.mjs';
 import { baseMoved, pinBase } from './pinned-base.mjs';
 import { pruneStale } from './prune-stale.mjs';
 import { branchReflogs, isNotStarted, reflogOnlyCommits } from './reflog.mjs';
@@ -33,6 +34,13 @@ const NOT_STARTED = `not started yet (no commit of its own), used in the last ${
 const NOT_A_COPY = 'it is no longer a copy of a newer branch';
 const item = (action, kind, subject, detail) => ({ action, kind, subject, detail });
 const HEADS = 'refs/heads/';
+const POOL_LOCK = `${LOCK_REASON_PREFIX} `; // a pool claim's lock reason: `cs-lane-pool <branch>` or `cs-lane-pool snapshot <8>`
+
+// Why a locked worktree stays. A pool folder is a lane in use: unlocking it by hand would let prune remove a folder an agent
+// may still work in, so the step is land or `lane release`, which free it the pool's way.
+const lockedReason = (tree) => (tree.lockReason.startsWith(POOL_LOCK)
+  ? `a pool folder in use (${tree.lockReason}); land its branch or lane release it`
+  : 'locked; unlock it with `git worktree unlock` first');
 
 // Where verdicts read their facts: with apply, git is asked again each time; a plan reads the worktree list once and
 // takes branch states from the candidates it was given.
@@ -121,7 +129,7 @@ function worktreeVerdict(ctx, candidate) {
   const keep = (reason) => ({ remove: false, reason });
   if (!tree) return keep('no longer a linked worktree');
   if (tree.missing) return keep('its folder is gone (stale, not merged)');
-  if (tree.locked) return keep('locked; unlock it with `git worktree unlock` first');
+  if (tree.locked) return keep(lockedReason(tree));
   if (tree.branch === null) return keep('detached HEAD');
   const runsFromHere = [repo.dir, process.cwd()].some((folder) => contains(tree.path, folder));
   if (runsFromHere) return keep('the command runs from this folder');

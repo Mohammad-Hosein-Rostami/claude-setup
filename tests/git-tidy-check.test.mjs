@@ -2,11 +2,12 @@
 // Each test builds its own repo in a temp folder (see git-tidy-helpers.mjs) and runs the real CLI on it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { addWorktree, CLEAN_ENV, commit, git, lines as allLines, makeRepo, tidy, withOrigin } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { adminDir, laneEnv } from './git-tidy-lane-pool-helpers.mjs';
 
 // The first output line is the base line (tested on its own); the other tests read the lines after it.
 const lines = (result) => allLines(result).slice(1);
@@ -183,6 +184,20 @@ test('hints: merged remote branch, behind base, dirty linked worktree', () => {
   assert.ok(out.includes('behind-base? behind behind main by 1'), out.join('\n'));
   assert.ok(out.includes(`dirty-worktree? ${wt} changed 1`), out.join('\n'));
   assert.ok(!out.some((line) => line.startsWith('merged-remote-branch? origin/main')), 'the upstream itself is not a leftover');
+});
+
+test('stale-lock?: a pool folder locked 2 days ago names lane release, not git worktree unlock', () => {
+  const dir = makeRepo();
+  const env = laneEnv();
+  const claimed = tidy(['lane', 'claim', '--repo', dir, '--snapshot', '--base', git(dir, 'rev-parse', 'HEAD')], { env });
+  assert.equal(claimed.status, 0, claimed.stderr);
+  const folder = allLines(claimed)[0].slice('lane: '.length);
+  const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+  utimesSync(join(adminDir(folder), 'locked'), twoDaysAgo, twoDaysAgo);
+  const out = lines(check(dir));
+  const hint = out.find((line) => line.startsWith(`stale-lock? ${folder} `));
+  assert.ok(hint?.includes('a pool folder: node ~/.claude/tools/git-tidy/git-tidy.mjs lane release --repo'), out.join('\n'));
+  assert.ok(!hint.includes('git worktree unlock'), hint);
 });
 
 test('--json prints { base, findings, hints } with kind, subject and detail', () => {

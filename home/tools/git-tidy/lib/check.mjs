@@ -13,7 +13,8 @@ import { isBackupTag } from './tags.mjs';
 import { tangledRefs } from './tangled.mjs';
 import { changedFileCount, currentBranch, ignoredFiles, inProgressOperation, listWorktrees } from './repo.mjs';
 import { isNotStarted } from './reflog.mjs';
-import { poolSlots } from './lane-slots.mjs';
+import { LOCK_REASON_PREFIX, poolSlots } from './lane-slots.mjs';
+import { shellWord } from './shell-word.mjs';
 
 const IGNORED_SHOWN = 5;
 // earlier branch positions compared with a folder's index; the landing that moved a branch under its folder is recent
@@ -74,12 +75,24 @@ function behindBaseHint(repo) {
 
 const STALE_LOCK_MS = 24 * 60 * 60 * 1000; // a lane lock older than a day is shown: its agent or session may be gone (r9-wt-lock)
 const HOUR_MS = 60 * 60 * 1000;
+const POOL_LOCK = `${LOCK_REASON_PREFIX} `; // a pool claim's lock reason: `cs-lane-pool <branch>` or `cs-lane-pool snapshot <8>`
+const RELEASE_COMMAND = 'node ~/.claude/tools/git-tidy/git-tidy.mjs lane release'; // ~ unquoted: the shell expands it
 
-function worktreeHints(worktrees, now) {
+// The `stale-lock?` detail. A pool folder is freed with `lane release` (it refuses a folder with work in it), never by unlocking
+// it by hand, which would let prune remove a folder an agent may still use.
+function staleLockDetail(repo, tree, now) {
+  const age = `locked ${Math.floor((now - tree.lockedAtMs) / HOUR_MS)} h ago`;
+  if (tree.lockReason.startsWith(POOL_LOCK)) {
+    return `${age} (${tree.lockReason}): a pool folder: ${RELEASE_COMMAND} --repo ${shellWord(repo.dir)} --folder ${shellWord(tree.path)} once no agent works there`;
+  }
+  return `${age}${tree.lockReason ? ` (${tree.lockReason})` : ''}: git worktree unlock it if no agent or session works there`;
+}
+
+function worktreeHints(repo, worktrees, now) {
   const hints = [];
   for (const tree of worktrees.filter((entry) => !entry.missing && !entry.bare)) {
     if (tree.locked && tree.lockedAtMs != null && now - tree.lockedAtMs > STALE_LOCK_MS) {
-      hints.push(item('stale-lock?', tree.path, `locked ${Math.floor((now - tree.lockedAtMs) / HOUR_MS)} h ago${tree.lockReason ? ` (${tree.lockReason})` : ''}: git worktree unlock it if no agent or session works there`));
+      hints.push(item('stale-lock?', tree.path, staleLockDetail(repo, tree, now)));
     }
     const changed = tree.main ? 0 : changedFileCount(tree.path);
     if (changed === null) hints.push(item('dirty-worktree?', tree.path, 'git status failed, treated as dirty'));
@@ -221,7 +234,7 @@ export function runCheck(repo, now = Date.now()) {
     ...publishedMergeHint(repo), ...unmerged, ...inLane.hints,
     ...unlandedLaneHints(repo, leftovers.states.filter((b) => b.state === 'unmerged' && !reportedAsCopy.has(b.name) && !inLane.named.has(b.name)), now), ...unmergedTags,
     ...mergedTags.filter((t) => !isBackupTag(t.name)).map((t) => item('merged-tag?', t.name, `${t.short} ${t.state}`)), ...tangled.hints, ...mergedRemoteHints(repo),
-    ...(repo.bare ? [] : behindBaseHint(repo)), ...worktreeHints(worktrees, now), ...ignoredFileHints(leftovers.mergedWorktrees.filter((w) => !notStarted.has(w.branch))), ...shallowHint(repo),
+    ...(repo.bare ? [] : behindBaseHint(repo)), ...worktreeHints(repo, worktrees, now), ...ignoredFileHints(leftovers.mergedWorktrees.filter((w) => !notStarted.has(w.branch))), ...shallowHint(repo),
   ];
   return { findings, hints, info: [...notStartedInfo(notStarted), ...laneFolderInfo(repo)] };
 }

@@ -4,7 +4,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { addWorktree, backdate, commit, git, lines, makeRepo, snapshot, tidy, withOrigin } from './git-tidy-helpers.mjs';
+import { spawnSync } from 'node:child_process';
+import { CLEAN_ENV, addWorktree, backdate, commit, git, lines, makeRepo, snapshot, tidy, withOrigin } from './git-tidy-helpers.mjs';
+import { claim, laneEnv, poolPath } from './git-tidy-lane-pool-helpers.mjs';
+import { LAND } from './land-sweep-helpers.mjs';
 
 // Most tests build their worktrees seconds before pruning them, so they lift the "used in the last hour" rule.
 const prune = (dir, ...extra) => tidy(['prune', dir, '--include-recent', ...extra], { cwd: dir });
@@ -165,6 +168,20 @@ test('a stale worktree is pruned; a locked stale one is kept with the reason', (
   assert.equal(kept.status, 1);
   assert.ok(lines(kept).some((line) => line.startsWith(`kept stale-worktree ${locked} `) && line.includes('locked')), kept.stdout);
   assert.ok(git(dir, 'worktree', 'list').includes('wt-locked'));
+});
+
+test('a pool lane with no commit is "a pool folder in use" when another lane lands, never "unlock it"', () => {
+  const repo = makeRepo();
+  commit(repo, '.gitignore', '.claude/\n'); // the pool folders live in <repo>/.claude/worktrees; a project ignores them
+  const base = git(repo, 'rev-parse', 'HEAD');
+  const env = laneEnv();
+  for (const branch of ['lane/n', 'lane/m']) assert.equal(claim(repo, branch, base, env).status, 0);
+  commit(poolPath(repo, 2), 'm.txt');
+  const landed = spawnSync(process.execPath, [LAND, 'lane/m', '--repo', repo], { cwd: repo, encoding: 'utf8', env: { ...CLEAN_ENV, ...env } });
+  assert.equal(landed.status, 0, landed.stderr);
+  const out = lines(landed);
+  assert.ok(out.some((line) => line.includes('a pool folder in use (cs-lane-pool lane/n)')), landed.stdout);
+  assert.ok(!out.some((line) => line.includes('git worktree unlock')), landed.stdout);
 });
 
 test('run from inside a linked worktree (or a subfolder of it): that worktree and its branch stay, exit 1 with the reason', () => {

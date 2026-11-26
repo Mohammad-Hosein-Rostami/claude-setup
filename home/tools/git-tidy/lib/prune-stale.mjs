@@ -8,7 +8,7 @@
 //   holds its HEAD commit, that commit becomes the branch `stale-head/<entry id>` first, so it stays reachable. Without
 //   `removes` (land's sweep) every entry stays, with the reason.
 import { runGit } from './git.mjs';
-import { entryIdOf, staleIndexWhy } from './lane-slots.mjs';
+import { LOCK_REASON_PREFIX, entryIdOf, staleIndexWhy } from './lane-slots.mjs';
 import { baseMoved } from './pinned-base.mjs';
 import { reflogOnlyCommits } from './reflog.mjs';
 
@@ -19,12 +19,18 @@ const NO_BRANCH_REMOVED = 'HEAD'; // no branch goes with an entry, and `HEAD` is
 const item = (action, subject, detail) => ({ action, kind: KIND, subject, detail });
 // Why land's sweep keeps an entry that holds nothing: a person decides about stale entries.
 const NOT_REMOVED_BY_LAND = 'land never removes a stale worktree entry; `git-tidy prune --apply` removes it once nothing is lost';
+const POOL_LOCK = `${LOCK_REASON_PREFIX} `; // a pool claim's lock reason: `cs-lane-pool <branch>` or `cs-lane-pool snapshot <8>`
+
+// Why a locked stale entry stays. A pool entry is never "unlock it": the pool owns its lock, and `lane list` shows the folder.
+const lockedReason = (tree) => (tree.lockReason.startsWith(POOL_LOCK)
+  ? `a pool folder entry (${tree.lockReason}); git-tidy lane list shows it`
+  : 'locked; unlock it with `git worktree unlock` first');
 
 // The facts of one stale entry: `{ keep: <why it stays> }`, or `{ head, isHeld, rescue }` (rescue: the branch its HEAD
 // becomes when no branch holds it).
 function readEntry(repo, tree) {
   if (!tree.missing) return { keep: 'its folder is back' };
-  if (tree.locked) return { keep: 'locked; unlock it with `git worktree unlock` first' };
+  if (tree.locked) return { keep: lockedReason(tree) };
   const id = entryIdOf(repo, tree.path);
   if (id === null) return { keep: 'its worktree entry cannot be found' };
   const ref = `worktrees/${id}/HEAD`;

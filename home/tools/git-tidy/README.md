@@ -65,7 +65,7 @@ The base and the branch checked out in the main worktree are never reported as m
 | `merged-remote-branch?` | an `origin/*` branch fully contained in the base's upstream; deleting it is the owner's call |
 | `behind-base?` | the current branch does not contain the base tip (rebase needed) |
 | `dirty-worktree?` | a linked worktree with uncommitted or untracked files |
-| `stale-lock?` | a linked worktree locked over a day ago (the age is the mtime of its `locked` file; the reason is shown): unlock it with `git worktree unlock` if no agent or session works there. Prune and the in-work check never touch a locked worktree |
+| `stale-lock?` | a linked worktree locked over a day ago (the age is the mtime of its `locked` file; the reason is shown): unlock it with `git worktree unlock` if no agent or session works there. A pool folder (lock `cs-lane-pool ...`) instead names `git-tidy lane release --repo <repo> --folder <path>`, to run once no agent works there. Prune and the in-work check never touch a locked worktree |
 | `in-progress?` | a rebase, merge, cherry-pick, revert or bisect is unfinished in that worktree |
 | `shallow?` | a shallow clone: history is cut, so a branch may look unmerged (never the other way round) |
 
@@ -80,12 +80,13 @@ Principle: it removes only what is provably on the base AND leaves no only-copy 
 and prints why. With `--apply`, in this order, each fact read again from git right before it is acted on:
 
 1. Stale entries (a worktree whose folder is gone), each with `git worktree remove -- <path>` on its own, never `git worktree
-   prune`. One is kept when it is locked, its HEAD reflog holds commits found nowhere else, or its index differs from its HEAD
+   prune`. One is kept when it is locked (a pool entry: `a pool folder entry (<lock reason>); git-tidy lane list shows it`), its HEAD reflog holds commits found nowhere else, or its index differs from its HEAD
    (staged content; the folder may only have moved). Land's sweep removes none: it lists each one under `left:`. When no branch holds its HEAD,
    that commit first becomes the branch `stale-head/<entry id>` (created, never moved), so it stays reachable:
    `removed stale-worktree <path> folder missing; its HEAD <sha> is kept as branch stale-head/<id>`.
 2. Each merged worktree is kept (`kept ...: <reason>`) when any of these holds, else `git worktree remove` (never `--force`):
-   it is locked; it is the folder the command runs from or contains the shell's current folder; its branch is no longer
+   it is locked (a pool folder, lock `cs-lane-pool ...`, says `a pool folder in use (<lock reason>); land its branch or lane
+   release it`, never "unlock it"); it is the folder the command runs from or contains the shell's current folder; its branch is no longer
    merged; it has any `git status --porcelain` output (untracked files included, whatever `status.showUntrackedFiles` says)
    or git status fails; a tracked file is marked assume-unchanged, or skip-worktree and exists on disk (`git ls-files -v`; git
    status does not show edits there; a sparse checkout's files outside its patterns are not on disk and do not count); it
