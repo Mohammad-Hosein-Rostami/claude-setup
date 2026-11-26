@@ -1,6 +1,6 @@
 // Tests for the rule "prune --apply removes only what is provably on the base AND leaves no only-copy behind": whitespace-only
 // differences, commits that live in a reflog only, ignored files, the caller's own folder, a branch that moves before the
-// delete, an unreadable repository, an ambiguous base and recently used worktrees. Each test builds a repo in a temp folder.
+// delete, an unreadable repository, base branches other than the base and recently used worktrees. Each test builds a repo in a temp folder.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, rmSync, utimesSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -194,21 +194,18 @@ test('a repository git cannot read is exit 2 with the command and git first mess
   assert.match(result.stderr, /^git-tidy: unexpected git failure: git \S+ \S+ failed: \S/);
 });
 
-test('base not given and main, master and develop all exist: --apply exits 2 naming them and deletes nothing; a plan and --base work', () => {
+test('main, master and develop all exist: --apply works against the checked-out main and keeps the develop marked as a base', () => {
   const dir = makeRepo();
   git(dir, 'branch', 'develop');
   git(dir, 'branch', 'master');
   git(dir, 'branch', 'fresh');
-  const refused = apply(dir, '--include-recent');
-  assert.equal(refused.status, 2);
-  assert.match(refused.stderr, /main, master, develop/);
-  assert.match(refused.stderr, /--base/);
-  assert.ok(branches(dir).includes('fresh'));
+  git(dir, 'config', 'branch.develop.cs-base', 'true');
   const plan = tidy(['prune', dir], { cwd: dir });
   assert.equal(plan.status, 0);
-  assert.equal(lines(plan)[0], 'base: main (fallback)');
-  assert.equal(applyNow(dir, '--base', 'main').status, 0);
-  assert.deepEqual(branches(dir), ['main']);
+  assert.equal(lines(plan)[0], 'base: main (checked out)');
+  const done = applyNow(dir);
+  assert.equal(done.status, 0, done.stderr);
+  assert.deepEqual(branches(dir), ['develop', 'main'], 'master and fresh are merged and not bases');
 });
 
 test('recently used: an empty lane touched in the last hour is kept without --include-recent, with the minutes and the flag', () => {

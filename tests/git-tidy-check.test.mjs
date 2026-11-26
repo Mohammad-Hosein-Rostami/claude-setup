@@ -140,7 +140,7 @@ test('a branch holding a merge commit is patch-equal when merging it changes not
   assert.ok(out.some((line) => line.startsWith('unmerged-branch? feat ')), out.join('\n'));
 });
 
-test('the base and the branch checked out in the main worktree are never merged-branch', () => {
+test('the base, a marked base and the branch checked out in the main worktree are never merged-branch', () => {
   const dir = makeRepo();
   git(dir, 'branch', 'other');
   git(dir, 'checkout', '-q', 'other');
@@ -148,8 +148,10 @@ test('the base and the branch checked out in the main worktree are never merged-
   git(dir, 'checkout', '-q', 'main');
   git(dir, 'merge', '-q', '--ff-only', 'other');
   git(dir, 'checkout', '-q', 'other');
-  const names = lines(check(dir)).filter((line) => line.startsWith('merged-branch'));
-  assert.deepEqual(names, []);
+  const merged = (...extra) => lines(check(dir, ...extra)).filter((line) => line.startsWith('merged-branch'));
+  assert.deepEqual(merged('--base', 'main'), []);
+  git(dir, 'config', 'branch.main.cs-base', 'true');
+  assert.deepEqual(merged(), []);
 });
 
 test('a linked worktree of a merged branch is merged-worktree; one whose folder is gone is stale-worktree', () => {
@@ -169,7 +171,7 @@ test('hints: merged remote branch, behind base, dirty linked worktree', () => {
   const dir = makeRepo();
   withOrigin(dir);
   git(dir, 'push', '-q', 'origin', 'main:old-feature');
-  git(dir, 'branch', 'behind');
+  const behindTree = addWorktree(dir, 'wt-behind', 'behind');
   const wt = addWorktree(dir, 'wt-wip', 'wip');
   commit(wt, 'wip.txt');
   writeFileSync(join(wt, 'scratch.txt'), 'untracked');
@@ -178,10 +180,10 @@ test('hints: merged remote branch, behind base, dirty linked worktree', () => {
   git(dir, 'checkout', '-q', 'main');
   git(dir, 'merge', '-q', '--ff-only', 'older');
   git(dir, 'push', '-q', 'origin', 'main');
-  git(dir, 'checkout', '-q', 'behind');
   const out = lines(check(dir));
   assert.ok(out.some((line) => /^merged-remote-branch\? origin\/old-feature [0-9a-f]{7,}$/.test(line)), out.join('\n'));
-  assert.ok(out.includes('behind-base? behind behind main by 1'), out.join('\n'));
+  const fromBehind = lines(tidy(['check', behindTree], { cwd: behindTree })); // behind-base? is about the folder checked
+  assert.ok(fromBehind.includes('behind-base? behind behind main by 1'), fromBehind.join('\n'));
   assert.ok(out.includes(`dirty-worktree? ${wt} changed 1`), out.join('\n'));
   assert.ok(!out.some((line) => line.startsWith('merged-remote-branch? origin/main')), 'the upstream itself is not a leftover');
 });
@@ -214,30 +216,19 @@ test('--json prints { base, findings, hints } with kind, subject and detail', ()
   assert.deepEqual(parsed.hints.map((h) => [h.kind, h.subject]), [['unmerged-branch?', 'wip']]);
 });
 
-test('base: --base wins, then origin/HEAD, then main, master, develop; none is exit 2 naming --base', () => {
+test('base: --base wins, else the branch checked out in the main checkout; origin/HEAD and the names main, master are not read', () => {
   const dir = makeRepo();
   git(dir, 'branch', '-m', 'main', 'develop');
   assert.match(lines(check(dir)).at(-1), /\(base develop\)/);
   git(dir, 'branch', 'master');
-  assert.match(lines(check(dir)).at(-1), /\(base master\)/);
   git(dir, 'branch', 'main');
-  assert.match(lines(check(dir)).at(-1), /\(base main\)/);
-  assert.match(lines(check(dir, '--base', 'develop')).at(-1), /\(base develop\)/);
+  withOrigin(dir); // origin/HEAD -> origin/main
+  assert.match(lines(check(dir)).at(-1), /\(base develop\)/);
+  assert.match(lines(check(dir, '--base', 'main')).at(-1), /\(base main\)/);
+  git(dir, 'switch', '-q', 'master');
+  assert.match(lines(check(dir)).at(-1), /\(base master\)/);
 
-  withOrigin(dir);
-  git(dir, 'branch', 'trunk');
-  git(dir, 'update-ref', 'refs/remotes/origin/trunk', 'trunk');
-  git(dir, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk');
-  assert.match(lines(check(dir)).at(-1), /\(base trunk\)/);
-  git(dir, 'branch', '-D', 'trunk');
-  assert.match(lines(check(dir)).at(-1), /\(base main\)/, 'origin/HEAD naming a missing local branch falls through');
-
-  const none = makeRepo();
-  git(none, 'branch', '-m', 'main', 'trunk');
-  const result = check(none);
-  assert.equal(result.status, 2);
-  assert.match(result.stderr, /--base/);
-  const missing = check(none, '--base', 'nope');
+  const missing = check(dir, '--base', 'nope');
   assert.equal(missing.status, 2);
   assert.match(missing.stderr, /nope/);
 });
@@ -277,10 +268,10 @@ test('GIT_DIR from the environment does not redirect the tool away from the fold
 
 test('the first line names the base and how it was chosen; the JSON keeps its shape', () => {
   const dir = makeRepo();
-  assert.equal(allLines(check(dir))[0], 'base: main (fallback)');
+  assert.equal(allLines(check(dir))[0], 'base: main (checked out)');
   assert.equal(allLines(check(dir, '--base', 'main'))[0], 'base: main (from --base)');
   withOrigin(dir);
-  assert.equal(allLines(check(dir))[0], 'base: main (from origin/HEAD)');
+  assert.equal(allLines(check(dir))[0], 'base: main (checked out)');
 });
 
 test('check never runs a textconv program of the repository config (the staged-changes test uses plumbing)', () => {

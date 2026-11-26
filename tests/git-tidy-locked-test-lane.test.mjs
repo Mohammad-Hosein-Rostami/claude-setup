@@ -26,7 +26,7 @@ test('a locked test lane with no commit of its own is a not-started info line, n
   const result = check(dir);
   assert.equal(result.status, 0, result.stdout);
   assert.deepEqual(lines(result), [
-    'base: main (fallback)',
+    'base: main (checked out)',
     `not started: ${BRANCH} in ${folder} (locked, no commit of its own yet)`,
     CLEAN_SUMMARY,
   ]);

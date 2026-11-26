@@ -27,8 +27,8 @@
 //   (JSON `{ from, to }`); exit 0 found, 1 not in the reflog, 2 usage.
 // Exit codes: check 0 clean, 1 findings; prune 0 (also when there is nothing to do), 1 when --apply could not remove
 // something it planned to (the line says why); both 2 for a usage error, a folder that is not a git repository, a base
-// branch that cannot be found, a git command that fails unexpectedly, or (prune --apply) a repository in the middle of a
-// rebase, merge or similar, or a base not given with --base while main, master or develop all exist.
+// branch that cannot be found, a main checkout with no branch checked out or a lane checked out, a git command that fails
+// unexpectedly, or (prune --apply) a repository in the middle of a rebase, merge or similar.
 //        git-tidy.mjs lane claim|list|release|reclaim --repo <abs> ...: the lane folder pool, its own flags and exit codes (lib/lane-cli.mjs)
 // Invariants: logic lives in lib/; this file parses arguments, prints and sets the exit code. Only `prune --apply`, `land` and `lane`
 //   (claim, release, reclaim) write.

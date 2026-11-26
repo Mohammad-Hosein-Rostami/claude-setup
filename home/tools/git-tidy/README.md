@@ -14,14 +14,20 @@ worktree moved back into place is read from disk.
 Run: `node ~/.claude/tools/git-tidy/git-tidy.mjs check [dir] [--base <branch>] [--json]`
 and `node ~/.claude/tools/git-tidy/git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--include-recent] [--json]`.
 `land <branch> [dir] [--base <branch>] [--rebase-only] --tip <sha> [--brief <file>] [--json]` and `range <sha> [dir] [--base <branch>] [--landed <sha>] [--json]` are described under "land" below.
-`check` and `prune` print `base: <branch> (from --base | from origin/HEAD | fallback)` first.
+`check` and `prune` print `base: <branch> (from --base | checked out)` first.
 `dir` defaults to the current folder (any folder inside a repository, a linked worktree or a bare repository).
 Used by the `git-linear-history` skill.
 
-The base is `--base`, else the branch `origin/HEAD` points at, else the first that exists of `main`, `master`, `develop`.
-It must be a local branch; when none is found the exit code is 2 and the message names `--base`. `prune --apply` also
-exits 2, deleting nothing, when the base was not given with `--base` and more than one of `main`, `master`, `develop`
-exists here: a wrong base would call work "merged" that is not on the branch you work against.
+The base is `--base`, else the branch checked out in the main checkout (the first entry of `git worktree list`; a bare
+repository's HEAD), the same from any folder of the repository. No remote and no branch name (`main`, `develop`) is
+looked at. Exit 2, with the step that fixes it, when the main checkout has no branch checked out (detached HEAD, or a
+rebase or similar not finished there), has a lane checked out (a branch with `branch.<lane>.cs-lane-base`, the base it
+was claimed on: switch it back to that base), or its branch has no commit yet; a `--base` that does not exist is exit 2 too.
+
+The base branches are never deleted, claimed as a lane or released, and `check` never lists them: the base, every branch
+marked as a base (`git config branch.<b>.cs-base true`; `git branch -d <b>` drops the mark),
+and the local branch each remote's HEAD points at (`refs/remotes/<r>/HEAD`). Any other branch whose work is on the base
+goes, `develop` and `main` included.
 
 `land` has its own codes (0 landed and clean, 1 landed with findings, 2 not ready or no `--tip`, 3 conflict, 5 base moved, 6 ui-proof, 7 new-file-size, 8 upstream-moved, 9 tip-moved). The plain landing route is the `land` tool (`tools/land/README.md`: rebase, `merge --ff-only`, then the branch and its worktree removed, then `prune --apply` run over the repository, ending with a `left:` list). Landing has no test run and no review record; `--checks` and the old UI waiver flag are refused (exit 2).
 
@@ -29,7 +35,7 @@ exists here: a wrong base would call work "merged" that is not on the branch you
 | ---- | ------- | ------- |
 | 0 | clean (hints never change it) | done, or nothing to do, or a plan without `--apply` |
 | 1 | findings | `--apply` kept or could not remove something it planned to (the line says why) |
-| 2 | usage error, not a git repository, base not found, any git command that fails | the same, and `--apply` while a rebase, merge, cherry-pick, revert or bisect is unfinished in any worktree, or with an ambiguous base |
+| 2 | usage error, not a git repository, base not found, any git command that fails | the same, and `--apply` while a rebase, merge, cherry-pick, revert or bisect is unfinished in any worktree, |
 
 ## check
 
@@ -175,7 +181,7 @@ range. It prints `from <sha>` and `to <sha>` (exit 0) or exits 1, so a landing a
 
 ### What `prune --apply` never touches
 
-The base, the current branch, a branch with commits the base lacks (`unmerged-branch?`), the branch checked out in the
+The base branches (above), the current branch, a branch with commits the base lacks (`unmerged-branch?`), the branch checked out in the
 main worktree, the main worktree, a linked worktree with uncommitted, untracked or ignored files, a locked worktree, a
 detached-HEAD worktree (listed as kept), a worktree used in the last hour (unless `--include-recent`, which does not apply to a lane with no commit of its own yet, nor to the worktree of a copy), anything whose reflog
 holds commits that exist nowhere else, remote branches and tags. Nothing is removed while any worktree has an unfinished
@@ -235,7 +241,7 @@ node_modules) stay warm, and no folder is left behind:
   or `fill: checkout (<why>)`. Each fill warning is a `git-tidy: fill warning: ...` line on stderr. Exit 0 ready, 1 an install
   failed (`lane not ready: ...`, the worktree, `to finish:` and `to release:` lines on stderr; the folder stays claimed and is not
   handed out), 2 usage (a short or unknown sha, a branch name `git check-ref-format --branch` refuses or that starts with `-` or
-  `refs/`, a base branch (the base, main, master or develop: never a lane), a branch already checked out in another folder or being filled there: named), 4 the pool lock stayed held by another live claim for 60 s,
+  `refs/`, a base branch (see the base branches above: never a lane), a branch already checked out in another folder or being filled there: named), 4 the pool lock stayed held by another live claim for 60 s,
   14 a git command or the fill failed (the folder is not handed out). `--json` prints
   `{ folder, slot, created, kept, branch, base, fill, record, ready, installs }`, with `fill` as
   `{ mode, entries, seconds, repaired, warnings, why }` (`mode` is `clone` or `checkout`; `why` says why).

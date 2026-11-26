@@ -35,8 +35,8 @@ const MS_PER_HOUR = 60 * 60 * 1000;
 const SESSION_VARIABLES = ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID'];
 const RELEASE_COMMAND = 'node ~/.claude/tools/git-tidy/git-tidy.mjs lane release'; // ~ unquoted: the shell expands it
 
-/** The base branch and every other base candidate that exists here (main, master, develop): none of them is ever a lane. */
-export const baseNames = (repo) => new Set([repo.base, ...repo.knownBases]);
+/** The base branches (`repo.baseBranches`: the base, a marked base, a remote's HEAD branch): none of them is ever a lane. */
+export const baseNames = (repo) => new Set(repo.baseBranches.map(({ name }) => name));
 
 /** The full sha `branch` points at, or null when there is no such branch. */
 export const branchTip = (repo, branch) => {

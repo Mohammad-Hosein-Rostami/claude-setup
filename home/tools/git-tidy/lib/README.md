@@ -6,7 +6,8 @@ The parts of the `git-tidy` tool. `../git-tidy.mjs` is the command; see `../READ
 | File | Job |
 | ---- | --- |
 | `git.mjs` | run git without a shell and without environment variables that pick a repository; `UsageError` |
-| `repo.mjs` | read facts: base branch, upstream, worktrees, branches, unfinished operations, uncommitted files, files marked assume-unchanged or skip-worktree |
+| `base-record.mjs` | the two git config keys: the base a lane was claimed on (`branch.<lane>.cs-lane-base`) and the mark of a base branch (`branch.<b>.cs-base`) |
+| `repo.mjs` | read facts: base branch (the one checked out in the main checkout) and the base branches never deleted, upstream, worktrees, branches, unfinished operations, uncommitted files, files marked assume-unchanged or skip-worktree |
 | `branches.mjs` | is a branch on the base (`ancestor`, `patch-equal`, `content-equal`: merging it changes nothing and every path it changed is the same blob on the base) or how far ahead is it |
 | `tags.mjs`, `tangled.mjs` | tags off the base's history (merged or not); branches and tags that still reach an unpublished merge commit |
 | `reflog.mjs` | commits that exist only in a reflog (lost when a worktree or branch is removed); whether a branch has no commit of its own yet (its reflog records no work) |

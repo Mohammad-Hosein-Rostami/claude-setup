@@ -68,6 +68,8 @@ function makeContext(repo, { apply, includeRecent }, leftovers, copies) {
 /** Why a branch must never be removed whatever its state, or null. */
 function protectedReason(repo, name, worktrees) {
   if (name === repo.base) return 'it is the base branch';
+  const base = repo.baseBranches.find((entry) => entry.name === name);
+  if (base) return `it is a base branch here (${base.why})`;
   const here = repo.topLevel === null ? undefined : worktrees.find((entry) => samePath(entry.path, repo.topLevel));
   if (name === (here ? here.branch : currentBranch(repo))) return 'it is the current branch';
   const [main] = worktrees;
@@ -235,14 +237,11 @@ function detachedWorktrees(ctx) {
     .map((tree) => item('keep', 'detached-worktree', tree.path, 'detached HEAD, not touched'));
 }
 
-/** Throws UsageError when an operation is unfinished in any worktree or the base is ambiguous: nothing may be removed then. */
+/** Throws UsageError when an operation is unfinished in any worktree: nothing may be removed then. */
 export function refuseUnsafeApply(repo) {
   for (const tree of listWorktrees(repo).filter((entry) => !entry.missing && !entry.bare)) {
     const operation = inProgressOperation(tree.path);
     if (operation !== null) throw new UsageError(`a ${operation} is not finished in ${tree.path}; finish or abort it before --apply`);
-  }
-  if (repo.baseSource !== 'from --base' && repo.knownBases.length > 1) {
-    throw new UsageError(`${repo.knownBases.join(', ')} all exist here and the base (${repo.base}) was not given; pass the one you work against with --base <branch>`);
   }
 }
 
@@ -253,7 +252,7 @@ export function refuseUnsafeApply(repo) {
  * (isNotStarted). `onlyOnBase` (land's sweep) keeps every copy (superseded-copy, agent-leftover not on the base) and every
  * stale worktree entry, with the reason. An apply pins the base (pinBase) and stops, keeping the rest, once the base moves.
  * Returns items `{ action, kind, subject, detail }`: `remove`/`keep` for a plan, `removed`/`deleted`/`kept`/`failed` for an apply. Throws UsageError when
- * apply meets an unfinished operation, an ambiguous base or a deletion log that is not safe to write.
+ * apply meets an unfinished operation or a deletion log that is not safe to write. A base branch (`repo.baseBranches`) is always kept.
  */
 export function pruneRepo(unpinned, { apply, includeRecent = false, onlyOnBase = false, leftovers = findLeftovers(unpinned) }) {
   if (apply) {

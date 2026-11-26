@@ -1,17 +1,18 @@
-// Purpose: the facts about a repository that `check` and `prune` read: base branch, upstream, worktrees, branches,
-//   a half-finished operation, uncommitted files. Everything here only reads.
+// Purpose: the facts about a repository that `check` and `prune` read: base branch, the base branches that are never
+//   deleted or claimed, upstream, worktrees, branches, a half-finished operation, uncommitted files. Everything here only reads.
 // Exports: openRepo, listWorktrees, listBranches, currentBranch, samePath, contains, inProgressOperation, changedFileCount,
 //   hiddenFileCount, HIDDEN_FILES_WHY, ignoredFiles, minutesSinceUse.
 // Invariants: branches are always addressed by full ref (`refs/heads/<name>`), so a tag with the same name is never
 //   mistaken for a branch; every git call fails closed, a fact that cannot be read is reported as unknown, not as clean.
+//   The base is `--base`, else the branch checked out in the main checkout (never guessed from a remote or a name list).
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
+import { markedBases, readLaneBase } from './base-record.mjs';
 import { UsageError, gitText, runGit } from './git.mjs';
 
 const HEADS = 'refs/heads/';
-const BASE_FALLBACKS = ['main', 'master', 'develop'];
-const ORIGIN_HEAD = 'refs/remotes/origin/HEAD';
-const ORIGIN_PREFIX = 'refs/remotes/origin/';
+const REMOTES = 'refs/remotes/';
+const REMOTE_HEAD = '/HEAD';
 // A file or folder inside a git dir that exists only while that operation is unfinished.
 // Ignored files in these folders are build output or caches that any build recreates; elsewhere they may exist only here.
 const REBUILDABLE_FOLDERS = new Set([
@@ -42,18 +43,54 @@ export function contains(outer, inner) {
   return candidate === folder || candidate.startsWith(folder.endsWith(sep) ? folder : folder + sep);
 }
 
-// The base and how it was chosen: `from --base`, `from origin/HEAD` or `fallback` (first of main, master, develop).
+// The branch checked out in the main checkout: the first `git worktree list` entry, or a bare repository's HEAD; null when detached.
+function mainCheckoutBranch(dir, main) {
+  if (!main.bare) return main.branch;
+  const head = runGit(dir, ['symbolic-ref', '-q', 'HEAD']);
+  return head.status === 0 ? head.stdout.trim().slice(HEADS.length) : null;
+}
+
+// The base and how it was chosen: `from --base`, or `checked out` (the branch checked out in the main checkout).
+// A main checkout with no branch, or with a recorded lane checked out, has no base: the caller gets the step that fixes it.
 function resolveBase(dir, requested) {
   if (requested !== null) {
     if (!branchExists(dir, requested)) throw new UsageError(`base branch "${requested}" does not exist here; pass an existing one with --base <branch>`);
     return { name: requested, source: 'from --base' };
   }
-  const originHead = runGit(dir, ['symbolic-ref', '-q', ORIGIN_HEAD]);
-  const named = originHead.status === 0 ? originHead.stdout.trim().slice(ORIGIN_PREFIX.length) : '';
-  if (named !== '' && branchExists(dir, named)) return { name: named, source: 'from origin/HEAD' };
-  const fallback = BASE_FALLBACKS.find((name) => branchExists(dir, name));
-  if (fallback === undefined) throw new UsageError('no base branch found (origin/HEAD, main, master, develop); pass one with --base <branch>');
-  return { name: fallback, source: 'fallback' };
+  const [main] = listWorktrees({ dir });
+  const name = mainCheckoutBranch(dir, main);
+  if (name === null) {
+    const operation = inProgressOperation(main.path);
+    const why = operation === null ? 'detached HEAD' : `a ${operation} is not finished there`;
+    throw new UsageError(`the main checkout ${main.path} has no branch checked out (${why}): check out the branch you work on there; tools use the branch checked out in the main checkout as the base`);
+  }
+  const claimedOn = readLaneBase(dir, name);
+  if (claimedOn !== null) throw new UsageError(`the main checkout ${main.path} has the lane ${name} checked out (claimed on ${claimedOn}): switch it back to ${claimedOn}`);
+  if (!branchExists(dir, name)) throw new UsageError(`${name}, checked out in ${main.path}, has no commit yet`);
+  return { name, source: 'checked out' };
+}
+
+// `[remote, branch]` for each remote whose HEAD points at one of its branches (`refs/remotes/<r>/HEAD -> refs/remotes/<r>/<b>`).
+function remoteHeadBranches(dir) {
+  const output = gitText(dir, ['for-each-ref', '--format=%(refname)%00%(symref)', REMOTES]);
+  return output.split('\n').map((line) => line.split('\0'))
+    .filter(([ref, target]) => ref.endsWith(REMOTE_HEAD) && target !== undefined && target !== '')
+    .map(([ref, target]) => {
+      const remote = ref.slice(REMOTES.length, -REMOTE_HEAD.length);
+      return [remote, target.slice(`${REMOTES}${remote}/`.length)];
+    });
+}
+
+/**
+ * The branches that are never deleted, claimed as a lane or released, as `{ name, why }`: the base, every existing branch
+ * marked `branch.<b>.cs-base`, and every existing local branch a remote's HEAD points at. One entry per name; the first why wins.
+ */
+function findBaseBranches(dir, base) {
+  const found = new Map([[base, 'the base']]);
+  const add = (name, why) => { if (!found.has(name) && branchExists(dir, name)) found.set(name, why); };
+  for (const name of markedBases(dir)) add(name, `marked as a base (git config branch.${name}.cs-base)`);
+  for (const [remote, name] of remoteHeadBranches(dir)) add(name, `${remote}/HEAD points at it`);
+  return [...found].map(([name, why]) => ({ name, why }));
 }
 
 function upstreamOf(dir, base) {
@@ -63,7 +100,11 @@ function upstreamOf(dir, base) {
   return { ref, name: ref.replace(/^refs\/remotes\//, '') };
 }
 
-/** Finds the repository containing `dir` and its base branch. Throws UsageError for a missing folder, a non-repo or no base. */
+/**
+ * Finds the repository containing `dir`, its base branch and its base branches (`baseBranches`, see findBaseBranches).
+ * Throws UsageError for a missing folder, a non-repo, a `--base` that does not exist, or a main checkout with no base
+ * (no branch checked out, a lane checked out, a branch with no commit).
+ */
 export function openRepo(dir, requestedBase) {
   if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw new UsageError(`${dir} is not a folder`);
   const inside = runGit(dir, ['rev-parse', '--is-bare-repository']);
@@ -71,8 +112,8 @@ export function openRepo(dir, requestedBase) {
   const bare = inside.stdout.trim() === 'true';
   const topLevel = bare ? null : runGit(dir, ['rev-parse', '--show-toplevel']).stdout.trim() || null;
   const { name: base, source: baseSource } = resolveBase(dir, requestedBase);
-  const knownBases = BASE_FALLBACKS.filter((name) => branchExists(dir, name));
-  return { dir, bare, topLevel, base, baseSource, knownBases, baseRef: `${HEADS}${base}`, upstream: upstreamOf(dir, base) };
+  const baseBranches = findBaseBranches(dir, base);
+  return { dir, bare, topLevel, base, baseSource, baseBranches, baseRef: `${HEADS}${base}`, upstream: upstreamOf(dir, base) };
 }
 
 const GITDIR_LINE = /^gitdir: (.+)$/m;
