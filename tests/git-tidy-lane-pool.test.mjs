@@ -181,7 +181,7 @@ test('lane-prep: an install failure exits 1 with the "lane not ready" lines and 
   assert.match(notice, /^git-tidy: added \/\.claude\/worktrees\/ to .*exclude so lane folders stay out of git status$/);
   assert.ok(readFileSync(join(repo, '.git', 'info', 'exclude'), 'utf8').split('\n').includes('/.claude/worktrees/'), 'the pool is excluded');
   assert.match(first, /^lane not ready: npm ci failed in \.: exit 1: fake npm broke$/);
-  assert.equal(second, `  worktree: ${folder} (branch a)`);
+  assert.equal(second, `  worktree: ${folder} (branch a, on main)`);
   assert.ok(third.startsWith('  to finish:  cd ') && third.endsWith(' && npm ci'), third);
   assert.ok(fourth.startsWith('  to release: node ') && fourth.includes('lane release'), fourth);
   assert.match(listOf(repo, env)[0], /^lane-1 busy locked \(cs-lane-pool a\)$/);
