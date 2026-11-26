@@ -46,15 +46,18 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 6. After each edit, `post-edit.mjs` runs the project's formatter.
 7. Tests, type check, lint and reviews run on main, one feature at a time, by the table "Which tess work a change gets" in the
    `qa-plan` skill (`home/CLAUDE.md`, "Quality checks", sums it up): dev's report names the change's risk
-   (`node ~/.claude/tools/risk/risk.mjs`). A risky change lands, then gets `tess` on main at once, and no new piece touches its
-   files until tess returns; other code changes get `tess` when 3 features have landed unchecked or the job's last piece has
-   landed; docs and text only get none; and what you ask for runs at once. Nobody tests or edits in the main folder: it is
+   (`node ~/.claude/tools/risk/risk.mjs`). By default tess does a quick look: the tests the change touched, a type or syntax
+   check, and one read of the diff against the brief and its acceptance lines. A risky change lands, then gets that quick
+   look on main at once, the boss tells you its risk in one line, and no new piece touches its files until tess returns;
+   other code changes get it when 3 features have landed unchecked or the job's last piece has landed; docs and text only
+   get none. The heavy checks (`full`: the whole suite, edge cases, a deep review, new tests, long checks) run only when you
+   ask for them in chat, and what you ask for runs at once. Nobody tests or edits in the main folder: it is
    only where the boss lands, and it keeps moving. Each tess tests its own feature in a snapshot lane, a lane detached at
-   main's commit (`git-tidy lane claim --snapshot --base <sha>`), released after it returns. Only one full suite runs per
+   main's commit (`git-tidy lane claim --snapshot --base <sha>`), released after it returns. A full suite (only in `full`) runs once per
    commit; its result is kept in `<git common dir>/cs-suite/<sha>.txt` and the other tess reuse it. tess answers
    `main: ok` or `main: must-fix <n>`; the boss re-checks a must-fix on the newest main, then makes it a new piece, and
    tess-write's new tests land like any other piece. dev and its helpers run no tests; tess
-   hands the runs to `tess-run` (full suites, installs and builds run directly, a full suite once per tree), edge cases to `tess-edge`, the simplicity review to `tess-simple`, a review to `tess-review` and
+   hands the runs to `tess-run` (full suites, installs and builds run directly, a full suite once per tree), and in `full` edge cases to `tess-edge`, the simplicity review to `tess-simple`, a review to `tess-review` and
    missing tests to `tess-write`, and keeps the verdict. No check runs by itself when an agent stops; no hook calls the risk
    command.
 

@@ -68,8 +68,8 @@ next: land <lane>; claim <piece>; tess on <feature>; dev <n>/3, tess <n>/3
   (`~/.claude/tools/land/ledger.mjs`) holds a land of `lane/<piece id>`.
 - **features**: the features fully landed and not checked, and every risky one (`risk` not `none`) with a landed piece and no
   tess mark since: no new piece should touch its files until tess returns. A feature is checked when its tess mark is newer than
-  its newest land. tess is due when a risky feature is listed, when 3 features are fully landed and not checked, or when the
-  plan's last piece has landed.
+  its newest land. tess (its quick look; `full` only when the owner asks) is due when a risky feature is listed, when 3
+  features are fully landed and not checked, or when the plan's last piece has landed.
 - **next**: only a suggestion: land one ready lane, claim startable pieces while fewer than 3 lanes are in flight, start tess
   when it is due. While main has a finding it says to fix main first and start no new piece.
 

@@ -76,7 +76,8 @@ pieces `after-redesign: yes`.
      acceptance, plus the parts a helper can take and the model each needs (`helpers: dev-part <part> [opus] | lex-scout
      <question>`) with the files each part owns. A feature is the group of pieces behind one outcome; each names `risk:` (the
      classes it will touch: security, data, money, concurrency, gate, large, or none) and `qa:` (the tess work from the routing
-     in CLAUDE.md, whose full table is in `qa-plan`; `e2e` only for a final pass the owner asks for). A feature that
+     in CLAUDE.md, whose full table is in `qa-plan`: the quick look by default; `full` and the other heavy checks only when
+     the owner asked for them; `e2e` only for a final pass the owner asks for). A feature that
      first makes a Claude-facing part work (a hook, agent, skill, setting, or a tool that starts `claude`) names `qa: smoke`
      and its trigger command.
    - Next to the plan, `<plan>.pieces.json`, which `board tick` reads:

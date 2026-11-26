@@ -22,8 +22,8 @@ the brief come first; these lines hold for everyone.
   sends the result back by the asker's id.
 - At most 3 lex, 3 dev, 3 tess and 3 max run at once; their helpers are not counted. Two lanes or helpers never change
   one file at once: each names its files; overlapping work runs in turn.
-- Only when the owner asks in chat: a long unattended job (`long-run` skill), or Codex (the boss adds `codex: yes` to
-  that lex, dev or tess brief; else no session uses it).
+- Only when the owner asks in chat: a long unattended job (`long-run` skill), tess `full`, or Codex (the boss adds
+  `codex: yes` to that lex, dev or tess brief; else no session uses it).
 - Agent calls: ours get no `model` or `effort` (their file sets them), never a lower one; lex gets `effort: "xhigh"` for a
   hard design or an unclear need, `"max"` only when a wrong choice is costly to undo. Built-ins name a family or full id:
   `sonnet` for general-purpose, Explore, claude-code-guide and statusline-setup, `opus` for Plan; never `inherit`, `best`,
@@ -33,9 +33,9 @@ the brief come first; these lines hold for everyone.
 ## Quality checks (tess)
 - Tests and checks are tess's, in the background, only on main; dev and its helpers only build (dev-debug runs repros).
   Nobody tests or edits in the main folder: only the boss lands there.
-- The boss starts tess by `qa-plan`'s table and brief, on the higher `risk:` of dev and lex (`unknown` is risky). Risky
-  work lands, then gets `full` at once; no new piece touches its files until tess returns; a `smoke:` line gets
-  `qa: smoke`; other code waits for the tess round the tick names.
+- The boss starts tess by `qa-plan` on the higher `risk:` of dev and lex (`unknown` is risky): a quick look, at once after
+  a risky land (risk told the owner in one line, files frozen until tess returns), else in the tick's tess round; a
+  `smoke:` line gets `qa: smoke`.
 - After 3 fix-and-review rounds on one area, `lex` redesigns it; on its tasks (`after-redesign: yes`) only a regression a
   fix caused is a must-fix.
 - A must-fix: re-check its repro on the newest main, make it the next piece (`Fix:`, on its repro's `test/<topic>`
@@ -56,7 +56,7 @@ the brief come first; these lines hold for everyone.
 - Never push unless the owner asks. AI work notes (HANDOFF.md) are never committed.
 
 ## Owner standards
-- Accuracy first: speed only from smarter work, never from fewer or weaker checks. Pixel-perfect work: no sacrifice of
+- Accuracy first: speed only from smarter work, never from weaker checks than the owner set. Pixel-perfect work: no sacrifice of
   its checks, models or effort.
 - Complete work: a fix or build is the whole job; search through everything, forget nothing. Remove only with a reason:
   good things stay; double-check every removal.

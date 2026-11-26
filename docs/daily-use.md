@@ -27,14 +27,17 @@ Keep extra usage off in claude.ai so nothing can bill credits.
     root cause), `dev-docs` (the docs and user-facing text, written while the code is built), `dev-run` (installs, long logs,
     returned as a short summary) and `lex-scout`.
   - `tess` runs the quality checks in the background, only on main and one feature at a time, by the table "Which tess work a
-    change gets" in the `qa-plan` skill (`home/CLAUDE.md`, "Quality checks", sums it up): a risky change (security, data,
-    money, concurrency, gate such as the setup's own hooks, large) lands, then gets tess on main at once, and no new piece
-    touches its files until tess returns; other code changes get checked in the next tess round; docs and text only get none;
-    and anything you ask for runs at once. When a feature that uses Claude first works, dev names a `smoke:` line (the
+    change gets" in the `qa-plan` skill (`home/CLAUDE.md`, "Quality checks", sums it up). By default tess does only a quick
+    look: the tests the change touched, a type or syntax check, and one read of the diff against the brief and its
+    acceptance lines. A risky change (security, data, money, concurrency, gate such as the setup's own hooks, large) lands,
+    then gets that quick look on main at once, the boss tells you its risk in one line, and no new piece touches its files
+    until tess returns; other code changes get it in the next tess round; docs and text only get none. The heavy checks
+    (`full`: the whole suite, edge cases, a deep review, new tests, long checks) run only when you ask for them in chat, and
+    anything you ask for runs at once. When a feature that uses Claude first works, dev names a `smoke:` line (the
     command and what it should show); tess runs it 1 to 3 times with real Claude and records each try, and nothing waits for
-    it. tess (Opus) plans and judges; its helpers do the work. A small change (risk none, under about 300 changed lines) gets 2 or 3 of them,
-    and a review runs at effort `xhigh` only for data, money, concurrency or security work (a review of docs or text only runs
-    on Sonnet). The helpers: `tess-run` (the runs, the full suite once per tree), `tess-edge`
+    it. tess (Opus) plans and judges; its helpers do the work. The quick look uses one of them (`tess-run`); `full` uses
+    more, and a review runs at effort `xhigh` only for data, money, concurrency or security work (a review of docs or text
+    only runs on Sonnet). The helpers: `tess-run` (the runs, the full suite once per tree), `tess-edge`
     (edge cases), `tess-simple` (needless complexity), `tess-review` (reviews the code against lex's spec) and `tess-write`
     (writes the missing tests in its own worktree, one per area; tess then proves each one can fail).
   - `max` (the ship agent; Opus, high) starts rarely: when you call it, or after a job's last land when lex's plan names a
@@ -51,9 +54,10 @@ Keep extra usage off in claude.ai so nothing can bill credits.
      (`node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim --repo <main checkout> --branch lane/<id> --base <main sha>`)
      and gives dev that folder. No agent makes its own folder.
   3. When dev reports, it lands the piece with the `land` script, one at a time, and ticks again: that tick checks main.
-  4. When 3 features have landed unchecked, or the job's last piece has landed, it starts one `tess` per feature. Each
-     tess tests a frozen snapshot of main in its own lane (`lane claim --snapshot --base <main sha>`), never the main
-     folder, which keeps moving as pieces land. Only one of them runs the full suite; the others reuse its result. tess
+  4. When 3 features have landed unchecked, or the job's last piece has landed, it starts one `tess` per feature (a risky
+     one at once). Each tess tests a frozen snapshot of main in its own lane (`lane claim --snapshot --base <main sha>`),
+     never the main folder, which keeps moving as pieces land. When you asked for `full`, only one of them runs the full
+     suite; the others reuse its result. tess
      answers `main: ok` or `main: must-fix <n>`; the boss re-checks a must-fix on the newest main, then makes it the next
      piece (`Fix:`).
 - After 3 rounds of fix and review on one area, the boss stops patching and sends the area to `lex` for a redesign; on the
