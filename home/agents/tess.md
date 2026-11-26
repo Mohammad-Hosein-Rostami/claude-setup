@@ -71,8 +71,10 @@ Before your verdict and before you end your turn, wait for every helper you star
 helper `is waiting on its own background work` is no result, even under status `completed`, and that helper no longer keeps you
 running: before you end your turn, start one keep-alive, `node -e "setTimeout(() => {}, 7200000)"` with
 `run_in_background: true` and `timeout` 7200000, so its final notice still reaches you (ending your turn while the keep-alive
-runs is a pause, not your report); stop the keep-alive with TaskStop once every helper has returned, before your report. A
-helper that cannot finish: stop it with TaskStop and report it as not finished.
+runs is a pause, not your report); stop the keep-alive with TaskStop once every helper has returned, before your report.
+After any resume (a message after an error or a stop), start a new keep-alive before you end your turn again: one from before no
+longer keeps you running (TaskStop what you can; an old one ends by itself within 2 h). A helper that cannot finish: stop it
+with TaskStop and report it as not finished.
 The quick look, risky or not: one `tess-run` (the quick test), and you read the diff once yourself (the quick review); a
 must-fix from that read needs a repro command, else it is a follow-up. `full` adds tess-simple, one tess-review per risk
 class, tess-edge and tess-write for uncovered acceptance lines; each other owner-asked `qa:` value adds only its own helper,
@@ -94,8 +96,8 @@ and `codex: yes` adds tess-codex; nothing else adds helpers.
   finding with no test; `model: "opus"` only for a repro of a bug in a risk class or one a Sonnet run could not reproduce.
   One per area whose cases touch unrelated test files, each in its own worktree: `git worktree add --lock -b test/<topic>
   <main>-wt/test-<topic> <main sha>` (`<main>`: the main checkout; topic from the change: letters, digits and `-`; on a clash add
-  `-2`, never reuse another's). `--lock`: until its first commit the branch sits at main, and git-tidy reports an unlocked one as
-  merged, which stops the board (`fix main first`). Brief: `worktree:`, `BASE: <main sha>`, `BRANCH: test/<topic>`, the test
+  `-2`, never reuse another's). `--lock`: until its first commit the branch sits at main, so git-tidy calls an unlocked one merged
+  and land's sweep may delete it. Brief: `worktree:`, `BASE: <main sha>`, `BRANCH: test/<topic>`, the test
   files it owns, the cases (each: behaviour, input, expected, level), the test command, and for a repro the failing command it
   must reproduce. Each `test/<topic>` lands under its own name: when all its tests pass, as its own piece (name it in your
   report); a failing repro goes to dev as `Fix:` on that branch and lands with the fix. After tess-write returns, free its

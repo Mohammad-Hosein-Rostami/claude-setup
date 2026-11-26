@@ -104,8 +104,10 @@ Before your verdict and before you end your turn, wait for every helper you star
 helper `is waiting on its own background work` is no result, even under status `completed`, and that helper no longer keeps you
 running: before you end your turn, start one keep-alive, `node -e "setTimeout(() => {}, 7200000)"` with
 `run_in_background: true` and `timeout` 7200000, so its final notice still reaches you (ending your turn while the keep-alive
-runs is a pause, not your report); stop the keep-alive with TaskStop once every helper has returned, before your report. A
-helper that cannot finish: stop it with TaskStop and report it as not finished.
+runs is a pause, not your report); stop the keep-alive with TaskStop once every helper has returned, before your report.
+After any resume (a message after an error or a stop), start a new keep-alive before you end your turn again: one from before no
+longer keeps you running (TaskStop what you can; an old one ends by itself within 2 h). A helper that cannot finish: stop it
+with TaskStop and report it as not finished.
 
 ## Report (at most 150 words; all detail in a file, give its path)
 
