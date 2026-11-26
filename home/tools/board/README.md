@@ -127,7 +127,7 @@ bottom, at 100 columns:
 | --- | --- | --- |
 | agents, only while an agent runs | `agents  5 running · 1 done · ! tess-review quiet 6 min` | the board's agents (`lib/layout.mjs`) |
 | git | `git     claude-setup  main  ↑2 to push · 1 staged · 3 changed · 1 new · stash 1` | the board's repositories (`lib/git-rows.mjs` gitLineRows) |
-| git row 2: lanes or a second repository | `lanes   r18-git ↑2 ~3 dev · r18-est ↑4 ready to land · r17-col ↓5 needs rebase · +2 more` | the same |
+| git row 2: lanes or a second repository | `lanes   r18-git ↑2 ~3 dev · r18-est ↑4 ready to land · r17-col ↓5 behind · +2 more` | the same |
 | session | `session Opus 5.5 high · context 29% · 5h 90% left, empty ~22:32 · 7d 47% left · acct mine` | the status input, the account's limit samples |
 
 The agents row (RC8) is one summary whatever the number of agents: running counts the quiet ones, done is finished in the last
@@ -142,7 +142,7 @@ worktree, at most every 60 s), the stash and the last commit's age (`branches un
 its other active branches (checked out in the session folder or where a live agent works, with changes, ahead of the base
 with a commit in the last 24 h, or
 the base while not level with its upstream), at most 4 and then `+K more`, each with `↑2` ahead, `~3` changed, its agents,
-`ready to land` or `↓5 needs rebase` (yellow). Outside a repository, or with a second one, one row per used repository (at most
+`ready to land` or `↓5 behind` (normal colour: land rebases it). Outside a repository, or with a second one, one row per used repository (at most
 2, then `+K more repos`) with its lanes after ` │ `. `git     loading` before the board's first refresh,
 `git     no repository used in this session yet (~ is not one)`.
 The session row: model and effort, context against the auto-compact window (`context 29%`, `context ?` after /compact until the
@@ -151,7 +151,7 @@ today; with no live 5 h window this account's last sample with its age), the 5 h
 before the reset, and the account (`CLAUDE_ACCOUNT`).
 
 When a row does not fit, its parts drop by priority, never a value cut mid-token where a whole part can go: the git row's last
-commit age first, then the stash (never the branch, conflicts, an operation, to pull or needs rebase); lanes are counted in
+commit age first, then the stash (never the branch, conflicts, an operation, to pull or behind); lanes are counted in
 `+K more`; the session row's account, then 7 d, then the 5 h clock. Over the row budget the rows kept are, in order: session,
 git, agents, git row 2 (git row 1 then counts what row 2 held: `3 lanes`, `+1 more repo`). On an error while drawing,
 the session row and one `status line error:` line still print.
@@ -160,12 +160,12 @@ the session row and one `status line error:` line still print.
 
 Colour by kind (RC14, "dont over do"): three kinds have a colour of their own and nothing else has it: branch names green
 (38;5;35), durations and clocks blue (38;5;33), the session's model, effort, context and limit values grey-violet (38;5;103).
-Three states are reserved and stay basic ANSI, so the terminal theme maps them: yellow needs a look (to pull, needs rebase, an
+Three states are reserved and stay basic ANSI, so the terminal theme maps them: yellow needs a look (to pull, an
 operation, a quiet agent, 60-80 % used, the 5 h pace), red a problem (conflicts, over 80 % used), magenta needs you (no row
 uses it since the alert row went with the question popup, 2026-11-25). Labels, ages and the ` · ` between parts are dim
 (SGR 2), counts and words are in the default colour, repository names bold. The 256-colour codes go out when `TERM` has `256color` or `COLORTERM` is `truecolor` or `24bit`, else the basic 16
 of the same kinds. A light palette (RC20, at least 4.36:1 on white) when `CLAUDE_STATUS_THEME=light` or `COLORFGBG` ends in
-`;7` or `;15`; `CLAUDE_STATUS_THEME=dark` forces the dark one. Every state also has its word (`to pull`, `needs rebase`,
+`;7` or `;15`; `CLAUDE_STATUS_THEME=dark` forces the dark one. Every state also has its word (`to pull`, `conflicts`,
 `quiet`), so `NO_COLOR` (any value), `TERM=dumb` or the old Windows console (no Windows Terminal, no
 `TERM_PROGRAM`) prints the same words with no escape code. Names from outside are cleaned of control characters and cut at a
 word or `-` with `…`, never mid-word.

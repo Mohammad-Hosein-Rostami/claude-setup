@@ -134,16 +134,20 @@ test('P1 RC14 RC20: one colour per kind on the dark, light (COLORFGBG) and 16-co
   assert.ok(busyRows({ ...TERM_256, CLAUDE_STATUS_THEME: 'light' }, 100).join('').includes('\u001b[38;5;28mmain'), 'CLAUDE_STATUS_THEME=light gives the light palette');
 });
 
-test('the reserved states: to pull and needs rebase yellow, conflicts red', () => {
+test('the reserved states: to pull yellow, conflicts red; a lane behind is calm', () => {
   const board = screenshotBoard();
   board.agents = [];
   board.repo.worktrees = board.repo.worktrees.map((wt) => (wt.main ? { ...wt, upBehind: 1, conflicts: 2, staged: 0, changed: 0 }
     : wt.name === 'remove-modes' ? { ...wt, behind: 5 } : wt));
   const view = viewOf(board, NOW, TERM_256);
   const text = statusRows(view, lookFor(TERM_256, 160)).join('\n');
-  for (const shown of ['\u001b[33m↓1 to pull', '\u001b[31m2 conflicts', '\u001b[33m ↓5 needs rebase']) {
+  for (const shown of ['\u001b[33m↓1 to pull', '\u001b[31m2 conflicts']) {
     assert.ok(text.includes(shown), `${JSON.stringify(shown)} in ${JSON.stringify(text)}`);
   }
+  // land rebases a lane behind its base, so `behind` is a plain word, never the yellow of `needs a look`
+  assert.ok(text.includes(' ↓5 behind'), text);
+  assert.ok(!text.includes('\u001b[33m ↓5 behind'), `↓5 behind not yellow in ${JSON.stringify(text)}`);
+  assert.doesNotMatch(text, /needs rebase/);
 });
 
 test('R33: an empty 5 h window shows its reset clock, never a pace that has already passed', () => {

@@ -1,6 +1,6 @@
 // The git rows of the status line (spec R18 "Rows" and "Git facts", owner decisions RC15 and RC18; at 100 columns):
 //   git     claude-setup  main  ↑2 to push · 1 staged · 3 changed · 1 new · stash 1              (the session's repository)
-//   lanes   r18-git ↑2 ~3 dev · r18-est ↑4 ready to land · r17-col ↓5 needs rebase · +2 more  (its other active branches)
+//   lanes   r18-git ↑2 ~3 dev · r18-est ↑4 ready to land · r17-col ↓5 behind · +2 more        (its other active branches)
 //   git     demo-web-ui  feat/auth-i18n  ↑1 to push · ↓2 to pull · rebase 3/7 · changes ?          (outside one, or a 2nd one)
 // Exports: gitLineRows(board, slots, look, folder) (the status line's 1 or 2 git rows).
 // From board.repo and board.repos (repos.mjs: the session folder's repository first): in the session's repository its current
@@ -8,7 +8,7 @@
 // outside one or with a second repository, one row each (at most GIT_LINE_ROWS, then `+K more repos`), lanes after ` │ `. A branch:
 // to push, to pull (yellow), conflicts (red), an operation (yellow), files (`changes ?` for refs only, `changes unknown` when git gave
 // no status), stash, last commit age; `branches unknown` (never `clean`) when git gave no refs and none are cached; a
-// lane `ready to land` or `needs rebase` (yellow). Too wide: last commit drops first, then stash, never the rest. Below
+// lane `ready to land` or `behind` (normal colour: land rebases it). Too wide: last commit drops first, then stash, never the rest. Below
 // LABEL_FROM_COLUMNS short forms (`↑2 +1 ~3 ?1`), no repository name when only one shows; branch names in the `branch` colour,
 // repository names bold. An old board without `active` draws its worktrees.
 // Invariants: pure (no I/O); every name goes through cleanText; every row fits look.columns.
@@ -85,7 +85,7 @@ function lanePart(lane, base, look, { inline, compact }) {
   if (isBase && above(lane.upAhead)) add(`${a.up}${lane.upAhead} to push`);
   if (isBase && above(lane.upBehind)) add(`${a.down}${lane.upBehind} to pull`, STATE.warn);
   if (!isBase && above(lane.ahead)) add(`${a.up}${lane.ahead}`);
-  if (!isBase && above(lane.behind)) add(`${a.down}${lane.behind} needs rebase`, STATE.warn);
+  if (!isBase && above(lane.behind)) add(`${a.down}${lane.behind} behind`); // calm: land rebases a lane behind its base
   if (above(lane.conflicts)) add(`${lane.conflicts} conflicts`, STATE.block);
   if (lane.op) add(opText(lane, look), STATE.warn);
   const files = [[lane.staged, '+'], [lane.changed, '~'], [lane.untracked, '?']].filter(([count]) => above(count)).map(([count, mark]) => `${mark}${count}`);
