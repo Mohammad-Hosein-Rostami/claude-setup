@@ -1,0 +1,22 @@
+<!doctype html>
+<!-- The `long-run view` page: view.js fills #runs from /api/runs every 2 s. No inline script or style (the CSP forbids them). -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>long-run</title>
+  <link rel="stylesheet" href="/view.css">
+  <script src="/view.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <h1>long-run</h1>
+    <p id="updated" class="muted">Waiting for the first update</p>
+    <label class="toggle"><input type="checkbox" id="show-finished"> Show finished runs</label>
+    <a id="all-runs" href="#" hidden>All runs</a>
+  </header>
+  <p id="lost" class="banner" role="alert" hidden></p>
+  <p class="legend muted">done goes to the next box unless a chip says otherwise; any other outcome without a chip holds the run for you</p>
+  <main id="runs"></main>
+</body>
+</html>

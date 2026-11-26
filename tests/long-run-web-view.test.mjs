@@ -1,12 +1,17 @@
-// Tests of the `long-run view` screen's data (plan run-viewer, piece rv-1): flowOf draws the job's routes; runsData lists the runs
-// newest first with step times and events, cleans token-shaped text, shows a broken run as an error entry, and writes nothing.
+// Tests of the `long-run view` screen (plan run-viewer, pieces rv-1 and rv-2). The data: flowOf draws the job's routes; runsData
+// lists the runs newest first with step times and events, cleans token-shaped text, shows a broken run as an error entry, and
+// writes nothing. The server: it serves the page and the runs on 127.0.0.1 with a strict CSP, refuses other paths, methods and
+// Host headers, refuses a port in use with one line, and writes nothing; openBrowser picks the opener per platform; the CLI
+// refuses an unknown run.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, statSync, writeFileSync } from 'node:fs';
+import { request } from 'node:http';
 import { join } from 'node:path';
 import { appendJsonLine, readRunJob, writeJournal, writeJson } from '../home/tools/long-run/lib/run-store.mjs';
 import { flowOf, runsData } from '../home/tools/long-run/lib/web-data.mjs';
-import { TOKEN_A, createRun, makeSandbox } from './long-run-helpers.mjs';
+import { openBrowser, startViewServer } from '../home/tools/long-run/lib/web-view.mjs';
+import { TOKEN_A, cli, createRun, makeSandbox } from './long-run-helpers.mjs';
 
 const OLDER = new Date('2026-11-25T10:00:00.000Z');
 const NEWER = new Date('2026-11-25T11:00:00.000Z');
@@ -119,4 +124,75 @@ test('runsData writes nothing: the state folder has the same files, sizes and mt
   const before = snapshot(box.root);
   runsData(box.root, { now: NOW });
   assert.deepEqual(snapshot(box.root), before);
+});
+
+/** One request to the view server; `host` replaces the Host header (fetch cannot set it). */
+function ask(url, path, { method = 'GET', host = null } = {}) {
+  const { hostname, port } = new URL(url);
+  return new Promise((resolve, reject) => {
+    const sent = request({ hostname, port, path, method, headers: host ? { host } : {} }, (response) => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk) => { body += chunk; });
+      response.on('end', () => resolve({ status: response.statusCode, headers: response.headers, body }));
+    });
+    sent.on('error', reject);
+    sent.end();
+  });
+}
+
+test('the view server serves the page and the runs on 127.0.0.1 and refuses other paths, methods and hosts', async () => {
+  const box = makeSandbox();
+  const paths = createRun(box, jobOf(box, 'served'));
+  const before = snapshot(box.root);
+  const { url, close } = await startViewServer({ root: box.root, port: 0, now: () => NOW });
+  try {
+    assert.match(url, /^http:\/\/127\.0\.0\.1:\d+\/$/);
+    const page = await ask(url, '/');
+    assert.equal(page.status, 200);
+    assert.match(page.headers['content-type'], /^text\/html/);
+    assert.match(page.headers['content-security-policy'], /default-src 'none'; script-src 'self'/);
+    assert.equal(page.headers['access-control-allow-origin'], undefined);
+    const runs = await ask(url, '/api/runs');
+    assert.equal(runs.status, 200);
+    assert.deepEqual(JSON.parse(runs.body).runs.map((run) => run.runId), [paths.runId]);
+    assert.equal((await ask(url, '/view.js')).status, 200);
+    assert.equal((await ask(url, '/../package.json')).status, 404);
+    assert.equal((await ask(url, '/x')).status, 404);
+    assert.equal((await ask(url, '/api/runs', { method: 'POST' })).status, 405);
+    assert.equal((await ask(url, '/', { host: `evil.example:${new URL(url).port}` })).status, 403);
+  } finally {
+    await close();
+  }
+  assert.deepEqual(snapshot(box.root), before);
+});
+
+test('a port in use is refused with one line naming --port', async () => {
+  const box = makeSandbox();
+  const first = await startViewServer({ root: box.root, port: 0 });
+  const { port } = new URL(first.url);
+  try {
+    await assert.rejects(startViewServer({ root: box.root, port: Number(port) }), {
+      message: `port ${port} is in use (another long-run view? open http://127.0.0.1:${port}/); try --port <n>`,
+    });
+  } finally {
+    await first.close();
+  }
+});
+
+test('openBrowser uses open on macOS, explorer.exe on Windows and xdg-open on Linux, detached', () => {
+  for (const [platform, command] of [['darwin', 'open'], ['win32', 'explorer.exe'], ['linux', 'xdg-open']]) {
+    const calls = [];
+    const spawner = (file, args, options) => {
+      calls.push({ file, args, detached: options.detached });
+      return { on: () => {}, unref: () => {} };
+    };
+    openBrowser('http://127.0.0.1:4790/', { platform, spawner });
+    assert.deepEqual(calls, [{ file: command, args: ['http://127.0.0.1:4790/'], detached: true }]);
+  }
+});
+
+test('long-run view of an unknown run exits 3', () => {
+  const box = makeSandbox();
+  assert.equal(cli(box, ['view', 'nope-20260101-000000', '--no-open']).status, 3);
 });

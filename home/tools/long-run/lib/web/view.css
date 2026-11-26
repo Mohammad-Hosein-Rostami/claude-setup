@@ -1,0 +1,245 @@
+/* Styles of the `long-run view` page: light and dark colours (prefers-color-scheme), one colour family per state, every text
+   colour at least 4.5:1 on its background. Works from 320 px wide; only the events table may scroll sideways. */
+:root {
+  --bg: #ffffff;
+  --text: #1a1a1a;
+  --muted: #555555;
+  --line: #8a8a8a;
+  --card: #fafafa;
+  --running-text: #174ea6;
+  --running-bg: #eef4ff;
+  --done-text: #1e6b30;
+  --done-bg: #edf7ef;
+  --bad-text: #a8231b;
+  --bad-bg: #fdeeee;
+  --wait-text: #7a4a00;
+  --wait-bg: #fff5e0;
+  --owner-text: #6b2fa8;
+  --owner-bg: #f4eefb;
+  --quiet-text: #4a4a4a;
+  --quiet-bg: #eeeeee;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181c;
+    --text: #e8e8e8;
+    --muted: #b0b0b0;
+    --line: #6e6e6e;
+    --card: #1e2126;
+    --running-text: #9cc0ff;
+    --running-bg: #1b2638;
+    --done-text: #8fd6a3;
+    --done-bg: #18291e;
+    --bad-text: #ff9e96;
+    --bad-bg: #331b1b;
+    --wait-text: #fdd663;
+    --wait-bg: #2e2614;
+    --owner-text: #dbb6fc;
+    --owner-bg: #271d33;
+    --quiet-text: #c4c4c4;
+    --quiet-bg: #2a2a2a;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0 auto;
+  max-width: 64rem;
+  padding: 1rem;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  overflow-wrap: anywhere;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.1rem;
+}
+
+h3 {
+  margin: 1rem 0 0.4rem;
+  font-size: 0.95rem;
+}
+
+a {
+  color: var(--running-text);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1.25rem;
+}
+
+.top p {
+  margin: 0;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.toggle input {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.banner,
+.warning,
+.hold {
+  padding: 0.6rem 0.8rem;
+  border-radius: 6px;
+  border: 1px solid currentColor;
+}
+
+.banner,
+.warning {
+  color: var(--bad-text);
+  background: var(--bad-bg);
+}
+
+.hold {
+  color: var(--owner-text);
+  background: var(--owner-bg);
+}
+
+.warning {
+  margin: 0.5rem 0;
+  padding-left: 1.6rem;
+}
+
+.run {
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+}
+
+.flow {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  max-width: 44rem;
+}
+
+.arrow {
+  align-self: center;
+  color: var(--muted);
+  line-height: 1.2;
+}
+
+.box {
+  padding: 0.5rem 0.7rem;
+  border: 2px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.box-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.25rem 0.75rem;
+}
+
+.label {
+  font-weight: 600;
+}
+
+.state {
+  font-weight: 600;
+}
+
+.details {
+  margin: 0.2rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.group {
+  border-style: dashed;
+}
+
+.items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+}
+
+.items .box {
+  flex: 1 1 12rem;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+}
+
+.chip {
+  padding: 0.05rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.85rem;
+}
+
+/* State colours: the state word is always shown as text too, so colour is never the only sign. */
+.s-running { border-color: var(--running-text); background: var(--running-bg); }
+.s-running .state, .run-state.s-running { color: var(--running-text); }
+.s-done { border-color: var(--done-text); background: var(--done-bg); }
+.s-done .state, .run-state.s-done { color: var(--done-text); }
+.s-bad { border-color: var(--bad-text); background: var(--bad-bg); }
+.s-bad .state, .run-state.s-bad { color: var(--bad-text); }
+.s-wait { border-color: var(--wait-text); background: var(--wait-bg); }
+.s-wait .state, .run-state.s-wait { color: var(--wait-text); }
+.s-owner { border-color: var(--owner-text); background: var(--owner-bg); }
+.s-owner .state, .run-state.s-owner { color: var(--owner-text); }
+.s-quiet { border-color: var(--quiet-text); background: var(--quiet-bg); }
+.s-quiet .state, .run-state.s-quiet { color: var(--quiet-text); }
+.run-state { background: none; }
+
+.events {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+th,
+td {
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: normal; /* break words only in the detail column; the table scrolls sideways when it must */
+}
+
+td.detail {
+  min-width: 8rem;
+  overflow-wrap: anywhere;
+}
