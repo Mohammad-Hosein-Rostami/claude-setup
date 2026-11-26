@@ -84,6 +84,7 @@ test('a git repository inside an ignored folder survives a claim of its folder, 
 test('the base branch is never a lane: claim refuses it, release refuses a folder holding it and never deletes it', () => {
   const repo = makeRepo();
   const base = head(repo);
+  git(repo, 'config', 'branch.main.cs-base', 'true'); // main served as a base (a git-tidy run there marks it)
   git(repo, 'switch', '-q', '-c', 'other');
   const env = laneEnv();
   const refused = claim(repo, 'main', base, env);

@@ -52,8 +52,10 @@ test('a dirty lane worktree is not dirty-base, and a base checked out in a linke
   const lane = addWorktree(dir, 'wt-side-lane', 'lane');
   writeFileSync(join(lane, 'base.txt'), 'lane edit');
   writeFileSync(join(dir, 'base.txt'), 'edit on side');
-  assert.deepEqual(linesOf(check(dir), 'dirty-base'), []);
+  // --base main: the base is checked out in a linked worktree, not in the main checkout (which holds side)
+  const checkMain = () => tidy(['check', dir, '--base', 'main'], { cwd: dir });
+  assert.deepEqual(linesOf(checkMain(), 'dirty-base'), []);
   const baseTree = addWorktree(dir, 'wt-base', 'main', { create: false });
   writeFileSync(join(baseTree, 'base.txt'), 'edit on main');
-  assert.deepEqual(linesOf(check(dir), 'dirty-base').map((line) => line.split(' ')[1]), [baseTree]);
+  assert.deepEqual(linesOf(checkMain(), 'dirty-base').map((line) => line.split(' ')[1]), [baseTree]);
 });

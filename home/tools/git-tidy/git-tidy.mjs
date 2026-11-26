@@ -31,7 +31,8 @@
 // unexpectedly, or (prune --apply) a repository in the middle of a rebase, merge or similar.
 //        git-tidy.mjs lane claim|list|release|reclaim --repo <abs> ...: the lane folder pool, its own flags and exit codes (lib/lane-cli.mjs)
 // Invariants: logic lives in lib/; this file parses arguments, prints and sets the exit code. Only `prune --apply`, `land` and `lane`
-//   (claim, release, reclaim) write.
+//   (claim, release, reclaim) write, but for the base mark every command writes for a base read from the main checkout
+//   (`branch.<b>.cs-base`, lib/repo.mjs openRepo; a failed mark is a stderr warning).
 import { runCheck } from './lib/check.mjs';
 import { UsageError } from './lib/git.mjs';
 import { readFileSync } from 'node:fs';
@@ -151,6 +152,7 @@ async function main(argv) {
   try {
     const options = parseArgs(argv);
     const repo = openRepo(options.dir, options.base);
+    if (repo.baseMarkWarning !== null) console.error(`git-tidy: warning: ${repo.baseMarkWarning}`);
     if (options.command === 'land') return await runLand(repo, options);
     if (options.command === 'range') return runRange(repo, options);
     if (options.command === 'prune') return runPrune(repo, options);

@@ -1,16 +1,18 @@
 // Tests for git-tidy's base rule: the base is the branch checked out in the main checkout (no origin/HEAD, no name list),
 // a main checkout with no branch or with a lane checked out stops with the fix step, and every base branch (the base, a
-// branch marked `branch.<b>.cs-base`, a remote's HEAD branch) is never deleted or claimed.
+// branch marked `branch.<b>.cs-base`, a remote's HEAD branch) is never deleted or claimed. A run marks the checked-out base.
 // Each test builds its own repo in a temp folder (see git-tidy-helpers.mjs) and runs the real CLI on it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { findLeftovers } from '../home/tools/git-tidy/lib/leftovers.mjs';
 import { pruneRepo } from '../home/tools/git-tidy/lib/prune.mjs';
 import { openRepo } from '../home/tools/git-tidy/lib/repo.mjs';
-import { addWorktree, commit, git, lines, makeRepo, tidy } from './git-tidy-helpers.mjs';
+import { CLEAN_ENV, addWorktree, commit, git, lines, makeRepo, tidy } from './git-tidy-helpers.mjs';
 import { branchExists, land } from './land-sweep-helpers.mjs';
 import { laneEnv } from './git-tidy-lane-pool-helpers.mjs';
 
+const spawnGit = (dir, ...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: CLEAN_ENV });
 const check = (dir, ...extra) => tidy(['check', dir, ...extra], { cwd: dir });
 const prune = (dir, ...extra) => tidy(['prune', dir, '--include-recent', ...extra], { cwd: dir });
 
@@ -115,6 +117,24 @@ test('prune keeps a base branch handed in as a merged candidate and names why', 
   git(dir, 'config', '--unset', 'branch.develop.cs-base');
   const byRemote = pruneRepo(openRepo(dir, null), { apply: false, leftovers: { ...findLeftovers(repo), mergedBranches: [develop] } });
   assert.equal(byRemote.find((entry) => entry.subject === 'develop')?.detail, 'it is a base branch here (origin/HEAD points at it)');
+});
+
+// Closes the gap until claim and land write marks: main, merged and with no remote, survives a switch to another branch.
+test('a git-tidy run marks the checked-out base, so prune on another branch later keeps it', () => {
+  const dir = makeRepo();
+  assert.equal(check(dir).status, 0);
+  assert.equal(git(dir, 'config', '--get', 'branch.main.cs-base'), 'true');
+  git(dir, 'switch', '-q', '-c', 'topic');
+  const result = prune(dir, '--apply');
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(branchExists(dir, 'main'), result.stdout);
+});
+
+test('a --base run marks nothing', () => {
+  const dir = makeRepo();
+  git(dir, 'branch', 'other');
+  check(dir, '--base', 'other');
+  assert.equal(spawnGit(dir, 'config', '--get', 'branch.other.cs-base').status, 1);
 });
 
 test('prune --apply on feature/x removes a merged develop that is neither marked nor a remote HEAD', () => {

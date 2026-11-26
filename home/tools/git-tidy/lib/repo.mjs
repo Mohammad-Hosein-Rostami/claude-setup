@@ -1,5 +1,7 @@
 // Purpose: the facts about a repository that `check` and `prune` read: base branch, the base branches that are never
-//   deleted or claimed, upstream, worktrees, branches, a half-finished operation, uncommitted files. Everything here only reads.
+//   deleted or claimed, upstream, worktrees, branches, a half-finished operation, uncommitted files. Everything here only reads, but for
+//   one write: openRepo marks the checked-out base (`branch.<b>.cs-base`), so a branch once used as a base stays a base branch
+//   after the owner switches away from it (a merged `main` is never deleted while the owner works on another branch).
 // Exports: openRepo, listWorktrees, listBranches, currentBranch, samePath, contains, inProgressOperation, changedFileCount,
 //   hiddenFileCount, HIDDEN_FILES_WHY, ignoredFiles, minutesSinceUse.
 // Invariants: branches are always addressed by full ref (`refs/heads/<name>`), so a tag with the same name is never
@@ -7,7 +9,7 @@
 //   The base is `--base`, else the branch checked out in the main checkout (never guessed from a remote or a name list).
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
-import { markedBases, readLaneBase } from './base-record.mjs';
+import { markBase, markedBases, readLaneBase } from './base-record.mjs';
 import { UsageError, gitText, runGit } from './git.mjs';
 
 const HEADS = 'refs/heads/';
@@ -102,7 +104,8 @@ function upstreamOf(dir, base) {
 
 /**
  * Finds the repository containing `dir`, its base branch and its base branches (`baseBranches`, see findBaseBranches).
- * Throws UsageError for a missing folder, a non-repo, a `--base` that does not exist, or a main checkout with no base
+ * A base read from the main checkout is marked as a base (markBase); `baseMarkWarning` is null, or why the mark could not be
+ * written (the caller prints it; the run goes on). Throws UsageError for a missing folder, a non-repo, a `--base` that does not exist, or a main checkout with no base
  * (no branch checked out, a lane checked out, a branch with no commit).
  */
 export function openRepo(dir, requestedBase) {
@@ -112,8 +115,9 @@ export function openRepo(dir, requestedBase) {
   const bare = inside.stdout.trim() === 'true';
   const topLevel = bare ? null : runGit(dir, ['rev-parse', '--show-toplevel']).stdout.trim() || null;
   const { name: base, source: baseSource } = resolveBase(dir, requestedBase);
+  const baseMarkWarning = baseSource === 'checked out' ? markBase(dir, base) : null;
   const baseBranches = findBaseBranches(dir, base);
-  return { dir, bare, topLevel, base, baseSource, baseBranches, baseRef: `${HEADS}${base}`, upstream: upstreamOf(dir, base) };
+  return { dir, bare, topLevel, base, baseSource, baseBranches, baseMarkWarning, baseRef: `${HEADS}${base}`, upstream: upstreamOf(dir, base) };
 }
 
 const GITDIR_LINE = /^gitdir: (.+)$/m;

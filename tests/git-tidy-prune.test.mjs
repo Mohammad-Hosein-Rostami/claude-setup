@@ -203,6 +203,7 @@ test('the branch checked out in the main worktree, a detached worktree and a loc
   assert.ok(existsSync(detached));
   const locked = addWorktree(dir, 'wt-locked', 'locked-done');
   git(dir, 'worktree', 'lock', locked);
+  git(dir, 'config', 'branch.main.cs-base', 'true'); // main served as a base (a git-tidy run there marks it)
   git(dir, 'checkout', '-q', 'on-main-checkout');
   const result = apply(dir);
   assert.equal(result.status, 1);
@@ -291,7 +292,7 @@ test('nothing to do is exit 0; --apply is not a flag of check; prune takes the s
   git(dir, 'branch', 'other');
   const onDevelop = apply(dir, '--base', 'develop');
   assert.equal(onDevelop.status, 0);
-  assert.deepEqual(branches(dir), ['develop']);
+  assert.deepEqual(branches(dir), ['develop', 'main'], 'other goes; main stays: the first run on it marked it as a base');
 });
 
 test('the dry run predicts exactly what --apply then does', () => {

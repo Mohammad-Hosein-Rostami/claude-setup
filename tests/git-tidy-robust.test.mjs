@@ -57,6 +57,7 @@ test('forged candidates: the base, the current branch, a main-worktree path, an 
   git(dir, 'checkout', '-q', '-b', 'wip');
   commit(dir, 'wip.txt');
   git(dir, 'checkout', '-q', 'main');
+  git(dir, 'config', 'branch.main.cs-base', 'true'); // main served as a base (a git-tidy run there marks it)
   git(dir, 'branch', 'current-one');
   git(dir, 'checkout', '-q', 'current-one');
   const wt = addWorktree(dir, 'wt-on-base', 'main', { create: false });
@@ -75,6 +76,7 @@ test('forged candidates: the base, the current branch, a main-worktree path, an 
 
 test('a linked worktree on the base branch is never removed (main checkout sits on another branch)', () => {
   const dir = makeRepo();
+  git(dir, 'config', 'branch.main.cs-base', 'true'); // main served as a base (a git-tidy run there marks it)
   git(dir, 'checkout', '-q', '-b', 'topic');
   const wt = addWorktree(dir, 'wt-base', 'main', { create: false });
   const result = apply(dir);
@@ -169,13 +171,13 @@ test('submodules are ignored: a repo with one checks clean and prune leaves it a
   assert.ok(existsSync(join(dir, 'vendor', 'sub', 'base.txt')));
 });
 
-test('a repo with no commit has no base: exit 2 naming --base', () => {
+test('a repo with no commit has no base: exit 2 saying its branch has no commit yet', () => {
   const dir = join(realpathSync(makeRepo()), '..', 'empty');
   mkdirSync(dir);
   git(dir, 'init', '-q', '-b', 'main');
   const result = tidy(['check', dir], { cwd: dir });
   assert.equal(result.status, 2);
-  assert.match(result.stderr, /--base/);
+  assert.match(result.stderr, /main, checked out in \S+empty, has no commit yet/);
 });
 
 // Counting git processes instead of timing: seconds measure how busy the machine is, the number of git processes

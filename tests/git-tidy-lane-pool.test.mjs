@@ -1,7 +1,7 @@
 // Tests of `git-tidy lane` (lib/lane-pool.mjs, lane-slots.mjs, pool-lock.mjs, lane-prep.mjs, lane-cli.mjs): claim, list, release, reclaim,
 // land's detach, the pool lock, the job-made record, the installs a claim runs, and `check`'s info lines. Every repo is a temp repo.
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -123,10 +123,10 @@ test('re-done lane: an existing branch is switched to as it is (no reset); one c
   const again = claim(repo, 'redo', base, env);
   assert.equal(again.status, 2);
   assert.ok(again.stderr.includes(`checked out in ${poolPath(repo, 1)}`), again.stderr);
-  git(repo, 'switch', '-q', '-c', 'side'); // a lane branch the main folder holds (the base itself is refused earlier: never a lane)
+  git(repo, 'switch', '-q', '-c', 'side'); // the branch the main folder holds is the base: never a lane
   const inMain = claim(repo, 'side', base, env);
   assert.equal(inMain.status, 2);
-  assert.ok(inMain.stderr.includes(`checked out in ${realpathSync(repo)}`), inMain.stderr);
+  assert.ok(inMain.stderr.includes('side is a base branch of this repository, never a lane'), inMain.stderr);
 });
 
 test('a reused folder keeps node_modules while the lockfiles are equal, loses it when one changed; dist/ and .env always go', () => {

@@ -25,9 +25,10 @@ rebase or similar not finished there), has a lane checked out (a branch with `br
 was claimed on: switch it back to that base), or its branch has no commit yet; a `--base` that does not exist is exit 2 too.
 
 The base branches are never deleted, claimed as a lane or released, and `check` never lists them: the base, every branch
-marked as a base (`git config branch.<b>.cs-base true`; `git branch -d <b>` drops the mark),
+marked as a base (`git config branch.<b>.cs-base true`; `git branch -d <b>` drops the mark; every git-tidy run that takes
+the base from the main checkout marks it, so `main` stays a base after you switch to another branch),
 and the local branch each remote's HEAD points at (`refs/remotes/<r>/HEAD`). Any other branch whose work is on the base
-goes, `develop` and `main` included.
+goes, whatever its name.
 
 `land` has its own codes (0 landed and clean, 1 landed with findings, 2 not ready or no `--tip`, 3 conflict, 5 base moved, 6 ui-proof, 7 new-file-size, 8 upstream-moved, 9 tip-moved). The plain landing route is the `land` tool (`tools/land/README.md`: rebase, `merge --ff-only`, then the branch and its worktree removed, then `prune --apply` run over the repository, ending with a `left:` list). Landing has no test run and no review record; `--checks` and the old UI waiver flag are refused (exit 2).
 
