@@ -2,7 +2,7 @@
 // cs-test repository with staged, changed and new files, a stash, a conflict, a rebase stopped at step 2 of 3 and a lane worktree;
 // the repository-config programs a refresh must never run (filter, fsmonitor: F1); names that are never options and reach the board
 // cleaned (F2); cached values kept with their age past the git budget (F3); new files counted only on the session's worktree and at
-// most 4 active branches (F5); repositories used by the lead's edits;
+// most 4 active branches (F5); repositories used by the lead's edits; the base is the main checkout's branch (none when detached);
 // a FIFO among a repository's files never hangs the refresh; a lane nested in the main checkout is the only current worktree; no git
 // call starts past the git budget (a git stand-in records each call, on a clock that each call moves); a git call that times out,
 // fails or is skipped for the budget leaves its facts `unknown` with the reason (P3), never null; and a refresh within git's limits
@@ -144,6 +144,18 @@ test('F2: branch names with control or bidi characters are cleaned; a leading-da
   assert.equal(repo.base, null, 'a leading-dash branch was taken as the base');
   assert.equal(repo.active[0].name, '-evil');
   assert.equal(JSON.stringify(repo).includes('\u202e'), false);
+});
+
+test('the base is the branch checked out in the main checkout, never main by name; a detached main checkout has none', () => {
+  const dir = newRepo('checked-out-base');
+  const common = join(dir, '.git');
+  git(dir, 'switch', '-q', '-c', 'develop');
+  const onDevelop = repoState({ cwd: dir, sessionFolder: dir, common, cache: null, nowMs: Date.now() }).repo;
+  assert.equal(onDevelop.base, 'develop', 'main was taken as the base while develop is checked out');
+  git(dir, 'switch', '-q', '--detach');
+  const detached = repoState({ cwd: dir, sessionFolder: dir, common, cache: null, nowMs: Date.now() }).repo;
+  assert.notEqual(detached, null, 'the refresh failed on a detached main checkout');
+  assert.equal(detached.base, null, 'a base was guessed for a detached main checkout');
 });
 
 test('F3: past the git budget the cached status stays with its age', () => {

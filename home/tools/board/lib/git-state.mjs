@@ -18,9 +18,10 @@
 // Every call (git-call.mjs gitIn) runs without the inherited GIT_* variables and with GIT_COMMON_DIR=<common>, so a git folder's `commondir` file
 // cannot send git elsewhere (review N-11).
 // File-system facts: stash = lines of `<common>/logs/refs/stash`; op = the first of OPS present in the worktree's git folder, with
-// `rebase 2/3` from rebase-merge msgnum/end or rebase-apply next/last, and the branch being rebased from its head-name; the base
-// branch from `<common>/refs/heads/` or `<common>/packed-refs`. Each file is read only as a plain file, never waiting on a FIFO and
-// never past its byte cap (read-part.mjs).
+// `rebase 2/3` from rebase-merge msgnum/end or rebase-apply next/last, and the branch being rebased from its head-name. Each file is
+// read only as a plain file, never waiting on a FIFO and never past its byte cap (read-part.mjs).
+// The base branch is the one checked out in the main checkout (its HEAD, from worktreeRecords), whatever its name; none (null) when
+// that checkout is detached or the repository is bare: the board never guesses a name such as main or master.
 // Current and own: the deepest worktree holding the session folder (a lane in `.claude/worktrees/` lies inside the main checkout, so
 // only the lane is current and counts new files); a live agent's folder makes only its deepest worktree active (rule b).
 // Unknown, never null (P3): a git call that times out, fails or is skipped for the budget leaves the last good answer with its age;
@@ -46,10 +47,8 @@ const MAX_ACTIVE = 4;
 const MAX_NAME_CHARS = 80;
 const MAX_STEP_BYTES = 32;
 const MAX_STASH_LOG_BYTES = 256 * 1024;
-const MAX_PACKED_REFS_BYTES = 256 * 1024; // the head of packed-refs: refs/heads sorts before refs/remotes and refs/tags
 const MS_PER_MIN = 60_000;
 const MS_PER_S = 1000;
-const BASE_NAMES = ['main', 'master'];
 const REPOSITORY_SCOPES = new Set(['local', 'worktree']); // config that comes with the repository, not the owner's own
 const UNKNOWN = 'unknown'; // a count git could not give this refresh (no earlier answer cached); the entry's `unknown` says why
 /** The operations a worktree's git folder can be in the middle of: [file, name, step files (done, total)]. */
@@ -69,12 +68,9 @@ const holderOf = (dir, worktrees) => worktrees.filter((wt) => isInside(dir, wt.p
 /** @returns {string | null} a branch or upstream name as the board stores it: no control or bidi character, at most MAX_NAME_CHARS */
 export const cleanName = (text) => (typeof text === 'string' && text !== '' ? text.replace(UNSHOWN_CHARS, ' ').slice(0, MAX_NAME_CHARS) : null);
 
-
-/** The base branch: main, else master, else the main worktree's branch; null when none is a safe name. */
-function baseOf(common, worktrees) {
-  const packed = textOf(join(common, 'packed-refs'), MAX_PACKED_REFS_BYTES) ?? '';
-  const found = BASE_NAMES.find((name) => exists(join(common, 'refs', 'heads', name)) || packed.includes(` refs/heads/${name}\n`));
-  const base = found ?? worktrees[0]?.branch ?? null;
+/** The base branch: the one checked out in the main checkout; null when it is detached, the repository is bare or the name is unsafe. */
+function baseOf(worktrees) {
+  const base = worktrees.find((wt) => wt.main)?.branch ?? null;
   return base !== null && SAFE_REF.test(base) ? base : null;
 }
 
@@ -184,7 +180,7 @@ function statusOf(wt, common, cached, { clock, own }) {
  */
 function refsOf(common, worktrees, cache, clock) {
   const spent = gitBudgetSpent(clock.startMs); // the refresh's whole git budget is used: the cached refs stay
-  const base = baseOf(common, worktrees);
+  const base = baseOf(worktrees);
   const refsFresh = spent || (cache.common === common && cache.base === base && clock.nowMs - (cache.refsAt ?? 0) < REFS_EVERY_MS);
   const format = `%(refname:short)%09%(committerdate:unix)%09%(upstream:short)%09%(upstream:track,nobracket)${base ? `%09%(ahead-behind:${base})` : ''}`;
   const call = refsFresh ? null : gitIn(common, [`--git-dir=${common}`, 'for-each-ref', `--format=${format}`, 'refs/heads']);
