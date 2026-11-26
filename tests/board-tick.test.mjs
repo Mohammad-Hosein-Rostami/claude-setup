@@ -1,7 +1,7 @@
 // Tests of `board.mjs tick` (home/tools/board/lib/tick.mjs, tick-plan.mjs; boss-integrator design, U14), run as a child process on
 // throw-away repositories whose lanes come from the real `git-tidy lane claim`: the main line, overlaps and strays among the lanes,
-// the plan's exit codes, a land ledger with lines that do not parse, branch and file names with control characters, and
-// `--mark-tess`. Every repository is in the OS temp folder (git-tidy-helpers.mjs) and every child has its own temp HOME, so the
+// the plan's exit codes, a land ledger with lines that do not parse, branch and file names with control characters,
+// `--mark-tess`, side findings on the `tidy` line that never block `next:`, snapshot folders and the lane verdicts. Every repository is in the OS temp folder (git-tidy-helpers.mjs) and every child has its own temp HOME, so the
 // ledger and the tess marks go to <HOME>/.claude/state/ there and never to the real ~/.claude.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -11,7 +11,7 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { CLEAN_ENV, commit, git, lines, makeRepo } from './git-tidy-helpers.mjs';
-import { claim, laneEnv } from './git-tidy-lane-pool-helpers.mjs';
+import { claim, lane, laneEnv, poolPath } from './git-tidy-lane-pool-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const BOARD = fileURLToPath(new URL('../home/tools/board/board.mjs', import.meta.url));
@@ -225,4 +225,65 @@ test('--mark-tess with a sha that is not 40 hex characters is refused by the tic
   const accepted = tick(home, ['--repo', repo, '--plan', plan, '--mark-tess', FEATURE, '--sha', sha]);
   assert.equal(accepted.status, EXIT_SHOWN, accepted.stderr);
   assert.equal(JSON.parse(readFileSync(marksFile(home), 'utf8'))[FEATURE].sha, sha, 'the same call with the full sha writes the mark');
+});
+
+const PRUNE = 'node ~/.claude/tools/git-tidy/git-tidy.mjs prune';
+
+test('a branch that reaches a merge commit main lacks is a tidy line, not a main finding: next still lands the lane, exit 1', () => {
+  const setup = poolRepo();
+  const { repo } = setup;
+  git(repo, 'checkout', '-q', '-b', 'side');
+  commit(repo, 'side.txt');
+  git(repo, 'checkout', '-q', '-b', 'inner');
+  commit(repo, 'inner.txt');
+  git(repo, 'checkout', '-q', 'side');
+  git(repo, 'merge', '-q', '--no-ff', '-m', 'Merge inner', 'inner');
+  git(repo, 'checkout', '-q', 'main');
+  git(repo, 'branch', '-q', '-D', 'inner');
+  claimWithCommits(setup, 'lane/a', [['a.txt', 'a']]);
+  const result = tick(setup.env.HOME, ['--repo', repo]);
+  assert.equal(result.status, EXIT_FINDINGS, result.stdout + result.stderr);
+  const shown = lines(result);
+  assert.equal(shown[0], `main ${headOf(repo).slice(0, SHORT_SHA)} clean, one line (git-tidy check 0)`);
+  assert.ok(shown.includes(`tidy 1 tangled-ref (refs/heads/side) -> ${PRUNE} ${repo} --base main`), result.stdout);
+  assert.ok(shown.at(-1).startsWith('next: land lane/a'), result.stdout);
+  const json = JSON.parse(tick(setup.env.HOME, ['--repo', repo, '--json']).stdout);
+  assert.deepEqual(json.tidy, [{ kind: 'tangled-ref', subject: 'refs/heads/side' }]);
+  assert.deepEqual(json.main.findings, []);
+});
+
+test('a merged branch checked out nowhere is a tidy line and next does not say fix main first', () => {
+  const { repo } = poolRepo();
+  git(repo, 'branch', 'test/x', 'HEAD~1');
+  const shown = lines(tick(makeHome(), ['--repo', repo]));
+  assert.ok(shown.some((line) => line.startsWith('tidy 1 merged-branch (test/x) -> ')), shown.join('\n'));
+  assert.equal(shown.at(-1).includes('fix main first'), false, shown.at(-1));
+});
+
+test('a changed tracked file in the base checkout still makes main dirty and next says fix main first', () => {
+  const { repo } = poolRepo();
+  writeFileSync(join(repo, '.gitignore'), '.claude/\nmore/\n');
+  const result = tick(makeHome(), ['--repo', repo]);
+  assert.equal(result.status, EXIT_FINDINGS, result.stdout + result.stderr);
+  const shown = lines(result);
+  assert.ok(shown[0].startsWith(`main ${headOf(repo).slice(0, SHORT_SHA)} dirty`), shown[0]);
+  assert.ok(shown.at(-1).startsWith('next: fix main first ('), shown.at(-1));
+});
+
+test('snapshot claims count as snapshot on the folders line, with the age of the oldest lock', () => {
+  const { repo, env } = poolRepo();
+  for (let count = 0; count < 3; count++) assert.equal(lane(['claim', '--repo', repo, '--snapshot', '--base', headOf(repo)], env).status, 0);
+  const released = lane(['release', '--repo', repo, '--folder', poolPath(repo, 1)], env);
+  assert.equal(released.status, 0, released.stdout + released.stderr);
+  const shown = lines(tick(env.HOME, ['--repo', repo]));
+  assert.ok(shown.includes('folders 1 free, 2 snapshot (oldest 0 h)'), shown.join('\n'));
+});
+
+test('a ready lane behind main says it still lands, and next lands it', () => {
+  const setup = poolRepo();
+  claimWithCommits(setup, 'lane/a', [['a.txt', 'a']]);
+  commit(setup.repo, 'later.txt');
+  const shown = lines(tick(setup.env.HOME, ['--repo', setup.repo]));
+  assert.ok(shown.some((line) => line.startsWith('lane lane/a') && line.endsWith('ready to land (behind main; land rebases it)')), shown.join('\n'));
+  assert.ok(shown.at(-1).startsWith('next: land lane/a'), shown.at(-1));
 });

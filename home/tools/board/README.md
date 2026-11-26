@@ -43,8 +43,9 @@ only with `--plan`, `ledger` only when the land ledger has lines it cannot parse
 
 ```text
 main <sha> <clean|dirty>, <one line|not one line> (git-tidy check 0|1: <count> <kind>, ...)[, <n> landed since tess round at <sha>]
-folders <n> <state>, ...
-lane <branch> <type> <agent id> <running|done|quiet N min>|no agent +<n> commits <clean|~<n> changed|changes ?> [ready to land|needs rebase (main moved)] [folder <state>]
+tidy <n> <kind> (<subject>[, +<n> more]), ... -> node ~/.claude/tools/git-tidy/git-tidy.mjs prune <repo> --base <base>
+folders <n> <state>, ...[ (oldest <n> h)]
+lane <branch> <type> <agent id> <running|done|quiet N min>|no agent +<n> commits <clean|~<n> changed|changes ?> [ready to land|ready to land (behind main; land rebases it)|behind main] [folder <state>]
 overlap <lane or piece> x <lane>: <file>, <file>, <file>, +<n> more
 stray <lane>: <files> (not in its files)
 queue <piece> startable | <piece> after <piece>, ... | <piece> overlaps <lane>
@@ -54,13 +55,20 @@ ledger unreadable (<why>): no piece counts as landed
 next: land <lane>; claim <piece>; tess on <feature>; dev <n>/3, tess <n>/3
 ```
 
-- **main**: the branch `--repo` names as its base (origin/HEAD, else main, master or develop), with `git-tidy check`'s findings by
-  kind: `dirty` is a `dirty-base` finding, `not one line` a merge commit or a tangled branch. Any finding is exit 1. With
-  `--plan` it ends with the plan's pieces landed since the newest tess mark (`<n> landed and no tess round yet` before the first).
-- **lane**: each lane pool folder that holds a branch (`git-tidy lane list`; `folders` counts the pool's folders by state, as
-  `lane list` gives it; `folders none` with no pool folder). Its files are `git diff --name-only <main>...<branch>` (as
+- **main**: the branch `--repo` names as its base (origin/HEAD, else main, master or develop), with `git-tidy check`'s findings
+  about main by kind: `dirty-base`, `merge-commit`, `stale-checkout`, and any kind not on the `tidy` line. `dirty` is a
+  `dirty-base` finding, `not one line` a merge commit. Any finding is exit 1. With `--plan` it ends with the plan's pieces
+  landed since the newest tess mark (`<n> landed and no tess round yet` before the first).
+- **tidy**: only when `git-tidy check` finds leftovers beside main: `tangled-ref`, `merged-branch`, `merged-tag`,
+  `merged-worktree`, `stale-worktree`, `superseded-copy`, `agent-leftover`, each kind with its count and first subject. The
+  command prints what `prune` would remove and changes nothing (`--apply` removes). These findings are exit 1 but never block
+  `next:`.
+- **folders**: the pool's folders by state, as `git-tidy lane list` gives it, with a snapshot claim counted as `snapshot` and
+  the age of the oldest snapshot lock in whole hours (left out when git cannot say); `folders none` with no pool folder.
+- **lane**: each lane pool folder that holds a branch. Its files are `git diff --name-only <main>...<branch>` (as
   plumbing) plus the changed and untracked files in its folder; its agent is the board agent on that branch. `ready to land`: the agent is done (or none is on the board),
-  the lane has commits and its folder is clean. A lane outside the pool is not shown.
+  the lane has commits and its folder is clean; `(behind main; land rebases it)` when main has moved since it started.
+  `behind main`: main moved and the lane is not ready yet. A lane outside the pool is not shown.
 - **overlap**: two lanes share a file, or a piece whose `after` pieces have all landed declares a file a lane changed (that piece
   is not startable). **stray**: a lane `lane/<piece id>` changed a file its piece does not declare. Either is exit 1; such a lane
   lands after the other one, with `land --test`.
@@ -71,14 +79,16 @@ next: land <lane>; claim <piece>; tess on <feature>; dev <n>/3, tess <n>/3
   its newest land. tess (its quick look; `full` only when the owner asks) is due when a risky feature is listed, when 3
   features are fully landed and not checked, or when the plan's last piece has landed.
 - **next**: only a suggestion: land one ready lane, claim startable pieces while fewer than 3 lanes are in flight, start tess
-  when it is due. While main has a finding it says to fix main first and start no new piece.
+  when it is due. While main has a finding of its own it says to fix main first and start no new piece; a `tidy` finding never
+  does.
 
 `--mark-tess <feature> --sha <40-hex>` records that tess was started on that feature at that main sha (it must be on main), and
 prints `marked <feature> for tess at <sha>`. The marks are in `~/.claude/state/board/jobs/<job>.json` as
 `{ "<feature>": { "sha": "<40-hex>", "at": "<ISO>" } }`, written through a temp file and a rename; delete the file to forget
-them. `--json` prints every fact as one JSON object (lanes with their files, folders with why, features, tess status).
+them. `--json` prints every fact as one JSON object (lanes with their files, folders with why and `lockedAtMs`, features, tess
+status); `main.findings` holds main's findings only and `tidy` the side ones, each `{ "kind", "subject" }`.
 
-Exit 0 shown; 1 findings (an overlap, a stray, a `git-tidy check` finding on main); 2 usage: a bad flag, a `--repo` that is not
+Exit 0 shown; 1 findings (an overlap, a stray, a `git-tidy check` finding on main or on the `tidy` line); 2 usage: a bad flag, a `--repo` that is not
 a git repository, a missing or bad plan or marks file (the message names what is wrong), or a git failure.
 
 ### pieces.json

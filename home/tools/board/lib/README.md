@@ -20,8 +20,9 @@ Collecting (run only by the detached refresh):
 - `cache-file.mjs`: the refresher's own cache files per session (transcript cursors, git cache).
 
 The boss's sync (`tick`, run by hand after every agent report and every land):
-- `tick.mjs`: the `tick` command: main's state, the lanes in flight, overlaps and strays among their files, the plan's queue,
-  features due for tess and a suggested next step.
+- `tick.mjs`: the `tick` command's facts: main's state and the side findings to tidy, the pool's folders, the lanes in flight,
+  overlaps and strays among their files, the plan's queue and features due for tess.
+- `tick-lines.mjs`: the tick's plain lines from those facts, ending with the suggested next step.
 - `tick-features.mjs`: the plan's side of the tick: waiting pieces, each feature's lands, which features tess has checked (a mark
   covers the lands its sha holds), whether a round is due, and the features and `commits <feature>:` lines.
 - `tick-plan.mjs`: reads and checks the plan's pieces.json, and reads and writes the job's tess marks (one writer at a time, by a
