@@ -1,13 +1,14 @@
 // Purpose: the clean-up `land` runs once the lane has landed and its own branch is gone: git-tidy's `prune --apply` over the
 //   whole repository (branches whose content is all on the base, with all of prune's safety checks; copies of another branch are
 //   kept with the reason), then the `left:` block, one line per branch still there and why, and per stale worktree entry
-//   prune kept.
+//   prune kept. A fold that landed as patches and changed on the base since gets a label only when landedAt proves its whole
+//   content at a base commit; the label advises looking first and never deletes.
 // Exports: sweepRepo.
 // Invariants: removes only what prune proves; a prune that refuses (an unfinished rebase or merge in some worktree) removes
 //   nothing and prints `cleanup skipped: <reason>`; a deletion log that is not safe to write stops it before anything is removed
 //   (prune throws, land prints it on stderr), and so does a git older than 2.40. Text from git (names, paths, messages) is
 //   printed without control characters.
-import { contentProofUnsupported, isMerged } from '../git-tidy/lib/branches.mjs';
+import { contentProofUnsupported, isMerged, landedAt } from '../git-tidy/lib/branches.mjs';
 import { UNLANDED_AFTER_HOURS } from '../git-tidy/lib/check.mjs';
 import { commitDates } from '../git-tidy/lib/copies.mjs';
 import { checkDeletionLog } from '../git-tidy/lib/deletion-log.mjs';
@@ -16,10 +17,12 @@ import { UsageError } from '../git-tidy/lib/git.mjs';
 import { findLeftovers } from '../git-tidy/lib/leftovers.mjs';
 import { pruneRepo } from '../git-tidy/lib/prune.mjs';
 import { listWorktrees, openRepo } from '../git-tidy/lib/repo.mjs';
+import { shellWord } from '../git-tidy/lib/shell-word.mjs';
 
 const MAX_LEFT_SHOWN = 20;
 const MS_PER_HOUR = 60 * 60 * 1000;
 const MS_PER_SECOND = 1000;
+const SHORT_HASH_LENGTH = 8;
 // Kinds that are not a branch or its worktree: a detached folder (a pool folder, a scratch checkout) and the merged-tag note.
 const NOT_LISTED = new Set(['detached-worktree', 'tags']);
 
@@ -44,6 +47,12 @@ function pruneItems(repo) {
   }
 }
 
+// The `left:` reason for branch `name`, whose whole content landedAt proved at base commit `pairedBase`.
+function landedLabel(repo, name, pairedBase) {
+  const look = `git log -p ${shellWord(`${repo.base}..${name}`)}`;
+  return plain(`landed in ${pairedBase.slice(0, SHORT_HASH_LENGTH)} (its content was on ${repo.base} there); ${repo.base} changed its files since: look (${look}), then git branch -D ${shellWord(name)}`);
+}
+
 // Map(branch -> why prune kept it): the reason of its worktree first (the branch only says it is checked out there).
 function keptReasons(repo, items) {
   const branchAt = new Map(listWorktrees(repo).map(({ path, branch }) => [path, branch]));
@@ -65,15 +74,19 @@ function leftLines(repo, items, now) {
   const reasons = keptReasons(repo, items);
   const holders = inLaneHolders(repo, states.filter(({ state }) => state === 'unmerged').map(({ name }) => name), states);
   const dates = commitDates(repo);
-  const why = ({ name, state, ahead }) => {
+  const why = ({ name, state, tip, ahead }) => {
     if (reasons.has(name)) return `kept: ${plain(reasons.get(name))}`;
     if (isMerged(state)) return `on ${repo.base} (${state}), not removed`;
     if (holders.has(name)) return `in ${holders.get(name)} (lands with it)`;
+    const pairedBase = tip === null ? null : landedAt(repo, tip);
+    if (pairedBase !== null) return landedLabel(repo, name, pairedBase);
     const hours = Math.floor((now - (dates.get(name) ?? 0) * MS_PER_SECOND) / MS_PER_HOUR);
     return hours >= UNLANDED_AFTER_HOURS ? `idle ${hours} h, ahead ${ahead}` : `active, ahead ${ahead}`;
   };
-  const rows = [...states.map((state) => `  ${state.name}: ${why(state)}`), ...staleRows];
-  const more = rows.length > MAX_LEFT_SHOWN ? [`  +${rows.length - MAX_LEFT_SHOWN} more`] : [];
+  // why runs git for each branch (landedAt), so only the branches shown get one.
+  const rows = [...states.slice(0, MAX_LEFT_SHOWN).map((state) => `  ${state.name}: ${why(state)}`), ...staleRows];
+  const hidden = states.length + staleRows.length - MAX_LEFT_SHOWN;
+  const more = hidden > 0 ? [`  +${hidden} more`] : [];
   return ['left:', ...rows.slice(0, MAX_LEFT_SHOWN), ...more];
 }
 

@@ -79,7 +79,9 @@ Steps, in order; nothing changes until every check has passed:
    `land` or `git-tidy prune --apply` does it. A deletion log that is not safe to write stops the sweep before it removes
    anything: one stderr line, exit 0. Then `left:` names every branch still there: `in <B> (lands with it)` (all its commits
    are in the live branch B: a stacked lane, a folded test branch), `kept: <reason>`, `on <base> (<state>), not removed`
-   (merged, but the sweep was skipped), `idle <h> h, ahead <n>` (no commit for 2 hours or more) or `active, ahead <n>`, then
+   (merged, but the sweep was skipped), `landed in <C> (its content was on <base> there); <base> changed its files since:
+   look (git log -p <base>..<b>), then git branch -D <b>` (a fold that landed as patches, see "Folded branches"),
+   `idle <h> h, ahead <n>` (no commit for 2 hours or more) or `active, ahead <n>`, then
    each stale worktree entry (`<path> (stale worktree entry): kept: <reason>`): the sweep never removes one, since its folder
    may only have moved; `git-tidy prune --apply` removes it once nothing is lost. At most 20 lines, then `+N more`.
 
@@ -142,6 +144,12 @@ hold too: every path the branch changed since its merge base is the same blob on
 in other commits (a squash, a plain cherry-pick), goes. A fold the lane changed later (the folded commit fixed up or
 amended, a file removed again, a commit dropped by `rebase --onto`) stays and is named under `left:`: look at it, then
 delete it by hand with `git branch -D`. Reflogs and patch ids never delete a branch on their own.
+
+A fold that landed as patches (a cherry-pick) and whose files the base changed later stays too, since merging it would undo
+or conflict with the later change. `left:` labels it `landed in <C> ...` only when git proves its whole content at one base
+commit C: every commit of the branch is a non-merge whose patch id equals a base commit's, C is the newest such base commit,
+and the content proof above holds with C as the base. Patch ids leave out line numbers, so the same line added at another
+place pairs too; the proof at C keeps such a branch `active` or `idle`. The label only advises: nothing deletes it.
 
 Every branch the sweep (or `git-tidy prune --apply`) deletes is first appended to `<git common dir>/cs-tidy-log.jsonl`,
 `{"deleted": {"branch", "sha", "reason", "at"}}`, and printed as `deleted <b> (was <sha>)`; a branch whose record cannot be

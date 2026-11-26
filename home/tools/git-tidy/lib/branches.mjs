@@ -1,6 +1,6 @@
 // Purpose: decide whether a local branch (or any commit) is already on the base, and how many commits it still has that are not.
 // Exports: ancestorBranches, branchState, changesOnBase, compareBranch, compareWithBase, contentOnBase,
-//   contentProofUnsupported, withContentState, isLanded, isMerged, mergeChangesNothing, CONTENT_EQUAL.
+//   contentProofUnsupported, withContentState, isLanded, isMerged, landedAt, mergeChangesNothing, CONTENT_EQUAL.
 // Invariants: only `ancestor`, `patch-equal` and `content-equal` mean "merged"; anything that cannot be proven is `unmerged`
 //   (fail closed). `content-equal` is the one content proof for every other branch: merging it into the base changes nothing
 //   (`git merge-tree --write-tree` prints the base's own tree), so all its content is on the base already (a squash or a
@@ -12,6 +12,7 @@
 //   patch ids ignore whitespace and skip merge commits, so a hand-made change in a merge would go unseen by the first.
 //   A proof is about the tip commit that was read, never a ref read again later. One git call per branch (a batch call for
 //   all ancestors first), plus two for each branch a merge proves, so 300 branches stay fast.
+//   landedAt only names a base commit for a label; no deletion and no state uses it.
 import { gitText, runGit } from './git.mjs';
 
 const HEADS = 'refs/heads/';
@@ -150,6 +151,29 @@ export function compareWithBase(repo, ref) {
   if (patchesLanded && mergeChangesNothing(repo, tip)) return { state: 'patch-equal', tip, ahead: 0 };
   const unequal = commits.filter((commit) => !commit.isMerge && !commit.equal).length;
   return { state: 'unmerged', tip, ahead: unequal > 0 ? unequal : commits.length };
+}
+
+/**
+ * The full hash of a base commit where all of `ref`'s content is proven, else null. Why: a fold that landed as patches and that
+ * the base changed later is neither merged nor plainly unlanded, so land's `left:` names that commit for a person to look at.
+ * Patch ids leave out line numbers, so a pairing alone proves nothing (the same line added at another place pairs too): the
+ * commit is the newest base commit a patch of `ref` pairs with, and mergeChangesNothing must hold with it as the base.
+ * @param repo the repository from openRepo
+ * @param ref a full ref or a commit hash
+ * @returns the base commit's full hash; null when `ref` has no commit the base lacks, holds a merge, has a commit with no
+ *   equal patch on the base, or fails the content proof there, and on any git error
+ */
+export function landedAt(repo, ref) {
+  const range = `${repo.baseRef}...${ref}`;
+  const own = runGit(repo.dir, ['rev-list', '--right-only', '--cherry-mark', '--parents', range]);
+  const commits = own.stdout.split('\n').filter((line) => line !== '');
+  const isPairedNonMerge = (line) => line[0] === '=' && line.split(' ').length <= 2; // a mark and hash, then at most one parent
+  if (own.status !== 0 || commits.length === 0 || !commits.every(isPairedNonMerge)) return null;
+  const based = runGit(repo.dir, ['rev-list', '--left-only', '--cherry-mark', '--topo-order', range]);
+  const newestPaired = based.status === 0 ? based.stdout.split('\n').find((line) => line[0] === '=') : undefined;
+  if (newestPaired === undefined) return null;
+  const pairedBase = newestPaired.slice(1);
+  return mergeChangesNothing({ ...repo, baseRef: pairedBase }, ref) ? pairedBase : null;
 }
 
 /**

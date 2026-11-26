@@ -1,5 +1,5 @@
 // Tests for what the sweep at the end of home/tools/land/land.mjs keeps and how it says so: the `left:` block (in a live lane,
-// active, idle, `+N more`), the branches that are never deleted, a sweep skipped for a rebase in another worktree, and a
+// landed as patches, active, idle, `+N more`), the branches that are never deleted, a sweep skipped for a rebase in another worktree, and a
 // deletion log that cannot be written safely (read-only, a folder, a FIFO, a symbolic link) or holds lines that do not parse.
 // New behaviour unless a test says it is a guard: the land before the sweep printed no `left:` block, so each fails on the old
 // sources. Each repository is a throw-away one in the OS temp folder (git-tidy-helpers.mjs: no user git config, private HOME).
@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { CLEAN_ENV, addWorktree, commit, git, makeRepo, tidy } from './git-tidy-helpers.mjs';
+import { CLEAN_ENV, addWorktree, backdate, commit, git, makeRepo, tidy } from './git-tidy-helpers.mjs';
 import {
   LAND, LOG_FILE, addWorktreeAt, branchExists, commitAt, land, laneSquashedOnTestBranch, logLines, logPath, logRecords, outputLines, tipOf,
 } from './land-sweep-helpers.mjs';
@@ -194,4 +194,61 @@ test('R4: a deletion log that cannot be opened (a folder in its place) still lan
   assert.equal(tipOf(repo, 'main'), laneTip);
   assert.equal(branchExists(repo, 'lane/l'), false);
   assert.equal(existsSync(laneTree), false);
+});
+
+const SHORT_HASH_LENGTH = 8; // sweep.mjs names the base commit by this many hex digits
+
+/** The `left:` line sweep.mjs prints for `name`, whose whole content was on main at `pairedBase`. */
+const landedLine = (name, pairedBase) =>
+  `  ${name}: landed in ${pairedBase.slice(0, SHORT_HASH_LENGTH)} (its content was on main there); main changed its files since: look (git log -p main..${name}), then git branch -D ${name}`;
+
+test('l: a fold that landed by cherry-pick, whose lines main changed since, is labelled landed in <C> and stays', () => {
+  const repo = makeRepo();
+  commit(repo, 'shared.txt', 'one\ntwo\n');
+  const testTree = addWorktree(repo, 'test', 'test/t');
+  const testTip = commit(testTree, 'shared.txt', 'one\nfixed\n');
+  git(addWorktree(repo, 'lane', 'lane/l'), 'cherry-pick', '-x', testTip); // -x: a commit of its own, not test/t's again
+  sweepLines(repo, 'lane/l'); // test/t is kept here only because its worktree was just used
+  const pairedBase = tipOf(repo, 'main');
+  git(repo, 'worktree', 'remove', testTree);
+  commit(addWorktree(repo, 'more', 'lane/m'), 'shared.txt', 'one\nfixed again\n');
+  assert.deepEqual(sweepLines(repo, 'lane/m'), ['left:', landedLine('test/t', pairedBase)]);
+  assert.equal(tipOf(repo, 'test/t'), testTip);
+});
+
+// Guard (plan D2): patch ids leave out line numbers, so R2's test commit pairs with the lane's commit at the other place;
+// a later change to the same file must not turn that pairing into a label (it would advise deleting unlanded work).
+test('l: R2, then main changes shared.txt elsewhere: the patch-id pair is no proof, test/T stays active, ahead 1', () => {
+  const repo = makeRepo();
+  const twice = `${['a', 'b', 'c', 'd', 'e', 'f'].join('\n')}\n`; // the same lines twice, so both places have one context
+  commit(repo, 'shared.txt', `${twice}g\nh\n${twice}`);
+  const testTree = addWorktree(repo, 'test', 'test/T');
+  const testTip = commit(testTree, 'shared.txt', `a\nb\nc\nNEW\nd\ne\nf\ng\nh\n${twice}`);
+  commit(addWorktree(repo, 'lane', 'lane/L'), 'shared.txt', `${twice}g\nh\na\nb\nc\nNEW\nd\ne\nf\n`);
+  backdate(testTree);
+  assert.deepEqual(sweepLines(repo, 'lane/L'), ['left:', '  test/T: active, ahead 1']);
+  commit(addWorktree(repo, 'more', 'lane/M'), 'shared.txt', `${twice}G\nh\na\nb\nc\nNEW\nd\ne\nf\n`);
+  assert.equal(git(repo, 'rev-list', '--right-only', '--cherry-mark', 'main...test/T'), `=${testTip}`, 'precondition: its commit pairs with one on main');
+  assert.deepEqual(sweepLines(repo, 'lane/M'), ['left:', '  test/T: active, ahead 1']);
+  assert.equal(tipOf(repo, 'test/T'), testTip);
+});
+
+test('l: a branch with one commit that landed by cherry-pick and one that has no equal patch on main gets no label', () => {
+  const repo = makeRepo();
+  const testTree = addWorktree(repo, 'test', 'test/t');
+  const pickedTip = commit(testTree, 'picked.txt');
+  const testTip = commit(testTree, 'own.txt', 'own\n');
+  // The lane holds own.txt as it is, but with another file in the same commit, so that commit's patch id differs; the
+  // cherry-pick comes last, so all of test/t's content is on main at the newest paired commit and only the rule "every
+  // commit has an equal patch" keeps the label off.
+  const laneTree = addWorktree(repo, 'lane', 'lane/l');
+  writeFileSync(join(laneTree, 'own.txt'), 'own\n');
+  git(laneTree, 'add', '--', 'own.txt');
+  commit(laneTree, 'extra.txt'); // commits own.txt and extra.txt together
+  git(laneTree, 'cherry-pick', pickedTip);
+  sweepLines(repo, 'lane/l'); // test/t is kept here only because its worktree was just used
+  git(repo, 'worktree', 'remove', testTree);
+  commit(addWorktree(repo, 'more', 'lane/m'), 'own.txt', 'own, changed\n');
+  assert.deepEqual(sweepLines(repo, 'lane/m'), ['left:', '  test/t: active, ahead 1']);
+  assert.equal(tipOf(repo, 'test/t'), testTip);
 });
