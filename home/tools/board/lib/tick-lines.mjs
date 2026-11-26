@@ -107,7 +107,8 @@ function nextLine(tick) {
   const land = ready.find((lane) => !flagged.has(lane.branch) && !lane.mainMoved) ?? ready.find((lane) => !flagged.has(lane.branch)) ?? ready[0];
   const steps = [];
   if (land !== undefined) steps.push(`land ${clean(land.branch)}${flagged.has(land.branch) ? ' --test "<suite>" (after the other one)' : ''}`);
-  queue.filter((piece) => piece.isStartable).slice(0, Math.max(0, MAX_DEV - lanes.length)).forEach((piece) => steps.push(`claim ${piece.id}`));
+  const claimText = (piece) => `claim ${piece.id}${piece.branch === null ? '' : ` (branch ${clean(piece.branch)})`}`;
+  queue.filter((piece) => piece.isStartable).slice(0, Math.max(0, MAX_DEV - lanes.length)).forEach((piece) => steps.push(claimText(piece)));
   if (plan !== null && plan.tess.reason !== null && tessRunning < MAX_TESS) {
     const ids = plan.tess.features.slice(0, MAX_TESS - tessRunning).map((feature) => feature.id).join(', ');
     steps.push(`tess on ${ids} (mark each: --mark-tess <feature> --sha ${main.sha} with this --repo and --plan)`);

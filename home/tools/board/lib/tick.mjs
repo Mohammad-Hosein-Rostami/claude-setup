@@ -6,7 +6,7 @@
 // Facts: main from git-tidy check (runCheck), split by kind: main's own findings block new work, the side ones (other refs and
 //   folders, SIDE_KINDS) only go on the `tidy` line; the lanes are the lane pool's folders that hold a branch (poolSlots), each with
 //   its commits and files against main (git) and its agent from the session's board (matched by branch); landed pieces from the
-//   land ledger (a land of branch `lane/<piece id>`; an unreadable ledger is one line, never exit 2); tess marks from tick-plan.mjs;
+//   land ledger (a land of the piece's branch, tick-features.mjs pieceBranch; an unreadable ledger is one line, never exit 2); tess marks from tick-plan.mjs;
 //   features and tess status judged in tick-features.mjs (a mark covers the lands its sha holds). Nothing comes from an agent's words.
 // Invariants: reads only; `--mark-tess` writes the job's marks file (under its lock file) and nothing else. Every branch name, path and agent name is
 //   printed through cells.mjs cleanText, so no control character reaches the terminal. `next:` only suggests: the boss decides.
@@ -19,7 +19,7 @@ import { slotKey } from '../../git-tidy/lib/lane-slots.mjs';
 import { listWorktrees, openRepo } from '../../git-tidy/lib/repo.mjs';
 import { readLandEntries } from '../../land/ledger.mjs';
 import { jsonText } from './cells.mjs';
-import { laneBranch, planState } from './tick-features.mjs';
+import { pieceBranch, planState } from './tick-features.mjs';
 import { clean, short, tickLines } from './tick-lines.mjs';
 import { readMarks, readPlan, writeMark } from './tick-plan.mjs';
 
@@ -107,18 +107,21 @@ function overlapsOf(lanes, candidates) {
   return [...pairs, ...touches].filter((pair) => pair.files.length > 0);
 }
 
-/** The queue: each waiting piece with the pieces it is after, the lanes its files touch, and whether it can start now. */
+/**
+ * The queue: each waiting piece with the branch it names (null for `lane/<id>`), the pieces it is after, the lanes its files
+ * touch, and whether it can start now.
+ */
 function queueOf(waiting, overlaps) {
-  return waiting.map(({ id, after }) => {
+  return waiting.map(({ id, branch, after }) => {
     const touched = overlaps.filter((pair) => pair.isPiece && pair.first === id).map((pair) => pair.second);
-    return { id, after, overlaps: touched, isStartable: after.length === 0 && touched.length === 0 };
+    return { id, branch, after, overlaps: touched, isStartable: after.length === 0 && touched.length === 0 };
   });
 }
 
 /** `stray` lanes: a lane of a plan piece that changed files the piece does not declare. */
 function straysOf(lanes, plan) {
   return lanes.flatMap((lane) => {
-    const piece = plan.pieces.find((entry) => laneBranch(entry.id) === lane.branch);
+    const piece = plan.pieces.find((entry) => pieceBranch(entry) === lane.branch);
     const files = piece === undefined ? [] : lane.files.filter((path) => !piece.files.includes(path));
     return files.length === 0 ? [] : [{ branch: lane.branch, files }];
   });
@@ -169,7 +172,7 @@ export function runTick(args, loadBoard) {
   try {
     const options = parseTickArgs(args);
     const repo = openRepo(options.repo, null);
-    const plan = options.plan === null ? null : readPlan(options.plan);
+    const plan = options.plan === null ? null : readPlan(options.plan, repo);
     if (options.markTess !== null) {
       const file = writeMark({ repo, plan, feature: options.markTess, sha: options.sha });
       console.log(`marked ${options.markTess} for tess at ${short(options.sha)} (${clean(file)})`);

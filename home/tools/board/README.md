@@ -52,7 +52,7 @@ queue <piece> startable | <piece> after <piece>, ... | <piece> overlaps <lane>
 features landed, not checked: <feature> <landed>/<pieces> (risk <risk>), ... -> tess due at 3 (now <n>)|tess due now (<why>)
 ledger <n> bad lines skipped
 ledger unreadable (<why>): no piece counts as landed
-next: land <lane>; claim <piece>; tess on <feature>; dev <n>/3, tess <n>/3
+next: land <lane>; claim <piece>[ (branch <branch>)]; tess on <feature>; dev <n>/3, tess <n>/3
 ```
 
 - **main**: the branch `--repo` names as its base (origin/HEAD, else main, master or develop), with `git-tidy check`'s findings
@@ -70,15 +70,16 @@ next: land <lane>; claim <piece>; tess on <feature>; dev <n>/3, tess <n>/3
   the lane has commits and its folder is clean; `(behind main; land rebases it)` when main has moved since it started.
   `behind main`: main moved and the lane is not ready yet. A lane outside the pool is not shown.
 - **overlap**: two lanes share a file, or a piece whose `after` pieces have all landed declares a file a lane changed (that piece
-  is not startable). **stray**: a lane `lane/<piece id>` changed a file its piece does not declare. Either is exit 1; such a lane
+  is not startable). **stray**: a lane on a piece's branch changed a file its piece does not declare. Either is exit 1; such a lane
   lands after the other one, with `land --test`.
 - **queue**: the plan's pieces not landed and not in a lane. A piece is landed when the land ledger
-  (`~/.claude/tools/land/ledger.mjs`) holds a land of `lane/<piece id>`.
+  (`~/.claude/tools/land/ledger.mjs`) holds a land of its branch: its `branch`, else `lane/<piece id>`.
 - **features**: the features fully landed and not checked, and every risky one (`risk` not `none`) with a landed piece and no
   tess mark since: no new piece should touch its files until tess returns. A feature is checked when its tess mark is newer than
   its newest land. tess (its quick look; `full` only when the owner asks) is due when a risky feature is listed, when 3
   features are fully landed and not checked, or when the plan's last piece has landed.
-- **next**: only a suggestion: land one ready lane, claim startable pieces while fewer than 3 lanes are in flight, start tess
+- **next**: only a suggestion: land one ready lane, claim startable pieces while fewer than 3 lanes are in flight (a piece
+  with a `branch` as `claim <piece> (branch <branch>)`: claim that branch), start tess
   when it is due. While main has a finding of its own it says to fix main first and start no new piece; a `tidy` finding never
   does.
 
@@ -94,15 +95,17 @@ a git repository, a missing or bad plan or marks file (the message names what is
 ### pieces.json
 
 lex writes it next to the plan; the tick reads it with `--plan`. Ids (`job`, features, pieces) are letters, digits, `-` and `_`
-(at most 64, starting with a letter or digit); `files` are repository-relative paths; `after` is optional:
+(at most 64, starting with a letter or digit); `files` are repository-relative paths; `after` and `branch` are optional:
 
 ```json
 { "job": "<slug>", "repo": "<abs>", "base": "<40-hex>",
   "features": [{ "id": "login", "risk": "none | security,data,...", "spec": "<plan path>#<section>" }],
-  "pieces": [{ "id": "login-1", "feature": "login", "files": ["<repo-relative path>"], "after": ["<piece id>"] }] }
+  "pieces": [{ "id": "login-1", "feature": "login", "files": ["<repo-relative path>"], "after": ["<piece id>"], "branch": "test/<topic>" }] }
 ```
 
-A piece's branch is `lane/<piece id>`. No two pieces that can run at the same time share a file; the tick shows it when they do.
+A piece's branch is its `branch`, else `lane/<piece id>`. A `Fix:` piece names tess-write's repro branch (`test/<topic>`), so
+it lands under that name and the tick counts it. A `branch` must be a name `lane claim --branch` takes and no base branch, and
+no two pieces may share a branch: else the tick exits 2 and names the piece. No two pieces that can run at the same time share a file; the tick shows it when they do.
 
 ## The status line rows
 

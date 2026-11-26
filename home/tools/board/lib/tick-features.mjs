@@ -1,6 +1,6 @@
 // Purpose: the plan's side of `board tick`: which pieces wait, how far each feature has landed, which features tess has checked,
 //   whether a tess round is due, and the lines that say so.
-// Exports: laneBranch(pieceId), planState(repo, plan, lanes, entries, marks), featuresLine(planState), commitsLines(planState).
+// Exports: pieceBranch(piece), planState(repo, plan, lanes, entries, marks), featuresLine(planState), commitsLines(planState).
 // Invariants: a feature is checked only when it has a tess mark and every ledger `to` of its pieces' branches is an ancestor of the
 //   mark's sha (gate R1: a mark's time says nothing about which lands tess saw); a git call that fails counts as not covered, so a
 //   doubt always reads `tess due`. Reads git and nothing else; the plan, ledger entries and marks come checked (tick-plan.mjs,
@@ -18,8 +18,8 @@ const PLAIN_LOOK = { ascii: false };
 const clean = (text) => cleanText(text, PLAIN_LOOK);
 const short = (sha) => sha.slice(0, SHORT_SHA);
 
-/** The branch a plan piece is built on: `lane/<piece id>`. */
-export const laneBranch = (pieceId) => `${LANE_PREFIX}${pieceId}`;
+/** The branch a plan piece is built on: its own `branch` (a `Fix:` on tess-write's `test/<topic>`), else `lane/<piece id>`. */
+export const pieceBranch = (piece) => piece.branch ?? `${LANE_PREFIX}${piece.id}`;
 
 /** Whether commit `to` is in the history of `sha`; any failure (an unknown commit, a git error) counts as not covered. */
 const isCovered = (repo, to, sha) => runGit(repo.dir, ['merge-base', '--is-ancestor', to, sha]).status === 0;
@@ -61,14 +61,14 @@ function tessDue(features, isJobLanded) {
  *   status, the newest mark's sha and the pieces with a land that sha does not hold
  */
 export function planState(repo, plan, lanes, entries, marks) {
-  const pieceOfBranch = new Map(plan.pieces.map((piece) => [laneBranch(piece.id), piece.id]));
+  const pieceOfBranch = new Map(plan.pieces.map((piece) => [pieceBranch(piece), piece.id]));
   // every land of a plan piece, oldest first as the ledger holds them
   const planLands = entries.filter(({ branch }) => pieceOfBranch.has(branch))
     .map(({ branch, from, to }) => ({ piece: pieceOfBranch.get(branch), from, to }));
   const landedIds = new Set(planLands.map(({ piece }) => piece));
   const isLanded = (id) => landedIds.has(id);
   const inFlight = new Set(lanes.map((lane) => lane.branch));
-  const waiting = plan.pieces.filter((piece) => !isLanded(piece.id) && !inFlight.has(laneBranch(piece.id)))
+  const waiting = plan.pieces.filter((piece) => !isLanded(piece.id) && !inFlight.has(pieceBranch(piece)))
     .map((piece) => ({ ...piece, after: piece.after.filter((id) => !isLanded(id)) }));
   // own keys only: a feature named `constructor` must not read Object.prototype's as its mark
   const markOf = (id) => (Object.hasOwn(marks, id) ? marks[id] : undefined);

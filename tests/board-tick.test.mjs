@@ -1,7 +1,8 @@
 // Tests of `board.mjs tick` (home/tools/board/lib/tick.mjs, tick-plan.mjs; boss-integrator design, U14), run as a child process on
 // throw-away repositories whose lanes come from the real `git-tidy lane claim`: the main line, overlaps and strays among the lanes,
 // the plan's exit codes, a land ledger with lines that do not parse, branch and file names with control characters,
-// `--mark-tess`, side findings on the `tidy` line that never block `next:`, snapshot folders and the lane verdicts. Every repository is in the OS temp folder (git-tidy-helpers.mjs) and every child has its own temp HOME, so the
+// `--mark-tess`, side findings on the `tidy` line that never block `next:`, snapshot folders, the lane verdicts and a piece that
+// names its own branch. Every repository is in the OS temp folder (git-tidy-helpers.mjs) and every child has its own temp HOME, so the
 // ledger and the tess marks go to <HOME>/.claude/state/ there and never to the real ~/.claude.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -52,13 +53,16 @@ function claimWithCommits({ repo, env }, branch, files) {
   return folder;
 }
 
-/** Writes a pieces.json (job JOB, feature FEATURE of risk `risk`, one piece PIECE declaring `files`) in a temp folder; returns its path. */
-function writePlan(repo, { files = [DECLARED], risk = 'none' } = {}) {
+/**
+ * Writes a pieces.json (job JOB, feature FEATURE of risk `risk`, by default one piece PIECE declaring `files`) in a temp folder;
+ * returns its path.
+ */
+function writePlan(repo, { files = [DECLARED], risk = 'none', pieces = [{ id: PIECE, feature: FEATURE, files }] } = {}) {
   const path = join(makeTempDir('board-tick-plan-'), 'pieces.json');
   const plan = {
     job: JOB, repo, base: headOf(repo),
     features: [{ id: FEATURE, risk, spec: 'plan.md#one' }],
-    pieces: [{ id: PIECE, feature: FEATURE, files }],
+    pieces,
   };
   writeFileSync(path, JSON.stringify(plan));
   return path;
@@ -286,4 +290,51 @@ test('a ready lane behind main says it still lands, and next lands it', () => {
   const shown = lines(tick(setup.env.HOME, ['--repo', setup.repo]));
   assert.ok(shown.some((line) => line.startsWith('lane lane/a') && line.endsWith('ready to land (behind main; land rebases it)')), shown.join('\n'));
   assert.ok(shown.at(-1).startsWith('next: land lane/a'), shown.at(-1));
+});
+
+const FIX = 'fix-1';
+const REPRO = 'test/repro-1';
+const fixPiece = (id = FIX, branch = REPRO) => ({ id, feature: FEATURE, files: [DECLARED], branch });
+
+test('a piece with a branch counts as landed from a ledger line of that branch, with its range on the commits line', () => {
+  const { repo } = poolRepo();
+  const home = makeHome();
+  writeLedger(home, repo, [landedLine(repo, REPRO)]);
+  const result = tick(home, ['--repo', repo, '--plan', writePlan(repo, { pieces: [fixPiece()] })]);
+  assert.equal(result.status, EXIT_SHOWN, result.stdout + result.stderr);
+  const shown = lines(result);
+  const sha = headOf(repo).slice(0, SHORT_SHA);
+  assert.ok(shown.some((line) => line.startsWith(`features landed, not checked: ${FEATURE} 1/1`)), result.stdout);
+  assert.ok(shown.includes('queue empty'), result.stdout);
+  assert.ok(shown.includes(`commits ${FEATURE}: ${sha}..${sha}`), result.stdout);
+});
+
+test('a pool lane on a piece\'s branch takes the piece off the queue and a file outside its files is a stray', () => {
+  const setup = poolRepo();
+  claimWithCommits(setup, REPRO, [[DECLARED, 'declared'], ['other.txt', 'undeclared']]);
+  const result = tick(setup.env.HOME, ['--repo', setup.repo, '--plan', writePlan(setup.repo, { pieces: [fixPiece()] })]);
+  assert.equal(result.status, EXIT_FINDINGS, result.stdout + result.stderr);
+  assert.ok(lines(result).includes(`stray ${REPRO}: other.txt (not in its files)`), result.stdout);
+  assert.ok(lines(result).includes('queue empty'), result.stdout);
+});
+
+test('a startable piece with a branch is claimed on it in next', () => {
+  const { repo } = poolRepo();
+  const shown = lines(tick(makeHome(), ['--repo', repo, '--plan', writePlan(repo, { pieces: [fixPiece()] })]));
+  assert.ok(shown.at(-1).includes(`claim ${FIX} (branch ${REPRO})`), shown.at(-1));
+});
+
+test('a piece branch that is no plain name, the base branch, or one two pieces share is exit 2 naming the piece', () => {
+  const { repo } = poolRepo();
+  const cases = [
+    [[fixPiece(FIX, '-x')], `piece ${FIX} has a "branch" that is no plain branch name`],
+    [[fixPiece(FIX, 'main')], `piece ${FIX} names the base branch main`],
+    [[fixPiece(), fixPiece('fix-2')], `pieces ${FIX} and fix-2 name the same branch ${REPRO}`],
+  ];
+  for (const [pieces, message] of cases) {
+    const result = tick(makeHome(), ['--repo', repo, '--plan', writePlan(repo, { pieces })]);
+    assert.equal(result.status, EXIT_USAGE, result.stdout);
+    assert.ok(result.stderr.includes(message), result.stderr);
+    assert.equal(result.stdout, '');
+  }
 });

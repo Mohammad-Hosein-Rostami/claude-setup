@@ -1,9 +1,10 @@
 // Purpose: the two files `board tick` reads beside git: the plan's pieces.json (lex writes it next to the plan) and the job's tess
 //   marks (written only by `tick --mark-tess`).
-// Exports: readPlan(path) -> plan, readMarks(job, env) -> marks, writeMark({ repo, plan, feature, sha, env, nowMs }) -> the marks file's path.
+// Exports: readPlan(path, repo) -> plan, readMarks(job, env) -> marks, writeMark({ repo, plan, feature, sha, env, nowMs }) -> the marks file's path.
 // Invariants: the boundary of the tick: every plan and marks file is checked here, so tick.mjs trusts what it gets; a missing or bad
 //   plan, or a marks file that is not valid, throws UsageError (exit 2), never a guess. Job, feature and piece ids are safe file
-//   names (NAME, a subset of session-store.mjs isSessionId). Marks live in `<boardDir>/jobs/<job>.json` as
+//   names (NAME, a subset of session-store.mjs isSessionId). A piece's `branch` passes the check `lane claim --branch` makes
+//   (lane-pool.mjs checkBranchName), is no base branch (git-tidy's lane-release.mjs baseNames) and no two pieces share a branch. Marks live in `<boardDir>/jobs/<job>.json` as
 //   `{ "<feature>": { "sha": "<40-hex>", "at": "<ISO>" } }` and are written through session-store.mjs: a temp file and a rename,
 //   no link followed, 0600, never swept (a job may wait more than a week). A mark's read and write run under `<job>.lock` beside it
 //   (O_EXCL, disk-free/lib/lock-file.mjs), so parallel `--mark-tess` calls never drop each other's mark (concurrency R3); a lock
@@ -11,9 +12,12 @@
 import { join } from 'node:path';
 import { releaseLock, takeLock } from '../../disk-free/lib/lock-file.mjs';
 import { UsageError, gitFlag } from '../../git-tidy/lib/git.mjs';
+import { checkBranchName } from '../../git-tidy/lib/lane-pool.mjs';
+import { baseNames } from '../../git-tidy/lib/lane-release.mjs';
 import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
 import { privateFolder, readSessionFile, writeSessionFile } from '../../../hooks/lib/session-store.mjs';
 import { boardDir } from './refresh.mjs';
+import { pieceBranch } from './tick-features.mjs';
 
 const MAX_PLAN_BYTES = 1024 * 1024;
 const MAX_MARKS_BYTES = 64 * 1024;
@@ -61,14 +65,41 @@ function planProblem(plan) {
   return plan.pieces.map((piece) => pieceProblem(piece, featureIds, pieceIds)).find((found) => found !== null) ?? null;
 }
 
+/** Whether `branch` is a name `lane claim --branch` takes: checkBranchName's refusal is a UsageError, anything else a real failure. */
+function isPlainBranch(repo, branch) {
+  try {
+    checkBranchName(repo, branch);
+    return true;
+  } catch (error) {
+    if (error instanceof UsageError) return false;
+    throw error;
+  }
+}
+
+/** The first thing wrong with the pieces' branches (a named one git refuses or that is a base, two pieces on one), or null. */
+function branchProblem(repo, pieces) {
+  const named = pieces.filter((piece) => piece.branch !== undefined);
+  const bad = named.find((piece) => !isPlainBranch(repo, piece.branch));
+  if (bad !== undefined) return `piece ${bad.id} has a "branch" that is no plain branch name (git check-ref-format --branch refuses it, or it starts with - or refs/)`;
+  const base = named.find((piece) => baseNames(repo).has(piece.branch));
+  if (base !== undefined) return `piece ${base.id} names the base branch ${base.branch}, which is never a lane`;
+  const branches = pieces.map(pieceBranch);
+  const second = branches.findIndex((branch, at) => branches.indexOf(branch) !== at);
+  if (second === -1) return null;
+  const first = branches.indexOf(branches[second]);
+  return `pieces ${pieces[first].id} and ${pieces[second].id} name the same branch ${branches[second]}`;
+}
+
 /**
  * Reads and checks a pieces.json.
  * @param {string} path the absolute path of the plan's pieces.json
+ * @param {{ dir: string }} repo openRepo's result: a piece's `branch` is checked against its git and its base branches
  * @returns {{ job: string, features: { id: string, risk: string }[],
- *   pieces: { id: string, feature: string, files: string[], after: string[] }[] }} the plan, files with `/` separators
+ *   pieces: { id: string, feature: string, files: string[], after: string[], branch: string | null }[] }} the plan, files with
+ *   `/` separators, `branch` null when the piece names none (it is then `lane/<id>`)
  * @throws {UsageError} the file is missing, unreadable, not JSON or not in the pieces.json format (the message says which)
  */
-export function readPlan(path) {
+export function readPlan(path, repo) {
   let text;
   try {
     text = readPlainFile(path, MAX_PLAN_BYTES);
@@ -81,13 +112,13 @@ export function readPlan(path) {
   } catch (error) {
     throw new UsageError(`the plan ${path} is not JSON (${error.message}); ${FORMAT_HINT}`, { cause: error });
   }
-  const problem = planProblem(plan);
+  const problem = planProblem(plan) ?? branchProblem(repo, plan.pieces);
   if (problem !== null) throw new UsageError(`the plan ${path} is not a valid pieces.json: ${problem}; ${FORMAT_HINT}`);
   return {
     job: plan.job,
     features: plan.features.map(({ id, risk }) => ({ id, risk })),
     // Windows paths in a plan written by hand: git names files with `/`
-    pieces: plan.pieces.map(({ id, feature, files, after }) => ({ id, feature, files: files.map((path) => path.replaceAll('\\', '/')), after: after ?? [] })),
+    pieces: plan.pieces.map(({ id, feature, files, after, branch }) => ({ id, feature, files: files.map((path) => path.replaceAll('\\', '/')), after: after ?? [], branch: branch ?? null })),
   };
 }
 

@@ -3,7 +3,7 @@
 //   every folder is busy (no cap). Where the main checkout can be cloned (lane-fill.mjs cloneSupport), a claim fills the folder by
 //   cloning it. A snapshot claim is a lane with no branch: it stays detached at its commit, locked as `cs-lane-pool snapshot <8>`,
 //   until release. Release, land's `detachLandedSlot` and reclaim are in lane-release.mjs.
-// Exports: KEPT_DEPENDENCY_FOLDERS, claimLane (and, from lane-slots.mjs, POOL_FOLDER, poolSlots; from lane-release.mjs, RECLAIM_IDLE_MS,
+// Exports: KEPT_DEPENDENCY_FOLDERS, claimLane, checkBranchName (board tick checks a plan piece's branch with it) (and, from lane-slots.mjs, POOL_FOLDER, poolSlots; from lane-release.mjs, RECLAIM_IDLE_MS,
 //   releaseLane, detachLandedSlot, reclaimLanes, so their callers import them from here).
 // Invariants:
 // - A claim runs under the one pool lock of the repository (pool-lock.mjs), the lock release and reclaim take too, so two sessions
@@ -56,7 +56,7 @@ const CLONE_MODE = 'clone'; // cloneSupport's mode when the main checkout can be
 const SHORT_SHA = 8;
 
 /** Refuses a branch name git would read as an option, a full ref or anything `check-ref-format --branch` rejects or rewrites. */
-function checkBranchName(repo, branch) {
+export function checkBranchName(repo, branch) {
   const refused = typeof branch !== 'string' || branch === '' || branch.startsWith('-') || branch.startsWith('refs/');
   const checked = refused ? null : runGit(repo.dir, ['check-ref-format', '--branch', branch]);
   if (checked === null || checked.status !== 0 || checked.stdout.trim() !== branch) {

@@ -88,6 +88,8 @@ pieces `after-redesign: yes`.
        "features": [{ "id": "login", "risk": "none | security,data,...", "spec": "<plan path>#<section>" }],
        "pieces": [{ "id": "login-1", "feature": "login", "files": ["<repo-relative path>"], "after": ["<piece id>"] }] }
      ```
+     A `Fix:` piece on tess-write's repro branch names it as `"branch": "test/<topic>"`; the boss claims that branch (`lane
+     claim --branch test/<topic> --base <main sha>` takes it as it is) and it lands under its own name.
    - Acceptance criteria: each a command with the exit it must return, else the observable behaviour; for behaviour no test
      covers, how the owner checks it. Cover every caller of a changed interface, the install and docs lines the change makes
      stale, and for UI the owner's real width.
