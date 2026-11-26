@@ -5,7 +5,7 @@
 //   --row refused with exit 2 (audit R7), a hostile name refused with exit 2, a verify failure with exit 3 and nothing sent, never a push,
 //   no doctor step (rows report the install exit), one run at a time (the lock of a killed sync is taken over, e1e226c7), and
 //   the base is the checked-out branch (plan base-current-branch, piece base-6): --base refused, a target follows the branch,
-//   a detached HEAD stops at verify.
+//   a detached HEAD stops at verify, and a detached target checkout is refused untouched (base-6 must-fix 1).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -185,6 +185,29 @@ test('a detached HEAD: exit 3, a verify line, nothing sent', () => {
   assert.equal(result.status, 3, result.stdout + result.stderr);
   assert.match(result.stdout, /verify: base branch failed: no branch checked out/);
   assert.equal(result.calls, '');
+});
+
+test('a detached target checkout is refused with a fix step and left as it was (its own commits stay on HEAD)', () => {
+  const fixture = setup({ targets: [{ name: 'pc', ssh: 'pc' }] });
+  const result = run(fixture, []);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  // The chain the fake ssh got, run for real in a detached clone with its own commit (tess's repro, base-6 must-fix 1).
+  const chain = result.calls.match(/\|\| exit 3; (.*); code=\$\?/)[1];
+  const pc = join(fixture.root, 'pc');
+  const bundle = join(fixture.root, 'main.bundle');
+  const git = (cwd, ...args) => spawnSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { encoding: 'utf8' });
+  git(fixture.root, 'clone', '-q', fixture.repo, pc);
+  git(fixture.repo, 'commit', '-q', '--allow-empty', '-m', 'newer');
+  git(fixture.repo, 'bundle', 'create', '-q', bundle, 'main');
+  git(pc, 'switch', '-q', '--detach');
+  git(pc, 'commit', '-q', '--allow-empty', '-m', 'pc-only work');
+  const pcOnly = git(pc, 'rev-parse', 'HEAD').stdout;
+  const ran = spawnSync('bash', ['-c', chain.replaceAll('/tmp/sync-sync-pc.bundle', bundle)], { cwd: pc, encoding: 'utf8' });
+  assert.notEqual(ran.status, 0);
+  assert.match(ran.stdout, /^the checkout is a detached HEAD: check out a branch there \(git switch -c <name> keeps its commits\)$/m);
+  assert.equal(git(pc, 'rev-parse', 'HEAD').stdout, pcOnly, 'HEAD stays on the pc commit');
+  assert.equal(git(pc, 'branch', '--show-current').stdout.trim(), '', 'still detached');
+  assert.equal(git(pc, 'rev-parse', 'main').stdout.trim(), fixture.head, 'main not moved');
 });
 
 test('tracked changes: exit 3, a verify line, nothing sent', () => {

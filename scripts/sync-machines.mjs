@@ -8,7 +8,7 @@
 // Steps: verify (tag, a branch checked out with a plain name, no tracked changes; open lanes are not checked; the removed --base,
 //   --checks and --row options exit 2), versions (one claude version, channel and pin on every machine, at or above CLAUDE_FLOOR (2.1.326, in
 //   scripts/sync/cli-checks.mjs), on the local.json pin), then per machine side by side: install on this machine; on a
-//   target a git bundle, the same branch fast-forward only with no tracked changes there (a pull when it is checked out, else a
+//   target a git bundle, the same branch fast-forward only with no tracked changes and no detached HEAD there (a pull when it is checked out, else a
 //   fetch into it and a switch to it; or a fetched tag), the shared local values, install, then the version and
 //   DISABLE_UPDATES read again. Never pushes; never touches a project repo.
 // Output: one line per machine, `<machine>: synced sha <40-hex> install <exit>` (or a JSON array with --json): { machine, synced, sha,
@@ -201,8 +201,9 @@ function lockRun(lockPath) {
 
 /**
  * A target: copy the bundle (under an alarm), then ONE remote script. The target follows this machine's branch: with no tracked
- * changes there, a fast-forward pull when it is on the branch, else a fetch into the branch (git refuses one that is not a
- * fast-forward) and a switch to it. The move comes before merge-shared because a target that is
+ * changes there and a branch checked out, a fast-forward pull when it is on the branch, else a fetch into the branch (git refuses
+ * one that is not a fast-forward) and a switch to it. A detached target is refused: a switch would leave its own commits on no
+ * branch. The move comes before merge-shared because a target that is
  * behind has no local-settings.mjs until the pull (a tag target is on the previous tag, never behind, so a tag merges first);
  * the version and DISABLE_UPDATES reads come after the install, which sets the pin.
  */
@@ -217,7 +218,7 @@ async function syncTarget(ctx, target) {
   const merge = `node scripts/install/local-settings.mjs merge-shared ${remoteShared}`;
   const chain = ctx.tag
     ? `${merge} && git fetch ${remoteBundle} refs/tags/${ctx.tag}:refs/tags/${ctx.tag} && scripts/install.sh --update --to ${ctx.tag}`
-    : `{ [ -z "$(git status --porcelain --untracked-files=no)" ] || { echo "tracked changes in the checkout: commit or undo them there"; false; }; } && if [ "$(git branch --show-current)" = "${ctx.base}" ]; then git pull --ff-only ${remoteBundle} ${ctx.base}; else git fetch ${remoteBundle} ${ctx.base}:refs/heads/${ctx.base} && git switch -q ${ctx.base}; fi && ${merge} && scripts/install.sh`;
+    : `{ [ -z "$(git status --porcelain --untracked-files=no)" ] || { echo "tracked changes in the checkout: commit or undo them there"; false; }; } && { [ -n "$(git branch --show-current)" ] || { echo "the checkout is a detached HEAD: check out a branch there (git switch -c <name> keeps its commits)"; false; }; } && if [ "$(git branch --show-current)" = "${ctx.base}" ]; then git pull --ff-only ${remoteBundle} ${ctx.base}; else git fetch ${remoteBundle} ${ctx.base}:refs/heads/${ctx.base} && git switch -q ${ctx.base}; fi && ${merge} && scripts/install.sh`;
   // A tag install links ~/.claude to a worktree of the tag and leaves the checkout's HEAD where it was (scripts/install/pin.mjs),
   // so the sha that runs there is the tag's commit.
   const installed = ctx.tag ? `refs/tags/${ctx.tag}^{commit}` : 'HEAD';

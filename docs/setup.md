@@ -59,7 +59,8 @@ some, `--json` for one JSON row per machine (the old `--base` and `--checks` are
 - Then every machine must run one Claude Code version and channel, at or above `CLAUDE_FLOOR` in `scripts/sync/cli-checks.mjs`, on the `cliVersion` pin of
   `settings/local.json`. A machine that does not is skipped and its row says why (a target still on an old checkout is checked again after its install).
 - Each target gets a git bundle (`scp`), then moves to the same branch, fast-forward only and only with no tracked change in its checkout: a pull
-  when it is on that branch, else a fetch into the branch and a switch to it. Then the shared local values and `scripts/install.sh`. Each machine prints one line,
+  when it is on that branch, else a fetch into the branch and a switch to it. A target checkout on a detached HEAD is refused and left as it is
+  (a switch would leave its own commits on no branch): check out a branch there (`git switch -c <name>` keeps its commits), then sync again. Then the shared local values and `scripts/install.sh`. Each machine prints one line,
   `<machine>: synced sha <40-hex> install <exit>`. Nothing is pushed and no project repo on a target is touched. Every ssh line is printed before it runs.
 - Exit 0: every machine synced (install exit 0, at the base tip); 1: a machine failed (rows printed); 2: bad arguments, or another sync runs (its run lock `sync-machines.lock` in the temp folder; a killed sync's lock is
   taken over and its leftover files removed); 3: verify failed.
