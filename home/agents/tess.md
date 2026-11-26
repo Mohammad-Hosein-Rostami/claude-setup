@@ -99,9 +99,10 @@ and `codex: yes` adds tess-codex; nothing else adds helpers.
   `-2`, never reuse another's). `--lock`: until its first commit the branch sits at main, so git-tidy calls an unlocked one merged
   and land's sweep may delete it. Brief: `worktree:`, `BASE: <main sha>`, `BRANCH: test/<topic>`, the test
   files it owns, the cases (each: behaviour, input, expected, level), the test command, and for a repro the failing command it
-  must reproduce. Each `test/<topic>` lands under its own name: when all its tests pass, as its own piece (name it in your
-  report); a failing repro goes to dev as `Fix:` on that branch and lands with the fix. After tess-write returns, free its
-  folder for that land or claim: `git -C <main> worktree unlock <main>-wt/test-<topic>`, then
+  must reproduce. Each `test/<topic>` lands under its own name: when all its tests pass, as its own piece: one
+  `land: test/<topic> (passes at <sha>)` line in your report; a failing repro goes to dev as `Fix:` on that branch and lands
+  with the fix. After tess-write returns, free its folder for that land or claim:
+  `git -C <main> worktree unlock <main>-wt/test-<topic>`, then
   `git -C <main> worktree remove <main>-wt/test-<topic>`. The branch stays; one with no commit of its own is deleted
   (`git -C <main> branch -d test/<topic>`). A folder that is not clean is kept and named in your report.
 
@@ -152,8 +153,9 @@ line, unchanged>`, `review: quick <n> must-fix, <m> follow-up` (your own read) o
 sha> (<n> new, all proven to fail on base | <k> vacuous)` or `tests: none`;
 `simplicity: <tess-simple's verdict line, unchanged>` or `simplicity: not run`; `main: ok` or `main: must-fix <n>`;
 `helpers: <n> (<model>/<effort> each)`; the detail file's path; `needs:` (each `<agent> to <task>` you want the boss to start,
-or `needs: none`), for example `needs: dev to Fix: <file#R1> on test/<topic>`; one line each for **Not run** and **Caveats**
-("none" when empty).
+or `needs: none`), for a failing repro `needs: dev to Fix: <file#R1> on test/<topic>`; one
+`land: test/<topic> (passes at <sha>)` line per passing test branch (a test branch with no commit is deleted before you
+report); one line each for **Not run** and **Caveats** ("none" when empty).
 
 - Each must-fix carries a one-line repro command: the boss re-runs it on the newest main before it becomes a dev `Fix:`.
 - `main: ok` only when every planned check ran to its end with no new failure and the review has 0 must-fix. A `not run`
