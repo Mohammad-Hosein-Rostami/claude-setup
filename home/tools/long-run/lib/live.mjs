@@ -1,6 +1,6 @@
 // Purpose: `long-run live`: one frame of the runs (each run's account and steps, limit and retry waits with their time, short
 //   session ids), redrawn every 2 s until Ctrl-C.
-// Exports: LIVE_REFRESH_MS, liveLines, liveLoop.
+// Exports: LIVE_REFRESH_MS, clean, liveLines, liveLoop.
 // Invariants: reads only, through runView() (the files the runs already write); each frame reads the runs again, so a run that
 //   starts, ends or switches account between frames shows in the next one; every line is cleaned of control characters and
 //   token-shaped text; a session id is cut to SESSION_ID_CHARS; a run whose files cannot be read is one `unreadable` line.
@@ -21,7 +21,8 @@ const CLEAR_SCREEN = '\x1b[H\x1b[2J';
 // C0 and C1 control characters (ESC, newline, carriage return ...): a model-written reason must not move the cursor or add lines.
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
 
-const clean = (line) => scrub(line.replace(CONTROL_CHARS, ' '), null);
+/** `line` with control characters as spaces and token-shaped text as `<token>`, safe to show on a terminal or a page. */
+export const clean = (line) => scrub(line.replace(CONTROL_CHARS, ' '), null);
 
 /** `(in N min)`, `(in <1 min)` or `(due)` from `now` until `iso`. */
 function countdown(iso, now) {

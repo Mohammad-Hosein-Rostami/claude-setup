@@ -64,7 +64,8 @@ function sessionOf(paths, unit, journal, driver) {
  * @param {Date} now the current time.
  * @returns {object} `{ runId, name, state, account, lastSwitch, steps: [...], sessions: [...], hold, warnings: string[] }`
  *   (`lastSwitch`: run.json's last `{ from, to, at }` of `resume --account`, or null; `warnings`: a stale run's bosses that still run;
- *   each step's `group`: the id of its parallel group, or null).
+ *   each step's `group`: the id of its parallel group, or null; `startedAt`: when this visit began, `lastStartAt`: when its last
+ *   start began, both UTC ISO or null before the first start; `wallMs`: the time its starts ran, 0 before the first).
  */
 export function runView(paths, now = new Date()) {
   const job = readRunJob(paths);
@@ -85,6 +86,7 @@ export function runView(paths, now = new Date()) {
       id: unit.id, kind: unit.kind, group: unit.group?.id ?? null, status: journal?.final?.status ?? (journal ? (journal.running && alive ? 'running' : 'started') : 'not started'),
       starts: journal?.totalStarts ?? 0, attempts: journal?.attempts ?? 0, waitUntil: journal?.waitUntil ?? journal?.nextAttemptAt ?? null,
       question: journal?.final?.question ?? null, reason: journal?.final?.reason ?? null,
+      startedAt: journal?.startedAt ?? null, lastStartAt: journal?.startsLog?.at(-1)?.at ?? null, wallMs: journal?.wallMs ?? 0,
     });
     const session = sessionOf(paths, unit, journal, alive ? driver : null);
     if (session) sessions.push(session);
