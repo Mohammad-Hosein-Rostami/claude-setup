@@ -25,13 +25,17 @@
 //   `--force` and no reset anywhere.
 // - A claim adds `/.claude/worktrees/` to the repository's local info/exclude when git does not ignore the pool yet (pool-ignore.mjs),
 //   under the lock, so lane folders stay out of `git status` and `git add -A`.
-// - A branch name passes `git check-ref-format --branch` unchanged, does not start with `-` or `refs/` and is no base branch (the base,
-//   main, master, develop), before anything is written.
+// - A branch name passes `git check-ref-format --branch` unchanged, does not start with `-` or `refs/` and is no base branch
+//   (`repo.baseBranches`), before anything is written.
+// - A claim starts at the base's tip, or at `--base`, which must be on the base for a new branch. Under the lock, before any folder
+//   is touched, a branch claim records its base (base-record.mjs; a failed write fails the claim) and refuses an existing branch
+//   recorded on another base. A snapshot records nothing; openRepo marks the base (`baseMarkWarning`, printed by lane-cli.mjs).
 // - The clean is `git clean -fdx` (one -f): a git repository inside an ignored folder stays. A stale entry is removed only when its
 //   HEAD is on the base and its reflog holds nothing found nowhere else (lane-slots.mjs staleEntryLossWhy).
 // - Every claim writes a job-made record (disk-free/lib/job-made.mjs) when a session id is known.
 // - Imports lane-release.mjs, which imports nothing from this file (no import cycle).
 import { gitFlag, gitText, runGit, UsageError } from './git.mjs';
+import { LANE_BASE_KEY, readLaneBase, writeLaneBase } from './base-record.mjs';
 import { listWorktrees } from './repo.mjs';
 import { withPoolLock } from './pool-lock.mjs';
 import { cloneSupport, FILL_ENV, fillFresh, fillIgnored } from './lane-fill.mjs';
@@ -39,6 +43,7 @@ import { deleteFillFile, emptyForRefill, readFillFile, removeStaleIndexLock, sta
 import { commonDirOf, LOCK_REASON_PREFIX, poolFolderOf, poolSlots, readSlot, SNAPSHOT_LABEL, staleEntryLossWhy } from './lane-slots.mjs';
 import { baseNames, branchTip, recordFolder, slotTree } from './lane-release.mjs';
 import { ignorePool } from './pool-ignore.mjs';
+import { shellWord } from './shell-word.mjs';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -67,6 +72,22 @@ export function checkBranchName(repo, branch) {
 function checkBase(repo, base) {
   if (!FULL_SHA.test(base ?? '')) throw new UsageError(`--base needs a full 40-character sha, got ${JSON.stringify(base)}`);
   if (runGit(repo.dir, ['cat-file', '-e', `${base}^{commit}`]).status !== 0) throw new UsageError(`--base ${base} is not a commit in this repository`);
+}
+
+/** Refuses a new lane's start commit that is not on the base: landing the lane would bring that other line's commits along. */
+function refuseOffBase(repo, base) {
+  if (!gitFlag(repo.dir, ['merge-base', '--is-ancestor', base, repo.baseRef])) throw new UsageError(`--base ${base} is not on ${repo.base} (the branch checked out in the main checkout); a new lane starts from it`);
+}
+
+/**
+ * Records that `branch` is claimed on the base. An existing branch recorded on another base is refused, so a claim never moves a
+ * lane silently; a new branch's old record is one a failed claim left, and is written over.
+ */
+function recordLaneBase(repo, branch, exists) {
+  const claimedOn = readLaneBase(repo.dir, branch);
+  if (claimedOn === repo.base) return;
+  if (exists && claimedOn !== null) throw new UsageError(`${branch} was claimed on ${claimedOn}, but the main checkout has ${repo.base} checked out: switch back to ${claimedOn} there, or move the lane on purpose (git config ${shellWord(`branch.${branch}.${LANE_BASE_KEY}`)} ${shellWord(repo.base)}) and claim again`);
+  writeLaneBase(repo.dir, branch, repo.base); // throws when config.lock stays held: the claim fails before the folder is touched
 }
 
 /** Refuses the base branch as a lane: its commits would go to the base and release would delete it. */
@@ -211,6 +232,8 @@ function claimUnderLock(repo, { branch, base, label }, cloning) {
   const filling = branch === null ? undefined : slots.find((slot) => slot.state === 'filling' && slot.fillFile.branch === branch);
   if (filling !== undefined) throw new UsageError(`branch ${branch} is being filled in ${filling.folder} (${filling.why}): wait for that claim to end`);
   const tip = branch === null ? null : branchTip(repo, branch);
+  if (branch !== null && tip === null) refuseOffBase(repo, base);
+  if (branch !== null) recordLaneBase(repo, branch, tip !== null);
   const lane = { branch, base, label, exists: tip !== null, target: tip ?? base };
   const [reuse, create] = cloning ? [takeFreeSlotToFill, createSlotToFill] : [takeFreeSlot, createSlot];
   const free = firstStillIn(repo, slots, 'free');
@@ -264,22 +287,27 @@ const checkoutFill = ({ mode, why }) => ({ mode, entries: 0, seconds: 0, repaire
 
 /**
  * Hands the lane `branch` a pool folder of `repo`, switched to the branch (made at `base` when new) and locked; in clone mode filled
- * by cloning the main checkout first (see the header). A snapshot gets a folder the same way but stays detached at `base`, with no
- * branch, locked as `cs-lane-pool snapshot <8 of base>` until `releaseLane` (a frozen copy of one commit, such as tess tests on).
+ * by cloning the main checkout first (see the header). A branch claim records `repo.base` as the base it is claimed on. A snapshot
+ * gets a folder the same way but stays detached at `base`, with no branch, locked as `cs-lane-pool snapshot <8 of base>` until
+ * `releaseLane` (a frozen copy of one commit, such as tess tests on).
  * @param {object} repo openRepo's result
- * @param {{ branch?: string|null, base: string, env?: NodeJS.ProcessEnv, snapshot?: boolean }} lane `base`: full sha a new branch
- *   starts at, or the snapshot's commit; `env`: HOME and session id of the job-made record, and GIT_TIDY_LANE_FILL (cloneSupport)
- * @returns {{ folder: string, slot: string, created: boolean, kept: string[], branch: string|null, base: string, snapshot: boolean,
- *   fill: object, record: string, poolIgnore: ReturnType<typeof ignorePool> }} `kept`: dependency folders left in place; `fill`:
+ * @param {{ branch?: string|null, base?: string|null, env?: NodeJS.ProcessEnv, snapshot?: boolean }} lane `base`: full sha a new
+ *   branch starts at (it must be on the base), or the snapshot's commit; null: the base's tip. `env`: HOME and session id of the
+ *   job-made record, and GIT_TIDY_LANE_FILL (cloneSupport)
+ * @returns {{ folder: string, slot: string, created: boolean, kept: string[], branch: string|null, base: string,
+ *   baseBranch: string|null, snapshot: boolean, fill: object, record: string, poolIgnore: ReturnType<typeof ignorePool> }}
+ *   `base`: the commit used; `baseBranch`: the base the lane is recorded on (null for a snapshot); `kept`: dependency folders left in place; `fill`:
  *   `{ mode: 'clone'|'checkout', entries, seconds, repaired, warnings, why }` (why: cloneSupport's reason; warnings: the fill's, and a
  *   broken slot's refill); `record`: job-made outcome; `poolIgnore`: whether git ignores the pool folder now (pool-ignore.mjs)
- * @throws {UsageError} bad branch name or sha, a snapshot with a branch, branch checked out in another folder or being filled there
- *   (named), no main worktree; PoolBusy; Error when git or the fill fails (the folder is then not handed out)
+ * @throws {UsageError} bad branch name or sha, a new branch's `--base` not on the base, an existing branch recorded on another base, a snapshot
+ *   with a branch, branch checked out in another folder or being filled there (named), no main worktree; PoolBusy; Error when git,
+ *   the record or the fill fails (the folder is then not handed out)
  */
-export function claimLane(repo, { branch = null, base, env = process.env, snapshot = false }) {
-  if (snapshot && branch !== null) throw new UsageError('--snapshot takes no --branch: a snapshot stays detached at --base');
+export function claimLane(repo, { branch = null, base = null, env = process.env, snapshot = false }) {
+  if (snapshot && branch !== null) throw new UsageError('--snapshot takes no --branch: a snapshot stays detached at one commit, with no branch');
   if (!snapshot) checkBranchName(repo, branch);
   if (!snapshot) refuseBaseBranch(repo, branch);
+  base ??= gitText(repo.dir, ['rev-parse', '--verify', `${repo.baseRef}^{commit}`]); // no --base: the base's tip
   checkBase(repo, base);
   const label = snapshot ? `${SNAPSHOT_LABEL} ${base.slice(0, SHORT_SHA)}` : branch;
   const worktrees = listWorktrees(repo);
@@ -292,5 +320,5 @@ export function claimLane(repo, { branch = null, base, env = process.env, snapsh
     return { ...taken, poolIgnore: ignorePool(worktrees[0].path) }; // under the lock: two claims never append the line twice
   });
   const fill = cloning ? fillAndEnd(repo, claimed, pending, support.why) : checkoutFill(support);
-  return { ...claimed, branch, base, snapshot, fill, record: recordFolder(env, claimed.folder, 'made', 'git-tidy lane claim') };
+  return { ...claimed, branch, base, baseBranch: snapshot ? null : repo.base, snapshot, fill, record: recordFolder(env, claimed.folder, 'made', 'git-tidy lane claim') };
 }

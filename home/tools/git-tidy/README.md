@@ -228,27 +228,37 @@ ever unlocked by the detach (below). A lock over a day old is the hint `stale-lo
 Lanes reuse folders instead of making a new worktree each time, so a folder's caches (the Go build cache keys on the path,
 node_modules) stay warm, and no folder is left behind:
 
-- `lane claim --repo <abs> --branch <name> --base <40-hex sha> [--json]` takes the pool lock, then hands out the lowest free
-  `<main worktree>/.claude/worktrees/lane-<n>`: it switches the folder to the branch (a new branch at `--base`; an existing one as
-  it is, never reset), runs `git clean -fdx` (one -f: a git repository inside an ignored folder stays) but keeps `node_modules` (any depth) when none of `pnpm-lock.yaml`, `yarn.lock`,
+- `lane claim --repo <abs> --branch <name> [--base <40-hex sha>] [--json]` takes the pool lock, then hands out the lowest free
+  `<main worktree>/.claude/worktrees/lane-<n>`: it switches the folder to the branch (a new branch at `--base`, else at the base's
+  tip; an existing one as it is, never reset), runs `git clean -fdx` (one -f: a git repository inside an ignored folder stays) but keeps `node_modules` (any depth) when none of `pnpm-lock.yaml`, `yarn.lock`,
   `package-lock.json`, `bun.lock`, `bun.lockb`, `package.json` differ between the folder's old HEAD and the new tip (`.venv` the
   same for `uv.lock`, `poetry.lock`, `Pipfile.lock`, `requirements*.txt`, `pyproject.toml`), and locks the worktree with
   `cs-lane-pool <branch>`. When every folder is busy it adds the lowest unused `lane-<n>` (no cap); a stale entry whose folder is
   gone is removed and made again, unless its HEAD is off the base, its reflog holds commits found nowhere else or its index holds staged changes (then it stays
   and a new number is used). Where the main checkout can be cloned, the folder is filled by clones instead of a checkout (Fill by
-  clone, below). Then it installs what the tip needs (`lib/lane-prep.mjs`, below). Output: `lane: <folder>`,
+  clone, below). Before it touches a folder it records the base the lane is claimed on, `git config branch.<lane>.cs-lane-base
+  <base>` (land uses the record; `git branch -m` moves it, `git branch -d` drops it); a record it cannot write fails the claim
+  (exit 14, no folder handed out). A new branch's `--base` must be on the base (`git merge-base --is-ancestor`), so a lane never
+  starts on another line. Every lane command marks the base (`branch.<base>.cs-base true`, above); a mark it cannot write is a
+  `git-tidy lane: warning: ...` line on stderr and the command goes on. Then it installs what the tip needs (`lib/lane-prep.mjs`,
+  below). Output: `lane: <folder>`,
   `kept: node_modules` or `kept: none`, `installed: <command> in <folder>, ...` or `installed: none` (`<command> in <folder> (from
   the deps cache)` when the deps cache gave the folder its `node_modules`), then `fill: clone <seconds> s, <n> entries, repaired <n>`
   or `fill: checkout (<why>)`. Each fill warning is a `git-tidy: fill warning: ...` line on stderr. Exit 0 ready, 1 an install
-  failed (`lane not ready: ...`, the worktree, `to finish:` and `to release:` lines on stderr; the folder stays claimed and is not
-  handed out), 2 usage (a short or unknown sha, a branch name `git check-ref-format --branch` refuses or that starts with `-` or
-  `refs/`, a base branch (see the base branches above: never a lane), a branch already checked out in another folder or being filled there: named), 4 the pool lock stayed held by another live claim for 60 s,
-  14 a git command or the fill failed (the folder is not handed out). `--json` prints
-  `{ folder, slot, created, kept, branch, base, fill, record, ready, installs }`, with `fill` as
+  failed (`lane not ready: ...`, the worktree line `worktree: <folder> (branch <b>, on <base>)`, `to finish:` and `to release:`
+  lines on stderr; the folder stays claimed and is not handed out), 2 usage (a short or unknown sha, a new branch's `--base` not
+  on the base (`is not on <base>`), an existing branch recorded on another base (`was claimed on <c>`: switch the main checkout back,
+  or move the lane on purpose with the `git config` step it prints), a branch name `git check-ref-format --branch` refuses or that
+  starts with `-` or `refs/`, a base branch (see the base branches above: never a lane), a branch already checked out in another
+  folder or being filled there: named), 4 the pool lock stayed held by another live claim for 60 s, 14 a git command, the base
+  record or the fill failed (the folder is not handed out). `--json` prints
+  `{ folder, slot, created, kept, branch, base, baseBranch, fill, record, ready, installs }` (`base`: the commit; `baseBranch`:
+  the base the lane is recorded on, null for a snapshot), with `fill` as
   `{ mode, entries, seconds, repaired, warnings, why }` (`mode` is `clone` or `checkout`; `why` says why).
-- `lane claim --repo <abs> --snapshot --base <40-hex sha> [--json]`: a snapshot, a frozen copy of one commit (the boss claims one
+- `lane claim --repo <abs> --snapshot [--base <40-hex sha>] [--json]`: a snapshot, a frozen copy of one commit (the boss claims one
   per tess at the commit a round landed, so tess tests on it while main moves on). It gets a folder and is filled exactly like a
-  lane (clone fill or checkout, then the installs), but stays detached at `--base`: no branch is made, and its lock is
+  lane (clone fill or checkout, then the installs), but stays detached at `--base` (else the base's tip): no branch is made and no
+  base is recorded, and its lock is
   `cs-lane-pool snapshot <first 8 of the sha>`. `--snapshot` with `--branch` is a usage error (exit 2); the other exit codes are a
   claim's. Output and `--json` are a claim's plus `snapshot: true` (in `--json`, `snapshot` is false for a lane and `branch` is null
   for a snapshot). `lane list` shows it as `busy snapshot <8>` and no claim takes it; `lane release` frees it once its tree is

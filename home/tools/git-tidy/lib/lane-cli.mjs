@@ -2,9 +2,10 @@
 //   print text lines or one JSON object, return the exit code.
 // Exports: LANE_USAGE, runLaneCommand.
 // Exit codes: claim 0 claimed and ready, 1 claimed but an install failed (the "lane not ready" lines; the folder is not handed out),
-//   2 usage (bad sha, a branch that fails check-ref-format, --snapshot with --branch, a branch checked out or being filled in another
-//   folder: named), 4 the pool lock stayed held by another live claim, 14 a git command or the clone fill failed (the folder is not
-//   handed out). A snapshot claim (--snapshot) has the same codes. list 0. release 0 detached, 3 refused (why). reclaim 0, 1 a
+//   2 usage (bad sha, a new branch's --base not on the base, an existing branch claimed on another base, a branch that fails check-ref-format,
+//   --snapshot with --branch, a branch checked out or being filled in another folder: named), 4 the pool lock stayed held by another
+//   live claim, 14 a git command, the lane's base record or the clone fill failed (the folder is not handed out). A snapshot claim
+//   (--snapshot) has the same codes. list 0. release 0 detached, 3 refused (why). reclaim 0, 1 a
 //   removal failed.
 //   Every command: 2 usage, 4 pool lock busy, 14 git failed.
 // Invariants: --repo and --folder are absolute paths; only lane-pool.mjs writes; a job-made record that could not be written is one stderr
@@ -18,13 +19,14 @@ import { PoolBusy } from './pool-lock.mjs';
 import { openRepo } from './repo.mjs';
 import { shellWord } from './shell-word.mjs';
 
-export const LANE_USAGE = 'usage: git-tidy.mjs lane claim --repo <abs> --branch <name> --base <40-hex sha> [--json]\n'
-  + '       git-tidy.mjs lane claim --repo <abs> --snapshot --base <40-hex sha> [--json]\n'
+export const LANE_USAGE = 'usage: git-tidy.mjs lane claim --repo <abs> --branch <name> [--base <40-hex sha>] [--json]\n'
+  + '       git-tidy.mjs lane claim --repo <abs> --snapshot [--base <40-hex sha>] [--json]\n'
   + '       git-tidy.mjs lane list --repo <abs> [--json]\n'
   + '       git-tidy.mjs lane release --repo <abs> --folder <abs lane folder> [--json]\n'
   + '       git-tidy.mjs lane reclaim --repo <abs> [--json]';
 const EXIT = Object.freeze({ ok: 0, notReady: 1, failed: 1, usage: 2, refused: 3, busy: 4, git: 14 });
-const NEEDS = Object.freeze({ claim: ['repo', 'branch', 'base'], list: ['repo'], release: ['repo', 'folder'], reclaim: ['repo'] });
+const NEEDS = Object.freeze({ claim: ['repo', 'branch'], list: ['repo'], release: ['repo', 'folder'], reclaim: ['repo'] });
+const OPTIONAL = Object.freeze({ claim: ['base'] }); // flags a command takes but does not need (claim: the base's tip by default)
 const FLAGS = Object.freeze({ '--repo': 'repo', '--branch': 'branch', '--base': 'base', '--folder': 'folder' });
 const ABSOLUTE_PATH = /^(\/|[A-Za-z]:[\\/])/;
 const WRITTEN_RECORDS = new Set(['recorded', 'filled']);
@@ -38,7 +40,7 @@ function parseLaneArgs([command, ...rest]) {
     const name = FLAGS[rest[i]];
     if (rest[i] === '--json') options.json = true;
     else if (rest[i] === '--snapshot' && command === 'claim') options.snapshot = true;
-    else if (name !== undefined && NEEDS[command].includes(name)) {
+    else if (name !== undefined && [...NEEDS[command], ...(OPTIONAL[command] ?? [])].includes(name)) {
       if (rest[i + 1] === undefined || rest[i + 1].startsWith('--')) throw new UsageError(`${rest[i]} needs a value. ${LANE_USAGE}`);
       options[name] = rest[++i];
     } else throw new UsageError(`unknown argument ${JSON.stringify(rest[i])} for lane ${command}. ${LANE_USAGE}`);
@@ -60,7 +62,7 @@ function warnRecord(record) {
 function notReadyLines(repoDir, claimed, failed) {
   return [
     `lane not ready: ${failed.command} failed in ${failed.dir}: ${failed.why}`,
-    `  worktree: ${claimed.folder} (${claimed.snapshot ? `snapshot, detached at ${claimed.base}` : `branch ${claimed.branch}`})`,
+    `  worktree: ${claimed.folder} (${claimed.snapshot ? `snapshot, detached at ${claimed.base}` : `branch ${claimed.branch}, on ${claimed.baseBranch}`})`,
     `  to finish:  cd ${shellWord(installFolder(claimed.folder, failed.dir))} && ${failed.command}`,
     `  to release: node ${shellWord(CLI)} lane release --repo ${shellWord(repoDir)} --folder ${shellWord(claimed.folder)}`,
   ];
@@ -129,7 +131,9 @@ const RUNNERS = Object.freeze({ claim: runClaim, list: runList, release: runRele
 export function runLaneCommand(argv) {
   try {
     const options = parseLaneArgs(argv);
-    return RUNNERS[options.command](openRepo(options.repo, null), options);
+    const repo = openRepo(options.repo, null);
+    if (repo.baseMarkWarning !== null) console.error(`git-tidy lane: warning: ${repo.baseMarkWarning}`);
+    return RUNNERS[options.command](repo, options);
   } catch (error) {
     console.error(`git-tidy lane: ${error.message}`);
     if (error instanceof UsageError) return EXIT.usage;
