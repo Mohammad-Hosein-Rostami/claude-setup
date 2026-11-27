@@ -20,12 +20,13 @@ Keep extra usage off in claude.ai so nothing can bill credits.
     only for the boss and asks you its questions at the start of a job. Work on locks, concurrency, security or data loss gets
     a short state design from it first, even when the build looks clear. Its helpers take the simple parts: `lex-scout` (code
     and doc lookups, maps of an area) and `lex-web` (web research with sources).
-  - `dev` builds one small piece in the lane the boss claimed for it and runs no tests. It splits the piece into parts, each
-    owning its files (parts that share a file run one after another), may write any part itself and reads every helper's
-    diff before taking it. Its helpers: `dev-part` (one part; Sonnet by default, Opus or xhigh for an important, risky or hard part),
-    `dev-ui` (screens, components, forms), `dev-pixel` (Figma to code; its final gate is `pixel-qa`), `dev-debug` (hard bugs,
-    root cause), `dev-docs` (the docs and user-facing text, written while the code is built), `dev-run` (installs, long logs,
-    returned as a short summary) and `lex-scout`.
+  - `dev` builds one small piece in the lane the boss claimed for it and runs no tests: before it edits, it reads every
+    acceptance line, every user of what it changes and each input's states, and before it reports, it reviews its own diff
+    against each acceptance line. It splits the piece into parts, each owning its files (parts that share a file run one after
+    another), may write any part itself and reads every helper's diff before taking it. Its helpers: `dev-part` (one part;
+    Sonnet by default, Opus or xhigh for an important, risky or hard part), `dev-ui` (screens, components, forms), `dev-pixel`
+    (Figma to code; its final gate is `pixel-qa`), `dev-debug` (hard bugs, root cause), `dev-docs` (the docs and user-facing
+    text, written while the code is built), `dev-run` (installs, long logs, returned as a short summary) and `lex-scout`.
   - `tess` runs the quality checks in the background, only on main and one feature at a time, by the table "Which tess work a
     change gets" in the `qa-plan` skill (`home/CLAUDE.md`, "Quality checks", sums it up). By default tess does only a quick
     look: the tests the change touched, a type or syntax check, and one read of the diff against the brief and its
