@@ -313,7 +313,8 @@ test('a second sync while one runs (its lock holds a running pid) exits 2 and se
   assert.equal(result.status, 2, result.stdout + result.stderr);
   assert.match(result.stderr, /another sync runs/);
   assert.equal(readFileSync(lockPathOf(fixture), 'utf8'), String(process.pid), 'the running sync keeps its lock');
-  assert.doesNotMatch(readFileSync(fixture.log, 'utf8'), /scp|git pull/);
+  // The lock comes before verify, so the refused run calls no fake ssh or scp (their only writers): no log, no git pull, nothing sent.
+  assert.equal(existsSync(fixture.log), false, 'the refused run calls no ssh or scp');
 });
 
 test('the script holds no git push', () => {
