@@ -5,16 +5,19 @@
 // Usage: node scripts/agent-usage.mjs [--since <iso>] [--project <key>] [--json]
 //   --since    an ISO 8601 instant; transcripts last written before it are skipped (default: 7 days ago)
 //   --project  one folder name under <config dir>/projects, the project key (default: every project)
-//   --json     one JSON object { since, project, runs, rules, skippedLines, unreadable } instead of the text
+//   --json     one JSON object { since, project, runs, rules, bossRules, skippedLines, unreadable } instead of the text
 // Reads: <config dir>/projects/<key>/<session>/subagents/*.jsonl (the agent type from the .meta.json beside each) and
 //   <config dir>/projects/<key>/<session>.jsonl (the main session, the boss). <config dir> is CLAUDE_CONFIG_DIR, else ~/.claude.
 // Output: a summary line, the table (one row per agent type: runs, cold start, context read, turns and own Bash per run as means,
 //   like the plan's baseline, background shells, TaskStop and `sleep` commands, report words as a median), then one line per
-//   rule `M<n> <what>: <number>`. A number with no runs behind it prints `no runs`, never 0%.
+//   rule `M<n> <what>: <number>`, then one per boss rule `B<n> <what>: <number>` (plan-core-best.md cb-usage-1: B1-B6 how the
+//   boss runs the round loop, B7 effort and dev verdicts per plan), counted from main-session lines stamped since --since
+//   (B3's releases from every transcript). A number with no runs behind it prints `no runs`, never 0%.
 // Exit: 0, also when nothing matched (a zero table and `no runs since <iso>`); 2 on a bad or unknown flag or an unknown project.
 // Exports: main(argv, env, nowMs) -> exit code.
-// Invariants: reads only and prints counts only, never transcript text. A line that is not JSON is skipped and counted; a file
-//   that cannot be read is named on stderr and skipped. Reading the transcripts is agent-usage/transcripts.mjs.
+// Invariants: reads only and prints counts only, never transcript text (B7 names plan files: word characters only). A line
+//   that is not JSON is skipped and counted; a file that cannot be read is named on stderr and skipped. Reading the transcripts
+//   is agent-usage/transcripts.mjs.
 import { readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -30,6 +33,9 @@ const REPORT_CAP_WORDS = { 'lex-web': 250, 'lex-scout': 200 }; // M8: the agents
 const MAP_CAP_WORDS = 500; // lex-scout's cap when its brief asks for a map
 const BOSS_OWN_FILES = /REPORT-|HANDOFF|\/scratchpad\/|claude-setup-reports/; // M3: notes and reports the boss may touch
 const RAISED_EFFORTS = new Set(['xhigh', 'max']);
+const EFFORT_NAMES = new Set(['low', 'medium', 'high', 'xhigh', 'max']); // B7: any other value is the agent file's own effort
+const BOSS_REPORT_CAP_WORDS = 150; // B5: the cap of a lex, dev, tess or max report to the boss (home/CLAUDE.md)
+const BOSS_REPORTERS = new Set(['lex', 'dev', 'tess', 'max']);
 const SAFE_PROJECT_KEY = /^(?!\.\.?$)[^/\\]+$/; // one folder name: no separator, not . or ..
 const OPTIONS = { since: { type: 'string' }, project: { type: 'string' }, json: { type: 'boolean' } };
 
@@ -124,6 +130,96 @@ function rulesSixToTen(agents, runsOf) {
   };
 }
 
+/** How many lands one land call made: its `landed` lines; with none shown, 0 when refused, else 1 (output cut or in background). */
+function landCount(result) {
+  if (result === null) return 1;
+  if (result.landed > 0) return result.landed;
+  return result.isRefused ? 0 : 1;
+}
+
+/** B1 for one session: a land is ticked by its own `tick:` line or by a tick call before the next land. */
+function tickedLands(calls) {
+  const tally = { lands: 0, ticked: 0 };
+  let isLastLandUnticked = false;
+  for (const call of calls) {
+    for (const step of call.steps) {
+      if (step === 'tick') {
+        if (isLastLandUnticked) tally.ticked += 1;
+        isLastLandUnticked = false;
+        continue;
+      }
+      const count = landCount(call.result);
+      if (count === 0) continue; // a refused land counts as neither
+      const ownTicks = Math.min(count, call.result?.ticks ?? 0);
+      tally.lands += count;
+      tally.ticked += ownTicks;
+      isLastLandUnticked = count > ownTicks;
+    }
+  }
+  return tally;
+}
+
+/** The session's agent reports with the start each belongs to (by the notice's tool use id, else its task id). */
+function reportsOf(run) {
+  const byAgentId = new Map(run.starts.filter((start) => start.agentId).map((start) => [start.agentId, start]));
+  return run.notices.map((notice) => ({ ...notice, start: run.startsById.get(notice.toolUseId) ?? byAgentId.get(notice.taskId) }))
+    .filter((report) => report.start !== undefined);
+}
+
+/** B7: per plan file, the efforts of the lex starts whose brief names it and the verdicts of the dev reports whose brief does. */
+function plansRule(boss) {
+  const plans = new Map();
+  const planOf = (name) => {
+    if (!plans.has(name)) plans.set(name, { lexEfforts: {}, devVerdicts: { done: 0, partial: 0, blocked: 0 } });
+    return plans.get(name);
+  };
+  for (const run of boss) {
+    for (const start of run.starts.filter((each) => each.type === 'lex' && each.isRecent)) {
+      const effort = EFFORT_NAMES.has(start.effort) ? start.effort : 'default';
+      for (const { lexEfforts } of start.plans.map(planOf)) lexEfforts[effort] = (lexEfforts[effort] ?? 0) + 1;
+    }
+    for (const report of reportsOf(run).filter((each) => each.start.type === 'dev' && each.verdict !== null)) {
+      for (const name of report.start.plans) planOf(name).devVerdicts[report.verdict] += 1;
+    }
+  }
+  const byPlan = Object.fromEntries([...plans].sort(([a], [b]) => a.localeCompare(b)));
+  const counts = (byName, separator) => Object.entries(byName).map(([name, count]) => `${name} ${count}`).join(separator);
+  const planText = ([name, { lexEfforts, devVerdicts }]) =>
+    `${name} lex ${counts(lexEfforts, ', ') || 'none'}, dev ${counts(devVerdicts, ' ')}`;
+  const text = plans.size === 0 ? 'no runs' : Object.entries(byPlan).map(planText).join('; ');
+  return { label: 'per plan: lex start efforts, dev report verdicts', byPlan, text };
+}
+
+/** Rules B1-B7: how the boss runs the round loop, from the main sessions (B3's releases from every run). */
+function bossRules(boss, agents) {
+  const calls = boss.flatMap((run) => run.ruleCalls);
+  const lands = boss.map((run) => tickedLands(run.ruleCalls));
+  const landCalls = calls.filter((call) => call.steps.includes('land'));
+  const cutLandCalls = landCalls.filter((call) => call.isLandCut).length;
+  const claims = sum(calls.map((call) => call.snapshotClaims));
+  const allCalls = [...calls, ...agents.flatMap((agent) => agent.run.ruleCalls)];
+  const releases = sum(allCalls.map((call) => call.releases));
+  const syncs = calls.filter((call) => call.isSync);
+  const failedSyncs = syncs.filter((call) => call.result?.isNotSynced).length;
+  const reports = boss.flatMap(reportsOf).filter((report) => BOSS_REPORTERS.has(report.start.type));
+  const longReports = reports.filter((report) => report.words > BOSS_REPORT_CAP_WORDS).length;
+  const checks = calls.filter((call) => call.isCheck).length;
+  const edits = boss.flatMap((run) => run.editPaths).filter((path) => path && !BOSS_OWN_FILES.test(path)).length;
+  const counted = (text) => (boss.length === 0 ? 'no runs' : text);
+  return {
+    B1: { label: 'lands followed by a tick', ...share(sum(lands.map((each) => each.ticked)), sum(lands.map((each) => each.lands))) },
+    B2: { label: "land calls that cut land's output (| head, | tail, | grep)", ...share(cutLandCalls, landCalls.length) },
+    B3: { label: 'snapshot claims and lane releases', claims, releases, text: counted(`${claims} claims, ${releases} releases`) },
+    B4: { label: 'sync calls that printed NOT synced', ...share(failedSyncs, syncs.length) },
+    B5: { label: `lex, dev, tess and max reports over ${BOSS_REPORT_CAP_WORDS} words`, ...share(longReports, reports.length) },
+    B6: {
+      label: 'boss test commands and Edit/Write calls on project files', checks, edits,
+      text: counted(`${checks} test commands, ${edits} Edit/Write calls`),
+    },
+    B7: plansRule(boss),
+  };
+}
+
 /** The table and rule lines as text. */
 function renderText(report) {
   const where = report.project ?? 'all projects';
@@ -135,7 +231,7 @@ function renderText(report) {
     lines.push([row.type, row.runs, tokens(row.coldStart), tokens(row.contextPerRun), row.turnsPerRun, row.bashPerRun,
       row.backgroundShells, row.taskStops, row.sleepCommands, row.reportWords].join(' | '));
   }
-  for (const [id, rule] of Object.entries(report.rules)) lines.push(`${id} ${rule.label}: ${rule.text}`);
+  for (const [id, rule] of Object.entries({ ...report.rules, ...report.bossRules })) lines.push(`${id} ${rule.label}: ${rule.text}`);
   return `${lines.join('\n')}\n`;
 }
 
@@ -179,7 +275,7 @@ export function main(argv, env = process.env, nowMs = Date.now()) {
   const runsOf = (type) => agents.filter((agent) => agent.type === type).map((agent) => agent.run);
   const report = {
     since: new Date(options.sinceMs).toISOString(), project: options.project, runs: tableRows(agents),
-    rules: { ...rulesOneToFive(runsOf, boss), ...rulesSixToTen(agents, runsOf) }, ...tally,
+    rules: { ...rulesOneToFive(runsOf, boss), ...rulesSixToTen(agents, runsOf) }, bossRules: bossRules(boss, agents), ...tally,
   };
   process.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : renderText(report));
   return EXIT.ok;

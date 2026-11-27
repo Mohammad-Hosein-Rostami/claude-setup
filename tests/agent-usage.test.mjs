@@ -25,7 +25,7 @@ const OLD_MTIME = new Date('2021-01-01T00:00:00Z');
 const NEW_MTIME = new Date('2024-01-01T00:00:00Z');
 const SINCE_BETWEEN = '2022-01-01T00:00:00.000Z';
 const RULE_IDS = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'M8', 'M9', 'M10'];
-const JSON_KEYS = ['project', 'rules', 'runs', 'since', 'skippedLines', 'unreadable'];
+const JSON_KEYS = ['bossRules', 'project', 'rules', 'runs', 'since', 'skippedLines', 'unreadable'];
 const cannotChmod = process.platform === 'win32' || process.getuid?.() === 0 ? 'a file cannot be made unreadable here' : false;
 
 const userLine = (content) => ({ type: 'user', message: { role: 'user', content } });
@@ -234,7 +234,7 @@ test('an unreadable file is named on stderr and counted in `unreadable`, and the
   assert.ok(report.runs.some(({ type }) => type === 'tess'), 'the readable run is counted');
 });
 
-test('--json parses and has the keys since, project, runs, rules, skippedLines and unreadable', () => {
+test('--json parses and has the keys since, project, runs, rules, bossRules, skippedLines and unreadable', () => {
   const world = makeWorld();
   world.agent({ type: 'dev', lines: runLines({ turns: 2 }) });
   const report = world.report();
