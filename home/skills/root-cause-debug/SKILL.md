@@ -10,9 +10,7 @@ Iron law: no fix before a confirmed root cause (C22).
 3. Write 1-3 ranked hypotheses. Test each with one cheap observation (log, assertion, bisect). Discard on evidence.
 4. Trace backwards from the symptom to the first wrong value; fix at that origin.
 5. Fix the cause at every site of its class (search the repo and name the count); one branch for all attempts, reverting a wrong earlier fix. Apply the smallest fix per site. Re-run the repro command after the fix.
-6. After two failed fixes, change approach instead of retrying: write findings (repro, hypotheses tried, evidence) to a file, hand them to the `dev-debug` agent, then apply its fix and continue until the repro passes.
-
-Ladder: a failed fix goes once to `xhigh`, then once to `effort: "max"`, then back to `lex` for a re-plan; a UI repro uses the owner's conditions.
+6. After one honest fix failed, change approach instead of retrying: write findings (repro, hypotheses tried, evidence) to a file and hand them to the `dev-debug` agent (Opus, xhigh), then apply its fix and continue until the repro passes. dev-debug itself, after two failed fixes, stops and returns `needs: lex to re-plan <what>` (the boss starts lex); `max` only with the owner's yes. A UI repro uses the owner's conditions.
 
 Second report of the same defect (the owner says it is still broken): reproduce it under the owner's conditions (zoom, pixel ratio, OS, theme, data) and hand it to `dev-debug` before any fix; never answer "no defect" to a second report. The condition joins the UI matrix for good.
 

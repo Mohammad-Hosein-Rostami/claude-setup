@@ -29,9 +29,10 @@ changelog of the installed version) before you edit; never guess a library API. 
 - Work only in the `worktree: <absolute path>` the brief names: the pool folder the boss claimed (`cd` there first and use
   absolute paths). Never make or pick a folder of your own, and never edit the main checkout (the boss only lands there);
   no `worktree:`: stop with `blocked: no worktree`.
-- First command: `git rev-parse HEAD`. With `BASE:` and `BRANCH:` in the brief: when HEAD is not BASE, switch to BRANCH if it
-  exists (then `git rebase <BASE>` unless BASE is already its ancestor), else `git switch -c <BRANCH> <BASE>`. A name that
-  `git check-ref-format --branch` rejects: stop with `bad branch <name>`. A failed switch: change nothing, return
+- First commands: `git rev-parse HEAD` and `git branch --show-current`. With `BASE:` and `BRANCH:` in the brief: not on
+  BRANCH, switch to it if it exists, else `git switch -c <BRANCH> <BASE>`; then, unless BASE is already an ancestor of HEAD,
+  `git rebase --reapply-cherry-picks <BASE>` (a plain rebase drops a commit whose patch the base took and later reverted). A
+  name that `git check-ref-format --branch` rejects: stop with `bad branch <name>`. A failed switch: change nothing, return
   `wrong base <got> != <BASE>`. A re-done task continues its branch: never `-2` or `-fix`, never `--force`.
 - Before the first edit, write the brief's constraints (scope, exclusions, owner decisions, acceptance) under `## Constraints` in
   your hand-over note: the path the brief gives, else `HANDOFF-<branch>.md` in your scratchpad; never commit it. After a
@@ -72,9 +73,10 @@ changelog of the installed version) before you edit; never guess a library API. 
   diff once against the brief (scope, simplicity, every acceptance line); a helper's "done" is never taken from its words. A gap
   goes back once to the same helper (SendMessage, the exact gap); a second miss: fix it yourself or re-run the part with
   `model: "opus"`.
-- Bring a helper's commits onto your branch by rebase and `git merge --ff-only` or cherry-pick, never a merge commit. Delete
-  the branch you folded in, and its worktree, in the same step: `git branch -d <it>` right after the fast-forward.
-- Only the boss starts `lex` (a design question the plan does not answer) and `tess` (it checks main after the land, never
+- Bring a helper's commits onto your branch, never by a merge commit: in its worktree `git rebase --reapply-cherry-picks
+  <your HEAD sha>`, then in yours `git merge --ff-only <its branch>` (or cherry-pick). Delete the branch you folded in, and its
+  worktree, in the same step: `git branch -d <it>` right after the fast-forward.
+- Only the boss starts `lex` (a design question the plan does not answer) and `tess` (it checks the base after the land, never
   your branch). Never message lex or tess yourself: ask the boss with `needs: <agent> to <task>, blocks: <what>` as
   home/CLAUDE.md says, and go on with what does not depend on it.
 - Before your verdict and before you end your turn, wait for every helper you started to return its result. A notice that says a
@@ -101,7 +103,7 @@ changelog of the installed version) before you edit; never guess a library API. 
 - Fix mode (the brief starts `Fix:`): fix every listed finding, each of its parts, and every other site of the same class
   (search the repo; report `swept: <id>: <class>: <n> sites`). A fix that needs new state, a lock, a cache, a new module or a new
   flag reuses a named helper (`reused: <path>`) or stops with `needs-design: <what>`. A `Fix:` of a landed piece is a new
-  piece: on its own `lane/<id>` from the main sha, or on tess-write's `test/<topic>` (`BRANCH: test/<topic>`), where it makes
+  piece: on its own `lane/<id>` from the base's commit, or on tess-write's `test/<topic>` (`BRANCH: test/<topic>`), where it makes
   the failing tests pass and never edits those tests; that branch lands with the fix, under its own name.
 - An install the work needs runs directly or goes to `dev-run`. A command that may run over 3 minutes runs with
   `run_in_background: true` and a `timeout` (at most 2 h), started and waited for as `~/.claude/agents/dev-run.md` says. A
@@ -143,7 +145,7 @@ Checks
 - C11 Acceptance lines first; a bug fix starts from its failing repro. C13 Never weaken or silence a check to pass it: no
   `ts-ignore`, `eslint-disable`, skipped, `.only`, deleted or loosened tests. C12/C29 Done means every acceptance line is met in
   the diff; the checks are tess's, and a failure it finds is fixed with its whole class.
-- C23 Show failing lines only. C28 After two failed approaches, change approach (`dev-debug`).
+- C23 Show failing lines only. C28 After one honest fix failed, change approach (`dev-debug`).
 
 Repo and git
 - C17 Match the repo's conventions and read the neighbours first; the project's own build, lint and test commands win.
