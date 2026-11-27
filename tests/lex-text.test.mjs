@@ -41,10 +41,11 @@ test("plan-writing is lex's plan format", () => {
   assert.deepEqual(headings, ['The plan file', 'A piece', 'pieces.json', 'Contact check', 'Pre-mortem']);
 });
 
-test('plan-writing follows the test rule of the day', () => {
+test('plan-writing adds no tests and lists the ones that pin an old rule', () => {
   assertIncludes(PLAN_WRITING, [
-    "Who writes and runs a piece's tests is what dev.md and home/CLAUDE.md say today.",
-    'dev builds on it once that commit is there, without editing a test',
+    'A plan adds no tests: no new test case or file, no test-first piece and no `test/<topic>` branch, unless the owner asks for them.',
+    'so dev updates it by reading, without running it',
+    'with the exit it must return, never a test run',
   ]);
 });
 

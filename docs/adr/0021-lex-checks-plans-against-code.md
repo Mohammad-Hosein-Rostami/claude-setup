@@ -1,6 +1,10 @@
 # 0021: lex checks each plan against the code before handoff
 
 - Status: accepted. Date: 2026-11-27. Builds on 0002 (team split), 0010 (round loop).
+- Update 2026-11-27 (the owner's decision: no tests to catch bugs): D3 and its consequences are replaced (no tess-write run,
+  no test list per plan). A plan adds no tests, no test-first piece and no `test/<topic>` branch unless the owner asks; a
+  piece lists the existing tests that pin an old rule (Stale pins), and dev updates them by reading. Acceptance lines are read
+  or near-free commands, never a test run; `pieces.json` has no `test` field.
 
 ## Context
 
