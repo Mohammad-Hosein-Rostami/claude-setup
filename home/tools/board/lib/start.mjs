@@ -9,13 +9,15 @@
 // Invariants: a piece is claimed only when the tick calls it startable (after, waits, overlap, held, clash), the base has no finding
 //   of its own and the ledger reads (an unread ledger hides every hold); the pool lock lets two starts of one piece make one claim.
 //   A piece whose branch a pool lane holds gets no second claim: its brief prints again when no live agent is on it and no hold is
-//   on its files. `--tess` claims the snapshot first, then writes the mark, so a crash between leaves a spare snapshot (released by
-//   its printed command), never a mark with no folder. Every name and path printed goes through cleanText, and every path through
+//   on its files, its `BASE:` the commit the lane's branch is on (its fork point), not the base's tip now. `--tess` claims the
+//   snapshot first, then writes the mark, so a crash between leaves a spare snapshot (released by its printed command), never a
+//   mark with no folder. Two `--tess` starts of one feature at once may both claim and mark (TODO(F3): the due check is not under
+//   the marks lock). Every name and path printed goes through cleanText, and every path through
 //   shellWord. Exit 0 started or brief again, 1 refused (`start refused: <why>` on stderr), 2 usage (a bad flag, an unknown or
 //   ambiguous id, no remembered plan, a tick that failed) and any unexpected failure.
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { UsageError } from '../../git-tidy/lib/git.mjs';
+import { UsageError, gitText } from '../../git-tidy/lib/git.mjs';
 import { claimPrepared, laneExit } from '../../git-tidy/lib/lane-cli.mjs';
 import { openRepo } from '../../git-tidy/lib/repo.mjs';
 import { shellWord } from '../../git-tidy/lib/shell-word.mjs';
@@ -152,7 +154,10 @@ function pieceBlock(tick, entry, piece) {
 function briefAgain(repo, tick, { plan, piece, lane }) {
   if (lane.agent !== null && lane.agent.state !== DONE) return refused(`${clean(lane.agent.type)} ${clean(lane.agent.id).slice(0, AGENT_ID_CHARS)} is on it (${lane.slot})`);
   if (lane.held.length > 0) return refused(`${piece.id} is in ${lane.slot} and held by ${lane.held.join(', ')}: it starts again once tess returns`);
-  return { lines: [`already claimed in ${lane.slot}; brief again:`, ...devBrief(repo, { plan, piece, folder: lane.folder, base: tick.main.sha })], exit: EXIT.started };
+  // the pool records only the base branch a lane was claimed on (cs-lane-base), not its sha: the fork point is the claim's sha
+  // until dev rebases, then the sha dev rebased onto, so BASE is the commit the branch is on, not the base's tip now
+  const base = gitText(repo.dir, ['merge-base', tick.main.sha, `refs/heads/${lane.branch}`]);
+  return { lines: [`already claimed in ${lane.slot}; brief again:`, ...devBrief(repo, { plan, piece, folder: lane.folder, base })], exit: EXIT.started };
 }
 
 /**
@@ -193,8 +198,24 @@ function isFirstFull(repo, tick, qa) {
   return !marks.some((mark) => mark.sha === tick.main.sha && (mark.qa ?? '').split(' ').includes(FULL));
 }
 
+/**
+ * The `acceptance:` of tess's brief: the feature's own `acceptance` when the plan gives one, else each landed piece's own
+ * `acceptance`, and the spec's lines of the landed pieces that give none (only when the feature has a spec).
+ */
+function tessAcceptance(plan, feature, state) {
+  if (feature.acceptance !== undefined) return clean(feature.acceptance);
+  const landedIds = new Set(state.lands.map(({ piece }) => piece));
+  const landed = plan.pieces.filter((piece) => landedIds.has(piece.id));
+  const own = landed.filter((piece) => piece.acceptance !== undefined).map((piece) => `${piece.id}: ${clean(piece.acceptance)}`);
+  const fromSpec = landed.filter((piece) => piece.acceptance === undefined).map((piece) => piece.id);
+  const specPart = fromSpec.length > 0 && feature.spec !== undefined ? [`the spec's lines of pieces ${fromSpec.join(', ')}`] : [];
+  const parts = [...own, ...specPart];
+  return parts.length === 0 ? NO_SPEC : parts.join('; ');
+}
+
 /** tess's brief: tess.md's fields, the job, and the `done:` and `release:` commands tess runs last. */
-function tessBrief(repo, { job, feature, state, claimed, qa, suite }) {
+function tessBrief(repo, { plan, feature, state, claimed, qa, suite }) {
+  const { job } = plan;
   const repoWord = shellWord(clean(repo.dir));
   return [
     `start tess with description "tess ${claimed.slot} ${feature.id}" and this brief, whole:`,
@@ -206,6 +227,7 @@ function tessBrief(repo, { job, feature, state, claimed, qa, suite }) {
     `commits: ${state.lands.map(({ from, to }) => `${short(from)}..${short(to)}`).join(' ')}`,
     `suite: ${suite ? 'yes' : 'no'}`,
     `spec: ${feature.spec === undefined ? NO_SPEC : clean(feature.spec)}`,
+    `acceptance: ${tessAcceptance(plan, feature, state)}`,
     `risk: ${clean(feature.risk)}${state.riskFound === null ? '' : ` -> ${clean(state.riskFound)}`}`,
     `job: ${job}`,
     `done: node ~/.claude/tools/board/board.mjs done --repo ${repoWord} --job ${job} --tess ${feature.id} --sha ${claimed.base} --verdict <ok|must-fix>`,
@@ -235,7 +257,7 @@ export function startTess({ repo, tick, featureId, job, qa }) {
   } catch (error) {
     return refused(`snapshot ${claimed.slot} is claimed, but the tess mark failed: ${firstLine(error.message)}; release it: ${releaseCommand(repo, claimed.folder)}`);
   }
-  const lines = [`snapshot ${claimed.slot} at ${short(claimed.base)}; marked ${feature.id} for tess (job ${entry.job})`, ...tessBrief(repo, { job: entry.job, feature, state, claimed, qa, suite })];
+  const lines = [`snapshot ${claimed.slot} at ${short(claimed.base)}; marked ${feature.id} for tess (job ${entry.job})`, ...tessBrief(repo, { plan, feature, state, claimed, qa, suite })];
   return { lines, exit: EXIT.started };
 }
 

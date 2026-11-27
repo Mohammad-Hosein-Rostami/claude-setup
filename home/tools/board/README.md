@@ -235,7 +235,8 @@ piece that has landed, any piece while the base has a finding of its own or the 
 queue does not call `startable`, with its queue state as the reason (`<id> after <piece>`, `held by <feature>`, `overlaps
 <lane>`, `clash`, `waits <branch>`): a held piece is never started. A piece whose branch a pool lane already holds gets no
 second claim: with no live agent on it and no hold on its files it prints `already claimed in lane-<n>; brief again:` and the
-brief (exit 0, `BASE:` the base's tip now); a live agent is `<type> <id7> is on it (lane-<n>)`, a hold `held by <feature>`
+brief (exit 0, `BASE:` the commit the lane's branch is on: its fork point from the base, the claim's sha until dev rebases,
+never the base's tip now); a live agent is `<type> <id7> is on it (lane-<n>)`, a hold `held by <feature>`
 (exit 1).
 
 `--tess` claims a snapshot at the tick's base sha, then marks the feature for tess at that sha (the `qa` level is kept in the
@@ -252,11 +253,17 @@ feature: <feature>
 commits: <from8>..<to8> ...
 suite: yes|no
 spec: <feature spec>|none in the plan
+acceptance: <feature acceptance>|<piece>: <piece acceptance>; the spec's lines of pieces <piece>, ...|none in the plan
 risk: <risk>[ -> <classes the risk tool found>]
 job: <slug>
 done: node ~/.claude/tools/board/board.mjs done --repo <abs> --job <slug> --tess <feature> --sha <40-hex> --verdict <ok|must-fix>
 release: node ~/.claude/tools/git-tidy/git-tidy.mjs lane release --repo <abs> --folder <abs snapshot folder>
 ```
+
+`acceptance` is the feature's own `acceptance` when the plan gives one; else, for the pieces that have landed, each piece's own
+`acceptance` and `the spec's lines of pieces <ids>` for those with none (when the feature has a `spec`); `none in the plan` when
+neither is there. Two `--tess` starts of one feature at the same moment can both claim a snapshot and mark it: the due check
+and the mark are not under one lock.
 
 `--qa` takes tess's levels (`quick`, the default, `smoke`, `checks`, `full`, `review`, `tests`, `edge`, `deps`, `ui`,
 `repro`, `e2e`; several with spaces or commas), only on the owner's ask. `suite: yes` only for the first `full` tess at that
