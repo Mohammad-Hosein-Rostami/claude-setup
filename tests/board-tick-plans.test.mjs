@@ -69,7 +69,11 @@ function writeLands(home, repo, lands) {
   writeFileSync(file, `${rows.join('\n')}\n`);
 }
 
-const nextOf = (result) => lines(result).at(-1);
+/** The `next:` header and the `do` lines after it, the tick's last lines, as one text. */
+const nextOf = (result) => {
+  const shown = lines(result);
+  return shown.slice(shown.findIndex((line) => line.startsWith('next: '))).join('\n');
+};
 const forgetCommand = (repo, plan) => `node ~/.claude/tools/board/board.mjs tick --repo ${repo} --forget-plan ${plan}`;
 
 test('two plans in one tick: each job\'s queue, features and base-line part start with its job, and next claims from both', () => {
@@ -85,7 +89,7 @@ test('two plans in one tick: each job\'s queue, features and base-line part star
   for (const line of ['alpha: queue a1 startable', `alpha: ${FEATURES_NONE}`, 'beta: queue b1 startable', `beta: ${FEATURES_NONE}`]) {
     assert.ok(shown.includes(line), `${line} in:\n${result.stdout}`);
   }
-  assert.ok(nextOf(result).startsWith('next: claim a1; claim b1; '), nextOf(result));
+  assert.match(nextOf(result), /^next: 2 steps .*\ndo 1: start dev on a1 \(job alpha\): .* --piece a1 --job alpha\ndo 2: start dev on b1 \(job beta\): .* --piece b1 --job beta$/, nextOf(result));
 });
 
 test('a plan passed once is remembered: a tick with no --plan shows it, per repository, and a second plan joins the list', () => {
@@ -123,7 +127,7 @@ test('a remembered plan file that is gone is a line with its forget command and 
   assert.ok(shown[0].startsWith('base main '), shown[0]);
   assert.ok(shown.includes(`plan ${beta}: there is no such file (forget it: ${forgetCommand(repo, beta)})`), result.stdout);
   assert.ok(shown.includes('queue a1 startable'), result.stdout);
-  assert.ok(shown.at(-1).startsWith('next: '), result.stdout);
+  assert.ok(nextOf(result).startsWith('next: '), result.stdout);
 
   const forgot = tick(home, ['--repo', repo, '--forget-plan', beta]);
   assert.equal(forgot.status, EXIT_SHOWN, forgot.stderr);
@@ -145,8 +149,8 @@ test('a branch two plans name is a clash line and exit 1, and neither piece is s
   assert.ok(shown.includes('clash lane/x: piece x of alpha, piece x of beta'), result.stdout);
   assert.ok(shown.includes('alpha: queue x clash | a2 startable'), result.stdout);
   assert.ok(shown.includes('beta: queue x clash'), result.stdout);
-  assert.equal(nextOf(result).includes('claim x'), false, nextOf(result));
-  assert.ok(nextOf(result).includes('claim a2'), nextOf(result));
+  assert.equal(nextOf(result).includes('start dev on x '), false, nextOf(result));
+  assert.ok(nextOf(result).includes('start dev on a2 (job alpha)'), nextOf(result));
 });
 
 test('a job whose pieces all landed and whose features are all checked prints job done (forgotten) once and leaves the list', () => {
@@ -157,7 +161,7 @@ test('a job whose pieces all landed and whose features are all checked prints jo
   const alpha = writePlan(repo, 'alpha', ['a1']);
   const due = tick(home, ['--repo', repo, '--plan', alpha]);
   assert.ok(lines(due).includes('features landed, not checked: f 1/1 (risk none) -> tess due now (last piece landed)'), due.stdout);
-  assert.ok(nextOf(due).includes(`(mark each: --mark-tess <feature> --sha ${landed} with this --repo and --plan ${alpha})`), nextOf(due));
+  assert.ok(nextOf(due).includes(`do 1: start tess on f (job alpha; last piece landed): node ~/.claude/tools/board/board.mjs start --repo ${repo} --tess f`), nextOf(due));
   assert.equal(tick(home, ['--repo', repo, '--plan', alpha, '--mark-tess', 'f', '--sha', landed]).status, EXIT_SHOWN);
   assert.equal(spawnSync(process.execPath, [BOARD, 'done', '--repo', repo, '--job', 'alpha', '--tess', 'f', '--sha', landed, '--verdict', 'ok'], { encoding: 'utf8', env: envOf(home) }).status, EXIT_SHOWN);
 

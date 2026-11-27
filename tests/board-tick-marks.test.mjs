@@ -1,7 +1,7 @@
 // Tests of the tess marks of `board.mjs tick` (home/tools/board/lib/tick-features.mjs, tick-plan.mjs, tick.mjs): a mark is judged by
 // ancestry of the landed commits and checks a feature only once `board.mjs done --verdict ok` is recorded on it (an old marks
 // file has no `done`), parallel `--mark-tess` calls keep every mark (a lock file beside the marks), the `commits <feature>:`
-// line, the `next:` line's mark command, and where the marks live (per repository and job; an old jobs/<job>.json is read, never
+// line, the `do` line that starts tess, and where the marks live (per repository and job; an old jobs/<job>.json is read, never
 // written). Each test runs the CLI as a child process on a throw-away repository in the OS temp
 // folder (git-tidy-helpers.mjs); every child has its own temp HOME, so the ledger and the marks go to <HOME>/.claude/state/ there and
 // never to the real ~/.claude. The lands are ledger lines written by the test, each between real commits on main.
@@ -152,7 +152,7 @@ test('an unchecked feature gets a commits line right after the features line, an
   assert.deepEqual(feature.lands, [{ piece: 'p1', from: base, to }]);
 });
 
-test('when tess is due and main moved past the last land, the next line names the mark command at main\'s exact sha, and that mark checks the feature once done ok', () => {
+test('when tess is due and main moved past the last land, a do line starts tess on the feature, and a mark at main\'s exact sha checks it once done ok', () => {
   const repo = makeRepo();
   const home = makeHome();
   const base = headOf(repo);
@@ -163,11 +163,11 @@ test('when tess is due and main moved past the last land, the next line names th
 
   const result = tick(home, ['--repo', repo, '--plan', plan]);
   assert.equal(result.status, EXIT_SHOWN, result.stderr);
-  const next = lines(result).find((line) => line.startsWith('next:'));
+  const next = lines(result).find((line) => line.startsWith('do ') && line.includes('start tess on f '));
   assert.notEqual(mainSha, landedTo);
-  assert.ok(next.includes(`tess on f (mark each: --mark-tess <feature> --sha ${mainSha} with this --repo and --plan ${plan})`), next);
+  assert.ok(next?.endsWith(`node ~/.claude/tools/board/board.mjs start --repo ${repo} --tess f`), result.stdout);
 
-  const sha = next.match(/--sha ([0-9a-f]{40})/)[1];
+  const sha = mainSha; // board start --tess marks at the tick's sha, main's tip (start.mjs)
   const marked = tick(home, markArgs(repo, plan, 'f', sha));
   assert.equal(marked.status, EXIT_SHOWN, marked.stderr);
   assert.equal(doneOk(home, repo, 'f', sha).status, EXIT_SHOWN);

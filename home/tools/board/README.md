@@ -50,9 +50,9 @@ printed once), or by `--forget-plan <abs>` (`forgot <path>`, or `<path> was not 
 
 The lines (`lib/tick.mjs`), every branch name, path and agent name cleaned of control characters; `queue` and `features` print
 for each job the tick reads (none before the first `--plan`), `tests not landed` only when a test branch is left, `ledger` only
-when the land ledger has lines it cannot parse or cannot be read at all, `hold` only for a held feature. With two or more jobs,
-each job's `queue`, `features`, `commits` and `hold` lines, its part of the `base` line and its tess step in `next:` start with
-`<job>: `:
+when the land ledger has lines it cannot parse or cannot be read at all, `hold` only for a held feature, `sync` only in the
+setup's own repository. With two or more jobs, each job's `queue`, `features`, `commits` and `hold` lines and its part of the
+`base` line start with `<job>: `. The tick ends with the `next:` header and its numbered `do` lines (`lib/tick-do.mjs`):
 
 ```text
 base <name> <sha> <clean|dirty>, <one line|not one line> (git-tidy check 0|1: <count> <kind>, ...)[, <n> landed since tess round at <sha>]
@@ -72,7 +72,20 @@ plans list: <file> <problem>; delete it to start the list again
 job <slug> done (forgotten|not forgotten: <why>)
 ledger <n> bad lines skipped
 ledger unreadable (<why>): no piece counts as landed
-next: land <lane>; claim <piece>[ (branch <branch>)]|ledger unreadable: start no new piece; test branches <branch>, ...: land each one tess passed (land <branch> --repo <repo>), a failing repro gets a Fix: piece on its branch; [<job>: ]tess on <feature> (mark each: ... --plan <path>); dev <n>/3, tess <n>/3
+sync running|never|ok at <sha>|failed[ at <sha>]: <first problem> (<n> times since <HH:MM>)|incomplete at <sha>: <machine> behind, ...|record unreadable (<why>)|state unknown (<why>)
+next: <n> steps (dev <n>/3, tess <n>/3; these replace every earlier do line)
+next: nothing to do now; <n> agents running (dev <n>/3, tess <n>/3)
+next: fix <name> first (node ~/.claude/tools/git-tidy/git-tidy.mjs check <repo>), start no new piece; dev <n>/3, tess <n>/3[; <n> steps, these replace every earlier do line]
+next: the land ledger cannot be read, so every hold is hidden: land nothing and start no new piece until it reads; dev <n>/3, tess <n>/3[; <n> steps, ...]
+do <n>: land <lane> (<type> <id> done|no agent, +<n> commits) if its report says done, or partial with safe to land: yes (re-queue its open lines as a piece); never a blocked one: node ~/.claude/tools/land/land.mjs <lane> --repo <repo>
+do <n>: land <lane> last (...; in an overlap or a stray: put the repository's whole test command for <suite>) if its report says done, ...: node ~/.claude/tools/land/land.mjs <lane> --repo <repo> --test '<suite>'
+do <n>: resume <type> <id> (done; <lane> ~<n> changed|+0 commits): SendMessage it to finish and report
+do <n>: release lane-<n> (snapshot <sha>, <n> h, no tess on it): node ~/.claude/tools/git-tidy/git-tidy.mjs lane release --repo <repo> --folder <folder> --expect '<lock reason>'
+do <n>: start dev on <piece> (job <slug>[, branch <branch>]): node ~/.claude/tools/board/board.mjs start --repo <repo> --piece <piece>[ --job <slug>]
+do <n>: start tess on <feature> (job <slug>; <why tess is due>): node ~/.claude/tools/board/board.mjs start --repo <repo> --tess <feature>[ --job <slug>]
+do <n>: land <test branch> if tess passed it (a failing repro gets a Fix: piece on its branch): node ~/.claude/tools/land/land.mjs <test branch> --repo <repo>
+do <n>: sync in the background (base <sha>, synced <sha>|never|unknown[; <machine> behind, ...]): node <repo>/scripts/sync-machines.mjs --repo <repo>
+do <n>: sync failed <n> times since <HH:MM> (<first problem>): tell the owner once, then a Fix piece; retry: node <repo>/scripts/sync-machines.mjs --repo <repo>
 ```
 
 - **base**: the branch checked out in the main checkout of `--repo`, by its own name (`git-tidy`'s base, never assumed to be
@@ -129,13 +142,25 @@ next: land <lane>; claim <piece>[ (branch <branch>)]|ledger unreadable: start no
   with either verdict: a `must-fix` frees the files for the fix piece, whose land holds them again. Holds count across every
   job the tick reads: a piece on a held file shows `held by <feature>` and is not startable, a lane on one is not ready. A hold
   is no finding (the exit is unchanged); a land whose files git cannot list is exit 2.
-- **next**: only a suggestion: land one ready lane (never a held one), claim startable pieces while fewer than 3 lanes are in
-  flight, none of which share a file (a piece
-  with a `branch` as `claim <piece> (branch <branch>)`: claim that branch), land the test branches with commits and no plan
-  piece or live agent (at most 3 named; land each one tess's report passed, and a failing repro gets a `Fix:` piece on its
-  branch), start tess when it is due (per job, with the mark command for that job's plan). While the base has a finding of its own it says `fix <name> first` and to start no new piece; a `tidy` finding never
-  does. While the ledger cannot be read it claims nothing (`ledger unreadable: start no new piece`): it hides every land, so
-  every hold.
+- **sync**: only in the setup's own repository (the one holding the running board code) with `scripts/sync-machines.mjs`: the
+  sync record `sync-machines.mjs` writes after each run (`lib/sync-record.mjs`), so a failed sync stays on screen. A machine is
+  synced only at the base's tip by a base run, never by a `--tag` run. No finding (the exit is unchanged).
+- **next** and **do**: only suggestions: the boss runs each `do` line in order, as printed, and keeps every judgement; the
+  lines of a new tick replace every earlier one (a land prints the next tick). The order is land, resume, release, start dev,
+  start tess, test branches, sync. `dev <n>/3` counts the lanes not on `test/*`. **land**: each ready lane not on `test/*`
+  (never a held one), one in an overlap or a stray last, with the repository's suite as `--test` (copied as printed,
+  `'<suite>'` fails and nothing lands). **resume**: a lane whose agent is done but left changes or no commit. **release**: a
+  snapshot whose lock is at least 1 h old, while every live tess of this session names its own folder (`lane-<n>`, as
+  `board start --tess` names it) and none names this one: a live tess whose name names no folder holds every release back. The
+  release passes the lock reason as `--expect`, so a folder claimed again since the tick is never freed. **start dev**: the
+  startable pieces of every job in plan order (none share a file, none is held or in a clash) while fewer than 3 dev lanes are
+  in flight; `--job` when the tick reads two or more jobs. **start tess**: each feature listed for tess in a job with tess due,
+  while fewer than 3 tess run; `board start --tess` claims the snapshot and writes the mark. **test branches**: a ready pool
+  lane on `test/*` (it never gets a plain land line), then each `test/*` branch with commits and no plan piece or live agent,
+  at most 3. **sync**: in the setup's own repository, when its path is one sync takes, no sync runs and not every machine is
+  at the base's tip; `sync failed` instead while the last runs failed. While the base has a finding of its own the header says
+  `fix <name> first`, and while the land ledger cannot be read (it hides every land, so every hold) it says to land nothing
+  and start no new piece: then only resume, release and sync lines print. A `tidy` finding never holds a step back.
 
 `--mark-tess <feature> --sha <40-hex>` (with exactly one `--plan`, which it does not add to the list) records that tess was
 started on that feature at that sha (it must be on the base), and prints `marked <feature> for tess at <sha>`. The marks are per

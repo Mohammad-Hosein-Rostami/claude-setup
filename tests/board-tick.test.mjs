@@ -256,7 +256,7 @@ test('a branch that reaches a merge commit main lacks is a tidy line, not a main
   const shown = lines(result);
   assert.equal(shown[0], `base main ${headOf(repo).slice(0, SHORT_SHA)} clean, one line (git-tidy check 0)`);
   assert.ok(shown.includes(`tidy 1 tangled-ref (refs/heads/side) -> ${PRUNE} ${repo}`), result.stdout);
-  assert.ok(shown.at(-1).startsWith('next: land lane/a'), result.stdout);
+  assert.ok(shown.at(-1).startsWith('do 1: land lane/a '), result.stdout);
   const json = JSON.parse(tick(setup.env.HOME, ['--repo', repo, '--json']).stdout);
   assert.deepEqual(json.tidy, [{ kind: 'tangled-ref', subject: 'refs/heads/side' }]);
   assert.deepEqual(json.main.findings, []);
@@ -317,7 +317,7 @@ test('a ready lane behind main says it still lands, and next lands it', () => {
   commit(setup.repo, 'later.txt');
   const shown = lines(tick(setup.env.HOME, ['--repo', setup.repo]));
   assert.ok(shown.some((line) => line.startsWith('lane lane/a') && line.endsWith('ready to land (behind main; land rebases it)')), shown.join('\n'));
-  assert.ok(shown.at(-1).startsWith('next: land lane/a'), shown.at(-1));
+  assert.ok(shown.at(-1).startsWith('do 1: land lane/a '), shown.at(-1));
 });
 
 const FIX = 'fix-1';
@@ -349,7 +349,7 @@ test('a pool lane on a piece\'s branch takes the piece off the queue and a file 
 test('a startable piece with a branch is claimed on it in next', () => {
   const { repo } = poolRepo();
   const shown = lines(tick(makeHome(), ['--repo', repo, '--plan', writePlan(repo, { pieces: [fixPiece()] })]));
-  assert.ok(shown.at(-1).includes(`claim ${FIX} (branch ${REPRO})`), shown.at(-1));
+  assert.equal(shown.at(-1), `do 1: start dev on ${FIX} (job ${JOB}, branch ${REPRO}): node ~/.claude/tools/board/board.mjs start --repo ${repo} --piece ${FIX}`);
 });
 
 test('a piece branch that is no plain name, the base branch, or one two pieces share is exit 2 naming the piece', () => {
@@ -387,7 +387,7 @@ test('a test branch with a commit is on the tests line and next says to land it,
   assert.equal(result.status, EXIT_SHOWN, result.stdout + result.stderr);
   const shown = lines(result);
   assert.equal(testsLineOf(shown), `${TESTS_LINE}test/gap +1`, result.stdout);
-  assert.ok(shown.at(-1).includes(`test branches test/gap: land each one tess passed (land test/gap --repo ${repo})`), shown.at(-1));
+  assert.equal(shown.at(-1), `do 1: land test/gap if tess passed it (a failing repro gets a Fix: piece on its branch): node ~/.claude/tools/land/land.mjs test/gap --repo ${repo}`);
   const json = JSON.parse(tick(home, ['--repo', repo, '--json']).stdout);
   assert.deepEqual(json.tests, [{ branch: 'test/gap', commits: 1, folder: null, piece: null, agent: null }]);
 });
@@ -398,7 +398,7 @@ test('a test branch at main in a locked folder outside the pool shows its folder
   git(repo, 'worktree', 'add', '-q', '--lock', '-b', 'test/held', folder, 'HEAD');
   const shown = lines(tick(makeHome(), ['--repo', repo]));
   assert.equal(testsLineOf(shown), `${TESTS_LINE}test/held no commit (in ${folder})`, shown.join('\n'));
-  assert.equal(shown.at(-1).includes('test branches'), false, shown.at(-1));
+  assert.equal(shown.some((line) => line.startsWith('do ') && line.includes('land test/held')), false, shown.join('\n'));
 });
 
 test('a test branch a pool lane holds is on its lane line, not on the tests line', () => {
@@ -414,14 +414,15 @@ test('a test branch a plan piece is built on names the piece, and next leaves it
   testBranchesWithCommit(repo, [REPRO]);
   const shown = lines(tick(makeHome(), ['--repo', repo, '--plan', writePlan(repo, { pieces: [fixPiece()] })]));
   assert.equal(testsLineOf(shown), `${TESTS_LINE}${REPRO} +1 (piece ${FIX})`, shown.join('\n'));
-  assert.equal(shown.at(-1).includes('test branches'), false, shown.at(-1));
+  assert.equal(shown.some((line) => line.startsWith('do ') && line.includes(`land ${REPRO}`)), false, shown.join('\n'));
 });
 
-test('7 test branches with commits: the tests line shows 5 and +2 more, next names 3 and +4 more', () => {
+test('7 test branches with commits: the tests line shows 5 and +2 more, next offers a land line for the first 3', () => {
   const { repo } = poolRepo();
   const branches = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((name) => `test/${name}`);
   testBranchesWithCommit(repo, branches);
   const shown = lines(tick(makeHome(), ['--repo', repo]));
   assert.equal(testsLineOf(shown), `${TESTS_LINE}${branches.slice(0, 5).map((branch) => `${branch} +1`).join(', ')}, +2 more`, shown.join('\n'));
-  assert.ok(shown.at(-1).includes('test branches test/a, test/b, test/c, +4 more: land each one tess passed (land <branch> --repo '), shown.at(-1));
+  const landLine = (at, branch) => `do ${at}: land ${branch} if tess passed it (a failing repro gets a Fix: piece on its branch): node ~/.claude/tools/land/land.mjs ${branch} --repo ${repo}`;
+  assert.deepEqual(shown.filter((line) => line.startsWith('do ')), branches.slice(0, 3).map((branch, at) => landLine(at + 1, branch)), shown.join('\n'));
 });

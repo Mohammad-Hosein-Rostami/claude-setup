@@ -23,7 +23,11 @@ The boss's sync (`tick`, run by hand after every agent report and every land):
 - `tick.mjs`: the `tick` command's facts: main's state and the side findings to tidy, the pool's folders, the lanes in flight
   (each with its piece's declared files, and the holds on them), and for each remembered job its queue, features due for tess
   and holds.
-- `tick-lines.mjs`: the tick's plain lines from those facts, ending with the suggested next step.
+- `tick-lines.mjs`: the tick's plain lines from those facts, ending with the `next:` header and its `do` lines.
+- `tick-do.mjs`: the steps to run next, in order (land, resume, release, start dev, start tess, test branches, sync), each with
+  the exact command, and the `sync` line.
+- `sync-record.mjs`: the sync record `scripts/sync-machines.mjs` writes after each run and the tick reads, sync's repo-path
+  check and its run lock.
 - `tick-tests.mjs`: the `test/*` branches not landed on main (the `tests not landed` line), with their commits, folder and plan
   piece.
 - `tick-features.mjs`: the plan's side of the tick: waiting pieces, each feature's lands, which features tess has checked (a mark

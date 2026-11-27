@@ -1,7 +1,8 @@
 // Purpose: `board tick`, the boss's sync after every agent report and every land (boss-integrator design, section 3): the base's
 //   state, the side findings to tidy, one line per lane in flight, the test branches not landed (tick-tests.mjs), the overlaps and
 //   strays among their files, each open job's queue (tick-queue.mjs), features waiting for tess and holds (a risky landed
-//   feature's files wait for tess, across every job: tick-features.mjs), and a suggested next step (the lines: tick-lines.mjs).
+//   feature's files wait for tess, across every job: tick-features.mjs), and the steps to run next (tick-do.mjs; the lines:
+//   tick-lines.mjs).
 //   The jobs are every plan the repository's ticks remember (tick-jobs.mjs): each `--plan` is added to that list,
 //   `--forget-plan` removes one, and a job whose pieces all landed and whose features are all checked leaves it. `--mark-tess`
 //   records that tess was started on a feature.
@@ -14,7 +15,9 @@
 //   its agent from the session's board (matched by branch); landed pieces from the
 //   land ledger (a land of the piece's branch made after the plan's base, tick-jobs.mjs landsOfPlan; an unreadable ledger is one
 //   line, never exit 2); tess marks from tick-plan.mjs; features and tess status judged in tick-features.mjs (a mark covers the
-//   lands its sha holds) and holds; whether a tess runs from the board's agents. Nothing comes from an agent's words.
+//   lands its sha holds) and holds; the live tess agents and the pool folders their names name (`lane-<n>`, as `board start`
+//   names them), and how many agents run, from the board; in the setup's own repository (trusted-repos.mjs) with its sync
+//   script, the sync record and whether a sync runs (sync-record.mjs). Nothing comes from an agent's words.
 // Invariants: writes only the remembered plans list (an add, a forget, a done job; under its lock), with `--mark-tess` the job's
 //   marks file (under its lock), and openRepo's one-time mark of the checked-out base (git config `branch.<base>.cs-base`,
 //   repo.mjs), and nothing else. Every branch name, path and agent name is printed through cells.mjs cleanText, so no control
@@ -23,20 +26,24 @@
 //   Exit 0 shown, 1 findings (an overlap, a stray, a clash, a git-tidy check finding on the base or on the side, a plan or the
 //   list that cannot be read, a done job that could not be forgotten), 2 usage (a bad flag, no repository, a bad `--plan` or marks file) and any unexpected failure (1
 //   must only ever mean findings). A hold is no finding.
+import { existsSync, realpathSync } from 'node:fs';
+import { join } from 'node:path';
 import { readLaneBase } from '../../git-tidy/lib/base-record.mjs';
 import { runCheck } from '../../git-tidy/lib/check.mjs';
 import { UsageError, gitText, runGit } from '../../git-tidy/lib/git.mjs';
 import { poolSlots } from '../../git-tidy/lib/lane-pool.mjs';
-import { slotKey } from '../../git-tidy/lib/lane-slots.mjs';
+import { commonDirOf, slotKey } from '../../git-tidy/lib/lane-slots.mjs';
 import { listWorktrees, openRepo } from '../../git-tidy/lib/repo.mjs';
 import { readLandEntries } from '../../land/ledger.mjs';
 import { jsonText } from './cells.mjs';
+import { isSyncablePath, readSyncRecord, syncRunning } from './sync-record.mjs';
 import { heldBy, pieceBranch, planState } from './tick-features.mjs';
 import { clashesOf, forgetPlan, landsOfPlan, readJobs, rememberPlans } from './tick-jobs.mjs';
 import { clean, short, tickLines } from './tick-lines.mjs';
 import { readMarks, readPlan, writeMark } from './tick-plan.mjs';
 import { queuesOf, straysOf } from './tick-queue.mjs';
 import { testBranches } from './tick-tests.mjs';
+import { trustedRepos } from './trusted-repos.mjs';
 
 export const TICK_USAGE = 'usage: board.mjs tick --repo <abs main checkout> [--plan <abs pieces.json>]... [--session <id>] [--json]\n'
   + '       board.mjs tick --repo <abs> --plan <abs> --mark-tess <feature> --sha <40-hex>\n'
@@ -51,6 +58,8 @@ const FULL_SHA = /^[0-9a-f]{40}$/;
 const MISSING_FOLDER = 'missing'; // lane-slots.mjs: the folder is gone, so git cannot run in it
 const STATUS_CODE_CHARS = 3; // `XY ` before each path in `git status --porcelain -z`
 const RENAMED = /^(?:[RC]|.[RC])/; // a rename or copy (staged or in the folder): -z puts its old path in the next field
+const SYNC_SCRIPT = join('scripts', 'sync-machines.mjs'); // the setup's own sync: the tick shows its record only there
+const LANE_NAME = /\blane-(\d+)\b/gi; // a pool folder in an agent's name, as a whole word (`tess lane-5 <feature>`: start.mjs)
 // git-tidy check kinds about other refs and folders, not main: a leftover there must not stop the round, so they go on the `tidy`
 // line. Every other kind (dirty-base, merge-commit, stale-checkout, and any kind check.mjs adds later) counts as main: fail safe.
 const SIDE_KINDS = new Set(['tangled-ref', 'merged-branch', 'merged-tag', 'merged-worktree', 'stale-worktree', 'superseded-copy', 'agent-leftover']);
@@ -153,10 +162,42 @@ function landLedger(repoDir) {
   }
 }
 
-/** The pool's folders, each with the time its lock was taken (`lockedAtMs`, null when unlocked or unknown) for the snapshot age. */
+/**
+ * The pool's folders, each with its lock: the time it was taken (`lockedAtMs`, null when unlocked or unknown) for the snapshot
+ * age, and its reason (`lockReason`, null when unlocked), which a release line passes as `--expect`.
+ */
 function foldersOf(repo) {
-  const lockTimes = new Map(listWorktrees(repo).map((tree) => [slotKey(tree.path), tree.lockedAtMs ?? null]));
-  return poolSlots(repo).map((slot) => ({ ...slot, lockedAtMs: lockTimes.get(slotKey(slot.folder)) ?? null }));
+  const trees = new Map(listWorktrees(repo).map((tree) => [slotKey(tree.path), tree]));
+  return poolSlots(repo).map((slot) => {
+    const tree = trees.get(slotKey(slot.folder));
+    return { ...slot, lockedAtMs: tree?.lockedAtMs ?? null, lockReason: tree?.lockReason ?? null };
+  });
+}
+
+/** The live tess agents of the board, each with the pool folders its name names: a snapshot one of them names stays claimed. */
+const liveTessOf = (agents) => agents.filter((agent) => agent.type === 'tess' && agent.state !== 'done')
+  .map((agent) => ({ id: agent.id, name: agent.name, slots: [...agent.name.matchAll(LANE_NAME)].map((match) => `lane-${Number(match[1])}`) }));
+
+/** Whether `repo` is the setup's own repository: the one holding this running code (trusted-repos.mjs, by the file system). */
+function isSetupRepo(repo) {
+  const setup = trustedRepos({ sessionFolder: null }).repos[0];
+  return setup !== undefined && realpathSync.native(setup.common) === realpathSync.native(commonDirOf(repo));
+}
+
+/**
+ * The sync facts, null outside the setup's own repository or without its sync script: the script, whether sync takes the
+ * repository's path, its last record (`{ unreadable }` when it cannot be read) and whether a sync runs; a run lock that cannot
+ * be read (a link, a folder: sync refuses to run then too) is `lockProblem`, and the rest of the tick still prints.
+ */
+function syncFacts(repo) {
+  const script = join(repo.dir, SYNC_SCRIPT);
+  if (!existsSync(script) || !isSetupRepo(repo)) return null;
+  const facts = { script, isSyncable: isSyncablePath(repo.dir), record: readSyncRecord(repo.dir) };
+  try {
+    return { ...facts, isRunning: syncRunning(), lockProblem: null };
+  } catch (error) {
+    return { ...facts, isRunning: false, lockProblem: error.message.split('\n')[0] };
+  }
 }
 
 /** The remembered list, after adding the plans given now: on a list that cannot be changed, those plans alone and why. */
@@ -222,7 +263,8 @@ function tickFacts(repo, { plans, problems, listProblem }, board) {
   const lanes = slots.filter((slot) => slot.branch !== null).map((slot) => withDeclaredFiles(laneOf(repo, main.sha, slot, agents), pieces));
   const tests = testBranches(repo, main.sha, { lanes, tidy, plan: plans.length === 0 ? null : { pieces } }).map((test) => ({ ...test, agent: agentOn(agents, test.branch) }));
   const ledger = landLedger(repo.dir);
-  const tessRunning = agents.filter((agent) => agent.type === 'tess' && agent.state !== 'done').length;
+  const liveTess = liveTessOf(agents);
+  const tessRunning = liveTess.length;
   const works = plans.map(({ path, plan }) => ({
     path, plan,
     work: planState(repo, plan, { lanes, entries: landsOfPlan(repo, plan, ledger.entries), marks: readMarks(repo, plan.job), isTessRunning: tessRunning > 0 }),
@@ -234,7 +276,8 @@ function tickFacts(repo, { plans, problems, listProblem }, board) {
   return {
     repo: repo.dir, main, tidy, folders: slots, lanes: lanes.map((lane) => heldLane(lane, holds)), tests, overlaps,
     strays: straysOf(lanes, pieces), clashes, jobs: works.map((entry, at) => jobOf(entry, queues[at])), planProblems: problems, listProblem,
-    ledgerSkipped: ledger.skipped, ledgerUnreadable: ledger.unreadable, tessRunning,
+    ledgerSkipped: ledger.skipped, ledgerUnreadable: ledger.unreadable, tessRunning, liveTess,
+    agentsRunning: agents.filter((agent) => agent.state !== 'done').length, sync: syncFacts(repo),
   };
 }
 

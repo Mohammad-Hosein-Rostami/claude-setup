@@ -1,30 +1,25 @@
 // Purpose: the plain lines `board tick` prints from its facts (tick.mjs tickFacts): the base (the branch checked out in the main
 //   checkout, by its own name), the side findings to tidy, the pool's folders, one line per lane, the test branches not landed,
-//   overlaps, strays, clashes, the plans that cannot be read, each job's lines (queue, features, commits, holds) and the
-//   suggested `next:` step. With two or more jobs each job's own lines (queue, features, commits, holds, its part of the base line
-//   and its tess step) start with `<job>: `.
+//   overlaps, strays, clashes, the plans that cannot be read, each job's lines (queue, features, commits, holds), the `sync` line
+//   in the setup's own repository, and last the `next:` header with its numbered `do` lines (tick-do.mjs). With two or more jobs
+//   each job's own lines (queue, features, commits, holds, its part of the base line) start with `<job>: `.
 // Exports: tickLines(tick) -> string[], clean(text), short(sha).
-// Invariants: pure apart from reading the clock for the snapshot age. Every branch name, path and agent name goes through
-//   cells.mjs cleanText, so no control character reaches the terminal, and through shellWord too inside a printed command. `next:`
-//   only suggests: the boss decides; it reads the base's own findings only, so a side finding (on the `tidy` line) never stops a land or a claim.
-//   It never lands a held lane (tick.mjs: not ready) or claims a piece that is not startable (tick-queue.mjs), and claims nothing
-//   while the ledger cannot be read: an unread ledger hides every land, so every hold.
+// Invariants: pure apart from reading the clock for the snapshot age (and tick-do.mjs's). Every branch name, path and agent name
+//   goes through cells.mjs cleanText, so no control character reaches the terminal, and through shellWord too inside a printed
+//   command. The `do` lines only suggest: the boss decides (tick-do.mjs says which steps print when).
 import { SNAPSHOT_LABEL } from '../../git-tidy/lib/lane-slots.mjs';
 import { shellWord } from '../../git-tidy/lib/shell-word.mjs';
 import { cleanText } from './cells.mjs';
+import { doSteps, isSnapshot, syncLine } from './tick-do.mjs';
 import { commitsLines, featuresLine } from './tick-features.mjs';
 import { queueLine } from './tick-queue.mjs';
 
-const MAX_DEV = 3;
-const MAX_TESS = 3;
 const SHORT_SHA = 8;
 const AGENT_ID_CHARS = 7;
 const SHOWN_FILES = 3;
 const SHOWN_TESTS = 5; // test branches on the `tests not landed` line
-const NAMED_TESTS = 3; // test branches the `next:` step names
 const MS_PER_HOUR = 60 * 60 * 1000;
 const BUSY = 'busy';
-const SNAPSHOT_WHY = `${SNAPSHOT_LABEL} `; // lane-slots.mjs: a snapshot claim's busy why is `snapshot <8 of its sha>`
 // cleanText reads only `ascii` from a look: these lines keep non-ASCII names as they are and carry no colour
 const PLAIN_LOOK = { ascii: false };
 
@@ -79,7 +74,7 @@ function tidyLine({ tidy, repo }) {
 }
 
 /** A folder's state as the folders line counts it: a snapshot claim is `snapshot`, not just `busy`. */
-const folderState = (slot) => (slot.state === BUSY && slot.why.startsWith(SNAPSHOT_WHY) ? SNAPSHOT_LABEL : slot.state);
+const folderState = (slot) => (isSnapshot(slot) ? SNAPSHOT_LABEL : slot.state);
 
 function foldersLine(slots) {
   if (slots.length === 0) return 'folders none';
@@ -120,18 +115,6 @@ function testsLine(tests) {
   return tests.length === 0 ? null : `tests not landed: ${firstOf(tests.map(testText), SHOWN_TESTS)}`;
 }
 
-/**
- * The step for test branches tess left with commits and no plan piece or live agent on them: land the ones it passed, give a
- * failing repro a `Fix:` piece. Null when there is none.
- */
-function testsStep({ tests, repo }) {
-  const left = tests.filter((test) => test.commits > 0 && test.piece === null && (test.agent === null || test.agent.state === 'done'));
-  if (left.length === 0) return null;
-  const branch = left.length === 1 ? shellWord(clean(left[0].branch)) : '<branch>';
-  const names = firstOf(left.map((test) => clean(test.branch)), NAMED_TESTS);
-  return `test branches ${names}: land each one tess passed (land ${branch} --repo ${shellWord(clean(repo))}), a failing repro gets a Fix: piece on its branch`;
-}
-
 /** `hold <feature> until tess returns (<why>[ at <sha8>]): <files>`: no piece or lane on those files starts or lands until then. */
 const holdLine = (hold) => `hold ${hold.feature} until tess returns (${hold.why}${hold.sha === null ? '' : ` at ${short(hold.sha)}`}): ${filesText(hold.files)}`;
 
@@ -149,48 +132,16 @@ function planProblemLine({ repo }, { path, problem }) {
 /** A done job's line: forgotten by this tick, or why it could not be. */
 const forgottenLine = ({ job, problem }) => `job ${job} done (${problem === null ? 'forgotten' : `not forgotten: ${clean(problem)}`})`;
 
-/**
- * The tess steps: one per job with tess due, while fewer than MAX_TESS tess run, each with the mark command at the base's sha
- * (gate R5) and that job's plan (the tick may have read it from the remembered list, not from a `--plan` of this call).
- */
-function tessSteps(tick) {
-  const steps = [];
-  let free = MAX_TESS - tick.tessRunning;
-  for (const job of tick.jobs.filter((entry) => entry.tess.reason !== null)) {
-    if (free <= 0) break;
-    const ids = job.tess.features.slice(0, free).map((feature) => feature.id);
-    free -= ids.length;
-    steps.push(`${jobPrefix(tick, job)}tess on ${ids.join(', ')} (mark each: --mark-tess <feature> --sha ${tick.main.sha} with this --repo and --plan ${shellWord(clean(job.path))})`);
-  }
-  return steps;
-}
-
-/**
- * The `next:` line: land one ready lane, claim startable pieces (of every job, in plan order) while fewer than MAX_DEV lanes run
- * and the ledger reads, land the test branches left, start tess when due (tessSteps); never while the base fails.
- */
-function nextLine(tick) {
-  const { main, lanes, overlaps, strays, tessRunning } = tick;
-  const queue = tick.jobs.flatMap((job) => job.queue);
-  const count = `dev ${lanes.length}/${MAX_DEV}, tess ${tessRunning}/${MAX_TESS}`;
-  if (main.findings.length > 0) return `next: fix ${clean(main.branch)} first (node ~/.claude/tools/git-tidy/git-tidy.mjs check ${clean(tick.repo)}), start no new piece; ${count}`;
-  const flagged = new Set([...overlaps.flatMap((pair) => [pair.first, pair.second]), ...strays.map((stray) => stray.branch)]);
-  const ready = lanes.filter((lane) => lane.isReady);
-  const land = ready.find((lane) => !flagged.has(lane.branch) && !lane.mainMoved) ?? ready.find((lane) => !flagged.has(lane.branch)) ?? ready[0];
-  const steps = [];
-  if (land !== undefined) steps.push(`land ${clean(land.branch)}${flagged.has(land.branch) ? ' --test "<suite>" (after the other one)' : ''}`);
-  const claimText = (piece) => `claim ${piece.id}${piece.branch === null ? '' : ` (branch ${clean(piece.branch)})`}`;
-  if (tick.ledgerUnreadable !== null) steps.push('ledger unreadable: start no new piece');
-  else queue.filter((piece) => piece.isStartable).slice(0, Math.max(0, MAX_DEV - lanes.length)).forEach((piece) => steps.push(claimText(piece)));
-  const testsNext = testsStep(tick);
-  if (testsNext !== null) steps.push(testsNext);
-  return `next: ${[...steps, ...tessSteps(tick), count].join('; ')}`;
+/** The `next:` header, then one `do <n>: <what and why>[: <command>]` line per step, in the order to run them. */
+function doLines(tick) {
+  const { header, steps } = doSteps(tick);
+  return [header, ...steps.map(({ text, command }, at) => `do ${at + 1}: ${text}${command === null ? '' : `: ${command}`}`)];
 }
 
 /**
  * The tick as plain lines (about 20 for 3 lanes and one job of 12 pieces).
  * @param {object} tick tick.mjs tickFacts's result
- * @returns {string[]} the lines in print order, `next:` last
+ * @returns {string[]} the lines in print order, the `next:` header and its `do` lines last
  */
 export function tickLines(tick) {
   return [
@@ -208,6 +159,7 @@ export function tickLines(tick) {
     ...tick.forgotten.map(forgottenLine),
     ...(tick.ledgerSkipped > 0 ? [`ledger ${plural(tick.ledgerSkipped, 'bad line')} skipped`] : []),
     ...(tick.ledgerUnreadable === null ? [] : [`ledger unreadable (${clean(tick.ledgerUnreadable)}): no piece counts as landed`]),
-    nextLine(tick),
+    ...[syncLine(tick)].filter((line) => line !== null),
+    ...doLines(tick),
   ];
 }
