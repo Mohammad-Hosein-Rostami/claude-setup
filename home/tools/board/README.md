@@ -50,27 +50,29 @@ printed once), or by `--forget-plan <abs>` (`forgot <path>`, or `<path> was not 
 
 The lines (`lib/tick.mjs`), every branch name, path and agent name cleaned of control characters; `queue` and `features` print
 for each job the tick reads (none before the first `--plan`), `tests not landed` only when a test branch is left, `ledger` only
-when the land ledger has lines it cannot parse or cannot be read at all. With two or more jobs, each job's `queue`, `features`
-and `commits` lines, its part of the `base` line and its tess step in `next:` start with `<job>: `:
+when the land ledger has lines it cannot parse or cannot be read at all, `hold` only for a held feature. With two or more jobs,
+each job's `queue`, `features`, `commits` and `hold` lines, its part of the `base` line and its tess step in `next:` start with
+`<job>: `:
 
 ```text
 base <name> <sha> <clean|dirty>, <one line|not one line> (git-tidy check 0|1: <count> <kind>, ...)[, <n> landed since tess round at <sha>]
 tidy <n> <kind> (<subject>[, +<n> more]), ... -> node ~/.claude/tools/git-tidy/git-tidy.mjs prune <repo>
 folders <n> <state>, ...[ (oldest <n> h)]
-lane <branch> <type> <agent id> <running|done|quiet N min>|no agent +<n> commits <clean|~<n> changed|changes ?> [claimed on <base>: lands only there|ready to land|ready to land (behind <name>; land rebases it)|behind <name>] [folder <state>]
+lane <branch> <type> <agent id> <running|done|quiet N min>|no agent +<n> commits <clean|~<n> changed|changes ?> [claimed on <base>: lands only there|held by <feature>, ...|ready to land|ready to land (behind <name>; land rebases it)|behind <name>] [folder <state>]
 tests not landed: <branch> +<n>[ (piece <piece>)][ (<type> <running|done|quiet N min>)], <branch> no commit (in <folder>), ..., +<n> more
-overlap <lane or piece> x <lane>: <file>, <file>, <file>, +<n> more
+overlap <lane or piece> x <lane or piece>: <file>, <file>, <file>, +<n> more
 stray <lane>: <files> (not in its files)
 clash <branch>: piece <a> of <job1>, piece <b> of <job2>
 plan <path>: <problem> (forget it: node ~/.claude/tools/board/board.mjs tick --repo <repo> --forget-plan <path>)
 plans list: <file> <problem>; delete it to start the list again
-[<job>: ]queue <piece> startable | <piece> clash | <piece> after <piece>, ... | <piece> overlaps <lane>
-[<job>: ]features landed, not checked: <feature> <landed>/<pieces> (risk <risk>[, must-fix]), ... -> tess due at 3 (now <n>)|tess due now (<why>)
+[<job>: ]queue <piece> startable | <piece> clash; after <piece>, ...; waits <branch>, ...; overlaps <lane or piece>, ...; held by <feature>, ... | ...
+[<job>: ]features landed, not checked: <feature> <landed>/<pieces> (risk <risk>[ -> <classes>][, tess on it|, must-fix]), ... -> tess due at 3 (now <n>)|tess due now (<why>)
 [<job>: ]commits <feature>: <from>..<to> ...
+[<job>: ]hold <feature> until tess returns (tess not started|landed since its tess mark|tess on it at <sha>): <file>, <file>, <file>, +<n> more
 job <slug> done (forgotten|not forgotten: <why>)
 ledger <n> bad lines skipped
 ledger unreadable (<why>): no piece counts as landed
-next: land <lane>; claim <piece>[ (branch <branch>)]; test branches <branch>, ...: land each one tess passed (land <branch> --repo <repo>), a failing repro gets a Fix: piece on its branch; [<job>: ]tess on <feature> (mark each: ... --plan <path>); dev <n>/3, tess <n>/3
+next: land <lane>; claim <piece>[ (branch <branch>)]|ledger unreadable: start no new piece; test branches <branch>, ...: land each one tess passed (land <branch> --repo <repo>), a failing repro gets a Fix: piece on its branch; [<job>: ]tess on <feature> (mark each: ... --plan <path>); dev <n>/3, tess <n>/3
 ```
 
 - **base**: the branch checked out in the main checkout of `--repo`, by its own name (`git-tidy`'s base, never assumed to be
@@ -84,18 +86,21 @@ next: land <lane>; claim <piece>[ (branch <branch>)]; test branches <branch>, ..
 - **folders**: the pool's folders by state, as `git-tidy lane list` gives it, with a snapshot claim counted as `snapshot` and
   the age of the oldest snapshot lock in whole hours (left out when git cannot say); `folders none` with no pool folder.
 - **lane**: each lane pool folder that holds a branch. Its files are `git diff --name-only <base>...<branch>` (as
-  plumbing) plus the changed and untracked files in its folder; its agent is the board agent on that branch. `ready to land`: the agent is done (or none is on the board),
+  plumbing) plus the changed and untracked files in its folder, plus the declared `files` of the plan piece (of any job) on its
+  branch, so a lane with no commit yet already counts its piece's files; its agent is the board agent on that branch. `ready to land`: the agent is done (or none is on the board),
   the lane has commits and its folder is clean; `(behind <name>; land rebases it)` when the base has moved since it started.
   `behind <name>`: the base moved and the lane is not ready yet. `claimed on <base>: lands only there`: `lane claim` recorded
   another base for it (`branch.<lane>.cs-lane-base`) than the one checked out now; it is never ready here (land refuses it),
-  so `next:` never lands it. A lane with no record counts as on the base. A lane outside the pool is not shown.
+  so `next:` never lands it. `held by <feature>`: a **hold** is on one of its files; it is not ready either. A lane with no
+  record counts as on the base. A lane outside the pool is not shown.
 - **tests not landed**: every `test/*` branch (tess-write's) not landed on the base, at most 5, then `+<n> more`: its commits
   beyond the base, the plan piece whose `branch` it is and the board agent on it; one with no commit of its own shows the folder
   that holds it (a tess-write folder outside the pool). Left out: a branch a pool lane holds (it is on its `lane` line), a
   `tidy` subject, and one with no commit that no folder holds (merged: `prune` removes it). Only shown: the tick never lands
   or deletes one, and it is no finding (exit unchanged).
-- **overlap**: two lanes share a file, or a piece whose `after` pieces have all landed declares a file a lane changed (that piece
-  is not startable). **stray**: a lane on a piece's branch changed a file its piece does not declare. Either is exit 1; such a lane
+- **overlap**: two lanes share a file, a piece whose `after` pieces and `waits` branches have all landed declares a file of a
+  lane (that piece is not startable), or two pieces that could both start now share a file (across every job, in plan order,
+  then piece order: only the first starts, the other shows `overlaps <piece>`). **stray**: a lane on a piece's branch changed a file its piece does not declare. Either is exit 1; such a lane
   lands after the other one, with `land --test`.
 - **clash**: two plans name one branch (two jobs reuse a piece id, or give the same `branch`): neither piece is startable
   (`clash` in its queue) until one plan changes. Exit 1.
@@ -104,19 +109,33 @@ next: land <lane>; claim <piece>[ (branch <branch>)]; test branches <branch>, ..
   and the rest of the tick still prints.
 - **queue**: the job's pieces not landed and not in a lane. A piece is landed when the land ledger
   (`~/.claude/tools/land/ledger.mjs`) holds a land of its branch (its `branch`, else `lane/<piece id>`) made after the plan's
-  `base`: a land whose commit the base already holds belongs to an older job that used the same branch name.
-- **features**: the features fully landed and not checked, and every risky one (`risk` not `none`) with a landed piece that is
-  not checked: no new piece should touch its files until tess returns. A feature is checked when its tess mark's sha holds every
+  `base`: a land whose commit the base already holds belongs to an older job that used the same branch name. A piece is
+  `startable` when nothing holds it back; else it shows each thing that does, joined by `; `: `clash`, `after <piece>` (not
+  landed yet), `waits <branch>` (no land of that branch in the ledger yet), `overlaps <lane or piece>`, `held by <feature>`.
+- **features**: the features fully landed and not checked, and every risky one with a landed piece that is not checked: the tick
+  holds its files (see **hold**). A feature is risky when its `risk` is not `none`, or when the risk tool
+  (`~/.claude/tools/risk/risk.mjs --base <from> --tip <to>`, on each land while tess has not returned on it) finds a class on
+  one of its lands, shown as `risk none -> <classes>` (`unknown` when the tool fails: risky too). A feature is checked when its tess mark's sha holds every
   land of its pieces and tess recorded `done` with verdict `ok` on that mark ([The done command](#the-done-command)); a mark
-  with no `done` (tess still running, or one that died) checks nothing, so the feature stays due. A feature whose verdict on such
+  with no `done` (tess still running, or one that died) checks nothing: while a tess agent runs such a feature is listed with
+  `, tess on it` and is not due again; with no tess running that tess died, and the feature is due again. A feature whose verdict on such
   a mark is `must-fix` is listed with `, must-fix` and is not due again until a piece of it lands after the mark (its fix).
   tess (its quick look; `full` only when the owner asks) is due when a risky feature is listed without `must-fix`, when 3
   features are fully landed and not checked, or when the plan's last piece has landed.
-- **next**: only a suggestion: land one ready lane, claim startable pieces while fewer than 3 lanes are in flight (a piece
+- **hold**: a risky feature with a land holds its files until tess returns: the declared `files` of its landed pieces and
+  every file its lands changed (`git diff-tree` of each ledger range, so a stray landed with `land --test` is held too). It is
+  `tess not started` (no mark), `landed since its tess mark` (a land the mark does not hold) or `tess on it at <sha>` (the
+  mark holds every land and tess has not recorded `done`). It ends when tess records `done` on a mark that holds every land,
+  with either verdict: a `must-fix` frees the files for the fix piece, whose land holds them again. Holds count across every
+  job the tick reads: a piece on a held file shows `held by <feature>` and is not startable, a lane on one is not ready. A hold
+  is no finding (the exit is unchanged); a land whose files git cannot list is exit 2.
+- **next**: only a suggestion: land one ready lane (never a held one), claim startable pieces while fewer than 3 lanes are in
+  flight, none of which share a file (a piece
   with a `branch` as `claim <piece> (branch <branch>)`: claim that branch), land the test branches with commits and no plan
   piece or live agent (at most 3 named; land each one tess's report passed, and a failing repro gets a `Fix:` piece on its
   branch), start tess when it is due (per job, with the mark command for that job's plan). While the base has a finding of its own it says `fix <name> first` and to start no new piece; a `tidy` finding never
-  does.
+  does. While the ledger cannot be read it claims nothing (`ledger unreadable: start no new piece`): it hides every land, so
+  every hold.
 
 `--mark-tess <feature> --sha <40-hex>` (with exactly one `--plan`, which it does not add to the list) records that tess was
 started on that feature at that sha (it must be on the base), and prints `marked <feature> for tess at <sha>`. The marks are per
@@ -126,8 +145,11 @@ repository and job, in `~/.claude/state/board/repos/<repo-key>/marks-<job>.json`
 `done` included), written through a temp file and a rename under a lock file; delete the file to forget them. An older
 `~/.claude/state/board/jobs/<job>.json` is read while the new file is not there yet, and never written: the next mark copies its
 marks into the new file. `--json` prints every fact as one JSON object (lanes with their
-files, folders with why and `lockedAtMs`, `jobs`: each with `job`, `path`, `queue`, `features` (each with tess's `verdict` on a
-mark holding all its lands, or null, and `isChecked`), `tess` status (`features` listed, `fixing` waiting for a fix), `isDone`; `clashes`,
+files and `held`, folders with why and `lockedAtMs`, `jobs`: each with `job`, `path`, `queue` (each piece with its `files`,
+`after`, `waits`, `overlaps`, `held`, `isClash` and `isStartable`), `features` (each with tess's `verdict` on a mark holding all
+its lands, or null, `isChecked`, `riskFound` and `tessOn`, the sha of that mark while tess has not returned on it), `tess`
+status (`features` listed, `underTess` tess is on, `fixing` waiting for a fix), `holds` (each `{ "feature", "why", "sha",
+"files" }`), `isDone`; `clashes`,
 `planProblems`, `listProblem`, `forgotten`); `main` is the base (`branch` its name, `sha` its tip); `main.findings` holds the base's findings only and `tidy` the
 side ones, each `{ "kind", "subject" }`; `lanes[].claimedOn` is the base a lane was claimed on (null with no record); `tests` holds the
 test branches, each `{ "branch", "commits", "folder", "piece", "agent" }` (`folder`, `piece` and `agent` null when none).
@@ -158,8 +180,8 @@ A piece's branch is its `branch`, else `lane/<piece id>`. A `Fix:` piece names t
 it lands under that name and the tick counts it. A `branch` must be a name `lane claim --branch` takes and no base branch, and
 no two pieces may share a branch: else the tick exits 2 and names the piece. It does the same for an empty `files`, an `after`
 cycle of any length (`a` after `b` after `a`: neither could ever start) and a bad `waits`. A piece's `waits` lists the branches
-of another job that must land before it (at most 16, each a name `lane claim --branch` takes); the tick checks the names, but
-does not hold the piece back yet. Two plans may reuse a piece id, but not a branch (the tick shows a `clash`). No two pieces
+of another job that must land before it (at most 16, each a name `lane claim --branch` takes); the piece is not startable
+until each has a land in the ledger (`waits <branch>` in its queue). Two plans may reuse a piece id, but not a branch (the tick shows a `clash`). No two pieces
 that can run at the same time share a file; the tick shows it when they do.
 
 ## The done command

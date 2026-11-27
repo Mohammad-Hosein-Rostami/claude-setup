@@ -1,18 +1,20 @@
 // Purpose: `board tick`, the boss's sync after every agent report and every land (boss-integrator design, section 3): the base's
 //   state, the side findings to tidy, one line per lane in flight, the test branches not landed (tick-tests.mjs), the overlaps and
-//   strays among their files, each open job's queue and features waiting for tess, and a suggested next step (the lines:
-//   tick-lines.mjs). The jobs are every plan the repository's ticks remember (tick-jobs.mjs): each `--plan` is added to that list,
+//   strays among their files, each open job's queue (tick-queue.mjs), features waiting for tess and holds (a risky landed
+//   feature's files wait for tess, across every job: tick-features.mjs), and a suggested next step (the lines: tick-lines.mjs).
+//   The jobs are every plan the repository's ticks remember (tick-jobs.mjs): each `--plan` is added to that list,
 //   `--forget-plan` removes one, and a job whose pieces all landed and whose features are all checked leaves it. `--mark-tess`
 //   records that tess was started on a feature.
 // Exports: TICK_USAGE, runTick(args, loadBoard) -> exit code.
 // Facts: the base is git-tidy's (openRepo: the branch checked out in the main checkout, by its own name; the `main` key holds it);
 //   its findings from git-tidy check (runCheck), split by kind: the base's own findings block new work, the side ones (other refs and
 //   folders, SIDE_KINDS) only go on the `tidy` line; the lanes are the lane pool's folders that hold a branch (poolSlots), each with
-//   its commits and files against the base (git), the base it was claimed on (base-record.mjs readLaneBase; a lane of another base
-//   is never ready: land refuses it here) and its agent from the session's board (matched by branch); landed pieces from the
+//   its commits and files against the base (git) plus the declared files of the plan piece on its branch, the base it was
+//   claimed on (base-record.mjs readLaneBase; a lane of another base is never ready: land refuses it here, nor is a held one) and
+//   its agent from the session's board (matched by branch); landed pieces from the
 //   land ledger (a land of the piece's branch made after the plan's base, tick-jobs.mjs landsOfPlan; an unreadable ledger is one
 //   line, never exit 2); tess marks from tick-plan.mjs; features and tess status judged in tick-features.mjs (a mark covers the
-//   lands its sha holds). Nothing comes from an agent's words.
+//   lands its sha holds) and holds; whether a tess runs from the board's agents. Nothing comes from an agent's words.
 // Invariants: writes only the remembered plans list (an add, a forget, a done job; under its lock), with `--mark-tess` the job's
 //   marks file (under its lock), and openRepo's one-time mark of the checked-out base (git config `branch.<base>.cs-base`,
 //   repo.mjs), and nothing else. Every branch name, path and agent name is printed through cells.mjs cleanText, so no control
@@ -20,7 +22,7 @@
 //   cannot be read, or a list that cannot be read, is a line and the rest still prints; a `--plan` given now is checked first.
 //   Exit 0 shown, 1 findings (an overlap, a stray, a clash, a git-tidy check finding on the base or on the side, a plan or the
 //   list that cannot be read, a done job that could not be forgotten), 2 usage (a bad flag, no repository, a bad `--plan` or marks file) and any unexpected failure (1
-//   must only ever mean findings).
+//   must only ever mean findings). A hold is no finding.
 import { readLaneBase } from '../../git-tidy/lib/base-record.mjs';
 import { runCheck } from '../../git-tidy/lib/check.mjs';
 import { UsageError, gitText, runGit } from '../../git-tidy/lib/git.mjs';
@@ -29,10 +31,11 @@ import { slotKey } from '../../git-tidy/lib/lane-slots.mjs';
 import { listWorktrees, openRepo } from '../../git-tidy/lib/repo.mjs';
 import { readLandEntries } from '../../land/ledger.mjs';
 import { jsonText } from './cells.mjs';
-import { pieceBranch, planState } from './tick-features.mjs';
+import { heldBy, pieceBranch, planState } from './tick-features.mjs';
 import { clashesOf, forgetPlan, landsOfPlan, readJobs, rememberPlans } from './tick-jobs.mjs';
 import { clean, short, tickLines } from './tick-lines.mjs';
 import { readMarks, readPlan, writeMark } from './tick-plan.mjs';
+import { queuesOf, straysOf } from './tick-queue.mjs';
 import { testBranches } from './tick-tests.mjs';
 
 export const TICK_USAGE = 'usage: board.mjs tick --repo <abs main checkout> [--plan <abs pieces.json>]... [--session <id>] [--json]\n'
@@ -53,7 +56,6 @@ const RENAMED = /^(?:[RC]|.[RC])/; // a rename or copy (staged or in the folder)
 const SIDE_KINDS = new Set(['tangled-ref', 'merged-branch', 'merged-tag', 'merged-worktree', 'stale-worktree', 'superseded-copy', 'agent-leftover']);
 
 const nulList = (text) => text.split('\0').filter((path) => path !== '');
-const sharedFiles = (first, second) => first.filter((path) => second.includes(path));
 
 function parseTickArgs(args) {
   const options = { repo: null, plans: [], forgetPlan: null, markTess: null, sha: null, session: null, json: false };
@@ -128,34 +130,18 @@ function laneOf(repo, mainSha, slot, agents) {
 }
 
 /**
- * `overlap` pairs: two lanes sharing a file, or a waiting piece (after-steps landed) whose declared files touch a lane (isPiece,
- * with the piece's `job`: two plans may reuse a piece id).
+ * The lane with the declared files of the plan piece on its branch added (cb-hold-1 d): a lane with no commit yet already holds
+ * the files its piece will change, for the overlaps and the holds.
  */
-function overlapsOf(lanes, candidates) {
-  const pairs = lanes.flatMap((lane, at) => lanes.slice(at + 1).map((other) => ({ first: lane.branch, second: other.branch, files: sharedFiles(lane.files, other.files), isPiece: false })));
-  const touches = candidates.flatMap((piece) => lanes.map((lane) => ({ first: piece.id, job: piece.job, second: lane.branch, files: sharedFiles(piece.files, lane.files), isPiece: true })));
-  return [...pairs, ...touches].filter((pair) => pair.files.length > 0);
+function withDeclaredFiles(lane, pieces) {
+  const piece = pieces.find((entry) => pieceBranch(entry) === lane.branch);
+  return piece === undefined ? lane : { ...lane, files: [...new Set([...lane.files, ...piece.files])] };
 }
 
-/**
- * One job's queue: each waiting piece with the branch it names (null for `lane/<id>`), the pieces it is after, the lanes its files
- * touch, whether another plan names its branch too (isClash), and whether it can start now.
- */
-function queueOf(job, waiting, overlaps, clashed) {
-  return waiting.map((piece) => {
-    const touched = overlaps.filter((pair) => pair.isPiece && pair.job === job && pair.first === piece.id).map((pair) => pair.second);
-    const isClash = clashed.has(pieceBranch(piece));
-    return { id: piece.id, branch: piece.branch, after: piece.after, overlaps: touched, isClash, isStartable: piece.after.length === 0 && touched.length === 0 && !isClash };
-  });
-}
-
-/** `stray` lanes: a lane of a plan piece (of any job) that changed files the piece does not declare. */
-function straysOf(lanes, pieces) {
-  return lanes.flatMap((lane) => {
-    const piece = pieces.find((entry) => pieceBranch(entry) === lane.branch);
-    const files = piece === undefined ? [] : lane.files.filter((path) => !piece.files.includes(path));
-    return files.length === 0 ? [] : [{ branch: lane.branch, files }];
-  });
+/** The lane with the holds on its files (`held`): a held lane is never ready, so `next:` never lands it before tess returns. */
+function heldLane(lane, holds) {
+  const held = heldBy(holds, lane.files);
+  return { ...lane, held, isReady: lane.isReady && held.length === 0 };
 }
 
 /** The land ledger, or no entries and why when it cannot be read: a broken ledger must not hide main and the lanes. */
@@ -204,10 +190,10 @@ function openPlans(repo, given) {
   return { plans, problems, listProblem: remembered.problem };
 }
 
-/** One job's facts: its queue, features and tess status, and whether it is done (every piece landed, every feature checked). */
-function jobOf({ path, plan, work }, overlaps, clashed) {
+/** One job's facts: its queue, features, tess status and holds, and whether it is done (every piece landed, every feature checked). */
+function jobOf({ path, plan, work }, queue) {
   return {
-    job: plan.job, path, queue: queueOf(plan.job, work.waiting, overlaps, clashed), features: work.features, tess: work.tess,
+    job: plan.job, path, queue, features: work.features, tess: work.tess, holds: work.holds,
     lastTessSha: work.lastTessSha, landedSince: work.landedSince,
     isDone: work.features.every((feature) => feature.landed === feature.pieces && feature.isChecked),
   };
@@ -232,19 +218,22 @@ function tickFacts(repo, { plans, problems, listProblem }, board) {
   const tidy = findings.filter(({ kind }) => SIDE_KINDS.has(kind));
   const slots = foldersOf(repo);
   const agents = board?.agents ?? [];
-  const lanes = slots.filter((slot) => slot.branch !== null).map((slot) => laneOf(repo, main.sha, slot, agents));
   const pieces = plans.flatMap(({ plan }) => plan.pieces);
+  const lanes = slots.filter((slot) => slot.branch !== null).map((slot) => withDeclaredFiles(laneOf(repo, main.sha, slot, agents), pieces));
   const tests = testBranches(repo, main.sha, { lanes, tidy, plan: plans.length === 0 ? null : { pieces } }).map((test) => ({ ...test, agent: agentOn(agents, test.branch) }));
   const ledger = landLedger(repo.dir);
-  const works = plans.map(({ path, plan }) => ({ path, plan, work: planState(repo, plan, lanes, landsOfPlan(repo, plan, ledger.entries), readMarks(repo, plan.job)) }));
-  const candidates = works.flatMap(({ plan, work }) => work.waiting.filter((piece) => piece.after.length === 0).map((piece) => ({ ...piece, job: plan.job })));
-  const overlaps = overlapsOf(lanes, candidates);
+  const tessRunning = agents.filter((agent) => agent.type === 'tess' && agent.state !== 'done').length;
+  const works = plans.map(({ path, plan }) => ({
+    path, plan,
+    work: planState(repo, plan, { lanes, entries: landsOfPlan(repo, plan, ledger.entries), marks: readMarks(repo, plan.job), isTessRunning: tessRunning > 0 }),
+  }));
+  const holds = works.flatMap(({ work }) => work.holds); // pooled: one job's risky land holds every job's pieces on its files
   const clashes = clashesOf(plans.map(({ plan }) => plan));
   const clashed = new Set(clashes.map(({ branch }) => branch));
-  const tessRunning = agents.filter((agent) => agent.type === 'tess' && agent.state !== 'done').length;
+  const { queues, overlaps } = queuesOf({ works, lanes, entries: ledger.entries, holds, clashed });
   return {
-    repo: repo.dir, main, tidy, folders: slots, lanes, tests, overlaps, strays: straysOf(lanes, pieces), clashes,
-    jobs: works.map((entry) => jobOf(entry, overlaps, clashed)), planProblems: problems, listProblem,
+    repo: repo.dir, main, tidy, folders: slots, lanes: lanes.map((lane) => heldLane(lane, holds)), tests, overlaps,
+    strays: straysOf(lanes, pieces), clashes, jobs: works.map((entry, at) => jobOf(entry, queues[at])), planProblems: problems, listProblem,
     ledgerSkipped: ledger.skipped, ledgerUnreadable: ledger.unreadable, tessRunning,
   };
 }

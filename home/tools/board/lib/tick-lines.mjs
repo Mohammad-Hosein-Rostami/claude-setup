@@ -1,15 +1,19 @@
 // Purpose: the plain lines `board tick` prints from its facts (tick.mjs tickFacts): the base (the branch checked out in the main
 //   checkout, by its own name), the side findings to tidy, the pool's folders, one line per lane, the test branches not landed,
-//   overlaps, strays, clashes, the plans that cannot be read, each job's lines and the suggested `next:` step. With two or more
-//   jobs each job's own lines (queue, features, commits, its part of the base line and its tess step) start with `<job>: `.
+//   overlaps, strays, clashes, the plans that cannot be read, each job's lines (queue, features, commits, holds) and the
+//   suggested `next:` step. With two or more jobs each job's own lines (queue, features, commits, holds, its part of the base line
+//   and its tess step) start with `<job>: `.
 // Exports: tickLines(tick) -> string[], clean(text), short(sha).
 // Invariants: pure apart from reading the clock for the snapshot age. Every branch name, path and agent name goes through
 //   cells.mjs cleanText, so no control character reaches the terminal, and through shellWord too inside a printed command. `next:`
 //   only suggests: the boss decides; it reads the base's own findings only, so a side finding (on the `tidy` line) never stops a land or a claim.
+//   It never lands a held lane (tick.mjs: not ready) or claims a piece that is not startable (tick-queue.mjs), and claims nothing
+//   while the ledger cannot be read: an unread ledger hides every land, so every hold.
 import { SNAPSHOT_LABEL } from '../../git-tidy/lib/lane-slots.mjs';
 import { shellWord } from '../../git-tidy/lib/shell-word.mjs';
 import { cleanText } from './cells.mjs';
 import { commitsLines, featuresLine } from './tick-features.mjs';
+import { queueLine } from './tick-queue.mjs';
 
 const MAX_DEV = 3;
 const MAX_TESS = 3;
@@ -87,11 +91,12 @@ function foldersLine(slots) {
 }
 
 /**
- * A lane's verdict: a lane claimed on another base lands only there (land refuses it here); a ready lane behind the base still
- * lands (land rebases it); a lane not ready only says it is behind.
+ * A lane's verdict: a lane claimed on another base lands only there (land refuses it here); a held lane waits for tess on the
+ * held features; a ready lane behind the base still lands (land rebases it); a lane not ready only says it is behind.
  */
 function laneVerdict(lane, base) {
   if (lane.claimedOn !== null && lane.claimedOn !== base) return `claimed on ${clean(lane.claimedOn)}: lands only there`;
+  if (lane.held.length > 0) return `held by ${lane.held.join(', ')}`;
   if (lane.isReady) return lane.mainMoved ? `ready to land (behind ${clean(base)}; land rebases it)` : 'ready to land';
   return lane.mainMoved ? `behind ${clean(base)}` : '';
 }
@@ -127,19 +132,11 @@ function testsStep({ tests, repo }) {
   return `test branches ${names}: land each one tess passed (land ${branch} --repo ${shellWord(clean(repo))}), a failing repro gets a Fix: piece on its branch`;
 }
 
-/** Why a waiting piece can or cannot start: a clash first (it never starts while two plans name its branch), then its after-pieces. */
-function pieceState(piece) {
-  if (piece.isStartable) return 'startable';
-  if (piece.isClash) return 'clash';
-  return piece.after.length > 0 ? `after ${piece.after.join(', ')}` : `overlaps ${piece.overlaps.map(clean).join(', ')}`;
-}
+/** `hold <feature> until tess returns (<why>[ at <sha8>]): <files>`: no piece or lane on those files starts or lands until then. */
+const holdLine = (hold) => `hold ${hold.feature} until tess returns (${hold.why}${hold.sha === null ? '' : ` at ${short(hold.sha)}`}): ${filesText(hold.files)}`;
 
-function queueLine(queue) {
-  return queue.length === 0 ? 'queue empty' : `queue ${queue.map((piece) => `${piece.id} ${pieceState(piece)}`).join(' | ')}`;
-}
-
-/** One job's lines: its queue, its features line and its commits lines. */
-const jobLines = (tick, job) => [queueLine(job.queue), featuresLine(job), ...commitsLines(job)].map((line) => `${jobPrefix(tick, job)}${line}`);
+/** One job's lines: its queue, its features line, its commits lines and its holds. */
+const jobLines = (tick, job) => [queueLine(job.queue), featuresLine(job), ...commitsLines(job), ...job.holds.map(holdLine)].map((line) => `${jobPrefix(tick, job)}${line}`);
 
 /** `clash <branch>: piece <a> of <job1>, piece <b> of <job2>`: two plans name one branch. */
 const clashLine = ({ branch, owners }) => `clash ${clean(branch)}: ${owners.map(({ job, piece }) => `piece ${piece} of ${job}`).join(', ')}`;
@@ -169,8 +166,8 @@ function tessSteps(tick) {
 }
 
 /**
- * The `next:` line: land one lane, claim pieces (of every job, in plan order) while fewer than MAX_DEV lanes run, land the test
- * branches left, start tess when due (tessSteps); never while the base fails.
+ * The `next:` line: land one ready lane, claim startable pieces (of every job, in plan order) while fewer than MAX_DEV lanes run
+ * and the ledger reads, land the test branches left, start tess when due (tessSteps); never while the base fails.
  */
 function nextLine(tick) {
   const { main, lanes, overlaps, strays, tessRunning } = tick;
@@ -183,7 +180,8 @@ function nextLine(tick) {
   const steps = [];
   if (land !== undefined) steps.push(`land ${clean(land.branch)}${flagged.has(land.branch) ? ' --test "<suite>" (after the other one)' : ''}`);
   const claimText = (piece) => `claim ${piece.id}${piece.branch === null ? '' : ` (branch ${clean(piece.branch)})`}`;
-  queue.filter((piece) => piece.isStartable).slice(0, Math.max(0, MAX_DEV - lanes.length)).forEach((piece) => steps.push(claimText(piece)));
+  if (tick.ledgerUnreadable !== null) steps.push('ledger unreadable: start no new piece');
+  else queue.filter((piece) => piece.isStartable).slice(0, Math.max(0, MAX_DEV - lanes.length)).forEach((piece) => steps.push(claimText(piece)));
   const testsNext = testsStep(tick);
   if (testsNext !== null) steps.push(testsNext);
   return `next: ${[...steps, ...tessSteps(tick), count].join('; ')}`;

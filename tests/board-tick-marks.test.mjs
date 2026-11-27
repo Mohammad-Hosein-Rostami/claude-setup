@@ -217,7 +217,7 @@ test('a feature named after an Object.prototype key, with no piece landed, is no
   assert.equal(result.stderr, '');
   assert.equal(featuresLineOf(result), `${FEATURES_LINE} none -> tess due at 3 (now 0)`, result.stdout);
   const shown = factsOf(home, repo, plan).jobs[0].features;
-  assert.deepEqual(shown, PROTOTYPE_KEY_FEATURES.map((id) => ({ id, risk: 'none', landed: 0, pieces: 1, lands: [], verdict: null, isChecked: false })));
+  assert.deepEqual(shown, PROTOTYPE_KEY_FEATURES.map((id) => ({ id, risk: 'none', landed: 0, pieces: 1, lands: [], verdict: null, isChecked: false, riskFound: null, tessOn: null })));
 });
 
 test('a piece landed twice and marked at its first land only is due, with both ranges in the commits line, and checked once marked at the second and done ok', () => {

@@ -20,13 +20,17 @@ Collecting (run only by the detached refresh):
 - `cache-file.mjs`: the refresher's own cache files per session (transcript cursors, git cache).
 
 The boss's sync (`tick`, run by hand after every agent report and every land):
-- `tick.mjs`: the `tick` command's facts: main's state and the side findings to tidy, the pool's folders, the lanes in flight,
-  overlaps and strays among their files, and for each remembered job its queue and features due for tess.
+- `tick.mjs`: the `tick` command's facts: main's state and the side findings to tidy, the pool's folders, the lanes in flight
+  (each with its piece's declared files, and the holds on them), and for each remembered job its queue, features due for tess
+  and holds.
 - `tick-lines.mjs`: the tick's plain lines from those facts, ending with the suggested next step.
 - `tick-tests.mjs`: the `test/*` branches not landed on main (the `tests not landed` line), with their commits, folder and plan
   piece.
 - `tick-features.mjs`: the plan's side of the tick: waiting pieces, each feature's lands, which features tess has checked (a mark
-  covers the lands its sha holds), whether a round is due, and the features and `commits <feature>:` lines.
+  whose sha holds every land, with tess's `done` verdict `ok` on it), whether a round is due, the holds (risky features, by the
+  plan or the risk tool, whose files wait for tess's `done`), and the features and `commits <feature>:` lines.
+- `tick-queue.mjs`: which waiting pieces of every job can start now and what holds each other one back (after, waits, clash,
+  overlaps, holds; startable pieces never share a file), the overlaps among lanes and pieces, the strays, and the `queue` line.
 - `tick-jobs.mjs`: the plans the repository's ticks remember (added by `--plan`, removed by `--forget-plan` or when a job is
   done; one writer at a time, by a lock file), the ledger lands that belong to a plan (after its base), and the branches two
   plans both name.
