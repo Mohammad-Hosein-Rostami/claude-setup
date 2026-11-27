@@ -246,7 +246,7 @@ test('a target ssh does not reach is named so, never "claude --version gave no v
   const result = run(fixture, [], { FAKE_SSH_REFUSED: '== pin' });
   assert.equal(result.status, 1);
   const problem = result.rows.find((row) => row.machine === 'pc').problem;
-  assert.match(problem, /^pc: ssh did not reach it \(sync again once it is on and reachable\): ssh: connect to host 192\.0\.2\.1 port 2222: Connection refused/);
+  assert.match(problem, /^pc: unreachable: ssh did not reach it \(sync again once it is on and reachable\): ssh: connect to host 192\.0\.2\.1 port 2222: Connection refused/);
   assert.doesNotMatch(problem, /gave no version/);
   assert.doesNotMatch(result.calls, /git pull/, 'nothing synced');
 });
@@ -257,7 +257,7 @@ test('ssh failing at the pull and install is named so', () => {
   assert.equal(result.status, 1);
   const row = result.rows.find((each) => each.machine === 'pc');
   assert.equal(row.installExit, 255);
-  assert.match(row.problem, /^ssh did not reach it for the pull and install \(sync again once it is reachable\): ssh: connect to host .* Connection refused/);
+  assert.match(row.problem, /^unreachable: ssh did not reach it for the pull and install \(sync again once it is reachable\): ssh: connect to host .* Connection refused/);
 });
 
 test('the remote version read run in a shell with no claude on PATH names that, with the PATH it searched', () => {

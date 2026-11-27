@@ -12,12 +12,16 @@
 //   target a git bundle, the same branch fast-forward only with no tracked changes and no detached HEAD there (a pull when it is checked out, else a
 //   fetch into it and a switch to it; or a fetched tag), the shared local values, install, then the version and
 //   DISABLE_UPDATES read again. Never pushes; never touches a project repo.
-// Output: one line per machine, `<machine>: synced sha <40-hex> install <exit>`, plus ` node <path>` for a target (or a JSON array
-//   with --json): { machine, synced, sha, installExit, node, problem }. installExit is install.sh's exit on this machine and the exit
-//   of the remote pull-and-install line on a target; null when the install did not run. node is the node a target's install ran
-//   ('' on this machine or when unread). A target ssh cannot reach says so in its problem, apart from a claude not found there.
+// Output: one line per machine, `<machine>: synced sha <40-hex> install <exit>`, plus ` node <path>` for a target, then
+//   `result: <machine> synced|unreachable|NOT synced, ...` (or a JSON array with --json): { machine, synced, unreachable, sha,
+//   installExit, node, problem }. installExit is install.sh's exit on this machine and the exit of the remote pull-and-install line
+//   on a target; null when the install did not run. node is the node a target's install ran ('' on this machine or when unread).
+//   A target ssh cannot reach is `NOT synced (unreachable)` in its row, `unreachable` in the result line, and its problem starts
+//   with `unreachable:` (a claude not found there is another problem). It is skipped, every machine that is reachable still
+//   syncs, and the sync record does not count it as a failed run.
 // Exit: 0 every machine synced (installed with exit 0 and at the tip: the base branch's sha, or the tag's commit on a target of a
-//   --tag run), 1 a machine failed (its row says why), 2 usage or another sync runs (the run lock below), 3 a verify check failed.
+//   --tag run), 1 a machine is not synced, failed or unreachable (its row and the result line say which), 2 usage or another sync
+//   runs (the run lock below), 3 a verify check failed.
 // Record: every run that reached verify writes its result to the sync record (home/tools/board/lib/sync-record.mjs, read by the
 //   boss's tick): each machine's state, and how many runs in a row failed since when. A record that cannot be read or written is
 //   one stderr line and changes no exit.
@@ -240,15 +244,16 @@ async function syncTarget(ctx, target) {
   const ran = await runLine(target.name, remoteLine(target.ssh, SYNC_SECONDS, script), SYNC_SECONDS);
   const after = readReport(ran.out);
   const installExit = ran.status;
-  if (installExit === SSH_ERROR_EXIT) return { installExit, problem: `ssh did not reach it for the pull and install (sync again once it is reachable): ${tail(ran.out)}` };
+  if (installExit === SSH_ERROR_EXIT) return { installExit, unreachable: true, problem: `unreachable: ssh did not reach it for the pull and install (sync again once it is reachable): ${tail(ran.out)}` };
   return installExit === 0 ? { installExit, sha: after.sha, node: after.node, after } : { installExit, node: after.node, problem: `pull or install exit ${installExit}: ${tail(ran.out)}` };
 }
 
 /** One machine's whole sync: install, the after-install checks, the sha against the tip. Always returns its row. */
 async function syncMachine(ctx, name, target, before) {
-  const row = { machine: name, synced: false, sha: '', installExit: null, node: '', problem: '' };
+  const row = { machine: name, synced: false, unreachable: false, sha: '', installExit: null, node: '', problem: '' };
   try {
     const moved = target ? await syncTarget(ctx, target) : await syncLocal(ctx);
+    row.unreachable = moved.unreachable ?? false;
     row.sha = moved.sha ?? '';
     row.installExit = moved.installExit ?? null;
     row.node = moved.node ?? '';
@@ -277,9 +282,16 @@ function chooseTargets(options) {
   return { config, targets: config.targets.filter((target) => !options.targets || options.targets.includes(target.name)) };
 }
 
+/** A row's state for the result line: synced, unreachable (skipped: ssh did not reach it) or NOT synced (it failed). */
+function rowState(row) {
+  if (row.synced) return 'synced';
+  return row.unreachable ? 'unreachable' : 'NOT synced';
+}
+
 function printRows(rows, json) {
   if (json) return console.log(JSON.stringify(rows));
-  for (const row of rows) console.log(`${row.machine}: ${row.synced ? 'synced' : 'NOT synced'} sha ${row.sha || '-'} install ${row.installExit ?? '-'}${row.node ? ` node ${row.node}` : ''}${row.problem ? ` problem: ${row.problem}` : ''}`);
+  for (const row of rows) console.log(`${row.machine}: ${row.synced ? 'synced' : `NOT synced${row.unreachable ? ' (unreachable)' : ''}`} sha ${row.sha || '-'} install ${row.installExit ?? '-'}${row.node ? ` node ${row.node}` : ''}${row.problem ? ` problem: ${row.problem}` : ''}`);
+  console.log(`result: ${rows.map((row) => `${row.machine} ${rowState(row)}`).join(', ')}`);
 }
 
 /** Under the run lock: writes this run's bundle and shared files, syncs every machine without a problem side by side, and removes them. */
@@ -293,7 +305,7 @@ async function syncAll(options, names, problems, reports) {
     writeFileSync(sharedFile, shared, { flag: 'wx', mode: 0o600 });
     const ctx = { ...options, sharedFile, bundles };
     return await Promise.all(names.map((name, index) => (problems[name].length > 0
-      ? { machine: name, synced: false, sha: '', installExit: null, node: '', problem: problems[name].join('; ') }
+      ? { machine: name, synced: false, unreachable: Boolean(reports[index].unreachable), sha: '', installExit: null, node: '', problem: problems[name].join('; ') }
       : syncMachine(ctx, name, options.targets[index - 1], reports[index]))));
   } finally {
     removeTempFiles();

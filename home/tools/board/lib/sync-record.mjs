@@ -9,10 +9,12 @@
 //   - at: the ISO time of the last run; repo: its --repo folder; sha: the base tip it synced to ('' when it stopped before
 //     reading the tip: verify or a crash); problem: why the run itself stopped before any machine ('' when it did not).
 //   - ok: every configured machine is at that base tip, synced there by a base run (a `--tag` run never counts).
-//   - failures: the failed runs in a row (a run fails on a problem or a machine it did not sync), 0 after a run that failed
-//     nothing; failedSince: the time of the first of them ('' when failures is 0).
+//   - failures: the failed runs in a row (a run fails on a problem or a machine it did not sync, except a target ssh could not
+//     reach: that one is skipped, not a failure), 0 after a run that failed nothing; failedSince: the time of the first of them
+//     ('' when failures is 0). A run that synced every machine it reached and skipped an unreachable one is no failure, but not ok.
 //   - machines: one entry per configured machine, this machine first. sha: the base tip a base run last synced it to ('' when
-//     none); ok: its last run synced it there by a base run; at: the time of that run ('' when none); problem: why not ok.
+//     none); ok: its last run synced it there by a base run; at: the time of that run ('' when none); problem: why not ok
+//     (`<machine>: unreachable: ...` or `unreachable: ...` for a target ssh did not reach).
 //     A run updates only the machines it ran (`--targets` runs a subset); an entry of a machine no longer configured is dropped.
 // Invariants: only sync writes the record, under its run lock, so there is one writer at a time; the write is a temp file and a
 //   rename (hooks/lib/session-store.mjs, 0600, no link followed, never swept), so a reader sees the old or the new record, never
@@ -145,8 +147,9 @@ function machineEntry(old, row, { at, tag }) {
  * @param {object | null} previous the record before (readSyncRecord's), null when there is none or it was unreadable
  * @param {{ at: string, repo: string, sha: string, tag: string, configured: string[], rows: object[], problem: string }} run
  *   at: this run's ISO time; sha: the base tip it synced to ('' when it stopped before); tag: the --tag ('' for a base run);
- *   configured: every machine name, this machine first; rows: sync's rows ({ machine, synced, sha, problem }, none when it
- *   stopped before the machines); problem: why it stopped before the machines ('' when it did not)
+ *   configured: every machine name, this machine first; rows: sync's rows ({ machine, synced, unreachable, sha, problem }, none
+ *   when it stopped before the machines; an unreachable row is not a failure); problem: why it stopped before the machines ('' when
+ *   it did not)
  * @returns {object} the new record
  */
 export function nextSyncRecord(previous, { at, repo, sha, tag, configured, rows, problem }) {
@@ -157,7 +160,8 @@ export function nextSyncRecord(previous, { at, repo, sha, tag, configured, rows,
     const row = ran.get(machine);
     return row ? machineEntry(old, row, { at, tag }) : old;
   });
-  const isFailed = problem !== '' || rows.some((row) => !row.synced);
+  // A target that is off or out of reach is skipped and says so; only a machine sync reached and could not sync is a failure.
+  const isFailed = problem !== '' || rows.some((row) => !row.synced && !row.unreachable);
   const wasFailing = (previous?.failures ?? 0) > 0;
   return {
     at,

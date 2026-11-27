@@ -1,7 +1,8 @@
 // Purpose: the pure checks of scripts/sync-machines.mjs: reading a machine's claude report, comparing the machines, and the floor.
 // Exports: VERSION, CLAUDE_FLOOR, CLAUDE_READ, NODE_READ, atLeast, readReport, cliProblems, afterInstallProblem.
 // Invariants: fail closed: a missing or unreadable value (version, pin) is a problem for that machine, never a pass. A problem
-//   names its real cause: a target ssh did not reach, a claude not on the remote PATH, and a claude that gave no version differ.
+//   names its real cause: a target ssh did not reach (`unreachable`), a claude not on the remote PATH, and a claude that gave no
+//   version differ. Only the machines whose version is known are compared, so a target that is off holds back no other.
 
 export const VERSION = /^\d+\.\d+\.\d+$/;
 /**
@@ -63,14 +64,16 @@ export function atLeast(version, floor) {
 
 /**
  * Every reason a machine must not sync before the install, by machine name (fail closed: a missing value is a problem). A target
- * report with `unreachable` (ssh's own error) or `missing` (no claude on its PATH) gets that cause, not "gave no version".
+ * report with `unreachable` (ssh's own error) or `missing` (no claude on its PATH) gets that cause, not "gave no version". The
+ * version and channel are compared across the machines whose version is known only: one without it has its own problem already,
+ * and comparing its blank version would refuse every machine.
  */
 export function cliProblems(names, reports, { floor, localName, pin }) {
   const problems = Object.fromEntries(names.map((name) => [name, []]));
   names.forEach((machine, index) => {
     const report = reports[index];
     const add = (text) => problems[machine].push(`${machine}: ${text}`);
-    if (report.unreachable) return add(`ssh did not reach it (sync again once it is on and reachable): ${report.unreachable}`);
+    if (report.unreachable) return add(`unreachable: ssh did not reach it (sync again once it is on and reachable): ${report.unreachable}`);
     if (report.missing) return add(report.missing);
     if (!VERSION.test(report.version)) return add('claude --version gave no version');
     if (!atLeast(report.version, floor)) add(`claude ${report.version} is below the floor ${floor}`);
@@ -80,10 +83,11 @@ export function cliProblems(names, reports, { floor, localName, pin }) {
     const wanted = machine === localName ? pin : report.pin;
     if (wanted && wanted !== report.version) add(`claude ${report.version}, but settings/local.json pins ${wanted}`);
   });
+  const known = names.flatMap((name, index) => (VERSION.test(reports[index].version) ? [{ name, report: reports[index] }] : []));
   for (const key of ['version', 'channel']) {
-    if (new Set(reports.map((report) => report[key])).size > 1) {
-      const text = `the machines differ in claude ${key}: ${names.map((name, index) => `${name} ${reports[index][key] || '?'}`).join(', ')}`;
-      names.forEach((name) => problems[name].push(text));
+    if (new Set(known.map(({ report }) => report[key])).size > 1) {
+      const text = `the machines differ in claude ${key}: ${known.map(({ name, report }) => `${name} ${report[key] || '?'}`).join(', ')}`;
+      known.forEach(({ name }) => problems[name].push(text));
     }
   }
   return problems;
