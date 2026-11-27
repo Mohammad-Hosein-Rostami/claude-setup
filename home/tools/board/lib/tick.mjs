@@ -13,9 +13,10 @@
 //   land ledger (a land of the piece's branch made after the plan's base, tick-jobs.mjs landsOfPlan; an unreadable ledger is one
 //   line, never exit 2); tess marks from tick-plan.mjs; features and tess status judged in tick-features.mjs (a mark covers the
 //   lands its sha holds). Nothing comes from an agent's words.
-// Invariants: writes only the remembered plans list (an add, a forget, a done job; under its lock) and, with `--mark-tess`, the
-//   job's marks file (under its lock) and nothing else. Every branch name, path and agent name is printed through cells.mjs
-//   cleanText, so no control character reaches the terminal. `next:` only suggests: the boss decides. A remembered plan that
+// Invariants: writes only the remembered plans list (an add, a forget, a done job; under its lock), with `--mark-tess` the job's
+//   marks file (under its lock), and openRepo's one-time mark of the checked-out base (git config `branch.<base>.cs-base`,
+//   repo.mjs), and nothing else. Every branch name, path and agent name is printed through cells.mjs cleanText, so no control
+//   character reaches the terminal. `next:` only suggests: the boss decides. A remembered plan that
 //   cannot be read, or a list that cannot be read, is a line and the rest still prints; a `--plan` given now is checked first.
 //   Exit 0 shown, 1 findings (an overlap, a stray, a clash, a git-tidy check finding on the base or on the side, a plan or the
 //   list that cannot be read, a done job that could not be forgotten), 2 usage (a bad flag, no repository, a bad `--plan` or marks file) and any unexpected failure (1

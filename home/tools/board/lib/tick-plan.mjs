@@ -7,6 +7,8 @@
 //   feature and piece ids are safe file names (NAME, a subset of session-store.mjs isSessionId). The plan's `base` is a commit of
 //   the repository (the base's sha when the plan was written). A piece's `branch` passes the check `lane claim --branch` makes
 //   (lane-pool.mjs checkBranchName), is no base branch (git-tidy's lane-release.mjs baseNames) and no two pieces share a branch.
+//   A piece's `files` is never empty, its `after` lists make no cycle (no piece of one could ever start), and each of its `waits`
+//   (another job's branches that land first, at most MAX_WAITS) passes the same branch-name check.
 //   Marks live per repository and job in `<repoStateDir>/marks-<job>.json` (tick-jobs.mjs; an old `<boardDir>/jobs/<job>.json` is
 //   read when that file is not there yet, and never written) as `{ "<feature>": { "sha": "<40-hex>", "at": "<ISO>" } }`, written
 //   through session-store.mjs: a temp file and a rename, no link followed, 0600, never swept (a job may wait more than a week). A
@@ -32,10 +34,12 @@ const MARKS_PREFIX = 'marks-';
 // the optional text fields a plan may give, kept for the briefs the board prints (plan-core-best, cb-start-1)
 const FEATURE_TEXTS = Object.freeze(['spec', 'qa', 'acceptance']);
 const PIECE_TEXTS = Object.freeze(['acceptance']);
+const MAX_WAITS = 16; // a piece waits on a few branches of other jobs; more is a plan written wrong
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isName = (value) => typeof value === 'string' && NAME.test(value);
-const isPathList = (value) => Array.isArray(value) && value.every((path) => typeof path === 'string' && path !== '');
+const isPathList = (value) => Array.isArray(value) && value.length > 0 && value.every((path) => typeof path === 'string' && path !== '');
+const isWaitList = (value) => Array.isArray(value) && value.length <= MAX_WAITS && value.every((branch) => typeof branch === 'string');
 const duplicateOf = (ids) => ids.find((id, at) => ids.indexOf(id) !== at);
 /** The first of `names` that `entry` gives as something other than a string, or undefined. */
 const badText = (entry, names) => names.find((name) => entry[name] !== undefined && typeof entry[name] !== 'string');
@@ -54,9 +58,10 @@ function featureProblem(feature) {
 function pieceProblem(piece, featureIds, pieceIds) {
   if (!isObject(piece) || !isName(piece.id)) return 'a piece needs an "id" of letters, digits, - and _';
   if (!featureIds.includes(piece.feature)) return `piece ${piece.id} names no feature of the plan`;
-  if (!isPathList(piece.files)) return `piece ${piece.id} needs "files": a list of repository-relative paths`;
+  if (!isPathList(piece.files)) return `piece ${piece.id} needs "files": a non-empty list of repository-relative paths`;
   const after = piece.after ?? [];
   if (!Array.isArray(after) || !after.every((id) => pieceIds.includes(id))) return `piece ${piece.id} has an "after" entry that is no piece of the plan`;
+  if (!isWaitList(piece.waits ?? [])) return `piece ${piece.id} needs "waits" as a list of at most ${MAX_WAITS} branch names`;
   const bad = badText(piece, PIECE_TEXTS);
   return bad === undefined ? null : `piece ${piece.id} has a non-string "${bad}"`;
 }
@@ -73,7 +78,30 @@ function planProblem(plan) {
   const pieceIds = plan.pieces.map((piece) => (isObject(piece) ? piece.id : null));
   const repeated = duplicateOf(featureIds) ?? duplicateOf(pieceIds);
   if (repeated !== undefined) return `the id ${repeated} is used twice`;
-  return plan.pieces.map((piece) => pieceProblem(piece, featureIds, pieceIds)).find((found) => found !== null) ?? null;
+  const pieceIssue = plan.pieces.map((piece) => pieceProblem(piece, featureIds, pieceIds)).find((found) => found !== null);
+  if (pieceIssue !== undefined) return pieceIssue;
+  const cycle = afterCycle(plan.pieces);
+  return cycle === null ? null : `piece ${cycle[0]} is in an "after" cycle (${cycle.join(' -> ')}), so none of them can ever start`;
+}
+
+/** One cycle of the pieces' `after` lists as piece ids, its first id again at the end (`a -> b -> a`), or null when there is none. */
+function afterCycle(pieces) {
+  const left = new Map(pieces.map((piece) => [piece.id, piece.after ?? []]));
+  // peel off each piece none of whose `after` pieces is left, until a round peels none: what stays is on a cycle or after one
+  let isPeeled = true;
+  while (isPeeled) {
+    isPeeled = false;
+    for (const [id, after] of left) {
+      if (after.some((other) => left.has(other))) continue;
+      left.delete(id);
+      isPeeled = true;
+    }
+  }
+  if (left.size === 0) return null;
+  // every piece left is after one left, so stepping from one to the next must come back to a piece already passed: the cycle
+  const path = [left.keys().next().value];
+  while (!path.slice(0, -1).includes(path.at(-1))) path.push(left.get(path.at(-1)).find((other) => left.has(other)));
+  return path.slice(path.indexOf(path.at(-1)));
 }
 
 /** Whether `branch` is a name `lane claim --branch` takes: checkBranchName's refusal is a UsageError, anything else a real failure. */
@@ -87,11 +115,17 @@ function isPlainBranch(repo, branch) {
   }
 }
 
-/** The first thing wrong with the plan in this repository: its base no commit here, or a problem of its pieces' branches; or null. */
+/** The first thing wrong with the plan in this repository: its base no commit here, or a problem of its pieces' branches or waits; or null. */
 function repoProblem(repo, plan) {
   // plumbing with a full sha: `cat-file -e` exits 0 only for an object of the repository, and `^{commit}` makes it a commit
   if (runGit(repo.dir, ['cat-file', '-e', `${plan.base}^{commit}`]).status !== 0) return `"base" ${plan.base.slice(0, SHORT_SHA)} is no commit of this repository`;
-  return branchProblem(repo, plan.pieces);
+  return branchProblem(repo, plan.pieces) ?? waitsProblem(repo, plan.pieces);
+}
+
+/** The first piece with a `waits` entry that is no plain branch name, as a problem, or null. */
+function waitsProblem(repo, pieces) {
+  const bad = pieces.find((piece) => (piece.waits ?? []).some((branch) => !isPlainBranch(repo, branch)));
+  return bad === undefined ? null : `piece ${bad.id} has a "waits" entry that is no plain branch name (git check-ref-format --branch refuses it, or it starts with - or refs/)`;
 }
 
 /** The first thing wrong with the pieces' branches (a named one git refuses or that is a base, two pieces on one), or null. */
@@ -111,11 +145,12 @@ function branchProblem(repo, pieces) {
 /**
  * Reads and checks a pieces.json.
  * @param {string} path the absolute path of the plan's pieces.json
- * @param {{ dir: string }} repo openRepo's result: a piece's `branch` is checked against its git and its base branches
+ * @param {{ dir: string }} repo openRepo's result: a piece's `branch` and `waits` are checked against its git, `branch` also against
+ *   its base branches
  * @returns {{ job: string, base: string, features: { id: string, risk: string, spec?: string, qa?: string, acceptance?: string }[],
- *   pieces: { id: string, feature: string, files: string[], after: string[], branch: string | null, acceptance?: string }[] }} the
- *   plan, files with `/` separators, `branch` null when the piece names none (it is then `lane/<id>`), each optional text only
- *   when the plan gives it
+ *   pieces: { id: string, feature: string, files: string[], after: string[], branch: string | null, waits?: string[],
+ *   acceptance?: string }[] }} the plan, files with `/` separators, `branch` null when the piece names none (it is then
+ *   `lane/<id>`), `waits` and each optional text only when the plan gives them
  * @throws {UsageError} `plan <path>: <problem>`: the file is missing, unreadable, not JSON or not in the pieces.json format
  */
 export function readPlan(path, repo) {
@@ -145,6 +180,7 @@ export function readPlan(path, repo) {
       files: piece.files.map((file) => file.replaceAll('\\', '/')),
       after: piece.after ?? [],
       branch: piece.branch ?? null,
+      ...(piece.waits === undefined ? {} : { waits: piece.waits }),
       ...textsOf(piece, PIECE_TEXTS),
     })),
   };

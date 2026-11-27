@@ -133,19 +133,27 @@ repository, a missing or bad `--plan` or marks file (the message names what is w
 
 lex writes it next to the plan; the tick reads it with `--plan` and remembers it. Ids (`job`, features, pieces) are letters,
 digits, `-` and `_` (at most 64, starting with a letter or digit); `base` is the full sha of the base when the plan was written (a
-commit of the repository); `files` are repository-relative paths; `after` and `branch` are optional, and so are the texts a
-brief takes: a feature's `spec`, `qa` and `acceptance`, a piece's `acceptance` (strings):
+commit of the repository); `files` is a non-empty list of repository-relative paths; `after`, `branch` and `waits` are optional,
+and so are the texts a brief takes: a feature's `spec`, `qa` and `acceptance`, a piece's `acceptance` (strings):
 
 ```json
 { "job": "<slug>", "repo": "<abs>", "base": "<40-hex>",
   "features": [{ "id": "login", "risk": "none | security,data,...", "spec": "<plan path>#<section>", "qa": "quick look", "acceptance": "<text>" }],
-  "pieces": [{ "id": "login-1", "feature": "login", "files": ["<repo-relative path>"], "after": ["<piece id>"], "branch": "test/<topic>", "acceptance": "<text>" }] }
+  "pieces": [{ "id": "login-1", "feature": "login", "files": ["<repo-relative path>"], "after": ["<piece id>"], "branch": "test/<topic>",
+    "waits": ["<branch of another job>"], "acceptance": "<text>" }] }
 ```
+
+The tick knows these fields: `job`, `repo`, `base`; a feature's `id`, `risk`, `qa`, `spec` and `acceptance`; a piece's `id`,
+`feature`, `files`, `after`, `branch`, `waits` and `acceptance`. It ignores any other field (`test` included), so a plan may
+carry notes for lex or dev.
 
 A piece's branch is its `branch`, else `lane/<piece id>`. A `Fix:` piece names tess-write's repro branch (`test/<topic>`), so
 it lands under that name and the tick counts it. A `branch` must be a name `lane claim --branch` takes and no base branch, and
-no two pieces may share a branch: else the tick exits 2 and names the piece. Two plans may reuse a piece id, but not a branch
-(the tick shows a `clash`). No two pieces that can run at the same time share a file; the tick shows it when they do.
+no two pieces may share a branch: else the tick exits 2 and names the piece. It does the same for an empty `files`, an `after`
+cycle of any length (`a` after `b` after `a`: neither could ever start) and a bad `waits`. A piece's `waits` lists the branches
+of another job that must land before it (at most 16, each a name `lane claim --branch` takes); the tick checks the names, but
+does not hold the piece back yet. Two plans may reuse a piece id, but not a branch (the tick shows a `clash`). No two pieces
+that can run at the same time share a file; the tick shows it when they do.
 
 ## The status line rows
 
