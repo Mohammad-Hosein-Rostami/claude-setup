@@ -159,7 +159,7 @@ puts a lane on the base as one straight line:
 3. Checks on the rebased tip (there is no test run and no review record):
    - The base's upstream is fetched first (`lib/upstream.mjs`; a fetch, never a push; 20 s timeout, and when it cannot be reached
      a WARN line is printed). When the upstream holds commits the base lacks, nothing lands and the exit code is 8
-     (`upstream-moved`, "`git pull --rebase` first"). A landing prints `published N` (JSON `upstream`).
+     (`upstream-moved`: run `git rebase --reapply-cherry-picks <upstream>` in the base folder first, then land again). A landing prints `published N` (JSON `upstream`).
    - A file the lane adds (`<base>..<tip>`, renames counted as adds) over the commit gate's `MAX_NEW_FILE_BYTES` (5 MB, imported from
      `hooks/lib/new-file-size.mjs`) whose path the `--brief <file>` text does not name (the commit gate's `namesPath`) stops it: exit 7
      (`new-file-size`). No `--brief` names no path; a file already on the base never counts.

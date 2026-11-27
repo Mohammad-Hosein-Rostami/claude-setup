@@ -20,7 +20,7 @@
 //   prints `ui plan <depth>: proved` and its `follow-up:` lines (JSON `uiPlan`), 7 new-file-size:
 //   the lane adds a file over the commit gate's MAX_NEW_FILE_BYTES that the `--brief` file does not name (no brief names none).
 //   8 upstream-moved: after a fetch of the base's upstream (timeout; offline is a WARN line), the upstream holds commits the base lacks:
-//   `git pull --rebase` first. 9 tip-moved: `refs/heads/<branch>` is not the `--tip` sha (changed since the caller read it; nothing was touched).
+//   `git rebase --reapply-cherry-picks <upstream>` in the base folder first. 9 tip-moved: `refs/heads/<branch>` is not the `--tip` sha (changed since the caller read it; nothing was touched).
 //   A landing prints the published count (`published N ...`; JSON `upstream`).
 //   A landing prints `from <sha>`, the base tip before the fast-forward (JSON: `from`).
 // range: the base's reflog step that landed the given sha's patches (lib/landed-range.mjs), printed as `from <sha>` and `to <sha>`

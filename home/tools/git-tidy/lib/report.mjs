@@ -78,7 +78,7 @@ const planText = (uiPlan) => (uiPlan ? [`ui plan ${uiPlan.depth}: proved`, ...ui
 export function formatLand(result, json) {
   if (json) return JSON.stringify(result, null, 2);
   const { status, tip, from, patchesChanged, removed, cleanupRefused, findings, files, why, upstream } = result;
-  if (status === 'upstream-moved') return `upstream moved: ${why}: \`git pull --rebase\` first, then land again (the lane stays rebased)`;
+  if (status === 'upstream-moved') return `upstream moved: ${why}: in the base folder run \`git rebase --reapply-cherry-picks ${upstream.upstream}\` first, then land again (the lane stays rebased)`;
   const upstreamLines = upstreamText(upstream);
   if (status === 'tip-moved') return `tip-moved: ${why}: the lane changed since the tip was read: land again with its new tip (nothing was touched)`;
   if (status === 'rebased') return `tip ${tip}\npatches-changed ${patchesChanged}`;
