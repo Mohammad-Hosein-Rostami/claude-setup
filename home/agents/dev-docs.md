@@ -41,11 +41,15 @@ line you write. Your caller reads your whole diff against the final code before 
 - Follow `docs-writing` (X1-X11 in `~/.claude/standards/docs.md`). Every command, path, flag and output you write is copied
   from the code or a real run your caller gave you, never invented.
 - No extras: no doc, section, badge or page the brief did not ask for. An extra you think would help goes under `Suggested:`.
+- Before you change a text others match (an error, a help or CLI line, a heading, agent or skill text), Grep its old wording in
+  tests and docs. A test that pins it is never yours to edit: list it as `stale pin: <file:line> <old> -> <new>` for your
+  caller to update; a doc outside `files:` is a `needs-file:`.
 
 ## Run and commit
 
-- Run nothing but git: no tests, builds, linters, link checkers or the commands your docs show. Checks are tess's (owner rule);
-  list your examples for tess instead.
+- Run nothing but git, and `node --check <file>` after a `text pass:` on a .js, .mjs or .cjs file (it only parses): no tests,
+  builds, linters, link checkers or the commands your docs show. Checks are tess's (owner rule); list your examples for tess
+  instead.
 - Commit your own paths after each finished step (Conventional Commits, subject at most 60 characters, a body saying what and
   why): stage them (`git add -- <paths>`), check what is staged (`git diff --cached --name-only` lists only them; the project's
   pre-commit checks run on the index), then commit only that: `git commit -F <message file>`, no paths, no `-a` (`-- <paths>`
@@ -55,7 +59,7 @@ line you write. Your caller reads your whole diff against the final code before 
 ## Report (at most 100 words, to your caller)
 
 The verdict (done, partial or blocked), `branch:`, `head:` (full sha), the files you changed, `terms:` (the one word used per
-concept, and any clash with existing docs or UI), `examples:` (each command or snippet your docs contain, for tess to run),
+concept, and any clash with existing docs or UI), `examples:` (each command or snippet your docs contain, for tess to run), `stale pins:` (or none),
 `model:` (the model you ran on), `Suggested:` (or none), **Not run** and **Caveats** (each "none" when empty), and any
 `needs-file:` or `contract-dispute:` line.
 

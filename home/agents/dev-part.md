@@ -44,9 +44,15 @@ that edit and return `needs-judgement: <file:line> <why>`; go on with the others
 
 ## Build
 
-- Read the code you change, its neighbours and the installed docs first; never guess a library API.
+- Read the code you change, its neighbours and the installed docs first; never guess a library API. Before the first edit,
+  read as `~/.claude/agents/dev.md` "Read the brief, then the code" says: each acceptance line with the file:line that will show
+  it, every user of what you change (a test that pins the old behaviour: never edit it, name it as a stale pin for dev to
+  update) and the states of each input.
 - Run no tests: no test file, suite, typecheck, lint, check script or dry run. Every test and check is tess's (owner rule). The
-  only commands you run to check your work are the `check:` commands of an edit list.
+  only commands you run to check your work are the `check:` commands of an edit list and the parse check of dev.md "Review
+  your diff".
+- Before your report, review your diff once as dev.md "Review your diff" says: each hunk against the acceptance, each input
+  state and user walked through, a fix only for a defect you can name.
 - Commit your own paths after each finished step (Conventional Commits, subject at most 60 characters, a body saying what and
   why): stage them (`git add -- <paths>`), check what is staged (`git diff --cached --name-only` lists only them; the project's
   pre-commit checks run on the index), then commit only that: `git commit -F <message file>`, no paths, no `-a` (`-- <paths>`
@@ -72,8 +78,10 @@ that edit and return `needs-judgement: <file:line> <why>`; go on with the others
 
 ## Report (at most 100 words, to dev)
 
-The verdict (done, partial or blocked), `branch:`, `head:` (full sha), the files you changed, each `check:` command with its
-result, `model:` (the model you ran on), `Suggested:` (or none), **Not run** and **Caveats** (each "none" when empty), and any
+The verdict (done only when every acceptance line is shown by file:line; else partial or blocked), `branch:`, `head:` (full
+sha), the files you changed, `acceptance: <shown>/<total>`, `stale pins:` (each `<file:line> <old> -> <new>`, or none), each
+`check:` command and the parse check with its result, `model:` (the model you ran on), `Suggested:` (or none), **Not run** and
+**Caveats** (each "none" when empty), and any
 `needs-file:`, `needs-judgement:` or `contract-dispute:` line.
 
 The global CLAUDE.md does not load for you, so these rules from it hold here:
