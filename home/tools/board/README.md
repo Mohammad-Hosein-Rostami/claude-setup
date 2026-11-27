@@ -75,7 +75,7 @@ ledger <n> bad lines skipped
 ledger unreadable (<why>): no piece counts as landed
 agents <n> running: <type> <n> (<name>[ <n> min]|<name> quiet N min, ...), ...[; +<n> more]|agents none running
 job <slug> (<abs pieces.json>): <n>/<n> landed, <n> in lanes, <n> waiting; <n>/<n> features checked; about <n> min per land (last <n>) -> about <n> h for <n> left|pace unknown (fewer than 2 lands)
-sync running|never|ok at <sha>|failed[ at <sha>]: <first problem> (<n> times since <HH:MM>)|incomplete at <sha>: <machine> behind, ...|record unreadable (<why>)|state unknown (<why>)
+sync running|never|ok at <sha>|failed[ at <sha>]: <first problem> (<n> times since <HH:MM>)|incomplete at <sha>: <machine> behind, ...|incomplete at <sha>: <machine> unreachable, ... (wake it and turn on Remote Login, then sync)|record unreadable (<why>)|state unknown (<why>)
 next: <n> steps (dev <n>/3, tess <n>/3; these replace every earlier do line)
 next: nothing to do now; <n> agents running (dev <n>/3, tess <n>/3)
 next: fix <name> first (node ~/.claude/tools/git-tidy/git-tidy.mjs check <repo>), start no new piece; dev <n>/3, tess <n>/3[; <n> steps, these replace every earlier do line]
@@ -135,14 +135,16 @@ do <n>: sync failed <n> times since <HH:MM> (<first problem>): tell the owner on
   land of its pieces and tess recorded `done` with verdict `ok` on that mark ([The done command](#the-done-command)); a mark
   with no `done` (tess still running, or one that died) checks nothing: while a tess agent runs such a feature is listed with
   `, tess on it` and is not due again; with no tess running that tess died, and the feature is due again. A feature whose verdict on such
-  a mark is `must-fix` is listed with `, must-fix` and is not due again until a piece of it lands after the mark (its fix).
+  a mark is `must-fix` is listed with `, must-fix` and is not due again until its fix lands: a piece of it after the mark, or
+  any commit on the base since the mark's sha that touches the feature's files (its landed pieces' declared files and every
+  file its lands changed), so a fix made on a branch that is no plan piece is re-checked too.
   tess (its quick look; `full` only when the owner asks) is due when a risky feature is listed without `must-fix`, when 3
   features are fully landed and not checked, or when the plan's last piece has landed.
 - **hold**: a risky feature with a land holds its files until tess returns: the declared `files` of its landed pieces and
   every file its lands changed (`git diff-tree` of each ledger range, so a stray landed with `land --test` is held too). It is
   `tess not started` (no mark), `landed since its tess mark` (a land the mark does not hold) or `tess on it at <sha>` (the
   mark holds every land and tess has not recorded `done`). It ends when tess records `done` on a mark that holds every land,
-  with either verdict: a `must-fix` frees the files for the fix piece, whose land holds them again. Holds count across every
+  with either verdict: a `must-fix` frees the files for the fix, whose land (a plan piece or any commit on those files) holds them again. Holds count across every
   job the tick reads: a piece on a held file shows `held by <feature>` and is not startable, a lane on one is not ready. A hold
   is no finding (the exit is unchanged); a land whose files git cannot list is exit 2.
 - **agents**: the session's agents that run (quiet ones included; done ones are not counted), by type in the board's order,
@@ -157,7 +159,9 @@ do <n>: sync failed <n> times since <HH:MM> (<first problem>): tell the owner on
 - **sync**: only in the setup's own repository (the one holding the running board code; a path lookup that fails counts as
   another repository, so the rest of the tick still prints) with `scripts/sync-machines.mjs`: the
   sync record `sync-machines.mjs` writes after each run (`lib/sync-record.mjs`), so a failed sync stays on screen. A machine is
-  synced only at the base's tip by a base run, never by a `--tag` run. No finding (the exit is unchanged).
+  synced only at the base's tip by a base run, never by a `--tag` run. `incomplete` names each machine `unreachable`, with
+  what to do, when every machine left behind was one ssh did not reach; else each one `behind`. No finding (the exit is
+  unchanged).
 - **next** and **do**: only suggestions: the boss runs each `do` line in order, as printed, and keeps every judgement; the
   lines of a new tick replace every earlier one (a land prints the next tick). The order is land, resume, release, start dev,
   start tess, test branches, sync. `dev <n>/3` counts the lanes not on `test/*`. **land**: each ready lane not on `test/*`
@@ -171,7 +175,9 @@ do <n>: sync failed <n> times since <HH:MM> (<first problem>): tell the owner on
   while fewer than 3 tess run; `board start --tess` claims the snapshot and writes the mark. **test branches**: a ready pool
   lane on `test/*` (it never gets a plain land line), then each `test/*` branch with commits and no plan piece or live agent,
   at most 3. **sync**: in the setup's own repository, when its path is one sync takes, no sync runs and not every machine is
-  at the base's tip; `sync failed` instead while the last runs failed. While the base has a finding of its own the header says
+  at the base's tip; `sync failed` instead while the last runs failed. No sync `do` line while the last run was at the base's tip
+  and every machine it left behind was out of ssh's reach (its problem starts with `unreachable:`): the `sync` status line
+  says `unreachable` and to wake it, since a sync again would only fail on it again. While the base has a finding of its own the header says
   `fix <name> first`, and while the land ledger cannot be read (it hides every land, so every hold) it says to land nothing
   and start no new piece: then only resume, release and sync lines print. A `tidy` finding never holds a step back.
 
@@ -234,7 +240,7 @@ node ~/.claude/tools/board/board.mjs done --repo <abs main checkout> --job <slug
 It writes `done: { verdict, at }` into the job's tess mark of that feature, under the same lock as `--mark-tess`, and prints
 `done <feature> at <sha8>: <verdict>`. Only the mark at that exact sha takes it: a tess started on an older mark cannot check a
 feature marked again since. `ok` checks the feature (when the mark's sha holds all its lands); `must-fix` keeps it unchecked and
-not due until a piece of it lands again. A second `done` on the same mark replaces the first.
+not due until its fix lands (a piece of it, or any commit on its files since that sha). A second `done` on the same mark replaces the first.
 Exit 0 recorded; 1 no tess mark of that feature at that sha in the job (`no tess mark for <feature> at <sha8>`, nothing
 written); 2 usage: a `--repo` that is not an absolute path or a git repository, a job or feature that
 is not a name, a sha that is not 40 hex characters, another verdict, marks that cannot be read or written, or the lock busy.
@@ -307,8 +313,8 @@ and the mark are not under one lock.
 `--qa` takes tess's levels (`quick`, the default, `smoke`, `checks`, `full`, `review`, `tests`, `edge`, `deps`, `ui`,
 `repro`, `e2e`; several with spaces or commas), only on the owner's ask. `suite: yes` only for the first `full` tess at that
 sha (no mark at it has `full`), so one full suite runs per sha. A feature with no land is refused; with the quick look, so is
-one the tick does not list for tess: `<feature> is checked at <sha8>`, `waits for its fix`, `tess is on <feature>`, or `not
-due yet`. A mark that cannot be written after the claim is refused with the command that releases the spare snapshot.
+one the tick does not list for tess: `<feature> is checked at <sha8>`, `waits for its fix` (no commit on its files has landed
+since the must-fix), `tess is on <feature>`, or `not due yet`. A mark that cannot be written after the claim is refused with the command that releases the spare snapshot.
 
 Every name and path is cleaned of control characters; the folder, repository and file paths and every word of a printed command
 are shell-quoted when they hold a space or a quote. Exit 0
