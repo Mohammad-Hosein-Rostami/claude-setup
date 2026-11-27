@@ -1,6 +1,6 @@
 // Purpose: the `git-tidy lane` command: parse `claim | list | release | reclaim`, run lane-pool.mjs (and lane-prep.mjs after a claim),
 //   print text lines or one JSON object, return the exit code.
-// Exports: LANE_USAGE, runLaneCommand.
+// Exports: LANE_USAGE, runLaneCommand, claimPrepared (the claim `board start` makes too), laneExit (the exit code of a thrown error).
 // Exit codes: claim 0 claimed and ready, 1 claimed but an install failed (the "lane not ready" lines; the folder is not handed out),
 //   2 usage (bad sha, a new branch's --base not on the base, an existing branch claimed on another base, a branch that fails check-ref-format,
 //   --snapshot with --branch, a branch checked out or being filled in another folder: named), 4 the pool lock stayed held by another
@@ -81,17 +81,32 @@ function reportPoolIgnore(repoDir, { outcome, path, why }) {
   if (outcome === 'failed') console.error(`git-tidy: lane folders show in git status of ${repoDir} (${why}): land refuses there until git ignores .claude/worktrees/`);
 }
 
-function runClaim(repo, options) {
+/**
+ * The claim of `lane claim`: claimLane, its warnings on stderr, then prepareLane, so the folder has its deps warm. `board start`
+ * claims with it too, so a started lane is the same as one claimed by hand.
+ * @param {object} repo openRepo's result
+ * @param {{ repo: string, branch: string | null, base: string | null, snapshot: boolean }} options the main checkout as given
+ *   (for the printed commands) and claimLane's options
+ * @returns {{ claimed: object, prep: object, notReady: string[] | null }} claimLane's and prepareLane's results, and the
+ *   `lane not ready` lines when an install failed (the folder is then not handed out), else null
+ * @throws what claimLane throws (laneExit gives its exit code)
+ */
+export function claimPrepared(repo, options) {
   const claimed = claimLane(repo, { branch: options.branch, base: options.base, snapshot: options.snapshot });
   reportPoolIgnore(options.repo, claimed.poolIgnore);
   warnRecord(claimed.record);
   claimed.fill.warnings.forEach((warning) => console.error(`git-tidy: fill warning: ${warning}`));
   const prep = prepareLane(claimed.folder);
   const failed = prep.installs.find((install) => install.outcome === 'failed');
+  return { claimed, prep, notReady: failed === undefined ? null : notReadyLines(options.repo, claimed, failed) };
+}
+
+function runClaim(repo, options) {
+  const { claimed, prep, notReady } = claimPrepared(repo, options);
   const installed = prep.installs.filter((install) => DONE_OUTCOMES.has(install.outcome)).map(installedText);
   if (options.json) console.log(JSON.stringify({ ...claimed, ready: prep.ready, installs: prep.installs }, null, 2));
-  if (failed !== undefined) {
-    console.error(notReadyLines(options.repo, claimed, failed).join('\n'));
+  if (notReady !== null) {
+    console.error(notReady.join('\n'));
     return EXIT.notReady;
   }
   if (!options.json) console.log([`lane: ${claimed.folder}`, `kept: ${claimed.kept.length > 0 ? claimed.kept.join(', ') : 'none'}`, `installed: ${installed.length > 0 ? installed.join(', ') : 'none'}`, fillLine(claimed.fill), ...(claimed.snapshot ? ['snapshot: true'] : [])].join('\n'));
@@ -124,6 +139,16 @@ function runReclaim(repo, options) {
 const RUNNERS = Object.freeze({ claim: runClaim, list: runList, release: runRelease, reclaim: runReclaim });
 
 /**
+ * The exit code of an error a lane command threw (see the header).
+ * @param {Error} error what the command threw
+ * @returns {number} 2 usage, 4 the pool lock stayed busy, 14 any other failure (git, the base record, the fill)
+ */
+export function laneExit(error) {
+  if (error instanceof UsageError) return EXIT.usage;
+  return error instanceof PoolBusy ? EXIT.busy : EXIT.git;
+}
+
+/**
  * Runs `git-tidy lane <argv>` and prints its result.
  * @param {string[]} argv the arguments after `lane`
  * @returns {number} the exit code (see the header)
@@ -136,7 +161,6 @@ export function runLaneCommand(argv) {
     return RUNNERS[options.command](repo, options);
   } catch (error) {
     console.error(`git-tidy lane: ${error.message}`);
-    if (error instanceof UsageError) return EXIT.usage;
-    return error instanceof PoolBusy ? EXIT.busy : EXIT.git;
+    return laneExit(error);
   }
 }

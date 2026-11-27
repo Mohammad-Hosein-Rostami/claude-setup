@@ -1,8 +1,8 @@
 # board
 
 The status line's engine: a detached refresh writes each session's board file, `show` prints it as plain lines, `tick` is
-the boss's sync of the base (the branch checked out in the main checkout), its lanes and the plan, and `done` is tess's record
-that it returned.
+the boss's sync of the base (the branch checked out in the main checkout), its lanes and the plan, `done` is tess's record
+that it returned, and `start` claims a piece's lane or a tess snapshot and prints the brief to send.
 
 The engine behind the status line: which agents run and the git state of the session's worktrees, in one small file the
 status line reads (`~/.claude/state/board/<session>.json`, at most 48 KB). Node 22, no dependencies.
@@ -199,6 +199,76 @@ not due until a piece of it lands again. A second `done` on the same mark replac
 Exit 0 recorded; 1 no tess mark of that feature at that sha in the job (`no tess mark for <feature> at <sha8>`, nothing
 written); 2 usage: a `--repo` that is not an absolute path or a git repository, a job or feature that
 is not a name, a sha that is not 40 hex characters, another verdict, marks that cannot be read or written, or the lock busy.
+
+## The start command
+
+The boss runs `start` for a step the tick names, so no claim, tess mark or brief is written by hand:
+
+```sh
+node ~/.claude/tools/board/board.mjs start --repo <abs main checkout> --piece <id> [--job <slug>] [--session <id>]
+node ~/.claude/tools/board/board.mjs start --repo <abs main checkout> --tess <feature> [--job <slug>] [--qa <level>] [--session <id>]
+```
+
+It first runs `tick --json` (`lib/start.mjs`), so it judges a piece or feature by the facts the tick prints: the remembered
+plans, the queue, the holds, the lanes and their agents. The piece or feature is looked up in every remembered plan; an id two
+plans share needs `--job`. Neither takes `--base`: the base is the branch checked out in the main checkout. The claim is
+`git-tidy lane claim`'s own (claim, then the deps prep), under its pool lock, so two starts of one piece make one claim.
+
+`--piece` claims the piece's branch (its `branch`, else `lane/<id>`) at the base's tip and prints dev's brief:
+
+```text
+started lane/<id> in lane-<n> at <sha8> (job <slug>)
+start dev with description "dev <id>" and this brief, whole:
+worktree: <abs lane folder>
+BRANCH: lane/<id>
+BASE: <40-hex>
+repo: <abs main checkout>
+piece: <id> (feature <feature>, risk <risk>, job <slug>)
+spec: <feature spec>#<id>|none in the plan
+files: <file>, <file>, ...
+tests: none (owner rule): write and run no tests; where your change alters text a test pins, update only that expectation, by reading, and name it as a stale pin
+report: starts with `verdict:` (dev.md, Report)
+```
+
+`spec` is the feature's `spec`, with `#<id>` added when it names no section. It refuses (exit 1, `start refused: <why>`) a
+piece that has landed, any piece while the base has a finding of its own or the land ledger cannot be read, and a piece the
+queue does not call `startable`, with its queue state as the reason (`<id> after <piece>`, `held by <feature>`, `overlaps
+<lane>`, `clash`, `waits <branch>`): a held piece is never started. A piece whose branch a pool lane already holds gets no
+second claim: with no live agent on it and no hold on its files it prints `already claimed in lane-<n>; brief again:` and the
+brief (exit 0, `BASE:` the base's tip now); a live agent is `<type> <id7> is on it (lane-<n>)`, a hold `held by <feature>`
+(exit 1).
+
+`--tess` claims a snapshot at the tick's base sha, then marks the feature for tess at that sha (the `qa` level is kept in the
+mark), and prints tess's brief:
+
+```text
+snapshot lane-<n> at <sha8>; marked <feature> for tess (job <slug>)
+start tess with description "tess lane-<n> <feature>" and this brief, whole:
+qa: <level>
+repo: <abs main checkout>
+main: <40-hex>
+worktree: <abs snapshot folder>
+feature: <feature>
+commits: <from8>..<to8> ...
+suite: yes|no
+spec: <feature spec>|none in the plan
+risk: <risk>[ -> <classes the risk tool found>]
+job: <slug>
+done: node ~/.claude/tools/board/board.mjs done --repo <abs> --job <slug> --tess <feature> --sha <40-hex> --verdict <ok|must-fix>
+release: node ~/.claude/tools/git-tidy/git-tidy.mjs lane release --repo <abs> --folder <abs snapshot folder>
+```
+
+`--qa` takes tess's levels (`quick`, the default, `smoke`, `checks`, `full`, `review`, `tests`, `edge`, `deps`, `ui`,
+`repro`, `e2e`; several with spaces or commas), only on the owner's ask. `suite: yes` only for the first `full` tess at that
+sha (no mark at it has `full`), so one full suite runs per sha. A feature with no land is refused; with the quick look, so is
+one the tick does not list for tess: `<feature> is checked at <sha8>`, `waits for its fix`, `tess is on <feature>`, or `not
+due yet`. A mark that cannot be written after the claim is refused with the command that releases the spare snapshot.
+
+Every name and path is cleaned of control characters; the folder, repository and file paths and every word of a printed command
+are shell-quoted when they hold a space or a quote. Exit 0
+started or brief again; 1 refused, or the claim failed (`start refused: lane claim exit <n>: <line>`, the claim's exit codes,
+or its `lane not ready` lines); 2 usage: a bad flag, an unknown id, an id in two plans with no `--job`, no remembered plan
+(tick once with `--plan`), or a tick that failed.
 
 ## The status line rows
 

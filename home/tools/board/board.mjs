@@ -6,15 +6,18 @@
 // refresh first, `--json` prints the board file's JSON instead. `tick` is the boss's read-only sync after every agent report and
 // every land (lib/tick.mjs): main, the lanes in flight with their agents (from one forced refresh), overlaps, strays, the plan's
 // queue, features due for tess and a suggested next step. `done` is tess's record that it returned: its verdict goes into the
-// feature's tess mark at that sha (lib/tick-plan.mjs writeDone), and only an `ok` there checks the feature.
+// feature's tess mark at that sha (lib/tick-plan.mjs writeDone), and only an `ok` there checks the feature. `start` claims the
+// lane of a startable plan piece, or a snapshot for tess (then its mark), and prints the brief to send (lib/start.mjs).
 // Usage: node board.mjs refresh --session <id> [--force]
 //        node board.mjs show [--session <id>] [--refresh] [--json]   (session default CLAUDE_CODE_SESSION_ID)
 //        node board.mjs tick --repo <abs> [--plan <abs pieces.json>] [--session <id>] [--json]
 //        node board.mjs tick --repo <abs> --plan <abs> --mark-tess <feature> --sha <40-hex>
 //        node board.mjs done --repo <abs> --job <slug> --tess <feature> --sha <40-hex> --verdict ok|must-fix
+//        node board.mjs start --repo <abs> --piece <id> [--job <slug>]   |   --tess <feature> [--job <slug>] [--qa <level>]
 // Exit: refresh 0 after a refresh (written or not: a refresh never fails loudly); show 0 shown, 1 no board file for the session
 // (it prints the refresh command to run); tick 0 shown, 1 findings, 2 usage or a bad plan (lib/tick.mjs); done 0 recorded, 1 no
-// tess mark of that feature at that sha, 2 usage or marks that cannot be read or written; 2 usage.
+// tess mark of that feature at that sha, 2 usage or marks that cannot be read or written; start 0 started or brief again, 1
+// refused, 2 usage (lib/start.mjs); 2 usage.
 import { realpathSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -25,7 +28,8 @@ import { showLines } from './lib/show.mjs';
 
 const USAGE = 'usage: board.mjs refresh --session <id> [--force]\n       board.mjs show [--session <id>] [--refresh] [--json]\n'
   + '       board.mjs tick --repo <abs> [--plan <abs pieces.json>] [--session <id>] [--json] (run `board.mjs tick` for all of it)\n'
-  + '       board.mjs done --repo <abs> --job <slug> --tess <feature> --sha <40-hex> --verdict ok|must-fix';
+  + '       board.mjs done --repo <abs> --job <slug> --tess <feature> --sha <40-hex> --verdict ok|must-fix\n'
+  + '       board.mjs start --repo <abs> --piece <id> [--job <slug>] | --tess <feature> [--job <slug>] [--qa <level>]';
 const SCRIPT = fileURLToPath(import.meta.url);
 const SHORT_SHA = 8;
 const DONE_EXIT = Object.freeze({ recorded: 0, noMark: 1, usage: 2 });
@@ -101,11 +105,21 @@ async function done(args) {
   }
 }
 
+/**
+ * The `start` command: claims a piece's lane or a tess snapshot and prints the brief (lib/start.mjs runStart). Imported only
+ * when run, as tick is: refresh must never fail on a module only start needs.
+ */
+async function start(session, args) {
+  const { runStart } = await import('./lib/start.mjs');
+  return runStart(args, session);
+}
+
 function main(args) {
   const session = flagValue(args, '--session') ?? process.env.CLAUDE_CODE_SESSION_ID;
   if (args[0] === 'show') return show(session, args);
   if (args[0] === 'tick') return tick(session, args.slice(1));
   if (args[0] === 'done') return done(args.slice(1));
+  if (args[0] === 'start') return start(session, args.slice(1));
   if (args[0] !== 'refresh') {
     console.error(USAGE);
     return 2;

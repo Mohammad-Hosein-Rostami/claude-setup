@@ -36,6 +36,8 @@ The boss's sync (`tick`, run by hand after every agent report and every land):
   plans both name.
 - `tick-plan.mjs`: reads and checks a plan's pieces.json, and reads and writes the job's tess marks, kept per repository (one
   writer at a time, by a lock file).
+- `start.mjs`: the `start` command: from the tick's facts (`tick --json`), claims the lane of a startable piece, or a snapshot
+  and then the tess mark, and prints dev's or tess's brief.
 
 Drawing: the status line is 2 rows when calm and at most 4 when busy (agents summary, git, lanes and session). Colour
 marks a state only, never an agent or a branch.
