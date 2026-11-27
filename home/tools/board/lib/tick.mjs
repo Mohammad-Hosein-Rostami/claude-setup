@@ -98,10 +98,19 @@ function landLedger(repoDir) {
   }
 }
 
-/** Whether `repo` is the setup's own repository: the one holding this running code (trusted-repos.mjs, by the file system). */
+/**
+ * Whether `repo` is the setup's own repository: the one holding this running code (trusted-repos.mjs, by the file system). A
+ * lookup that fails (a git folder gone or not readable, git that cannot name the common dir) means it is not: only the sync line
+ * is lost then, never the rest of the tick.
+ */
 function isSetupRepo(repo) {
   const setup = trustedRepos({ sessionFolder: null }).repos[0];
-  return setup !== undefined && realpathSync.native(setup.common) === realpathSync.native(commonDirOf(repo));
+  if (setup === undefined) return false;
+  try {
+    return realpathSync.native(setup.common) === realpathSync.native(commonDirOf(repo));
+  } catch {
+    return false; // see above: the sync line is optional, so no lookup of it may stop the tick (exit 2)
+  }
 }
 
 /**

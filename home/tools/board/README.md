@@ -154,7 +154,8 @@ do <n>: sync failed <n> times since <HH:MM> (<first problem>): tell the owner on
   gaps, `last <n>` says how many) times the pieces not landed yet (those in lanes included), in minutes, from an hour on in
   hours (`under 1 min` below a minute; `none left` once every piece landed). Under 2 lands it says
   `pace unknown (fewer than 2 lands)`; it never guesses. No finding (the exit is unchanged).
-- **sync**: only in the setup's own repository (the one holding the running board code) with `scripts/sync-machines.mjs`: the
+- **sync**: only in the setup's own repository (the one holding the running board code; a path lookup that fails counts as
+  another repository, so the rest of the tick still prints) with `scripts/sync-machines.mjs`: the
   sync record `sync-machines.mjs` writes after each run (`lib/sync-record.mjs`), so a failed sync stays on screen. A machine is
   synced only at the base's tip by a base run, never by a `--tag` run. No finding (the exit is unchanged).
 - **next** and **do**: only suggestions: the boss runs each `do` line in order, as printed, and keeps every judgement; the
