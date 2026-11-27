@@ -40,7 +40,8 @@ what it does. Everything is plain text and Node scripts. You can read, change an
    check main. Each land frees a slot, which the boss fills at once.
 5. Agents have full access: commands run with no permission prompt, and no hook checks a command first. A dangerous `rm` runs
    without a prompt too, because the installer sets `CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1` in the shell start-up
-   files (restart Claude Code from a new terminal to pick it up). A question for you is Claude Code's own terminal question;
+   files (restart Claude Code from a new terminal to pick it up). Nothing stops a delete, so agents follow the rule "Look
+   before deleting or overwriting" in `home/CLAUDE.md`. A question for you is Claude Code's own terminal question;
    left unanswered it auto-continues after 5 minutes with no keypress and Claude takes the recommended option. The timer
    does not count down while that terminal window is focused, so to let it run, switch to another window or app.
 6. After each edit, `post-edit.mjs` runs the project's formatter.

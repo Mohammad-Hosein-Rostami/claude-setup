@@ -31,8 +31,8 @@ Put long examples in `home/standards/<area>.md`. Use a new id prefix or continue
 
 ## Add a tool
 `home/tools/<name>/` with its own `README.md` (its first line after the heading is the catalog description) and `package.json`; the folder is already linked via `tools`. Dependencies
-go in that package.json and its lockfile (committed); `node_modules/` is gitignored. Extend `install_tool_deps` in the
-installers if it needs an install step.
+go in that package.json and its lockfile (committed); `node_modules/` is gitignored. If it has dependencies, add its name to
+`TOOLS_WITH_DEPS` in `scripts/install.mjs`: install then installs them, and so does `scripts/lane-new.sh`.
 
 ## Commits
 Small and atomic. Types in use: `feat`, `fix`, `docs`, `refactor`, `chore`. Never `--no-verify`.

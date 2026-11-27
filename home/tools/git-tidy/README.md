@@ -245,15 +245,17 @@ node_modules) stay warm, and no folder is left behind:
   `kept: node_modules` or `kept: none`, `installed: <command> in <folder>, ...` or `installed: none` (`<command> in <folder> (from
   the deps cache)` when the deps cache gave the folder its `node_modules`), then `fill: clone <seconds> s, <n> entries, repaired <n>`
   or `fill: checkout (<why>)`. Each fill warning is a `git-tidy: fill warning: ...` line on stderr. Exit 0 ready, 1 an install
-  failed (`lane not ready: ...`, the worktree line `worktree: <folder> (branch <b>, on <base>)`, `to finish:` and `to release:`
+  failed (`lane not ready: <command> failed in <folder>: <why>`, the worktree line `worktree: <folder> (branch <b>, on <base>)`
+  (`(snapshot, detached at <sha>)` for a snapshot), `to finish:` and `to release:`
   lines on stderr; the folder stays claimed and is not handed out), 2 usage (a short or unknown sha, a new branch's `--base` not
   on the base (`is not on <base>`), an existing branch recorded on another base (`was claimed on <c>`: switch the main checkout back,
   or move the lane on purpose with the `git config` step it prints), a branch name `git check-ref-format --branch` refuses or that
   starts with `-` or `refs/`, a base branch (see the base branches above: never a lane), a branch already checked out in another
   folder or being filled there: named), 4 the pool lock stayed held by another live claim for 60 s, 14 a git command, the base
   record or the fill failed (the folder is not handed out). `--json` prints
-  `{ folder, slot, created, kept, branch, base, baseBranch, fill, record, ready, installs }` (`base`: the commit; `baseBranch`:
-  the base the lane is recorded on, null for a snapshot), with `fill` as
+  `{ folder, slot, created, kept, branch, base, baseBranch, snapshot, fill, record, poolIgnore, ready, installs }` (`base`: the
+  commit; `baseBranch`: the base the lane is recorded on, null for a snapshot; `poolIgnore`: `{ outcome, path, why }` of adding
+  `/.claude/worktrees/` to the repository's `info/exclude`, `outcome` `already`, `added` or `failed`), with `fill` as
   `{ mode, entries, seconds, repaired, warnings, why }` (`mode` is `clone` or `checkout`; `why` says why).
 - `lane claim --repo <abs> --snapshot [--base <40-hex sha>] [--json]`: a snapshot, a frozen copy of one commit (the boss claims one
   per tess at the commit a round landed, so tess tests on it while main moves on). It gets a folder and is filled exactly like a

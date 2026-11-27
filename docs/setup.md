@@ -11,7 +11,7 @@
     scripts/install.sh --dry-run        # preview
     scripts/install.sh                  # macOS, Linux, Git Bash
     scripts/install.sh --no-plugins     # skip `claude plugin` calls
-    scripts/install.sh --no-tools       # skip tool dependency install (ui-check, env-names)
+    scripts/install.sh --no-tools       # skip tool dependency install (ui-check, env-names, long-run)
 
     scripts/install.sh --update --to <tag>        # rollback to a git tag (`git tag` lists them): links on a worktree of that tag; plain --update goes back
     scripts/install.sh --uninstall      # remove what the installer made, restore the backed-up files
@@ -23,9 +23,9 @@ edits. `install.ps1` runs on Windows PowerShell 5.1 and 7 (not verified on Windo
 
 The installer links `home/*` (rules, skills, agents, standards, hooks, tools, statusline.mjs, and `commands` when it has files) into
 `~/.claude`, makes `personal/` from `personal.example/` when it is missing (git-ignored, its own git repo with a first commit),
-links `~/.claude/project-notes` to `personal/project-notes`, and writes `~/.claude/CLAUDE.md` as a marker line plus
-`@<repo>/home/CLAUDE.md` and `@<repo>/personal/CLAUDE.md`, builds `~/.claude/settings.json`, installs `home/tools/ui-check` dependencies (lockfile if present,
-otherwise a plain install), unsets `core.hooksPath` when an earlier install set it to `.githooks`, writes `docs/catalog.md` (git-ignored; a problem in it is only a warning, and `node scripts/catalog.mjs write` rebuilds it), then installs plugins. Anything replaced is moved
+links `~/.claude/project-notes` to `personal/project-notes`, writes `~/.claude/CLAUDE.md` as a marker line plus
+`@<repo>/home/CLAUDE.md` and `@<repo>/personal/CLAUDE.md`, writes `docs/catalog.md` (git-ignored; a problem in it is only a warning, and `node scripts/catalog.mjs write` rebuilds it), unsets `core.hooksPath` when an earlier install set it to `.githooks`, installs plugins, then builds `~/.claude/settings.json` (after the plugins, so the repo's settings win) and installs the dependencies of the tools in `TOOLS_WITH_DEPS` (`scripts/install.mjs`: ui-check, env-names, long-run; lockfile if present,
+otherwise a plain install). Anything replaced is moved
 to `~/.claude-backup-<stamp>/`, never deleted. One install runs at a time: a second one started meanwhile stops with a message. To check the result, ask `tess` for a setup check.
 To check free disk space, run `node ~/.claude/tools/disk-free/disk-free.mjs check` (FAIL below 5 GB, WARN below 15 GB; `DISK_FAIL_FREE_GB` and `DISK_WARN_FREE_GB` move the limits); it names the caches to clear.
 
@@ -88,8 +88,8 @@ plugins the install output names. `gitkraken` is installed by the GitKraken app.
 when `settings/`, `plugins/` or a tool's `package.json` changed.
 
 When a pull deletes hooks, run `scripts/install.sh` from a terminal right after it, before you use Claude Code again. Until
-install merges the settings again, `~/.claude/settings.json` still names the deleted hook files, and an entry set to
-`"onFailure": "block"` (the old guards) then blocks every call it covers.
+install merges the settings again, `~/.claude/settings.json` still names the deleted hook files, and each event they cover
+shows a hook error.
 
 A running Claude Code session reads settings, hooks config, CLAUDE.md, agents and plugins only at start: after any change,
 restart open sessions (`/exit`, then `claude -c` to continue). Hook scripts run fresh on every call, so edits to a hook's
