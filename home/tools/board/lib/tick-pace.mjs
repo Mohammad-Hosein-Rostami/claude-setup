@@ -23,7 +23,7 @@ const wholeMinutes = (ms) => Math.max(0, Math.floor(ms / MS_PER_MIN)); // as age
 
 /**
  * One agent as the line names it: `<name> quiet N min` while quiet, else `<name> N min` since it started, or `<name>` alone when
- * its start time is unknown (repos.mjs placeAgents leaves `startMs` out of the board's agents), never `NaN min`.
+ * its start time is unknown (`startMs` missing, as on a board written before repos.mjs placeAgents kept it), never `NaN min`.
  */
 function agentText(agent, nowMs) {
   const name = clean(agent.name);

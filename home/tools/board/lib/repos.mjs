@@ -112,14 +112,15 @@ function unplacedText(places, agent, repoName) {
  * @param {object[]} agents agents.mjs entries (with `places`)
  * @param {object[]} repos sessionRepos(...).repos
  * @returns {{ agents: object[], repos: object[] }} agents with repo, wt, branch (null when on no sure worktree) and `unplaced` (the
- *   row's text then: `claude-setup · no edits yet`, `round4 · no edits yet`, or null), without places or startMs; the repositories
- *   with each worktree's `agents` (the names of the live agents surely on it)
+ *   row's text then: `claude-setup · no edits yet`, `round4 · no edits yet`, or null), without places (`startMs` stays: the tick's
+ *   agents line shows each agent's age from it); the repositories with each worktree's `agents` (the names of the live agents
+ *   surely on it)
  */
 export function placeAgents(agents, repos) {
   const worktrees = repos.flatMap((repo) => repo.worktrees.map((wt) => ({ repo, wt }))).sort((a, b) => b.wt.path.length - a.wt.path.length);
   const flat = worktrees.map(({ wt }) => wt);
   const names = new Map(flat.map((wt) => [wt, []]));
-  const placed = agents.map(({ places = {}, startMs, ...agent }) => {
+  const placed = agents.map(({ places = {}, ...agent }) => {
     const { home, sure } = homeOf(places, flat);
     const repo = home === undefined ? undefined : worktrees.find((entry) => entry.wt === home).repo;
     if (!sure) return { ...agent, repo: repo?.name ?? null, wt: null, branch: null, unplaced: unplacedText(places, agent, repo?.name ?? null) };
