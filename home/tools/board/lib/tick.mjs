@@ -1,17 +1,20 @@
 // Purpose: `board tick`, the boss's read-only sync after every agent report and every land (boss-integrator design, section 3):
-//   main's state, the side findings to tidy, one line per lane in flight, the test branches not landed (tick-tests.mjs), the
+//   the base's state, the side findings to tidy, one line per lane in flight, the test branches not landed (tick-tests.mjs), the
 //   overlaps and strays among their files, the plan's queue, the features waiting for tess and a suggested next step (the lines:
 //   tick-lines.mjs). `--mark-tess` records that tess was started on a feature.
 // Exports: TICK_USAGE, runTick(args, loadBoard) -> exit code.
-// Facts: main from git-tidy check (runCheck), split by kind: main's own findings block new work, the side ones (other refs and
+// Facts: the base is git-tidy's (openRepo: the branch checked out in the main checkout, by its own name; the `main` key holds it);
+//   its findings from git-tidy check (runCheck), split by kind: the base's own findings block new work, the side ones (other refs and
 //   folders, SIDE_KINDS) only go on the `tidy` line; the lanes are the lane pool's folders that hold a branch (poolSlots), each with
-//   its commits and files against main (git) and its agent from the session's board (matched by branch); landed pieces from the
+//   its commits and files against the base (git), the base it was claimed on (base-record.mjs readLaneBase; a lane of another base
+//   is never ready: land refuses it here) and its agent from the session's board (matched by branch); landed pieces from the
 //   land ledger (a land of the piece's branch, tick-features.mjs pieceBranch; an unreadable ledger is one line, never exit 2); tess marks from tick-plan.mjs;
 //   features and tess status judged in tick-features.mjs (a mark covers the lands its sha holds). Nothing comes from an agent's words.
 // Invariants: reads only; `--mark-tess` writes the job's marks file (under its lock file) and nothing else. Every branch name, path and agent name is
 //   printed through cells.mjs cleanText, so no control character reaches the terminal. `next:` only suggests: the boss decides.
-//   Exit 0 shown, 1 findings (an overlap, a stray, a git-tidy check finding on main or on the side), 2 usage (a bad flag, no
+//   Exit 0 shown, 1 findings (an overlap, a stray, a git-tidy check finding on the base or on the side), 2 usage (a bad flag, no
 //   repository, a bad plan or marks file) and any unexpected failure (1 must only ever mean findings).
+import { readLaneBase } from '../../git-tidy/lib/base-record.mjs';
 import { runCheck } from '../../git-tidy/lib/check.mjs';
 import { UsageError, gitText, runGit } from '../../git-tidy/lib/git.mjs';
 import { poolSlots } from '../../git-tidy/lib/lane-pool.mjs';
@@ -83,7 +86,10 @@ function agentOn(agents, branch) {
   return agent === undefined ? null : { id: agent.id, type: agent.type, state: agent.state, quietMin: agent.quietMin };
 }
 
-/** One lane in flight: a pool folder holding a branch, with its commits and files against main and its agent. */
+/**
+ * One lane in flight: a pool folder holding a branch, with its commits and files against the base, the base it was claimed on
+ * (`claimedOn`, null for a lane with no record) and its agent.
+ */
 function laneOf(repo, mainSha, slot, agents) {
   const ref = `refs/heads/${slot.branch}`;
   const forkPoint = gitText(repo.dir, ['merge-base', mainSha, ref]);
@@ -93,11 +99,13 @@ function laneOf(repo, mainSha, slot, agents) {
   const changed = slot.state === MISSING_FOLDER ? null : changedPaths(slot.folder);
   const agent = agentOn(agents, slot.branch);
   const commits = Number(gitText(repo.dir, ['rev-list', '--count', `${mainSha}..${ref}`]));
+  const claimedOn = readLaneBase(repo.dir, slot.branch);
+  const isOnBase = claimedOn === null || claimedOn === repo.base; // land refuses a lane claimed on another base
   return {
-    branch: slot.branch, slot: slot.slot, folder: slot.folder, folderState: slot.state, agent, commits, changed,
+    branch: slot.branch, slot: slot.slot, folder: slot.folder, folderState: slot.state, agent, commits, changed, claimedOn,
     files: [...new Set([...nulList(committed.stdout), ...(changed ?? [])])],
     mainMoved: forkPoint !== mainSha,
-    isReady: (agent === null || agent.state === 'done') && commits > 0 && changed?.length === 0,
+    isReady: (agent === null || agent.state === 'done') && commits > 0 && changed?.length === 0 && isOnBase,
   };
 }
 

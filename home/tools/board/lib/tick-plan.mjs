@@ -161,7 +161,7 @@ export function readMarks(job, env = process.env) {
 export function writeMark({ repo, plan, feature, sha, env = process.env, nowMs = Date.now() }) {
   const ids = plan.features.map((entry) => entry.id);
   if (!ids.includes(feature)) throw new UsageError(`--mark-tess ${JSON.stringify(feature)} is no feature of the plan (${ids.join(', ')})`);
-  if (!gitFlag(repo.dir, ['merge-base', '--is-ancestor', sha, repo.baseRef])) throw new UsageError(`--sha ${sha} is not on ${repo.base}: tess runs on main`);
+  if (!gitFlag(repo.dir, ['merge-base', '--is-ancestor', sha, repo.baseRef])) throw new UsageError(`--sha ${sha} is not on ${repo.base}: tess runs on the base`);
   const { job } = plan;
   const file = marksFile(job, env);
   const notPlain = `cannot write the tess marks ${file}: its folder or file is not a plain one of yours`;

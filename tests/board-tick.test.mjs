@@ -95,7 +95,7 @@ test('a clean main with no lanes: exit 0 and a main line that says clean, one li
   const result = tick(makeHome(), ['--repo', repo]);
   assert.equal(result.status, EXIT_SHOWN, result.stderr);
   const [first, ...rest] = lines(result);
-  assert.equal(first, `main ${headOf(repo).slice(0, SHORT_SHA)} clean, one line (git-tidy check 0)`);
+  assert.equal(first, `base main ${headOf(repo).slice(0, SHORT_SHA)} clean, one line (git-tidy check 0)`);
   assert.ok(rest.includes('folders none'), result.stdout);
   assert.equal(result.stderr, '');
 });
@@ -248,8 +248,8 @@ test('a branch that reaches a merge commit main lacks is a tidy line, not a main
   const result = tick(setup.env.HOME, ['--repo', repo]);
   assert.equal(result.status, EXIT_FINDINGS, result.stdout + result.stderr);
   const shown = lines(result);
-  assert.equal(shown[0], `main ${headOf(repo).slice(0, SHORT_SHA)} clean, one line (git-tidy check 0)`);
-  assert.ok(shown.includes(`tidy 1 tangled-ref (refs/heads/side) -> ${PRUNE} ${repo} --base main`), result.stdout);
+  assert.equal(shown[0], `base main ${headOf(repo).slice(0, SHORT_SHA)} clean, one line (git-tidy check 0)`);
+  assert.ok(shown.includes(`tidy 1 tangled-ref (refs/heads/side) -> ${PRUNE} ${repo}`), result.stdout);
   assert.ok(shown.at(-1).startsWith('next: land lane/a'), result.stdout);
   const json = JSON.parse(tick(setup.env.HOME, ['--repo', repo, '--json']).stdout);
   assert.deepEqual(json.tidy, [{ kind: 'tangled-ref', subject: 'refs/heads/side' }]);
@@ -271,8 +271,29 @@ test('a changed tracked file in the base checkout still makes main dirty and nex
   const result = tick(makeHome(), ['--repo', repo]);
   assert.equal(result.status, EXIT_FINDINGS, result.stdout + result.stderr);
   const shown = lines(result);
-  assert.ok(shown[0].startsWith(`main ${headOf(repo).slice(0, SHORT_SHA)} dirty`), shown[0]);
+  assert.ok(shown[0].startsWith(`base main ${headOf(repo).slice(0, SHORT_SHA)} dirty`), shown[0]);
   assert.ok(shown.at(-1).startsWith('next: fix main first ('), shown.at(-1));
+});
+
+test('the base is the branch checked out in the main checkout, by its name: develop on the first line and in fix develop first', () => {
+  const { repo } = poolRepo();
+  git(repo, 'switch', '-q', '-c', 'develop');
+  const shown = lines(tick(makeHome(), ['--repo', repo]));
+  assert.ok(shown[0].startsWith('base develop '), shown[0]);
+  writeFileSync(join(repo, '.gitignore'), '.claude/\nmore/\n');
+  const dirty = lines(tick(makeHome(), ['--repo', repo]));
+  assert.ok(dirty.at(-1).startsWith('next: fix develop first ('), dirty.at(-1));
+});
+
+test('a lane claimed on main while the main checkout is now on feat lands only on main: next does not land it', () => {
+  const setup = poolRepo();
+  claimWithCommits(setup, 'lane/a', [['a.txt', 'a']]);
+  git(setup.repo, 'switch', '-q', '-c', 'feat');
+  const shown = lines(tick(setup.env.HOME, ['--repo', setup.repo]));
+  assert.ok(shown.some((line) => line.startsWith('lane lane/a') && line.endsWith('claimed on main: lands only there')), shown.join('\n'));
+  assert.equal(shown.at(-1).includes('land lane/'), false, shown.at(-1));
+  const json = JSON.parse(tick(setup.env.HOME, ['--repo', setup.repo, '--json']).stdout);
+  assert.equal(json.lanes[0].claimedOn, 'main');
 });
 
 test('snapshot claims count as snapshot on the folders line, with the age of the oldest lock', () => {

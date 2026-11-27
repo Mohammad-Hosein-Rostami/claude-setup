@@ -1,9 +1,10 @@
-// Purpose: the plain lines `board tick` prints from its facts (tick.mjs tickFacts): main, the side findings to tidy, the pool's
-//   folders, one line per lane, the test branches not landed, overlaps, strays, the plan's lines and the suggested `next:` step.
+// Purpose: the plain lines `board tick` prints from its facts (tick.mjs tickFacts): the base (the branch checked out in the main
+//   checkout, by its own name), the side findings to tidy, the pool's folders, one line per lane, the test branches not landed,
+//   overlaps, strays, the plan's lines and the suggested `next:` step.
 // Exports: tickLines(tick) -> string[], clean(text), short(sha).
 // Invariants: pure apart from reading the clock for the snapshot age. Every branch name, path and agent name goes through
-//   cells.mjs cleanText, so no control character reaches the terminal, and through shellWord too inside a printed command. `next:` only suggests: the boss decides; it reads main's own
-//   findings only, so a side finding (on the `tidy` line) never stops a land or a claim.
+//   cells.mjs cleanText, so no control character reaches the terminal, and through shellWord too inside a printed command. `next:`
+//   only suggests: the boss decides; it reads the base's own findings only, so a side finding (on the `tidy` line) never stops a land or a claim.
 import { SNAPSHOT_LABEL } from '../../git-tidy/lib/lane-slots.mjs';
 import { shellWord } from '../../git-tidy/lib/shell-word.mjs';
 import { cleanText } from './cells.mjs';
@@ -47,22 +48,22 @@ function mainLine({ main, plan }) {
   const isOneLine = !main.findings.some(({ kind }) => kind === 'merge-commit');
   const check = kinds.length === 0 ? 'git-tidy check 0' : `git-tidy check 1: ${kinds.join(', ')}`;
   const tess = plan === null ? '' : `, ${plan.landedSince} landed ${plan.lastTessSha === null ? 'and no tess round yet' : `since tess round at ${short(plan.lastTessSha)}`}`;
-  return `main ${short(main.sha)} ${isDirty ? 'dirty' : 'clean'}, ${isOneLine ? 'one line' : 'not one line'} (${check})${tess}`;
+  return `base ${clean(main.branch)} ${short(main.sha)} ${isDirty ? 'dirty' : 'clean'}, ${isOneLine ? 'one line' : 'not one line'} (${check})${tess}`;
 }
 
 /**
  * The side findings (other refs and folders, not main) by kind with one subject each, and the prune command that lists what it
- * would remove: `prune` without `--apply` changes nothing, and `--base` keeps it from refusing a repository with two base names.
- * Null when there is none.
+ * would remove: `prune` without `--apply` changes nothing and takes the same base as the tick (the branch checked out in the main
+ * checkout). Null when there is none.
  */
-function tidyLine({ tidy, repo, main }) {
+function tidyLine({ tidy, repo }) {
   if (tidy.length === 0) return null;
   const kinds = kindsOf(tidy).map((kind) => {
     const subjects = tidy.filter((finding) => finding.kind === kind).map(({ subject }) => subject);
     const more = subjects.length > 1 ? `, +${subjects.length - 1} more` : '';
     return `${subjects.length} ${kind} (${clean(subjects[0])}${more})`;
   });
-  return `tidy ${kinds.join(', ')} -> node ~/.claude/tools/git-tidy/git-tidy.mjs prune ${clean(repo)} --base ${clean(main.branch)}`;
+  return `tidy ${kinds.join(', ')} -> node ~/.claude/tools/git-tidy/git-tidy.mjs prune ${clean(repo)}`;
 }
 
 /** A folder's state as the folders line counts it: a snapshot claim is `snapshot`, not just `busy`. */
@@ -77,17 +78,21 @@ function foldersLine(slots) {
   return `folders ${counts.join(', ')}${oldest}`;
 }
 
-/** A lane's verdict: a ready lane behind main still lands (land rebases it); a lane not ready only says it is behind. */
-function laneVerdict(lane) {
-  if (lane.isReady) return lane.mainMoved ? 'ready to land (behind main; land rebases it)' : 'ready to land';
-  return lane.mainMoved ? 'behind main' : '';
+/**
+ * A lane's verdict: a lane claimed on another base lands only there (land refuses it here); a ready lane behind the base still
+ * lands (land rebases it); a lane not ready only says it is behind.
+ */
+function laneVerdict(lane, base) {
+  if (lane.claimedOn !== null && lane.claimedOn !== base) return `claimed on ${clean(lane.claimedOn)}: lands only there`;
+  if (lane.isReady) return lane.mainMoved ? `ready to land (behind ${clean(base)}; land rebases it)` : 'ready to land';
+  return lane.mainMoved ? `behind ${clean(base)}` : '';
 }
 
-function laneLine(lane) {
+function laneLine(lane, base) {
   const agent = lane.agent === null ? 'no agent' : `${clean(lane.agent.type)} ${clean(lane.agent.id).slice(0, AGENT_ID_CHARS)} ${agentStateText(lane.agent)}`;
   const changes = lane.changed === null ? 'changes ?' : lane.changed.length === 0 ? 'clean' : `~${lane.changed.length} changed`;
   const folder = lane.folderState === BUSY ? '' : `folder ${clean(lane.folderState)}`;
-  return ['lane', clean(lane.branch), agent, `+${plural(lane.commits, 'commit')}`, changes, laneVerdict(lane), folder].filter((part) => part !== '').join(' ');
+  return ['lane', clean(lane.branch), agent, `+${plural(lane.commits, 'commit')}`, changes, laneVerdict(lane, base), folder].filter((part) => part !== '').join(' ');
 }
 
 /** A test branch: its commits, plan piece and agent, or the folder that holds it when it has no commit of its own yet. */
@@ -125,12 +130,12 @@ function queueLine(queue) {
 
 /**
  * The `next:` line: land one lane, claim pieces while fewer than MAX_DEV lanes run, land the test branches left, start tess when
- * due with the mark command at main's sha (gate R5); never main while it fails.
+ * due with the mark command at the base's sha (gate R5); never while the base fails.
  */
 function nextLine(tick) {
   const { main, lanes, overlaps, strays, queue, plan, tessRunning } = tick;
   const count = `dev ${lanes.length}/${MAX_DEV}, tess ${tessRunning}/${MAX_TESS}`;
-  if (main.findings.length > 0) return `next: fix main first (node ~/.claude/tools/git-tidy/git-tidy.mjs check ${clean(tick.repo)}), start no new piece; ${count}`;
+  if (main.findings.length > 0) return `next: fix ${clean(main.branch)} first (node ~/.claude/tools/git-tidy/git-tidy.mjs check ${clean(tick.repo)}), start no new piece; ${count}`;
   const flagged = new Set([...overlaps.flatMap((pair) => [pair.first, pair.second]), ...strays.map((stray) => stray.branch)]);
   const ready = lanes.filter((lane) => lane.isReady);
   const land = ready.find((lane) => !flagged.has(lane.branch) && !lane.mainMoved) ?? ready.find((lane) => !flagged.has(lane.branch)) ?? ready[0];
@@ -157,7 +162,7 @@ export function tickLines(tick) {
     mainLine(tick),
     ...[tidyLine(tick)].filter((line) => line !== null),
     foldersLine(tick.folders),
-    ...tick.lanes.map(laneLine),
+    ...tick.lanes.map((lane) => laneLine(lane, tick.main.branch)),
     ...[testsLine(tick.tests)].filter((line) => line !== null),
     ...tick.overlaps.map((pair) => `overlap ${clean(pair.first)} x ${clean(pair.second)}: ${filesText(pair.files)}`),
     ...tick.strays.map((stray) => `stray ${clean(stray.branch)}: ${filesText(stray.files)} (not in its files)`),

@@ -1,7 +1,7 @@
 # board
 
 The status line's engine: a detached refresh writes each session's board file, `show` prints it as plain lines, and `tick` is
-the boss's sync of main, its lanes and the plan.
+the boss's sync of the base (the branch checked out in the main checkout), its lanes and the plan.
 
 The engine behind the status line: which agents run and the git state of the session's worktrees, in one small file the
 status line reads (`~/.claude/state/board/<session>.json`, at most 48 KB). Node 22, no dependencies.
@@ -43,10 +43,10 @@ only with `--plan`, `tests not landed` only when a test branch is left, `ledger`
 parse or cannot be read at all:
 
 ```text
-main <sha> <clean|dirty>, <one line|not one line> (git-tidy check 0|1: <count> <kind>, ...)[, <n> landed since tess round at <sha>]
-tidy <n> <kind> (<subject>[, +<n> more]), ... -> node ~/.claude/tools/git-tidy/git-tidy.mjs prune <repo> --base <base>
+base <name> <sha> <clean|dirty>, <one line|not one line> (git-tidy check 0|1: <count> <kind>, ...)[, <n> landed since tess round at <sha>]
+tidy <n> <kind> (<subject>[, +<n> more]), ... -> node ~/.claude/tools/git-tidy/git-tidy.mjs prune <repo>
 folders <n> <state>, ...[ (oldest <n> h)]
-lane <branch> <type> <agent id> <running|done|quiet N min>|no agent +<n> commits <clean|~<n> changed|changes ?> [ready to land|ready to land (behind main; land rebases it)|behind main] [folder <state>]
+lane <branch> <type> <agent id> <running|done|quiet N min>|no agent +<n> commits <clean|~<n> changed|changes ?> [claimed on <base>: lands only there|ready to land|ready to land (behind <name>; land rebases it)|behind <name>] [folder <state>]
 tests not landed: <branch> +<n>[ (piece <piece>)][ (<type> <running|done|quiet N min>)], <branch> no commit (in <folder>), ..., +<n> more
 overlap <lane or piece> x <lane>: <file>, <file>, <file>, +<n> more
 stray <lane>: <files> (not in its files)
@@ -57,22 +57,24 @@ ledger unreadable (<why>): no piece counts as landed
 next: land <lane>; claim <piece>[ (branch <branch>)]; test branches <branch>, ...: land each one tess passed (land <branch> --repo <repo>), a failing repro gets a Fix: piece on its branch; tess on <feature>; dev <n>/3, tess <n>/3
 ```
 
-- **main**: the branch `--repo` names as its base (origin/HEAD, else main, master or develop), with `git-tidy check`'s findings
-  about main by kind: `dirty-base`, `merge-commit`, `stale-checkout`, and any kind not on the `tidy` line. `dirty` is a
-  `dirty-base` finding, `not one line` a merge commit. Any finding is exit 1. With `--plan` it ends with the plan's pieces
+- **base**: the branch checked out in the main checkout of `--repo`, by its own name (`git-tidy`'s base, never assumed to be
+  `main`), with `git-tidy check`'s findings about it by kind: `dirty-base`, `merge-commit`, `stale-checkout`, and any kind not
+  on the `tidy` line. `dirty` is a `dirty-base` finding, `not one line` a merge commit. Any finding is exit 1. With `--plan` it ends with the plan's pieces
   landed since the newest tess mark (`<n> landed and no tess round yet` before the first).
-- **tidy**: only when `git-tidy check` finds leftovers beside main: `tangled-ref`, `merged-branch`, `merged-tag`,
+- **tidy**: only when `git-tidy check` finds leftovers beside the base: `tangled-ref`, `merged-branch`, `merged-tag`,
   `merged-worktree`, `stale-worktree`, `superseded-copy`, `agent-leftover`, each kind with its count and first subject. The
-  command prints what `prune` would remove and changes nothing (`--apply` removes). These findings are exit 1 but never block
-  `next:`.
+  command prints what `prune` would remove and changes nothing (`--apply` removes); it takes the same base as the tick. These
+  findings are exit 1 but never block `next:`.
 - **folders**: the pool's folders by state, as `git-tidy lane list` gives it, with a snapshot claim counted as `snapshot` and
   the age of the oldest snapshot lock in whole hours (left out when git cannot say); `folders none` with no pool folder.
-- **lane**: each lane pool folder that holds a branch. Its files are `git diff --name-only <main>...<branch>` (as
+- **lane**: each lane pool folder that holds a branch. Its files are `git diff --name-only <base>...<branch>` (as
   plumbing) plus the changed and untracked files in its folder; its agent is the board agent on that branch. `ready to land`: the agent is done (or none is on the board),
-  the lane has commits and its folder is clean; `(behind main; land rebases it)` when main has moved since it started.
-  `behind main`: main moved and the lane is not ready yet. A lane outside the pool is not shown.
-- **tests not landed**: every `test/*` branch (tess-write's) not landed on main, at most 5, then `+<n> more`: its commits
-  beyond main, the plan piece whose `branch` it is and the board agent on it; one with no commit of its own shows the folder
+  the lane has commits and its folder is clean; `(behind <name>; land rebases it)` when the base has moved since it started.
+  `behind <name>`: the base moved and the lane is not ready yet. `claimed on <base>: lands only there`: `lane claim` recorded
+  another base for it (`branch.<lane>.cs-lane-base`) than the one checked out now; it is never ready here (land refuses it),
+  so `next:` never lands it. A lane with no record counts as on the base. A lane outside the pool is not shown.
+- **tests not landed**: every `test/*` branch (tess-write's) not landed on the base, at most 5, then `+<n> more`: its commits
+  beyond the base, the plan piece whose `branch` it is and the board agent on it; one with no commit of its own shows the folder
   that holds it (a tess-write folder outside the pool). Left out: a branch a pool lane holds (it is on its `lane` line), a
   `tidy` subject, and one with no commit that no folder holds (merged: `prune` removes it). Only shown: the tick never lands
   or deletes one, and it is no finding (exit unchanged).
@@ -88,17 +90,18 @@ next: land <lane>; claim <piece>[ (branch <branch>)]; test branches <branch>, ..
 - **next**: only a suggestion: land one ready lane, claim startable pieces while fewer than 3 lanes are in flight (a piece
   with a `branch` as `claim <piece> (branch <branch>)`: claim that branch), land the test branches with commits and no plan
   piece or live agent (at most 3 named; land each one tess's report passed, and a failing repro gets a `Fix:` piece on its
-  branch), start tess when it is due. While main has a finding of its own it says to fix main first and start no new piece; a `tidy` finding never
+  branch), start tess when it is due. While the base has a finding of its own it says `fix <name> first` and to start no new piece; a `tidy` finding never
   does.
 
-`--mark-tess <feature> --sha <40-hex>` records that tess was started on that feature at that main sha (it must be on main), and
+`--mark-tess <feature> --sha <40-hex>` records that tess was started on that feature at that sha (it must be on the base), and
 prints `marked <feature> for tess at <sha>`. The marks are in `~/.claude/state/board/jobs/<job>.json` as
 `{ "<feature>": { "sha": "<40-hex>", "at": "<ISO>" } }`, written through a temp file and a rename; delete the file to forget
 them. `--json` prints every fact as one JSON object (lanes with their files, folders with why and `lockedAtMs`, features, tess
-status); `main.findings` holds main's findings only and `tidy` the side ones, each `{ "kind", "subject" }`; `tests` holds the
+status); `main` is the base (`branch` its name, `sha` its tip); `main.findings` holds the base's findings only and `tidy` the
+side ones, each `{ "kind", "subject" }`; `lanes[].claimedOn` is the base a lane was claimed on (null with no record); `tests` holds the
 test branches, each `{ "branch", "commits", "folder", "piece", "agent" }` (`folder`, `piece` and `agent` null when none).
 
-Exit 0 shown; 1 findings (an overlap, a stray, a `git-tidy check` finding on main or on the `tidy` line); 2 usage: a bad flag, a `--repo` that is not
+Exit 0 shown; 1 findings (an overlap, a stray, a `git-tidy check` finding on the base or on the `tidy` line); 2 usage: a bad flag, a `--repo` that is not
 a git repository, a missing or bad plan or marks file (the message names what is wrong), or a git failure.
 
 ### pieces.json
@@ -201,7 +204,7 @@ A refresh runs one at a time (a claim in the file), at most every 5 s while an a
   NotebookEdit, counted only after the call succeeded; a Bash call's cwd says nothing of where it writes), then their isolation
   worktree (`meta.worktreePath`); the cwd only says the repository. One refresh per session
   at a time (an O_EXCL lock file from `tools/disk-free/lib/lock-file.mjs`, broken after 20 s): one `for-each-ref` with
-  `%(ahead-behind:main)` every 15 s, and `--no-optional-locks status --untracked-files=no` per worktree only when its index or
+  `%(ahead-behind:<base>)` (the branch checked out in the main checkout) every 15 s, and `--no-optional-locks status --untracked-files=no` per worktree only when its index or
   HEAD changed (15 s at most); 1.5 s timeout per call and 3 s of git per refresh (sized for a loaded machine: a call takes
   up to ~0.3 s there), past which the old values stay with their age, or `unknown` with the reason where there are none.
   Before `status`, `config --list --name-only --show-scope` looks for a filter in the repository's own config (`status` would run
