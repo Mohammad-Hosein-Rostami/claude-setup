@@ -5,11 +5,12 @@
 // Invariants: a feature is checked only when it has a tess mark, every ledger `to` of its pieces' branches is an ancestor of the
 //   mark's sha (gate R1: a mark's time says nothing about which lands tess saw) and tess recorded `done` with verdict `ok` on that
 //   mark (`board done`; plan-core-best cb-done-1): a mark alone, from a tess still running or one that died, checks nothing. A
-//   `must-fix` on such a mark is not due again until a piece of the feature lands after it (the fix). A git call that fails counts
-//   as not covered, so a doubt always reads `tess due`. A feature is risky when its plan risk is not `none` or the risk tool finds
-//   a class (or fails: `unknown`) on one of its lands; a risky feature with a land holds its files until a mark that holds every
-//   land has a `done` of either verdict (a `must-fix` frees them for the fix piece), and a git call that cannot list a land's
-//   files throws. A feature tess was started on and has not returned on is not due again while a tess runs (with none running,
+//   `must-fix` on such a mark is not due again until its fix lands: a piece of the feature after the mark, or any commit on the
+//   base since the mark's sha that touches the feature's files (heldFiles; a fix on a branch that is no plan piece). A git call
+//   that fails counts as not covered (or as a fix landed), so a doubt always reads `tess due`. A feature is risky when its plan
+//   risk is not `none` or the risk tool finds a class (or fails: `unknown`) on one of its lands; a risky feature with a land holds
+//   its files until a mark that holds every land has a `done` of either verdict (a `must-fix` frees them for the fix piece), and a
+//   git call that cannot list the files of a held or must-fix feature's land throws. A feature tess was started on and has not returned on is not due again while a tess runs (with none running,
 //   that tess died). Reads git and runs the risk tool, nothing else; the plan, ledger entries and marks come checked
 //   (tick-plan.mjs, land/ledger.mjs).
 import { spawnSync } from 'node:child_process';
@@ -53,19 +54,32 @@ function landsRisk(repo, lands) {
 }
 
 /**
+ * Whether a commit that touches `files` has landed on the base since `sha` (the fix of a must-fix tess recorded there, a plan
+ * piece or not); a git call that fails counts as landed, so a doubt reads `tess due`.
+ */
+function hasLandedOn(repo, sha, files) {
+  // --literal-pathspecs: a plan's files are paths, never globs (`app/[id]/page.tsx` must not match `app/i/page.tsx`)
+  const listed = runGit(repo.dir, ['--literal-pathspecs', 'rev-list', '-n', '1', `${sha}..${repo.baseRef}`, '--', ...files]);
+  return listed.status !== 0 || listed.stdout.trim() !== '';
+}
+
+/**
  * One feature's progress: pieces landed, every land of its pieces in ledger order, tess's verdict on a mark whose sha holds all of
  * them (null when there is no such mark or tess has not returned on it), whether that verdict checks the feature, that mark's sha
  * while tess has not returned on it (`tessOn`), and, for a plan risk `none` with no verdict yet, what the risk tool finds on its
  * lands (`riskFound`, null when it finds nothing: the higher of lex's and dev's risk, as qa-plan routes).
  */
-function featureState(repo, feature, pieces, planLands, mark) {
-  const own = new Set(pieces.filter((piece) => piece.feature === feature.id).map((piece) => piece.id));
+function featureState(repo, feature, plan, planLands, mark) {
+  const own = new Set(plan.pieces.filter((piece) => piece.feature === feature.id).map((piece) => piece.id));
   // filtered from the ledger-ordered list, never gathered piece by piece: the first range must start at the oldest land (gate R4)
   const lands = planLands.filter(({ piece }) => own.has(piece));
   const landed = new Set(lands.map(({ piece }) => piece)).size;
   const isCoveredAll = mark !== undefined && lands.every(({ to }) => isCovered(repo, to, mark.sha));
   // a verdict counts only on a mark that holds every land: a land after the mark is one tess has not seen
-  const verdict = isCoveredAll ? (mark.done?.verdict ?? null) : null;
+  const markVerdict = isCoveredAll ? (mark.done?.verdict ?? null) : null;
+  // a must-fix stops counting once a commit on the feature's files lands after it: its fix, also from a branch no piece names
+  const isFixLanded = markVerdict !== null && markVerdict !== VERDICT_OK && hasLandedOn(repo, mark.sha, heldFiles(repo, plan, { lands }));
+  const verdict = isFixLanded ? null : markVerdict;
   const tessOn = isCoveredAll && mark.done === undefined ? mark.sha : null;
   const riskFound = feature.risk === NO_RISK && verdict === null ? landsRisk(repo, lands) : null;
   return { id: feature.id, risk: feature.risk, landed, pieces: own.size, lands, verdict, isChecked: verdict === VERDICT_OK, riskFound, tessOn };
@@ -77,8 +91,9 @@ const isRisky = (feature) => feature.risk !== NO_RISK || feature.riskFound !== n
 /**
  * Whether a tess round is due (design section 1, step 5, and the owner's rule for risky features): a risky feature landed and
  * not checked, TESS_DUE_AT features fully landed and not checked, or the job's last piece landed. A landed feature with a
- * `must-fix` verdict waits for its fix (`fixing`): not checked, but never due until a piece of it lands again. A feature tess was
- * started on and has not returned on (`underTess`) is not due again while a tess runs: only with none running did that tess die.
+ * `must-fix` verdict waits for its fix (`fixing`): not checked, but never due until its fix lands (featureState drops the
+ * verdict then). A feature tess was started on and has not returned on (`underTess`) is not due again while a tess runs: only
+ * with none running did that tess die.
  */
 function tessDue(features, isJobLanded, isTessRunning) {
   const isUnderTess = (feature) => feature.tessOn !== null && isTessRunning;
@@ -134,7 +149,7 @@ export function heldBy(holds, files) {
 
 /**
  * The plan's side of the tick.
- * @param {{ dir: string }} repo openRepo's result (git runs there)
+ * @param {{ dir: string, baseRef: string }} repo openRepo's result (git runs there; a must-fix's fix is looked for on baseRef)
  * @param {object} plan readPlan's result
  * @param {object} facts the tick's facts for this plan
  * @param {{ branch: string }[]} facts.lanes the lanes in flight
@@ -146,7 +161,7 @@ export function heldBy(holds, files) {
  *   its `verdict`, `riskFound` and `tessOn`, the tess status (`features` listed for tess, `underTess` tess has not returned on,
  *   `fixing` waiting for a fix), the holds (`{ feature, why, sha, files }`), the newest mark's sha and the pieces with a land that
  *   sha does not hold
- * @throws {Error} when git cannot list the files of a held feature's land
+ * @throws {Error} when git cannot list the files of a held or must-fix feature's land
  */
 export function planState(repo, plan, { lanes, entries, marks, isTessRunning }) {
   const pieceOfBranch = new Map(plan.pieces.map((piece) => [pieceBranch(piece), piece.id]));
@@ -160,7 +175,7 @@ export function planState(repo, plan, { lanes, entries, marks, isTessRunning }) 
     .map((piece) => ({ ...piece, after: piece.after.filter((id) => !isLanded(id)) }));
   // own keys only: a feature named `constructor` must not read Object.prototype's as its mark
   const markOf = (id) => (Object.hasOwn(marks, id) ? marks[id] : undefined);
-  const features = plan.features.map((feature) => featureState(repo, feature, plan.pieces, planLands, markOf(feature.id)));
+  const features = plan.features.map((feature) => featureState(repo, feature, plan, planLands, markOf(feature.id)));
   const lastMark = Object.values(marks).sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0] ?? null;
   const uncovered = planLands.filter(({ to }) => lastMark === null || !isCovered(repo, to, lastMark.sha));
   const landedSince = new Set(uncovered.map(({ piece }) => piece)).size;

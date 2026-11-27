@@ -186,7 +186,8 @@ function notDueWhy(entry, feature, marks, qa) {
   if (qa !== QUICK || entry.tess.features.some((each) => each.id === feature.id)) return null;
   // a verdict comes only from a mark holding every land (tick-features.mjs), so the feature has a mark here
   if (feature.isChecked) return `${feature.id} is checked at ${short(marks[feature.id].sha)}`;
-  if (feature.verdict !== null) return `${feature.id} waits for its fix (${clean(feature.verdict)} at ${short(marks[feature.id].sha)})`;
+  // tick-features.mjs drops a must-fix once a commit on the feature's files lands after it, a plan piece or not
+  if (feature.verdict !== null) return `${feature.id} waits for its fix (${clean(feature.verdict)} at ${short(marks[feature.id].sha)}): it is due again once a commit on its files lands on the base`;
   if (feature.tessOn !== null) return `tess is on ${feature.id} at ${short(feature.tessOn)}`;
   return `${feature.id} is not due yet (${feature.landed}/${feature.pieces} pieces landed, risk none): tess comes once it has fully landed`;
 }
