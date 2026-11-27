@@ -33,11 +33,15 @@ what it does. Everything is plain text and Node scripts. You can read, change an
    preloaded skills and the helpers it may start. Only the boss starts lex, dev, tess and max (no other agent does): an agent that
    needs one asks the boss with a `needs:` line. lex works only for the boss, so a `needs: lex` always goes to the boss.
 4. The boss works in rounds. lex's plan comes with `<plan>.pieces.json`: small pieces, each with its feature, its files and
-   the pieces it must wait for. After every agent report and every land the boss runs `board tick`
-   (`node ~/.claude/tools/board/board.mjs tick --repo <main checkout> --plan <pieces.json>`). For each piece that can start,
-   while fewer than 3 dev run, it claims a folder from the lane pool (`git-tidy lane claim`) and gives it to dev; no agent
-   makes its own folder. When dev reports, the boss lands the piece with the `land` script, one at a time, and ticks again to
-   check main. Each land frees a slot, which the boss fills at once.
+   the pieces it must wait for. After every agent report or finished background step, after a compaction and when you ask
+   how things stand, the boss runs `board tick` (`node ~/.claude/tools/board/board.mjs tick --repo <main checkout>`; a new
+   plan once with `--plan <pieces.json>`, and the tick remembers it). The tick ends with numbered `do` lines, and the boss
+   runs them in order, as printed, reading each output whole: `land` lands one branch (only on a `done` report, or `partial`
+   with `safe to land: yes`) and prints the next tick; `board start --piece` claims a folder from the lane pool and prints
+   dev's brief, `board start --tess` a snapshot and tess's brief, which the boss sends whole; no agent makes its own folder.
+   The other lines resume a stopped agent, release a forgotten snapshot, land a passing test branch or sync the machines.
+   The `agents` and `job` lines say what runs and how far each job is, with its measured pace. Each land frees a slot,
+   which the boss fills at once.
 5. Agents have full access: commands run with no permission prompt, and no hook checks a command first. A dangerous `rm` runs
    without a prompt too, because the installer sets `CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1` in the shell start-up
    files (restart Claude Code from a new terminal to pick it up). Nothing stops a delete, so agents follow the rule "Look
@@ -54,7 +58,8 @@ what it does. Everything is plain text and Node scripts. You can read, change an
    get none. The heavy checks (`full`: the whole suite, edge cases, a deep review, new tests, long checks) run only when you
    ask for them in chat, and what you ask for runs at once. Nobody tests or edits in the main folder: it is
    only where the boss lands, and it keeps moving. Each tess tests its own feature in a snapshot lane, a lane detached at
-   main's commit (`git-tidy lane claim --snapshot --base <sha>`), released after it returns. A full suite (only in `full`) runs once per
+   the base's commit (`board start --tess` claims it); tess records its verdict (`board done`) and releases the snapshot
+   itself when it returns. A full suite (only in `full`) runs once per
    commit; its result is kept in `<git common dir>/cs-suite/<sha>.txt` and the other tess reuse it. tess answers
    `main: ok` or `main: must-fix <n>`; the boss re-checks a must-fix on the newest main, then makes it a new piece, and
    tess-write's new tests land like any other piece. dev and its helpers run no tests; tess

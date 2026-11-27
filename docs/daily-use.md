@@ -50,24 +50,42 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   back. A `needs: lex` always goes to the boss, which decides whether and when to wake lex.
 - The boss works in rounds; each land frees a slot, which it fills at once. The base is the branch checked out in the
   main checkout (main, develop or a feature branch); no command names it. Switching it leaves open lanes on their old base:
-  land them after switching back.
-  1. After every agent report and every land it runs `node ~/.claude/tools/board/board.mjs tick --repo <main checkout>
-     --plan <pieces.json>`, which shows the base (`base <name>`), the lanes in flight, the pieces that can start and when
-     tess is due.
-  2. While fewer than 3 dev run, it claims a pool lane for each piece that can start
-     (`node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim --repo <main checkout> --branch lane/<id>`)
-     and gives dev that folder. No agent makes its own folder.
-  3. When dev reports, it lands the piece with the `land` script, one at a time, and ticks again: that tick checks the base.
-     A `completed` notice that only says the agent still waits means it stopped: the boss resumes it by SendMessage with
-     the helper results that reached the boss.
-  4. When 3 features have landed unchecked, or the job's last piece has landed, it starts one `tess` per feature (a risky
-     one at once). Each tess tests a frozen snapshot of main in its own lane (`lane claim --snapshot --base <main sha>`),
-     never the main folder, which keeps moving as pieces land; the boss releases each snapshot (`git-tidy lane release`)
-     when its tess reports. When you asked for `full`, only one of them runs the full suite; the others reuse its result.
-     tess answers `main: ok` or `main: must-fix <n>`; the boss re-checks a must-fix on the newest main, then makes it the
-     next piece (`Fix:`), which lands on its repro's `test/<topic>` branch when it has one. Only tess's
-     `land: test/<topic>` lines (passing test branches) are landed, like a dev report
-     (`land test/<topic> --repo <base checkout>`); the tick's `tests not landed` line lists any left.
+  land them after switching back. The tools print every step, so the boss writes no claim, command or brief by hand:
+  1. After every agent report or finished background step, after a compaction and when you ask how things stand, it runs
+     `node ~/.claude/tools/board/board.mjs tick --repo <main checkout>` (a new plan once with `--plan <pieces.json>`; the
+     tick remembers every open plan of the repository). The tick shows the base (`base <name>`), the lanes in flight, each
+     job's queue and features, the held files, and ends with `next:` and numbered `do` lines, which replace every earlier one.
+  2. It runs each `do` line in order, as printed, and reads each output whole (never cut with `head`, `tail` or `grep`):
+     - `land`: only when dev's report says `done`, or `partial` with `safe to land: yes` (its open lines go back in the queue
+       as a new piece); never a `blocked` one. The `land` script lands one branch at a time and then prints the next tick:
+       the boss goes on with that tick's `do` lines.
+     - `start dev` and `start tess`: `board start` claims the pool lane (for tess a snapshot of the base, and its mark) and
+       prints the description and the brief; the boss starts the agent with both, whole. No agent makes its own folder.
+     - `resume`: a `completed` notice that only says the agent still waits means it stopped: the boss resumes it by
+       SendMessage with the helper results that reached the boss.
+     - `release`: a tess snapshot still locked after an hour with no tess on it.
+     - `land <test branch>`: a passing `test/<topic>` branch from tess's `land: test/<topic>` line, landed like a dev report.
+     - `sync`: the machine sync, run in the background; `sync failed` is told to you once and becomes a `Fix:` piece.
+  3. tess is due when 3 features have landed unchecked or the job's last piece has landed, and at once for a risky one. It
+     tests its feature in its snapshot, never in the main folder, which keeps moving as pieces land. When you asked for
+     `full`, only one of them runs the full suite (`suite: yes`); the others reuse its result. tess answers `main: ok` or
+     `main: must-fix <n>`, records it with the brief's `done:` command and frees its snapshot with `release:`. The boss
+     re-checks a must-fix on the newest main, then makes it the next piece (`Fix:`), which lands on its repro's
+     `test/<topic>` branch when it has one.
+  4. A report's `questions:` go to you (skill `ask-owner`); a `needs:` line starts that agent with the description
+     `<type> for <asker id7>: <task>`, so the board keeps who asked after a compaction. A failed step (a land or a claim
+     refused, a sync that failed) is told to you once and becomes a `Fix:` piece.
+
+  The tick's `agents` and `job` lines answer "where are we" and "how long": the agents running and for how long, each job's
+  pieces landed, in lanes and waiting, its features checked, and its pace measured from the land ledger
+  (`pace unknown (fewer than 2 lands)`; never a guess).
+- The briefs the tools do not print:
+  - `lex`: the first line `analysis: <question>` or `plan: <request>`; then `repo:`, `out: <abs plan path>`, `open plans:` (the
+    pieces.json paths of the tick's `job` lines), your words quoted, and `codex: yes` only when you asked for Codex.
+  - `max`: exactly the fields of its Brief (`home/agents/max.md`): `mode:`, `repo:`, `target:`, `base:`, `spec:`, `tess:`
+    (the latest verdict and its sha), `worktree:`, `BASE:`, `BRANCH: ship/<topic>`, and `owner-command:` only from your own
+    words in chat. Its folder is a pool claim of `ship/<topic>`
+    (`node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim --repo <main checkout> --branch ship/<topic>`).
 - After 3 rounds of fix and review on one area, the boss stops patching and sends the area to `lex` for a redesign; on the
   redesigned tasks only a regression that a fix caused counts as a must-fix.
 - Helpers are not counted. Two lanes or helpers never change the same file at once. Technical choices are made and stated in one line; your decisions are asked.

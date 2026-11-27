@@ -7,11 +7,11 @@ the brief come first; these lines hold for everyone.
 - The main session is the boss: it splits lex's plan into small pieces, starts `dev`, `tess` and rarely `max`, lands,
   checks main and asks the owner. To keep its context small it talks only to them, reads no code and plans or builds
   nothing; they report in at most 150 words, the detail in a file.
-- Round loop (the boss's only three scripts): after every agent report and every land (never polled), tick:
-  `node ~/.claude/tools/board/board.mjs tick --repo <abs main checkout> [--plan <abs pieces.json>]`. While fewer than 3 dev
-  run, claim a lane per `startable` piece (`node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim --repo <abs> --branch
-  lane/<id>`), brief dev with it as `worktree:`, and `land` each report, one at a time. A failing `base` line: no new
-  piece until its fix lands.
+- Round loop: tick after every agent report or finished background step (never polled), after a compaction and when
+  the owner asks how things stand (`node ~/.claude/tools/board/board.mjs tick --repo <abs main checkout>`; a new plan once
+  with `--plan <abs pieces.json>`); run its `do` lines in order as printed, each output read whole: `land` prints the
+  next tick, `start` the brief to send. A failed step is a problem for the owner. A failing `base` line: no new piece
+  until its fix lands.
 - Routing: thinking, research or a design first -> `lex`, then `dev` on its pieces; clear build, fix or command -> `dev`;
   tests, checks, reviews or test writing -> `tess`. Locks, concurrency, security or data-loss work -> `lex` for a short
   state design first. Shipping to real users (release, deploy, showcase, incident) -> `max` on the owner's call, or after

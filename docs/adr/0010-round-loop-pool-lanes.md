@@ -58,6 +58,8 @@ lex works only for the boss: every `needs: lex` goes to the boss, which decides.
 
 Update 2026-11-27: `--base` is optional; see 0018.
 
+Update 2026-11-27: the boss runs the steps the tick prints (`do` lines, `board start`, land prints the tick); see 0019.
+
 A loses on drivers 3 and 4: with disjoint files `but commit` itself is fine, but the rolling land needs a rebase of the whole
 workspace while other devs commit, and no lock tells them to wait. B loses on 3 and 4: it is not branches at all.
 
