@@ -1,7 +1,8 @@
 # board
 
-The status line's engine: a detached refresh writes each session's board file, `show` prints it as plain lines, and `tick` is
-the boss's sync of the base (the branch checked out in the main checkout), its lanes and the plan.
+The status line's engine: a detached refresh writes each session's board file, `show` prints it as plain lines, `tick` is
+the boss's sync of the base (the branch checked out in the main checkout), its lanes and the plan, and `done` is tess's record
+that it returned.
 
 The engine behind the status line: which agents run and the git state of the session's worktrees, in one small file the
 status line reads (`~/.claude/state/board/<session>.json`, at most 48 KB). Node 22, no dependencies.
@@ -64,7 +65,7 @@ clash <branch>: piece <a> of <job1>, piece <b> of <job2>
 plan <path>: <problem> (forget it: node ~/.claude/tools/board/board.mjs tick --repo <repo> --forget-plan <path>)
 plans list: <file> <problem>; delete it to start the list again
 [<job>: ]queue <piece> startable | <piece> clash | <piece> after <piece>, ... | <piece> overlaps <lane>
-[<job>: ]features landed, not checked: <feature> <landed>/<pieces> (risk <risk>), ... -> tess due at 3 (now <n>)|tess due now (<why>)
+[<job>: ]features landed, not checked: <feature> <landed>/<pieces> (risk <risk>[, must-fix]), ... -> tess due at 3 (now <n>)|tess due now (<why>)
 [<job>: ]commits <feature>: <from>..<to> ...
 job <slug> done (forgotten|not forgotten: <why>)
 ledger <n> bad lines skipped
@@ -104,9 +105,12 @@ next: land <lane>; claim <piece>[ (branch <branch>)]; test branches <branch>, ..
 - **queue**: the job's pieces not landed and not in a lane. A piece is landed when the land ledger
   (`~/.claude/tools/land/ledger.mjs`) holds a land of its branch (its `branch`, else `lane/<piece id>`) made after the plan's
   `base`: a land whose commit the base already holds belongs to an older job that used the same branch name.
-- **features**: the features fully landed and not checked, and every risky one (`risk` not `none`) with a landed piece and no
-  tess mark since: no new piece should touch its files until tess returns. A feature is checked when its tess mark is newer than
-  its newest land. tess (its quick look; `full` only when the owner asks) is due when a risky feature is listed, when 3
+- **features**: the features fully landed and not checked, and every risky one (`risk` not `none`) with a landed piece that is
+  not checked: no new piece should touch its files until tess returns. A feature is checked when its tess mark's sha holds every
+  land of its pieces and tess recorded `done` with verdict `ok` on that mark ([The done command](#the-done-command)); a mark
+  with no `done` (tess still running, or one that died) checks nothing, so the feature stays due. A feature whose verdict on such
+  a mark is `must-fix` is listed with `, must-fix` and is not due again until a piece of it lands after the mark (its fix).
+  tess (its quick look; `full` only when the owner asks) is due when a risky feature is listed without `must-fix`, when 3
   features are fully landed and not checked, or when the plan's last piece has landed.
 - **next**: only a suggestion: land one ready lane, claim startable pieces while fewer than 3 lanes are in flight (a piece
   with a `branch` as `claim <piece> (branch <branch>)`: claim that branch), land the test branches with commits and no plan
@@ -117,10 +121,13 @@ next: land <lane>; claim <piece>[ (branch <branch>)]; test branches <branch>, ..
 `--mark-tess <feature> --sha <40-hex>` (with exactly one `--plan`, which it does not add to the list) records that tess was
 started on that feature at that sha (it must be on the base), and prints `marked <feature> for tess at <sha>`. The marks are per
 repository and job, in `~/.claude/state/board/repos/<repo-key>/marks-<job>.json` as
-`{ "<feature>": { "sha": "<40-hex>", "at": "<ISO>" } }`, written through a temp file and a rename under a lock file; delete the
-file to forget them. An older `~/.claude/state/board/jobs/<job>.json` is read while the new file is not there yet, and never
-written: the next mark copies its marks into the new file. `--json` prints every fact as one JSON object (lanes with their
-files, folders with why and `lockedAtMs`, `jobs`: each with `job`, `path`, `queue`, `features`, `tess` status, `isDone`; `clashes`,
+`{ "<feature>": { "sha": "<40-hex>", "at": "<ISO>", "qa": "<level>", "done": { "verdict": "ok|must-fix", "at": "<ISO>" } } }`
+(`qa` only when the mark was given one, `done` only once tess recorded its verdict; a new mark of a feature replaces its old one,
+`done` included), written through a temp file and a rename under a lock file; delete the file to forget them. An older
+`~/.claude/state/board/jobs/<job>.json` is read while the new file is not there yet, and never written: the next mark copies its
+marks into the new file. `--json` prints every fact as one JSON object (lanes with their
+files, folders with why and `lockedAtMs`, `jobs`: each with `job`, `path`, `queue`, `features` (each with tess's `verdict` on a
+mark holding all its lands, or null, and `isChecked`), `tess` status (`features` listed, `fixing` waiting for a fix), `isDone`; `clashes`,
 `planProblems`, `listProblem`, `forgotten`); `main` is the base (`branch` its name, `sha` its tip); `main.findings` holds the base's findings only and `tidy` the
 side ones, each `{ "kind", "subject" }`; `lanes[].claimedOn` is the base a lane was claimed on (null with no record); `tests` holds the
 test branches, each `{ "branch", "commits", "folder", "piece", "agent" }` (`folder`, `piece` and `agent` null when none).
@@ -154,6 +161,22 @@ cycle of any length (`a` after `b` after `a`: neither could ever start) and a ba
 of another job that must land before it (at most 16, each a name `lane claim --branch` takes); the tick checks the names, but
 does not hold the piece back yet. Two plans may reuse a piece id, but not a branch (the tick shows a `clash`). No two pieces
 that can run at the same time share a file; the tick shows it when they do.
+
+## The done command
+
+tess runs `done` when it returns, before it releases its folder, so the board knows it returned and with which verdict:
+
+```sh
+node ~/.claude/tools/board/board.mjs done --repo <abs main checkout> --job <slug> --tess <feature> --sha <40-hex> --verdict ok|must-fix
+```
+
+It writes `done: { verdict, at }` into the job's tess mark of that feature, under the same lock as `--mark-tess`, and prints
+`done <feature> at <sha8>: <verdict>`. Only the mark at that exact sha takes it: a tess started on an older mark cannot check a
+feature marked again since. `ok` checks the feature (when the mark's sha holds all its lands); `must-fix` keeps it unchecked and
+not due until a piece of it lands again. A second `done` on the same mark replaces the first.
+Exit 0 recorded; 1 no tess mark of that feature at that sha in the job (`no tess mark for <feature> at <sha8>`, nothing
+written); 2 usage: a `--repo` that is not an absolute path or a git repository, a job or feature that
+is not a name, a sha that is not 40 hex characters, another verdict, marks that cannot be read or written, or the lock busy.
 
 ## The status line rows
 

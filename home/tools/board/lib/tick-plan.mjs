@@ -1,7 +1,7 @@
 // Purpose: the two files `board tick` reads beside git for each job: the plan's pieces.json (lex writes it next to the plan) and the
-//   job's tess marks (written only by `tick --mark-tess`).
-// Exports: readPlan(path, repo) -> plan, readMarks(repo, job, env) -> marks, writeMark({ repo, plan, feature, sha, env, nowMs }) ->
-//   the marks file's path.
+//   job's tess marks (written only by `tick --mark-tess` and `board done`).
+// Exports: readPlan(path, repo) -> plan, readMarks(repo, job, env) -> marks, writeMark({ repo, plan, feature, sha, qa, env,
+//   nowMs }) -> the marks file's path, writeDone({ repo, job, feature, sha, verdict, env, nowMs }) -> that path or null.
 // Invariants: the boundary of the tick: every plan and marks file is checked here, so tick.mjs trusts what it gets; a missing or bad
 //   plan, or a marks file that is not valid, throws UsageError, never a guess (the message starts `plan <path>: ` for a plan). Job,
 //   feature and piece ids are safe file names (NAME, a subset of session-store.mjs isSessionId). The plan's `base` is a commit of
@@ -10,10 +10,11 @@
 //   A piece's `files` is never empty, its `after` lists make no cycle (no piece of one could ever start), and each of its `waits`
 //   (another job's branches that land first, at most MAX_WAITS) passes the same branch-name check.
 //   Marks live per repository and job in `<repoStateDir>/marks-<job>.json` (tick-jobs.mjs; an old `<boardDir>/jobs/<job>.json` is
-//   read when that file is not there yet, and never written) as `{ "<feature>": { "sha": "<40-hex>", "at": "<ISO>" } }`, written
-//   through session-store.mjs: a temp file and a rename, no link followed, 0600, never swept (a job may wait more than a week). A
-//   mark's read and write run under `marks-<job>.lock` beside it (tick-jobs.mjs withStateLock), so parallel `--mark-tess` calls never
-//   drop each other's mark (concurrency R3).
+//   read when that file is not there yet, and never written) as `{ "<feature>": { "sha": "<40-hex>", "at": "<ISO>", "qa"?: "<text>",
+//   "done"?: { "verdict": "ok" | "must-fix", "at": "<ISO>" } } }`, written through session-store.mjs: a temp file and a rename, no
+//   link followed, 0600, never swept (a job may wait more than a week). A new mark has no `done`: only tess's own `board done` at
+//   that mark's sha adds it. Every read and write of a job's marks runs under `marks-<job>.lock` beside them (tick-jobs.mjs
+//   withStateLock), so parallel `--mark-tess` and `done` calls never drop each other's change (concurrency R3).
 import { join } from 'node:path';
 import { UsageError, gitFlag, runGit } from '../../git-tidy/lib/git.mjs';
 import { checkBranchName } from '../../git-tidy/lib/lane-pool.mjs';
@@ -35,6 +36,8 @@ const MARKS_PREFIX = 'marks-';
 const FEATURE_TEXTS = Object.freeze(['spec', 'qa', 'acceptance']);
 const PIECE_TEXTS = Object.freeze(['acceptance']);
 const MAX_WAITS = 16; // a piece waits on a few branches of other jobs; more is a plan written wrong
+// tess's verdicts on a mark (`board done --verdict`): only `ok` checks a feature (tick-features.mjs)
+const VERDICTS = Object.freeze(['ok', 'must-fix']);
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isName = (value) => typeof value === 'string' && NAME.test(value);
@@ -188,7 +191,10 @@ export function readPlan(path, repo) {
 
 const oldMarksDir = (env) => join(boardDir(env), 'jobs'); // before marks were kept per repository: read, never written
 const marksName = (job) => `${MARKS_PREFIX}${job}`;
-const isMark = (mark) => isObject(mark) && FULL_SHA.test(mark.sha) && typeof mark.at === 'string' && Number.isFinite(Date.parse(mark.at));
+const isTime = (value) => typeof value === 'string' && Number.isFinite(Date.parse(value));
+const isDone = (done) => isObject(done) && VERDICTS.includes(done.verdict) && isTime(done.at);
+const isMark = (mark) => isObject(mark) && FULL_SHA.test(mark.sha) && isTime(mark.at)
+  && (mark.qa === undefined || typeof mark.qa === 'string') && (mark.done === undefined || isDone(mark.done));
 
 /** The job's marks file and its text: the per-repository one, else the old one; text null when neither is there. */
 function marksText(repo, job, env) {
@@ -199,11 +205,12 @@ function marksText(repo, job, env) {
 }
 
 /**
- * The tess marks of a job: which feature tess was started on, at which base sha and when.
+ * The tess marks of a job: which feature tess was started on, at which base sha and when, and tess's verdict once it returned.
  * @param {{ dir: string }} repo openRepo's result: marks are kept per repository
  * @param {string} job the plan's job (a NAME)
  * @param {object} [env] the environment (HOME), process.env by default
- * @returns {Record<string, { sha: string, at: string }>} the marks, {} when the job has none yet
+ * @returns {Record<string, { sha: string, at: string, qa?: string, done?: { verdict: string, at: string } }>} the marks, {} when
+ *   the job has none yet; a mark with no `done` is one tess has not returned on (an older marks file has none)
  * @throws {UsageError} the file is a link, too big, not JSON or holds a bad mark (delete it, or fix the named entry)
  */
 export function readMarks(repo, job, env = process.env) {
@@ -222,25 +229,62 @@ export function readMarks(repo, job, env = process.env) {
 }
 
 /**
- * Marks a feature as given to tess at a base sha (`tick --mark-tess`), keeping the job's other marks (an old marks file's too).
- * @param {{ repo: object, plan: object, feature: string, sha: string, env?: object, nowMs?: number }} mark openRepo's result, the
- *   plan (readPlan), the feature, the full base sha tess runs on, the environment (HOME) and now (epoch ms)
- * @returns {string} the marks file written
- * @throws {UsageError} the feature is not in the plan, the sha is not on the base, another --mark-tess held the job's lock the
- *   whole wait (withStateLock), the marks cannot be read (readMarks) or the file cannot be written
+ * Applies `change` to the job's marks under their lock and writes its result: the one read-modify-write of a marks file.
+ * @param {{ dir: string }} repo openRepo's result
+ * @param {string} job the job (a NAME)
+ * @param {object} env the environment (HOME)
+ * @param {(marks: object) => object | null} change the marks to write, or null to write nothing
+ * @returns {string | null} the marks file written, null when `change` gave null
+ * @throws {UsageError} the folder or file is not a plain one of yours, another call held the lock the whole wait, the marks
+ *   cannot be read (readMarks)
  */
-export function writeMark({ repo, plan, feature, sha, env = process.env, nowMs = Date.now() }) {
-  const ids = plan.features.map((entry) => entry.id);
-  if (!ids.includes(feature)) throw new UsageError(`--mark-tess ${JSON.stringify(feature)} is no feature of the plan (${ids.join(', ')})`);
-  if (!gitFlag(repo.dir, ['merge-base', '--is-ancestor', sha, repo.baseRef])) throw new UsageError(`--sha ${sha} is not on ${repo.base}: tess runs on the base`);
-  const name = marksName(plan.job);
+function changeMarks(repo, job, env, change) {
+  const name = marksName(job);
   const dir = repoStateDir(repo.dir, env);
   const file = join(dir, `${name}.json`);
   const notPlain = `cannot write the tess marks ${file}: its folder or file is not a plain one of yours`;
   if (privateFolder(dir) === undefined) throw new UsageError(notPlain); // the lock file goes in it, so it must be there first
-  withStateLock(join(dir, `${name}.lock`), `another --mark-tess is writing ${file}; run it again`, () => {
-    const marks = { ...readMarks(repo, plan.job, env), [feature]: { sha, at: new Date(nowMs).toISOString() } };
+  return withStateLock(join(dir, `${name}.lock`), `another --mark-tess or done is writing ${file}; run it again`, () => {
+    const marks = change(readMarks(repo, job, env));
+    if (marks === null) return null;
     if (!writeSessionFile(dir, name, `${JSON.stringify(marks, null, 2)}\n`, { sweep: false })) throw new UsageError(notPlain);
+    return file;
   });
-  return file;
+}
+
+/**
+ * Marks a feature as given to tess at a base sha (`tick --mark-tess`), keeping the job's other marks (an old marks file's too).
+ * The new mark replaces the feature's old one, its `done` too: a verdict belongs to the tess run of its own mark.
+ * @param {{ repo: object, plan: object, feature: string, sha: string, qa?: string, env?: object, nowMs?: number }} mark openRepo's
+ *   result, the plan (readPlan), the feature, the full base sha tess runs on, the qa level tess was given (kept only when given),
+ *   the environment (HOME) and now (epoch ms)
+ * @returns {string} the marks file written
+ * @throws {UsageError} the feature is not in the plan, the sha is not on the base, or changeMarks's reasons
+ */
+export function writeMark({ repo, plan, feature, sha, qa, env = process.env, nowMs = Date.now() }) {
+  const ids = plan.features.map((entry) => entry.id);
+  if (!ids.includes(feature)) throw new UsageError(`--mark-tess ${JSON.stringify(feature)} is no feature of the plan (${ids.join(', ')})`);
+  if (!gitFlag(repo.dir, ['merge-base', '--is-ancestor', sha, repo.baseRef])) throw new UsageError(`--sha ${sha} is not on ${repo.base}: tess runs on the base`);
+  const mark = { sha, at: new Date(nowMs).toISOString(), ...(qa === undefined ? {} : { qa }) };
+  return changeMarks(repo, plan.job, env, (marks) => ({ ...marks, [feature]: mark }));
+}
+
+/**
+ * Records tess's verdict in the mark of `feature` at `sha` (`board done`, run by tess when it returns), keeping every other mark. Only the mark at that exact sha takes it: a tess started on an older mark of the feature cannot check a newer one.
+ * @param {{ repo: object, job: string, feature: string, sha: string, verdict: string, env?: object, nowMs?: number }} done
+ *   openRepo's result, the job and feature (NAMEs), the full sha the mark names, one of VERDICTS, the environment (HOME) and now
+ * @returns {string | null} the marks file written, null when the job has no mark of that feature at that sha (nothing written)
+ * @throws {UsageError} a job, feature, sha or verdict not in its format, or changeMarks's reasons
+ */
+export function writeDone({ repo, job, feature, sha, verdict, env = process.env, nowMs = Date.now() }) {
+  if (!isName(job)) throw new UsageError(`--job ${JSON.stringify(job)} is no job name (letters, digits, - and _)`);
+  if (!isName(feature)) throw new UsageError(`--tess ${JSON.stringify(feature)} is no feature name (letters, digits, - and _)`);
+  if (!FULL_SHA.test(sha ?? '')) throw new UsageError(`--sha needs the full 40-character sha of the tess mark, got ${JSON.stringify(sha)}`);
+  if (!VERDICTS.includes(verdict)) throw new UsageError(`--verdict needs ${VERDICTS.join(' or ')}, got ${JSON.stringify(verdict)}`);
+  return changeMarks(repo, job, env, (marks) => {
+    // own keys only, as planState reads them: a feature named `constructor` has no inherited mark
+    const mark = Object.hasOwn(marks, feature) ? marks[feature] : undefined;
+    if (mark?.sha !== sha) return null;
+    return { ...marks, [feature]: { ...mark, done: { verdict, at: new Date(nowMs).toISOString() } } };
+  });
 }

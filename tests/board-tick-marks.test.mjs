@@ -1,5 +1,6 @@
 // Tests of the tess marks of `board.mjs tick` (home/tools/board/lib/tick-features.mjs, tick-plan.mjs, tick.mjs): a mark is judged by
-// ancestry of the landed commits, parallel `--mark-tess` calls keep every mark (a lock file beside the marks), the `commits <feature>:`
+// ancestry of the landed commits and checks a feature only once `board.mjs done --verdict ok` is recorded on it (an old marks
+// file has no `done`), parallel `--mark-tess` calls keep every mark (a lock file beside the marks), the `commits <feature>:`
 // line, the `next:` line's mark command, and where the marks live (per repository and job; an old jobs/<job>.json is read, never
 // written). Each test runs the CLI as a child process on a throw-away repository in the OS temp
 // folder (git-tidy-helpers.mjs); every child has its own temp HOME, so the ledger and the marks go to <HOME>/.claude/state/ there and
@@ -24,7 +25,7 @@ const LANDED_AT = '2026-01-01T00:00:00.000Z';
 const FEATURES_LINE = 'features landed, not checked:';
 const PARALLEL_MARKS = 8;
 const ROUNDS = 4;
-const FRESH_LOCK_MESSAGE = 'another --mark-tess is writing';
+const FRESH_LOCK_MESSAGE = 'another --mark-tess or done is writing';
 const STALE_LOCK_AGE_S = 11; // the lock is stale after 10 s (STATE_LOCK_STALE_MS in tick-jobs.mjs)
 const RISKY = 'gate';
 
@@ -86,9 +87,12 @@ function writeLands(home, repo, lands) {
 
 const featuresLineOf = (result) => lines(result).find((line) => line.startsWith(FEATURES_LINE));
 const markArgs = (repo, plan, feature, sha) => ['--repo', repo, '--plan', plan, '--mark-tess', feature, '--sha', sha];
+/** Runs `board.mjs done` for the feature's mark at `sha` with verdict ok, as tess's brief does when it returns. */
+const doneOk = (home, repo, feature, sha) => spawnSync(process.execPath,
+  [BOARD, 'done', '--repo', repo, '--job', JOB, '--tess', feature, '--sha', sha, '--verdict', 'ok'], { encoding: 'utf8', env: envOf(home) });
 const factsOf = (home, repo, plan) => JSON.parse(tick(home, ['--repo', repo, '--plan', plan, '--json']).stdout);
 
-test('a risky feature marked at its first piece\'s land is still due, and checked once marked at its last piece\'s land', () => {
+test('a risky feature marked at its first piece\'s land is still due, and checked once marked at its last piece\'s land and done ok', () => {
   const repo = makeRepo();
   const home = makeHome();
   const base = headOf(repo);
@@ -105,6 +109,7 @@ test('a risky feature marked at its first piece\'s land is still due, and checke
 
   const markedLast = tick(home, markArgs(repo, plan, 'f', lastTo));
   assert.equal(markedLast.status, EXIT_SHOWN, markedLast.stderr);
+  assert.equal(doneOk(home, repo, 'f', lastTo).status, EXIT_SHOWN);
   const checkedResult = tick(home, ['--repo', repo, '--plan', plan]);
   assert.ok(featuresLineOf(checkedResult).startsWith(`${FEATURES_LINE} none`), checkedResult.stdout);
   const feature = factsOf(home, repo, plan).jobs[0].features.find(({ id }) => id === 'f');
@@ -147,7 +152,7 @@ test('an unchecked feature gets a commits line right after the features line, an
   assert.deepEqual(feature.lands, [{ piece: 'p1', from: base, to }]);
 });
 
-test('when tess is due and main moved past the last land, the next line names the mark command at main\'s exact sha, and that mark checks the feature', () => {
+test('when tess is due and main moved past the last land, the next line names the mark command at main\'s exact sha, and that mark checks the feature once done ok', () => {
   const repo = makeRepo();
   const home = makeHome();
   const base = headOf(repo);
@@ -165,6 +170,7 @@ test('when tess is due and main moved past the last land, the next line names th
   const sha = next.match(/--sha ([0-9a-f]{40})/)[1];
   const marked = tick(home, markArgs(repo, plan, 'f', sha));
   assert.equal(marked.status, EXIT_SHOWN, marked.stderr);
+  assert.equal(doneOk(home, repo, 'f', sha).status, EXIT_SHOWN);
   const after = tick(home, ['--repo', repo, '--plan', plan]);
   assert.ok(featuresLineOf(after).startsWith(`${FEATURES_LINE} none`), after.stdout);
   assert.equal(factsOf(home, repo, plan).jobs[0].features[0].isChecked, true);
@@ -211,10 +217,10 @@ test('a feature named after an Object.prototype key, with no piece landed, is no
   assert.equal(result.stderr, '');
   assert.equal(featuresLineOf(result), `${FEATURES_LINE} none -> tess due at 3 (now 0)`, result.stdout);
   const shown = factsOf(home, repo, plan).jobs[0].features;
-  assert.deepEqual(shown, PROTOTYPE_KEY_FEATURES.map((id) => ({ id, risk: 'none', landed: 0, pieces: 1, lands: [], isChecked: false })));
+  assert.deepEqual(shown, PROTOTYPE_KEY_FEATURES.map((id) => ({ id, risk: 'none', landed: 0, pieces: 1, lands: [], verdict: null, isChecked: false })));
 });
 
-test('a piece landed twice and marked at its first land only is due, with both ranges in the commits line, and checked once marked at the second', () => {
+test('a piece landed twice and marked at its first land only is due, with both ranges in the commits line, and checked once marked at the second and done ok', () => {
   const repo = makeRepo();
   const home = makeHome();
   const base = headOf(repo);
@@ -231,13 +237,14 @@ test('a piece landed twice and marked at its first land only is due, with both r
 
   const markedAgain = tick(home, markArgs(repo, plan, 'f', secondTo));
   assert.equal(markedAgain.status, EXIT_SHOWN, markedAgain.stderr);
+  assert.equal(doneOk(home, repo, 'f', secondTo).status, EXIT_SHOWN);
   const after = tick(home, ['--repo', repo, '--plan', plan]);
   assert.ok(featuresLineOf(after).startsWith(`${FEATURES_LINE} none`), after.stdout);
 });
 
 const oldMarksFile = (home) => join(home, '.claude', 'state', 'board', 'jobs', `${JOB}.json`);
 
-test('an old jobs/<job>.json marks file is read while the repository has none, and never written: the next mark keeps its marks in the new file', () => {
+test('an old jobs/<job>.json marks file is read while the repository has none (its marks have no done, so check nothing), and never written: the next mark keeps its marks in the new file', () => {
   const repo = makeRepo();
   const home = makeHome();
   const base = headOf(repo);
@@ -250,7 +257,7 @@ test('an old jobs/<job>.json marks file is read while the repository has none, a
   writeFileSync(oldMarksFile(home), oldText);
 
   const before = factsOf(home, repo, plan).jobs[0].features;
-  assert.deepEqual(before.map(({ id, isChecked }) => [id, isChecked]), [['a', true], ['b', false]]);
+  assert.deepEqual(before.map(({ id, isChecked }) => [id, isChecked]), [['a', false], ['b', false]]);
   const marked = tick(home, markArgs(repo, plan, 'b', secondTo));
   assert.equal(marked.status, EXIT_SHOWN, marked.stderr);
   assert.deepEqual(Object.keys(readMarks(home, repo)).sort(), ['a', 'b']);
@@ -267,6 +274,7 @@ test('marks are kept per repository: a mark of a job in one repository checks no
   });
   const marked = tick(home, markArgs(first, plans[0].plan, 'f', plans[0].to));
   assert.equal(marked.status, EXIT_SHOWN, marked.stderr);
+  assert.equal(doneOk(home, first, 'f', plans[0].to).status, EXIT_SHOWN);
   assert.equal(factsOf(home, first, plans[0].plan).jobs[0].features[0].isChecked, true);
   assert.equal(factsOf(home, second, plans[1].plan).jobs[0].features[0].isChecked, false);
 });
