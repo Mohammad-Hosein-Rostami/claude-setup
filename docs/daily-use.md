@@ -47,13 +47,16 @@ Keep extra usage off in claude.ai so nothing can bill credits.
 - Only the boss starts `lex`, `dev`, `tess` and `max`. An agent that needs one asks the boss with a `needs:` line (by message
   while it runs in the background, else in its report); the boss starts it, keeps track of who is on what and sends the result
   back. A `needs: lex` always goes to the boss, which decides whether and when to wake lex.
-- The boss works in rounds; each land frees a slot, which it fills at once:
+- The boss works in rounds; each land frees a slot, which it fills at once. The base is the branch checked out in the
+  main checkout (main, develop or a feature branch); no command names it. Switching it leaves open lanes on their old base:
+  land them after switching back.
   1. After every agent report and every land it runs `node ~/.claude/tools/board/board.mjs tick --repo <main checkout>
-     --plan <pieces.json>`, which shows main, the lanes in flight, the pieces that can start and when tess is due.
+     --plan <pieces.json>`, which shows the base (`base <name>`), the lanes in flight, the pieces that can start and when
+     tess is due.
   2. While fewer than 3 dev run, it claims a pool lane for each piece that can start
-     (`node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim --repo <main checkout> --branch lane/<id> --base <main sha>`)
+     (`node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim --repo <main checkout> --branch lane/<id>`)
      and gives dev that folder. No agent makes its own folder.
-  3. When dev reports, it lands the piece with the `land` script, one at a time, and ticks again: that tick checks main.
+  3. When dev reports, it lands the piece with the `land` script, one at a time, and ticks again: that tick checks the base.
      A `completed` notice that only says the agent still waits means it stopped: the boss resumes it by SendMessage with
      the helper results that reached the boss.
   4. When 3 features have landed unchecked, or the job's last piece has landed, it starts one `tess` per feature (a risky
@@ -141,7 +144,7 @@ Say what to remove or merge ("remove Nx", "merge the apps into one project") and
 
 ## Clean git history
 History stays one straight line: no merge commits, no branch merged into another.
-- Agents commit on their own branch; the boss lands each branch with the `land` script (rebase onto main, then
+- Agents commit on their own branch; the boss lands each branch with the `land` script (rebase onto the base, then
   `git merge --ff-only`), one at a time, which then deletes the landed branch and keeps its pool folder for reuse.
 - Ask "clean up the git tree" and the `git-linear-history` skill loads; it backs up first and proves the tree is unchanged.
 - The two commands: `node ~/.claude/tools/git-tidy/git-tidy.mjs check` (what is left to clean) and `... prune --apply`.
@@ -205,9 +208,9 @@ on Opus (`claude --model opus --effort high -c`), not credits.
   then `claude -c`).
 - `~/.claude/settings.json` is a merged copy: change `settings/base.json`, then re-run `scripts/install.sh`.
 - Because the repo is live in every session, edit hooks and tools in a git worktree: a pool lane
-  (`node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim --repo <repo> --branch lane/<name> --base <main sha>`) or
+  (`node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim --repo <repo> --branch lane/<name>`) or
   `scripts/lane-new.sh <name>`, which makes one on `lane/<name>` and installs the tool dependencies. When the suite is green,
-  land it with the `land` script (rebase onto main, then `git merge --ff-only`).
+  land it with the `land` script (rebase onto the base, then `git merge --ff-only`).
 
 ## Another machine
 `git pull`, then `scripts/install.sh` (Windows PowerShell:

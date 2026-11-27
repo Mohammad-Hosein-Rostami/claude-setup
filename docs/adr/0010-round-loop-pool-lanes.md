@@ -56,6 +56,8 @@ C, with the round loop:
 
 lex works only for the boss: every `needs: lex` goes to the boss, which decides. `land` keeps pool folders for reuse.
 
+Update 2026-11-27: `--base` is optional; see 0018.
+
 A loses on drivers 3 and 4: with disjoint files `but commit` itself is fine, but the rolling land needs a rebase of the whole
 workspace while other devs commit, and no lock tells them to wait. B loses on 3 and 4: it is not branches at all.
 

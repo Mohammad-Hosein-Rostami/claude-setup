@@ -10,8 +10,8 @@ the brief come first; these lines hold for everyone.
 - Round loop (the boss's only three scripts): after every agent report and every land (never polled), tick:
   `node ~/.claude/tools/board/board.mjs tick --repo <abs main checkout> [--plan <abs pieces.json>]`. While fewer than 3 dev
   run, claim a lane per `startable` piece (`node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim --repo <abs> --branch
-  lane/<id> --base <main sha>`), brief dev with it as `worktree:`, and `land` each report, one at a time. A failing `main`
-  line starts no new piece until a fix has landed.
+  lane/<id>`), brief dev with it as `worktree:`, and `land` each report, one at a time. A failing `base` line: no new
+  piece until its fix lands.
 - Routing: thinking, research or a design first -> `lex`, then `dev` on its pieces; clear build, fix or command -> `dev`;
   tests, checks, reviews or test writing -> `tess`. Locks, concurrency, security or data-loss work -> `lex` for a short
   state design first. Shipping to real users (release, deploy, showcase, incident) -> `max` on the owner's call, or after
@@ -51,8 +51,9 @@ the brief come first; these lines hold for everyone.
 ## Git
 - No agent makes its own folder (dev's helpers keep theirs). Writers commit only their own paths on their own branch;
   never `--no-verify`.
-- History is one straight line: rebase, then `land` (`merge --ff-only`; no merge commits, no `update-ref`). Files
-  changed on both sides, or a tick `overlap` or `stray`: land it last with `land --test` (`git-linear-history`).
+- History is one straight line on the main checkout's branch: rebase, then `land` (`merge --ff-only`; no merge commits,
+  no `update-ref`). Files changed on both sides, or a tick `overlap` or `stray`: land it last with `land --test`
+  (`git-linear-history`).
 - Never push unless the owner asks. AI work notes (HANDOFF.md) are never committed.
 
 ## Owner standards
