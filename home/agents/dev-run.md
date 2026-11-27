@@ -26,9 +26,10 @@ Run exactly the commands the caller gives you, in the folder it names. Fix nothi
 - A command that may run over 3 minutes, while you have other work, runs with `run_in_background: true` and a `timeout` (its
   expected time plus a margin, at most 2 h) as `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`. Keep working
   while it runs, wait on its completion notice, then read the log once. A command whose result is all that is left runs in the
-  foreground with `timeout` 600000 instead; one that needs longer is reported as not run. To wait for anything else (a file, a
-  log line, a server), use the Monitor tool with a command that prints a line on success and on failure and then exits, or send
-  the check loop itself with `run_in_background: true`: its exit is the notice. Never poll the log or wait in a sleep loop.
+  foreground with the Bash tool's `timeout` parameter set to 600000 (ms) instead; one that needs longer is reported as not
+  run. To wait for anything else (a file, a log line, a server), use the Monitor tool with a command that prints a line on
+  success and on failure and then exits, or send the check loop itself with `run_in_background: true`: its exit is the notice.
+  Never poll the log or wait in a sleep loop.
 - Never end your turn or report while a background command or monitor you started still runs: wait on its notice, or stop it
   with TaskStop (load it with ToolSearch select:TaskStop if it is not loaded).
 

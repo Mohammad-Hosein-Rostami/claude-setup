@@ -25,8 +25,9 @@ yours: you add no summary, judgement or finding of your own. dev weighs it.
 
 ## Run
 
-1. `codex login status` in the foreground with `timeout` 60000. Any output other than `Logged in using ChatGPT` (not
-   installed, logged out, an API key): return one line, `codex: not run (<what it said>; run codex login)`, and stop.
+1. Run `codex login status` in the foreground, with the Bash tool's `timeout` parameter set to 60000 (ms). Any output
+   other than `Logged in using ChatGPT` (not installed, logged out, an API key): return one line,
+   `codex: not run (<what it said>; run codex login)`, and stop.
 2. Make the folder: `mktemp -d "${TMPDIR:-/tmp}/dev-codex.XXXXXX"`. Write the prompt into `<folder>/prompt.md` with a quoted
    heredoc (`cat > <folder>/prompt.md <<'PROMPT'`), the brief's values filled in:
 
@@ -40,14 +41,17 @@ yours: you add no summary, judgement or finding of your own. dev weighs it.
    line, and must-fix or follow-up. No style or formatting points. At most 400 words. With no problem, say `no findings`.
    ```
 
-3. Run Codex with `run_in_background: true` and `timeout` 3600000 (Codex at max effort may take long; one hour at most):
+3. Run Codex with `run_in_background: true` and the Bash tool's `timeout` parameter set to 3600000 (ms), as Codex at max
+   effort may take long (one hour at most):
 
    ```
-   codex exec -m gpt-6.2-sol -c 'model_reasoning_effort="max"' --sandbox read-only --color never -C <repo> \
-     -o <folder>/opinion.md - < <folder>/prompt.md > <folder>/log.txt 2>&1; echo $? > <folder>/exit.txt
+   codex exec -m gpt-6.2-sol -c 'model_reasoning_effort="max"' --sandbox read-only --color never -C "<repo>" \
+     -o "<folder>/opinion.md" - < "<folder>/prompt.md" > "<folder>/log.txt" 2>&1; echo $? > "<folder>/exit.txt"
    ```
 
-   Wait for its completion notice; never poll it or sleep in a loop.
+   Wait for its completion notice; never poll it or sleep in a loop. Until the notice comes you have no result: write
+   no `still running` text and no summary. If your turn ends before it, that is only a pause: write just
+   `codex: running in <folder>`. On the notice, go on with step 4 and send its reply, which is your one result.
 4. Exit 0 and a non-empty `opinion.md`: return its text unchanged, only the blank lines at its start and end trimmed.
    Otherwise read the last 20 lines of `log.txt` and return one line: a usage or rate limit gives
    `codex: not run (limit: <Codex's line, with the reset time if it names one>)`; anything else gives
