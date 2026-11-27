@@ -17,16 +17,21 @@
 //   ('' on this machine or when unread). A target ssh cannot reach says so in its problem, apart from a claude not found there.
 // Exit: 0 every machine synced (installed with exit 0 and at the tip: the base branch's sha, or the tag's commit on a target of a
 //   --tag run), 1 a machine failed (its row says why), 2 usage or another sync runs (the run lock below), 3 a verify check failed.
+// Record: every run that reached verify writes its result to the sync record (home/tools/board/lib/sync-record.mjs, read by the
+//   boss's tick): each machine's state, and how many runs in a row failed since when. A record that cannot be read or written is
+//   one stderr line and changes no exit.
 // Invariants: everything that reaches an ssh line (base, tag, repo, host) is validated first; every remote command is ONE line,
 //   printed before it runs: perl's alarm (this Mac has no `timeout`), ssh, and the PATH export inside the quotes with the command.
 //   Every ssh and scp call carries SSH_OPTIONS: it never waits for a password or a host-key question, and gives up on a connect after 30 s.
-//   One sync at a time: the run lock <tmp>/sync-machines.lock holds the running sync's pid; a second sync exits 2, and the lock of a
-//   killed sync (its pid runs no more) is taken over and its leftover temp files are removed.
+//   One sync at a time: the run lock <tmp>/sync-machines.lock holds the running sync's pid from before verify until the record is
+//   written; a second sync exits 2, and the lock of a killed sync (its pid runs no more) is taken over and its leftover temp
+//   files are removed.
 import { spawn } from 'node:child_process';
 import { lstatSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isSyncablePath, nextSyncRecord, readSyncRecord, syncLockPath, writeSyncRecord } from '../home/tools/board/lib/sync-record.mjs';
 import { releaseLock, takeLock } from '../home/tools/disk-free/lib/lock-file.mjs';
 import { readLocal, sharedPart, syncConfig } from './install/local-settings.mjs';
 import { isRunning } from './install/record.mjs';
@@ -51,11 +56,9 @@ const TAIL_LINES = 10;
 // The temp files of a run: /tmp/sync-local-shared.json and /tmp/sync-sync-<target>.bundle, here and on each target (the names the
 // removed --row option gave by default). Here they are made only under the run lock, after a killed run's leftovers are removed.
 const TEMP_PREFIX = 'sync';
-const RUN_LOCK_NAME = `${TEMP_PREFIX}-machines.lock`;
 const NEVER_BY_AGE = Infinity; // takeLock's limit that never breaks a lock for its age alone: a sync has no fixed length
 const PLAIN_BASE = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 const PLAIN_TAG = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const PLAIN_PATH = /^(\/|~\/)[A-Za-z0-9._/+@:~-]*$/; // absolute or ~/..., no space, quote, $, backtick or backslash
 // A home folder at the start of the repo path (the target has its own home): /Users/<me>/ (not /Users/Shared/), /home/<me>/ or ~/.
 const HOME_PREFIX = /^(?:\/Users\/(?!Shared\/)[^/]+|\/home\/[^/]+|~)\//;
 const SETTINGS_READ = 'echo "== settings"; grep -E "autoUpdatesChannel|DISABLE_UPDATES" "$HOME/.claude/settings.json"; echo "== shell env"; echo "DISABLE_UPDATES=$DISABLE_UPDATES"';
@@ -100,7 +103,7 @@ function parseArgs(argv) {
     else if (flags[argv[index]] && argv[index + 1] !== undefined) opts[flags[argv[index]]] = argv[++index];
     else throw new UsageError(`unknown or incomplete argument ${argv[index]}`);
   }
-  if (typeof opts.repo !== 'string' || !PLAIN_PATH.test(opts.repo)) throw new UsageError('--repo must be an absolute path (or ~/...) of letters, digits and . _ / + @ : ~ -');
+  if (!isSyncablePath(opts.repo)) throw new UsageError('--repo must be an absolute path (or ~/...) of letters, digits and . _ / + @ : ~ -');
   if (opts.tag !== undefined && !PLAIN_TAG.test(opts.tag)) throw new UsageError('--tag must be a tag name');
   return { ...opts, targets: opts.targets?.split(','), localRepo: opts.repo.startsWith('~/') ? join(homedir(), opts.repo.slice(2)) : opts.repo };
 }
@@ -135,13 +138,13 @@ function verifyChecks({ localRepo, tag }, checkedOut) {
   return list;
 }
 
-/** Runs the verify checks and stops at the first failure; returns the exit code (0 when all hold). */
+/** Runs the verify checks and stops at the first failure; returns its line `verify: <check> failed: <why>`, '' when all hold. */
 async function verify(options, checkedOut) {
   for (const [name, check] of verifyChecks(options, checkedOut)) {
     const why = await check();
-    if (why) { console.log(`verify: ${name} failed: ${why}`); return EXIT_VERIFY; }
+    if (why) return `verify: ${name} failed: ${why}`;
   }
-  return 0;
+  return '';
 }
 
 /** This machine's claude version, channel and DISABLE_UPDATES (its own settings.json or the shell). */
@@ -277,8 +280,6 @@ function printRows(rows, json) {
 
 /** Under the run lock: writes this run's bundle and shared files, syncs every machine without a problem side by side, and removes them. */
 async function syncAll(options, names, problems, reports) {
-  if (!PLAIN_PATH.test(tmpdir())) throw new UsageError(`the temp folder ${tmpdir()} is not a plain path`);
-  const release = lockRun(join(tmpdir(), RUN_LOCK_NAME));
   const sharedFile = join(tmpdir(), `${TEMP_PREFIX}-local-shared.json`);
   const bundles = Object.fromEntries(options.targets.map((target) => [target.name, join(tmpdir(), `${TEMP_PREFIX}-sync-${target.name}.bundle`)]));
   const removeTempFiles = () => [sharedFile, ...Object.values(bundles)].forEach((path) => rmSync(path, { force: true }));
@@ -292,7 +293,6 @@ async function syncAll(options, names, problems, reports) {
       : syncMachine(ctx, name, options.targets[index - 1], reports[index]))));
   } finally {
     removeTempFiles();
-    release();
   }
 }
 
@@ -308,20 +308,67 @@ async function tipShas({ localRepo, base, tag }) {
   return { local, target: tag ? await sha(`refs/tags/${tag}^{commit}`) : local };
 }
 
-async function main(argv) {
-  const options = parseArgs(argv);
-  const { config, targets } = chooseTargets(options);
-  const checkedOut = await readBase(options.localRepo);
-  const verified = await verify(options, checkedOut);
-  if (verified !== 0) return verified;
-  const withBase = { ...options, base: checkedOut.base };
+/** After verify: the version reads, the tips and every machine's sync; returns the base tip and the rows. */
+async function syncMachines(options, config, targets, base) {
+  const withBase = { ...options, base };
   const names = [config.machine, ...targets.map((target) => target.name)];
   const reports = await Promise.all([readLocalCli(), ...targets.map((target) => readTargetCli(options, target))]);
   const problems = cliProblems(names, reports, { floor: CLAUDE_FLOOR, localName: config.machine, pin: config.cliVersion });
   const tips = await tipShas(withBase);
-  const rows = await syncAll({ ...withBase, targets, tips }, names, problems, reports);
-  printRows(rows, options.json);
-  return rows.every((row) => row.synced) ? 0 : EXIT_FAILED; // synced: installed with exit 0 and at the tip
+  return { sha: tips.local, rows: await syncAll({ ...withBase, targets, tips }, names, problems, reports) };
+}
+
+/**
+ * Writes this run into the sync record, merged with the record before it (sync-record.mjs). The record is the boss's view of the
+ * sync and never changes its exit: one that cannot be read starts again, and one that cannot be written is a stderr line.
+ * @param {{ localRepo: string, tag?: string }} options the parsed arguments
+ * @param {string[]} configured every machine name, this machine first
+ * @param {{ sha: string, rows: object[], problem: string }} result the base tip, the rows, why the run stopped before the machines
+ */
+function recordRun(options, configured, result) {
+  try {
+    const previous = readSyncRecord(options.localRepo);
+    if (previous?.unreadable) console.error(`sync-machines: ${previous.unreadable}; writing a new record`);
+    const run = { ...result, at: new Date().toISOString(), repo: options.localRepo, tag: options.tag ?? '', configured };
+    writeSyncRecord(options.localRepo, nextSyncRecord(previous?.unreadable ? null : previous, run));
+  } catch (error) {
+    console.error(`sync-machines: the sync record was not written: ${error.message}`);
+  }
+}
+
+/** Under the run lock: verify, sync every machine, print the rows, and record the run (also a verify failure or a crash). */
+async function verifyAndSync(options, config, targets) {
+  const configured = [config.machine, ...config.targets.map((target) => target.name)];
+  const checkedOut = await readBase(options.localRepo);
+  const verifyProblem = await verify(options, checkedOut);
+  if (verifyProblem) {
+    console.log(verifyProblem);
+    recordRun(options, configured, { sha: '', rows: [], problem: verifyProblem });
+    return EXIT_VERIFY;
+  }
+  let synced;
+  try {
+    synced = await syncMachines(options, config, targets, checkedOut.base);
+  } catch (error) {
+    recordRun(options, configured, { sha: '', rows: [], problem: `sync-machines: ${error.message}` });
+    throw error;
+  }
+  printRows(synced.rows, options.json);
+  recordRun(options, configured, { ...synced, problem: '' });
+  return synced.rows.every((row) => row.synced) ? 0 : EXIT_FAILED; // synced: installed with exit 0 and at the tip
+}
+
+async function main(argv) {
+  const options = parseArgs(argv);
+  const { config, targets } = chooseTargets(options);
+  // The temp folder holds the run lock and reaches the scp lines.
+  if (!isSyncablePath(tmpdir())) throw new UsageError(`the temp folder ${tmpdir()} is not a plain path`);
+  const release = lockRun(syncLockPath()); // before verify, held through the record write: one writer of the record
+  try {
+    return await verifyAndSync(options, config, targets);
+  } finally {
+    release();
+  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
