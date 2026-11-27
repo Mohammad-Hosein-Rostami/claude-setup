@@ -6,10 +6,11 @@
 //   hiddenFileCount, HIDDEN_FILES_WHY, ignoredFiles, minutesSinceUse.
 // Invariants: branches are always addressed by full ref (`refs/heads/<name>`), so a tag with the same name is never
 //   mistaken for a branch; every git call fails closed, a fact that cannot be read is reported as unknown, not as clean.
-//   The base is `--base`, else the branch checked out in the main checkout (never guessed from a remote or a name list).
+//   The base is `--base`, else the branch checked out in the main checkout (never guessed from a remote or a name list), and
+//   never a work branch (base-record.mjs isWorkBranch) checked out there.
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
-import { markBase, markedBases, readLaneBase } from './base-record.mjs';
+import { isWorkBranch, markBase, markedBases, readLaneBase } from './base-record.mjs';
 import { UsageError, gitText, runGit } from './git.mjs';
 
 const HEADS = 'refs/heads/';
@@ -53,7 +54,7 @@ function mainCheckoutBranch(dir, main) {
 }
 
 // The base and how it was chosen: `from --base`, or `checked out` (the branch checked out in the main checkout).
-// A main checkout with no branch, or with a recorded lane checked out, has no base: the caller gets the step that fixes it.
+// A main checkout with no branch, a recorded lane or another work branch checked out has no base: the caller gets the step that fixes it.
 function resolveBase(dir, requested) {
   if (requested !== null) {
     if (!branchExists(dir, requested)) throw new UsageError(`base branch "${requested}" does not exist here; pass an existing one with --base <branch>`);
@@ -68,6 +69,7 @@ function resolveBase(dir, requested) {
   }
   const claimedOn = readLaneBase(dir, name);
   if (claimedOn !== null) throw new UsageError(`the main checkout ${main.path} has the lane ${name} checked out (claimed on ${claimedOn}): switch it back to ${claimedOn}`);
+  if (isWorkBranch(name)) throw new UsageError(`the main checkout is on the work branch ${name}: switch it to the base first`);
   if (!branchExists(dir, name)) throw new UsageError(`${name}, checked out in ${main.path}, has no commit yet`);
   return { name, source: 'checked out' };
 }
@@ -106,7 +108,7 @@ function upstreamOf(dir, base) {
  * Finds the repository containing `dir`, its base branch and its base branches (`baseBranches`, see findBaseBranches).
  * A base read from the main checkout is marked as a base (markBase); `baseMarkWarning` is null, or why the mark could not be
  * written (the caller prints it; the run goes on). Throws UsageError for a missing folder, a non-repo, a `--base` that does not exist, or a main checkout with no base
- * (no branch checked out, a lane checked out, a branch with no commit).
+ * (no branch checked out, a lane or another work branch checked out, a branch with no commit).
  */
 export function openRepo(dir, requestedBase) {
   if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw new UsageError(`${dir} is not a folder`);

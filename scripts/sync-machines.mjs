@@ -5,8 +5,9 @@
 // Usage: node scripts/sync-machines.mjs --repo <abs or ~/path> [--tag <tag>] [--targets <name,...>] [--json]
 //   Run it from the repo folder on the main machine after every land: `node scripts/sync-machines.mjs --repo "$PWD"`
 //   syncs the PC (the default target `pc` over `ssh pc`). Targets come from settings/local.json `claudeSetup.syncTargets`.
-// Steps: verify (tag, a branch checked out with a plain name, no tracked changes; open lanes are not checked; the removed --base,
-//   --checks and --row options exit 2), versions (one claude version, channel and pin on every machine, at or above CLAUDE_FLOOR (2.1.326, in
+// Steps: verify (tag, a branch checked out with a plain name that is no work branch (lane/*, test/*, worktree-agent-*),
+//   no tracked changes; open lanes are not checked; the removed --base, --checks and --row options exit 2), versions (one
+//   claude version, channel and pin on every machine, at or above CLAUDE_FLOOR (2.1.326, in
 //   scripts/sync/cli-checks.mjs), on the local.json pin), then per machine side by side: install on this machine; on a
 //   target a git bundle, the same branch fast-forward only with no tracked changes and no detached HEAD there (a pull when it is checked out, else a
 //   fetch into it and a switch to it; or a fetched tag), the shared local values, install, then the version and
@@ -33,6 +34,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isSyncablePath, nextSyncRecord, readSyncRecord, syncLockPath, writeSyncRecord } from '../home/tools/board/lib/sync-record.mjs';
 import { releaseLock, takeLock } from '../home/tools/disk-free/lib/lock-file.mjs';
+import { isWorkBranch } from '../home/tools/git-tidy/lib/base-record.mjs';
 import { readLocal, sharedPart, syncConfig } from './install/local-settings.mjs';
 import { isRunning } from './install/record.mjs';
 import { CLAUDE_FLOOR, CLAUDE_READ, NODE_READ, afterInstallProblem, cliProblems, readReport } from './sync/cli-checks.mjs';
@@ -115,7 +117,8 @@ function remoteCheckout(repo) {
 }
 
 /**
- * Reads the branch checked out in --repo: the base every machine syncs to. It reaches the ssh lines, so it must be a plain name.
+ * Reads the branch checked out in --repo: the base every machine syncs to. It reaches the ssh lines, so it must be a plain name;
+ * a work branch (a lane, a test branch) is never a base, the same rule as git-tidy's.
  * @param {string} localRepo the repo folder on this machine
  * @returns {Promise<{base: string, why: string}>} why is '' when the branch can be synced, else the verify failure
  */
@@ -124,7 +127,8 @@ async function readBase(localRepo) {
   const base = out.trim();
   if (status !== 0) return { base: '', why: `git branch --show-current exit ${status}: ${tail(out)}` };
   if (!base) return { base, why: 'no branch checked out (detached HEAD); check out the branch to sync' };
-  return { base, why: PLAIN_BASE.test(base) ? '' : `the branch "${base}" is not a plain name (letters, digits and . _ / -)` };
+  if (!PLAIN_BASE.test(base)) return { base, why: `the branch "${base}" is not a plain name (letters, digits and . _ / -)` };
+  return { base, why: isWorkBranch(base) ? `the checkout is on the work branch ${base}: switch it to the base first` : '' };
 }
 
 /** The verify checks in order; each returns '' when it holds, else why not. Open lanes do not matter: sync needs only a clean base. */
