@@ -16,7 +16,8 @@
 //   land ledger (a land of the piece's branch made after the plan's base, tick-jobs.mjs landsOfPlan; an unreadable ledger is one
 //   line, never exit 2); tess marks from tick-plan.mjs; features and tess status judged in tick-features.mjs (a mark covers the
 //   lands its sha holds) and holds; the live tess agents and the pool folders their names name (`lane-<n>`, as `board start`
-//   names them), and how many agents run, from the board; in the setup's own repository (trusted-repos.mjs) with its sync
+//   names them), and the board's agents (how many run, and for the agents line), from the board; each job's ledger lands
+//   (for its pace on the job line, tick-pace.mjs); in the setup's own repository (trusted-repos.mjs) with its sync
 //   script, the sync record and whether a sync runs (sync-record.mjs). Nothing comes from an agent's words.
 // Invariants: writes only the remembered plans list (an add, a forget, a done job; under its lock), with `--mark-tess` the job's
 //   marks file (under its lock), and openRepo's one-time mark of the checked-out base (git config `branch.<base>.cs-base`,
@@ -231,10 +232,13 @@ function openPlans(repo, given) {
   return { plans, problems, listProblem: remembered.problem };
 }
 
-/** One job's facts: its queue, features, tess status and holds, and whether it is done (every piece landed, every feature checked). */
-function jobOf({ path, plan, work }, queue) {
+/**
+ * One job's facts: its queue, features, tess status, holds and ledger lands (`lands`), and whether it is done (every piece
+ * landed, every feature checked).
+ */
+function jobOf({ path, plan, work, entries }, queue) {
   return {
-    job: plan.job, path, queue, features: work.features, tess: work.tess, holds: work.holds,
+    job: plan.job, path, queue, features: work.features, tess: work.tess, holds: work.holds, lands: entries,
     lastTessSha: work.lastTessSha, landedSince: work.landedSince,
     isDone: work.features.every((feature) => feature.landed === feature.pieces && feature.isChecked),
   };
@@ -265,10 +269,10 @@ function tickFacts(repo, { plans, problems, listProblem }, board) {
   const ledger = landLedger(repo.dir);
   const liveTess = liveTessOf(agents);
   const tessRunning = liveTess.length;
-  const works = plans.map(({ path, plan }) => ({
-    path, plan,
-    work: planState(repo, plan, { lanes, entries: landsOfPlan(repo, plan, ledger.entries), marks: readMarks(repo, plan.job), isTessRunning: tessRunning > 0 }),
-  }));
+  const works = plans.map(({ path, plan }) => {
+    const entries = landsOfPlan(repo, plan, ledger.entries);
+    return { path, plan, entries, work: planState(repo, plan, { lanes, entries, marks: readMarks(repo, plan.job), isTessRunning: tessRunning > 0 }) };
+  });
   const holds = works.flatMap(({ work }) => work.holds); // pooled: one job's risky land holds every job's pieces on its files
   const clashes = clashesOf(plans.map(({ plan }) => plan));
   const clashed = new Set(clashes.map(({ branch }) => branch));
@@ -276,7 +280,7 @@ function tickFacts(repo, { plans, problems, listProblem }, board) {
   return {
     repo: repo.dir, main, tidy, folders: slots, lanes: lanes.map((lane) => heldLane(lane, holds)), tests, overlaps,
     strays: straysOf(lanes, pieces), clashes, jobs: works.map((entry, at) => jobOf(entry, queues[at])), planProblems: problems, listProblem,
-    ledgerSkipped: ledger.skipped, ledgerUnreadable: ledger.unreadable, tessRunning, liveTess,
+    ledgerSkipped: ledger.skipped, ledgerUnreadable: ledger.unreadable, tessRunning, liveTess, agents,
     agentsRunning: agents.filter((agent) => agent.state !== 'done').length, sync: syncFacts(repo),
   };
 }
