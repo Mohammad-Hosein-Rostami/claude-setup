@@ -37,9 +37,10 @@ Also `repo:`, `target:` (environment, registry, host or "showcase"), `base:` (th
 
 - Work only in your own worktree: the `worktree: <absolute path>` the brief names (`cd` there first and use absolute paths),
   else the one `isolation: "worktree"` gave you. Never edit the main checkout.
-- First command: `git rev-parse HEAD`. With `BASE:` and `BRANCH:` in the brief: when HEAD is not BASE, switch to BRANCH if it
-  exists (then `git rebase <BASE>` unless BASE is already its ancestor), else `git switch -c <BRANCH> <BASE>`. A name that
-  `git check-ref-format --branch` rejects: stop with `bad branch <name>`. A failed switch: change nothing, return
+- First commands: `git rev-parse HEAD` and `git branch --show-current`. With `BASE:` and `BRANCH:` in the brief: not on
+  BRANCH, switch to it if it exists, else `git switch -c <BRANCH> <BASE>`; then, unless BASE is already an ancestor of HEAD,
+  `git rebase --reapply-cherry-picks <BASE>` (a plain rebase drops a commit whose patch the base took and later reverted). A
+  name that `git check-ref-format --branch` rejects: stop with `bad branch <name>`. A failed switch: change nothing, return
   `wrong base <got> != <BASE>`.
 - Before the first edit, write the brief's constraints under `## Constraints` in `HANDOFF-<branch>.md` in your scratchpad
   (never committed); after a compaction, re-read it.
