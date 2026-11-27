@@ -134,8 +134,9 @@ exits 1 after the fast-forward (a clean-up that stopped, a ledger line not writt
 
 Each landing appends one JSON line, right after the fast-forward, to `~/.claude/state/land/<repo-key>.jsonl` (`~` is the
 `HOME` land runs with), so a tool such as `board tick` can tell what landed without asking an agent. A base that moved
-always gets its line. A base that did not move gets none when the ledger already has a line for the branch at a sha the
-base holds: that is a re-run of `land` after a clean-up stop, also when other lanes moved the base in between. Otherwise (a
+always gets its line. A base that did not move gets none when the ledger already has a line for the branch at the lane's tip
+from before the run: that is a re-run of `land` after a clean-up stop, also when other lanes moved the base in between. A line
+an older job wrote for the same branch name never matches, so a re-run after a ledger line that was not written is recorded. Otherwise (a
 lane with no new commit) it gets a line with `"commits":0`, so a reader sees the lane as landed.
 
 ```json
@@ -204,6 +205,6 @@ worktree list and the clean checks are git-tidy's (`../git-tidy/lib/repo.mjs`), 
 (`../git-tidy/lib/branches.mjs`), the deletion log (`../git-tidy/lib/deletion-log.mjs`), the `in <B>` hint
 (`../git-tidy/lib/in-lane.mjs`) and the sweep (`../git-tidy/lib/prune.mjs`); the test's process tree is ended by
 `../long-run/lib/process-tree.mjs`; the pool folder detach is git-tidy's (`../git-tidy/lib/lane-pool.mjs`). Files: `land.mjs`
-(the CLI and its steps), `ledger.mjs` (the land ledger), `sweep.mjs` (step 6: the sweep and the `left:` block),
+(the CLI and its steps up to the fast-forward), `after-landing.mjs` (the base mark, the ledger line and the lane's clean-up), `ledger.mjs` (the land ledger), `sweep.mjs` (step 6: the sweep and the `left:` block),
 `test-gate.mjs` (the test step), `run-test.mjs` (runs the command), `refusal.mjs` (the refusal and the
 clean check), `tick-after.mjs` (the tick after a landing). Tests: `tests/land.test.mjs`, `tests/land-base.test.mjs` (the lane record and the mark), `tests/land-test-gate.test.mjs`, `tests/land-sweep*.test.mjs` (`land-sweep-strict` for the one rule), `tests/git-tidy-content-equal.test.mjs`.

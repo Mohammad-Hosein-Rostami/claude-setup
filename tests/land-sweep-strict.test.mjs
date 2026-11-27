@@ -30,7 +30,7 @@ function repoWithCopies() {
 
 test('copies whose work is on another branch, not on the base, are kept by the sweep and named under left:', () => {
   const { repo, copyTip } = repoWithCopies();
-  const result = land(['lane/l', '--repo', repo], repo);
+  const result = land(['lane/l', '--repo', repo, '--no-tick'], repo);
   assert.equal(result.status, 0, result.stderr);
   const agentWhy = `its commits are on other branches, ${NOT_ON_BASE}`;
   const copyWhy = `its work is in lane/c-2, ${NOT_ON_BASE}`;
@@ -67,7 +67,7 @@ function oldGitFolder() {
 test('with a git older than 2.40 land still lands, skips the sweep with one stderr line and deletes nothing else', POSIX_ONLY, () => {
   const { repo, laneTip, testTip } = laneSquashedOnTestBranch();
   const env = { ...CLEAN_ENV, PATH: `${oldGitFolder()}${delimiter}${CLEAN_ENV.PATH ?? ''}` };
-  const result = spawnSync(process.execPath, [LAND, 'test/x', '--repo', repo], { cwd: repo, encoding: 'utf8', env });
+  const result = spawnSync(process.execPath, [LAND, 'test/x', '--repo', repo, '--no-tick'], { cwd: repo, encoding: 'utf8', env });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stderr, /^land: test\/x landed on main at [0-9a-f]+ and was removed; the clean-up of other branches was skipped: git version 2\.39\.5 is older than 2\.40, which the content proof needs \(git merge-tree --stdin\)\n$/);
   assert.equal(tipOf(repo, 'main'), testTip);

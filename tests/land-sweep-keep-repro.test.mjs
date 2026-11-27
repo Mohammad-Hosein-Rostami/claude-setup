@@ -33,7 +33,7 @@ function laneWithUnrelatedCommit(repo) {
 
 /** Lands lane/L from `repo`; returns the spawn result and its stdout and stderr in one text for failure messages. */
 function landLane(repo) {
-  const result = spawnSync(process.execPath, [LAND, 'lane/L', '--repo', repo], { cwd: repo, encoding: 'utf8', env: CLEAN_ENV });
+  const result = spawnSync(process.execPath, [LAND, 'lane/L', '--repo', repo, '--no-tick'], { cwd: repo, encoding: 'utf8', env: CLEAN_ENV });
   return { result, said: `stdout:\n${result.stdout}\nstderr:\n${result.stderr}` };
 }
 

@@ -14,7 +14,7 @@ const TEST = 'test/T';
 
 /** Lands `branch` from `repo` and returns its output lines after the three of the landing itself (landed, worktree, branch). */
 function sweepLines(repo, branch) {
-  const result = land([branch, '--repo', repo], repo);
+  const result = land([branch, '--repo', repo, '--no-tick'], repo);
   assert.equal(result.status, 0, result.stderr);
   return outputLines(result.stdout).slice(3);
 }
