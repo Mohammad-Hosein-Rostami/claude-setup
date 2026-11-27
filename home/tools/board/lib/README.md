@@ -23,6 +23,8 @@ The boss's sync (`tick`, run by hand after every agent report and every land):
 - `tick.mjs`: the `tick` command's facts: main's state and the side findings to tidy, the pool's folders, the lanes in flight
   (each with its piece's declared files, and the holds on them), and for each remembered job its queue, features due for tess
   and holds.
+- `tick-lanes.mjs`: the lane side of those facts: the pool's folders with their locks, each lane's commits and files against
+  the base, the declared files of its piece and the holds on them, the board agent on a branch and the live tess agents.
 - `tick-lines.mjs`: the tick's plain lines from those facts, ending with the `next:` header and its `do` lines.
 - `tick-pace.mjs`: the `agents` line (the session's agents that run, by type, with names and ages) and each job's `job` line
   (pieces landed, in lanes and waiting, features checked, and the pace measured from the job's lands in the land ledger).

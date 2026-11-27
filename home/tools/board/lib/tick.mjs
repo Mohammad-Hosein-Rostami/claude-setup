@@ -9,7 +9,7 @@
 // Exports: TICK_USAGE, runTick(args, loadBoard) -> exit code.
 // Facts: the base is git-tidy's (openRepo: the branch checked out in the main checkout, by its own name; the `main` key holds it);
 //   its findings from git-tidy check (runCheck), split by kind: the base's own findings block new work, the side ones (other refs and
-//   folders, SIDE_KINDS) only go on the `tidy` line; the lanes are the lane pool's folders that hold a branch (poolSlots), each with
+//   folders, SIDE_KINDS) only go on the `tidy` line; the lanes are the lane pool's folders that hold a branch (tick-lanes.mjs), each with
 //   its commits and files against the base (git) plus the declared files of the plan piece on its branch, the base it was
 //   claimed on (base-record.mjs readLaneBase; a lane of another base is never ready: land refuses it here, nor is a held one) and
 //   its agent from the session's board (matched by branch); landed pieces from the
@@ -29,17 +29,16 @@
 //   must only ever mean findings). A hold is no finding.
 import { existsSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
-import { readLaneBase } from '../../git-tidy/lib/base-record.mjs';
 import { runCheck } from '../../git-tidy/lib/check.mjs';
-import { UsageError, gitText, runGit } from '../../git-tidy/lib/git.mjs';
-import { poolSlots } from '../../git-tidy/lib/lane-pool.mjs';
-import { commonDirOf, slotKey } from '../../git-tidy/lib/lane-slots.mjs';
-import { listWorktrees, openRepo } from '../../git-tidy/lib/repo.mjs';
+import { UsageError, gitText } from '../../git-tidy/lib/git.mjs';
+import { commonDirOf } from '../../git-tidy/lib/lane-slots.mjs';
+import { openRepo } from '../../git-tidy/lib/repo.mjs';
 import { readLandEntries } from '../../land/ledger.mjs';
 import { jsonText } from './cells.mjs';
 import { isSyncablePath, readSyncRecord, syncRunning } from './sync-record.mjs';
-import { heldBy, pieceBranch, planState } from './tick-features.mjs';
+import { planState } from './tick-features.mjs';
 import { clashesOf, forgetPlan, landsOfPlan, readJobs, rememberPlans } from './tick-jobs.mjs';
+import { agentOn, foldersOf, heldLane, laneOf, liveTessOf, withDeclaredFiles } from './tick-lanes.mjs';
 import { clean, short, tickLines } from './tick-lines.mjs';
 import { readMarks, readPlan, writeMark } from './tick-plan.mjs';
 import { queuesOf, straysOf } from './tick-queue.mjs';
@@ -56,16 +55,10 @@ const VALUE_FLAGS = Object.freeze({
 });
 const ABSOLUTE_PATH = /^(\/|[A-Za-z]:[\\/])/;
 const FULL_SHA = /^[0-9a-f]{40}$/;
-const MISSING_FOLDER = 'missing'; // lane-slots.mjs: the folder is gone, so git cannot run in it
-const STATUS_CODE_CHARS = 3; // `XY ` before each path in `git status --porcelain -z`
-const RENAMED = /^(?:[RC]|.[RC])/; // a rename or copy (staged or in the folder): -z puts its old path in the next field
 const SYNC_SCRIPT = join('scripts', 'sync-machines.mjs'); // the setup's own sync: the tick shows its record only there
-const LANE_NAME = /\blane-(\d+)\b/gi; // a pool folder in an agent's name, as a whole word (`tess lane-5 <feature>`: start.mjs)
 // git-tidy check kinds about other refs and folders, not main: a leftover there must not stop the round, so they go on the `tidy`
 // line. Every other kind (dirty-base, merge-commit, stale-checkout, and any kind check.mjs adds later) counts as main: fail safe.
 const SIDE_KINDS = new Set(['tangled-ref', 'merged-branch', 'merged-tag', 'merged-worktree', 'stale-worktree', 'superseded-copy', 'agent-leftover']);
-
-const nulList = (text) => text.split('\0').filter((path) => path !== '');
 
 function parseTickArgs(args) {
   const options = { repo: null, plans: [], forgetPlan: null, markTess: null, sha: null, session: null, json: false };
@@ -96,64 +89,6 @@ function checkTickOptions(options) {
   if (options.forgetPlan !== null && !isForgetAlone) throw new UsageError(`--forget-plan goes with --repo alone. ${TICK_USAGE}`);
 }
 
-/** The changed and untracked paths in a lane's folder (renames give both paths), or null when git cannot say. */
-function changedPaths(folder) {
-  const { status, stdout } = runGit(folder, ['status', '--porcelain', '-z', '--untracked-files=all', '--ignore-submodules=none']);
-  if (status !== 0) return null;
-  const fields = nulList(stdout);
-  const paths = [];
-  for (let at = 0; at < fields.length; at++) {
-    paths.push(fields[at].slice(STATUS_CODE_CHARS));
-    if (RENAMED.test(fields[at])) paths.push(fields[++at]);
-  }
-  return paths;
-}
-
-/** The board agent on `branch`: a live one first, else the first done one in the board's order; null when none is there. */
-function agentOn(agents, branch) {
-  const own = agents.filter((agent) => agent.branch === branch);
-  const agent = own.find((entry) => entry.state !== 'done') ?? own[0];
-  return agent === undefined ? null : { id: agent.id, type: agent.type, state: agent.state, quietMin: agent.quietMin };
-}
-
-/**
- * One lane in flight: a pool folder holding a branch, with its commits and files against the base, the base it was claimed on
- * (`claimedOn`, null for a lane with no record) and its agent.
- */
-function laneOf(repo, mainSha, slot, agents) {
-  const ref = `refs/heads/${slot.branch}`;
-  const forkPoint = gitText(repo.dir, ['merge-base', mainSha, ref]);
-  // plumbing (diff-tree), not `diff`: plumbing never runs a textconv or external diff program the repository names
-  const committed = runGit(repo.dir, ['diff-tree', '-r', '--name-only', '-z', forkPoint, ref]); // runGit: gitText's trim would cut a path's spaces
-  if (committed.status !== 0) throw new Error(`git diff-tree failed for ${clean(slot.branch)}: ${committed.stderr}`);
-  const changed = slot.state === MISSING_FOLDER ? null : changedPaths(slot.folder);
-  const agent = agentOn(agents, slot.branch);
-  const commits = Number(gitText(repo.dir, ['rev-list', '--count', `${mainSha}..${ref}`]));
-  const claimedOn = readLaneBase(repo.dir, slot.branch);
-  const isOnBase = claimedOn === null || claimedOn === repo.base; // land refuses a lane claimed on another base
-  return {
-    branch: slot.branch, slot: slot.slot, folder: slot.folder, folderState: slot.state, agent, commits, changed, claimedOn,
-    files: [...new Set([...nulList(committed.stdout), ...(changed ?? [])])],
-    mainMoved: forkPoint !== mainSha,
-    isReady: (agent === null || agent.state === 'done') && commits > 0 && changed?.length === 0 && isOnBase,
-  };
-}
-
-/**
- * The lane with the declared files of the plan piece on its branch added (cb-hold-1 d): a lane with no commit yet already holds
- * the files its piece will change, for the overlaps and the holds.
- */
-function withDeclaredFiles(lane, pieces) {
-  const piece = pieces.find((entry) => pieceBranch(entry) === lane.branch);
-  return piece === undefined ? lane : { ...lane, files: [...new Set([...lane.files, ...piece.files])] };
-}
-
-/** The lane with the holds on its files (`held`): a held lane is never ready, so `next:` never lands it before tess returns. */
-function heldLane(lane, holds) {
-  const held = heldBy(holds, lane.files);
-  return { ...lane, held, isReady: lane.isReady && held.length === 0 };
-}
-
 /** The land ledger, or no entries and why when it cannot be read: a broken ledger must not hide main and the lanes. */
 function landLedger(repoDir) {
   try {
@@ -162,22 +97,6 @@ function landLedger(repoDir) {
     return { entries: [], skipped: 0, unreadable: error.message.split('\n')[0] };
   }
 }
-
-/**
- * The pool's folders, each with its lock: the time it was taken (`lockedAtMs`, null when unlocked or unknown) for the snapshot
- * age, and its reason (`lockReason`, null when unlocked), which a release line passes as `--expect`.
- */
-function foldersOf(repo) {
-  const trees = new Map(listWorktrees(repo).map((tree) => [slotKey(tree.path), tree]));
-  return poolSlots(repo).map((slot) => {
-    const tree = trees.get(slotKey(slot.folder));
-    return { ...slot, lockedAtMs: tree?.lockedAtMs ?? null, lockReason: tree?.lockReason ?? null };
-  });
-}
-
-/** The live tess agents of the board, each with the pool folders its name names: a snapshot one of them names stays claimed. */
-const liveTessOf = (agents) => agents.filter((agent) => agent.type === 'tess' && agent.state !== 'done')
-  .map((agent) => ({ id: agent.id, name: agent.name, slots: [...agent.name.matchAll(LANE_NAME)].map((match) => `lane-${Number(match[1])}`) }));
 
 /** Whether `repo` is the setup's own repository: the one holding this running code (trusted-repos.mjs, by the file system). */
 function isSetupRepo(repo) {
