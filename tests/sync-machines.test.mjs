@@ -5,7 +5,9 @@
 //   --row refused with exit 2 (audit R7), a hostile name refused with exit 2, a verify failure with exit 3 and nothing sent, never a push,
 //   no doctor step (rows report the install exit), one run at a time (the lock of a killed sync is taken over, e1e226c7), and
 //   the base is the checked-out branch (plan base-current-branch, piece base-6): --base refused, a target follows the branch,
-//   a detached HEAD stops at verify, and a detached target checkout is refused untouched (base-6 must-fix 1).
+//   a detached HEAD stops at verify, and a detached target checkout is refused untouched (base-6 must-fix 1). A target ssh does not
+//   reach is named so, apart from a claude not on its PATH (cb-sync-1: a refused ssh read as "claude --version gave no version"),
+//   and a target's row names the node its install ran (pc-node-1).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -15,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 import { cleanEnv } from './clean-env.mjs';
 import { hardLinkSharedTool, sharedToolDir } from './shared-tools.mjs';
+import { CLAUDE_READ, cliProblems, readReport } from '../scripts/sync/cli-checks.mjs';
 
 const SCRIPT = fileURLToPath(new URL('../scripts/sync-machines.mjs', import.meta.url));
 const FLOOR = '2.1.326';
@@ -31,11 +34,15 @@ while (args[0] === '-o') args.splice(0, 2); // the options before the host
 const script = args.slice(1).join(' ');
 fs.appendFileSync(process.env.FAKE_LOG, 'ssh ' + process.argv.slice(2).join(' ') + '\\n');
 const env = process.env;
+if (env.FAKE_SSH_REFUSED && script.includes(env.FAKE_SSH_REFUSED)) {
+  console.error('ssh: connect to host 192.0.2.1 port 2222: Connection refused');
+  process.exit(255);
+}
 if (script.includes('== pin')) {
   console.log('== version\\n' + env.FAKE_VERSION + ' (Claude Code)\\n== settings\\n"autoUpdatesChannel": "latest",\\n== shell env\\nDISABLE_UPDATES=' + (env.FAKE_PIN_BEFORE ?? '1'));
   console.log('== pin\\n' + (env.FAKE_PIN_JSON ?? '{"cliVersion":""}'));
 } else if (script.includes('git pull')) {
-  console.log('== version\\n' + (env.FAKE_VERSION_AFTER ?? env.FAKE_VERSION) + ' (Claude Code)\\n== settings\\n"autoUpdatesChannel": "latest",\\n== shell env\\nDISABLE_UPDATES=' + (env.FAKE_PIN_AFTER ?? '1') + '\\n== head\\n' + env.FAKE_HEAD);
+  console.log('== version\\n' + (env.FAKE_VERSION_AFTER ?? env.FAKE_VERSION) + ' (Claude Code)\\n== settings\\n"autoUpdatesChannel": "latest",\\n== shell env\\nDISABLE_UPDATES=' + (env.FAKE_PIN_AFTER ?? '1') + '\\n== node\\n/usr/local/bin/node\\n== head\\n' + env.FAKE_HEAD);
 }
 `;
 
@@ -232,6 +239,51 @@ test('a claude version that changed during the install fails that machine', () =
   const result = run(fixture, [], { FAKE_VERSION_AFTER: '2.1.400' });
   assert.equal(result.status, 1);
   assert.match(result.rows.find((row) => row.machine === 'pc').problem, /after the install, but was/);
+});
+
+test('a target ssh does not reach is named so, never "claude --version gave no version"', () => {
+  const fixture = setup({ targets: [{ name: 'pc', ssh: 'pc' }] });
+  const result = run(fixture, [], { FAKE_SSH_REFUSED: '== pin' });
+  assert.equal(result.status, 1);
+  const problem = result.rows.find((row) => row.machine === 'pc').problem;
+  assert.match(problem, /^pc: ssh did not reach it \(sync again once it is on and reachable\): ssh: connect to host 192\.0\.2\.1 port 2222: Connection refused/);
+  assert.doesNotMatch(problem, /gave no version/);
+  assert.doesNotMatch(result.calls, /git pull/, 'nothing synced');
+});
+
+test('ssh failing at the pull and install is named so', () => {
+  const fixture = setup({ targets: [{ name: 'pc', ssh: 'pc' }] });
+  const result = run(fixture, [], { FAKE_SSH_REFUSED: 'git pull' });
+  assert.equal(result.status, 1);
+  const row = result.rows.find((each) => each.machine === 'pc');
+  assert.equal(row.installExit, 255);
+  assert.match(row.problem, /^ssh did not reach it for the pull and install \(sync again once it is reachable\): ssh: connect to host .* Connection refused/);
+});
+
+test('the remote version read run in a shell with no claude on PATH names that, with the PATH it searched', () => {
+  const ran = spawnSync('/bin/sh', ['-c', CLAUDE_READ], { encoding: 'utf8', env: { PATH: '/nonexistent-bin' } });
+  const report = readReport(ran.stdout);
+  assert.equal(report.version, '');
+  const problems = cliProblems(['pc'], [report], { floor: FLOOR, localName: 'mac', pin: '' });
+  assert.deepEqual(problems.pc, ['pc: claude is not on the PATH of the ssh shell (PATH=/nonexistent-bin)']);
+});
+
+test('the remote version read finds claude on PATH: its version, no missing line', () => {
+  const fixture = setup();
+  const ran = spawnSync('/bin/sh', ['-c', CLAUDE_READ], { encoding: 'utf8', env: { PATH: `${fixture.bin}:/usr/bin:/bin` } });
+  const report = readReport(ran.stdout);
+  assert.equal(report.version, FLOOR, ran.stdout);
+  assert.equal(report.missing, '');
+});
+
+test('a synced target names the node its install ran, in the JSON row and the text line', () => {
+  const fixture = setup({ targets: [{ name: 'pc', ssh: 'pc' }] });
+  const result = run(fixture, []);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.deepEqual(result.rows.map((row) => [row.machine, row.node]), [['mac', ''], ['pc', '/usr/local/bin/node']]);
+  assert.match(result.calls, /echo "== node"; command -v node; echo "== head"/);
+  const text = spawnSync('node', [SCRIPT, '--repo', fixture.repo], { encoding: 'utf8', env: cleanEnv({ PATH: `${fixture.bin}:${process.env.PATH}`, HOME: fixture.home, TMPDIR: fixture.root, FAKE_LOG: fixture.log, FAKE_VERSION: FLOOR, FAKE_HEAD: fixture.head }) });
+  assert.match(text.stdout, new RegExp(`^pc: synced sha ${fixture.head} install 0 node /usr/local/bin/node$`, 'm'));
 });
 
 const lockPathOf = (fixture) => join(fixture.root, 'sync-machines.lock');

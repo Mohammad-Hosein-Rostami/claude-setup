@@ -11,9 +11,10 @@
 //   target a git bundle, the same branch fast-forward only with no tracked changes and no detached HEAD there (a pull when it is checked out, else a
 //   fetch into it and a switch to it; or a fetched tag), the shared local values, install, then the version and
 //   DISABLE_UPDATES read again. Never pushes; never touches a project repo.
-// Output: one line per machine, `<machine>: synced sha <40-hex> install <exit>` (or a JSON array with --json): { machine, synced, sha,
-//   installExit, problem }. installExit is install.sh's exit on this machine and the exit of the remote pull-and-install line on a
-//   target; null when the install did not run.
+// Output: one line per machine, `<machine>: synced sha <40-hex> install <exit>`, plus ` node <path>` for a target (or a JSON array
+//   with --json): { machine, synced, sha, installExit, node, problem }. installExit is install.sh's exit on this machine and the exit
+//   of the remote pull-and-install line on a target; null when the install did not run. node is the node a target's install ran
+//   ('' on this machine or when unread). A target ssh cannot reach says so in its problem, apart from a claude not found there.
 // Exit: 0 every machine synced (installed with exit 0 and at the tip: the base branch's sha, or the tag's commit on a target of a
 //   --tag run), 1 a machine failed (its row says why), 2 usage or another sync runs (the run lock below), 3 a verify check failed.
 // Invariants: everything that reaches an ssh line (base, tag, repo, host) is validated first; every remote command is ONE line,
@@ -29,17 +30,20 @@ import { fileURLToPath } from 'node:url';
 import { releaseLock, takeLock } from '../home/tools/disk-free/lib/lock-file.mjs';
 import { readLocal, sharedPart, syncConfig } from './install/local-settings.mjs';
 import { isRunning } from './install/record.mjs';
-import { CLAUDE_FLOOR, afterInstallProblem, cliProblems, readReport } from './sync/cli-checks.mjs';
+import { CLAUDE_FLOOR, CLAUDE_READ, NODE_READ, afterInstallProblem, cliProblems, readReport } from './sync/cli-checks.mjs';
 
 const EXIT_FAILED = 1;
 const EXIT_USAGE = 2;
 const EXIT_VERIFY = 3;
 // A non-interactive ssh shell on a target has a short PATH, so `claude`, `node` and `git` are not found: every remote command starts with this.
 // On macOS path_helper then reorders it as a terminal login shell does, so install builds the tools for the same node the
-// owner's terminal runs (the Volta shim first gave the wrong node ABI). Linux and Windows have no path_helper: PATH stays as set.
+// owner's terminal runs (the Volta shim first gave the wrong node ABI). path_helper puts /etc/paths first and keeps every entry
+// already set after them, so ~/.local/bin (claude) stays. Linux and Windows have no path_helper: PATH stays as set.
 // No single quote inside: the line sits in the '...' of the ssh command.
 const REMOTE_PATH_EXPORT =
   'export PATH="$HOME/.volta/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin:$PATH"; [ -x /usr/libexec/path_helper ] && eval "$(/usr/libexec/path_helper -s)";';
+// ssh(1): ssh exits with the remote command's status, or 255 when ssh itself failed (refused, no route, connect timeout, auth).
+const SSH_ERROR_EXIT = 255;
 const READ_SECONDS = 120; // a remote read
 const SYNC_SECONDS = 540; // the remote pull and install
 const TRANSFER_SECONDS = 300; // the scp of the bundle over a slow link (the PC sits behind a phone relay)
@@ -148,13 +152,16 @@ async function readLocalCli() {
   return { version: /^(\d+\.\d+\.\d+)\b/m.exec(out)?.[1] ?? '', channel: settings.autoUpdatesChannel ?? 'latest', pinned: settings.env?.DISABLE_UPDATES === '1' || process.env.DISABLE_UPDATES === '1', checkout: true, pin: '' };
 }
 
-/** A target's version, settings and pin as one remote script; the pin reads "" while a stale checkout has no local-settings.mjs. */
+/**
+ * A target's version, settings and pin as one remote script; the pin reads "" while a stale checkout has no local-settings.mjs.
+ * `unreachable` holds ssh's own error when it did not reach the target, so that is not reported as a claude problem.
+ */
 async function readTargetCli(ctx, target) {
   const emptyPin = 'echo "{\\"cliVersion\\":\\"\\"}"';
   const script = 'scripts/install/local-settings.mjs';
   const pin = `if cd "${remoteCheckout(ctx.repo)}"; then if [ -f ${script} ]; then node ${script} targets; else ${emptyPin}; fi; else echo "NO_CHECKOUT"; fi`;
-  const ran = await runLine(target.name, remoteLine(target.ssh, READ_SECONDS, `echo "== version"; claude --version; ${SETTINGS_READ}; echo "== pin"; ${pin}`), READ_SECONDS);
-  return readReport(ran.out);
+  const ran = await runLine(target.name, remoteLine(target.ssh, READ_SECONDS, `${CLAUDE_READ}; ${SETTINGS_READ}; echo "== pin"; ${pin}`), READ_SECONDS);
+  return { ...readReport(ran.out), unreachable: ran.status === SSH_ERROR_EXIT ? tail(ran.out) : '' };
 }
 
 /** This machine: install, then HEAD and the claude version. */
@@ -222,20 +229,22 @@ async function syncTarget(ctx, target) {
   // A tag install links ~/.claude to a worktree of the tag and leaves the checkout's HEAD where it was (scripts/install/pin.mjs),
   // so the sha that runs there is the tag's commit.
   const installed = ctx.tag ? `refs/tags/${ctx.tag}^{commit}` : 'HEAD';
-  const script = `cd "${remoteCheckout(ctx.repo)}" || exit 3; ${chain}; code=$?; echo "== version"; claude --version; ${SETTINGS_READ}; echo "== head"; git rev-parse ${installed}; exit $code`;
+  const script = `cd "${remoteCheckout(ctx.repo)}" || exit 3; ${chain}; code=$?; ${CLAUDE_READ}; ${SETTINGS_READ}; ${NODE_READ}; echo "== head"; git rev-parse ${installed}; exit $code`;
   const ran = await runLine(target.name, remoteLine(target.ssh, SYNC_SECONDS, script), SYNC_SECONDS);
   const after = readReport(ran.out);
   const installExit = ran.status;
-  return installExit === 0 ? { installExit, sha: after.sha, after } : { installExit, problem: `pull or install exit ${installExit}: ${tail(ran.out)}` };
+  if (installExit === SSH_ERROR_EXIT) return { installExit, problem: `ssh did not reach it for the pull and install (sync again once it is reachable): ${tail(ran.out)}` };
+  return installExit === 0 ? { installExit, sha: after.sha, node: after.node, after } : { installExit, node: after.node, problem: `pull or install exit ${installExit}: ${tail(ran.out)}` };
 }
 
 /** One machine's whole sync: install, the after-install checks, the sha against the tip. Always returns its row. */
 async function syncMachine(ctx, name, target, before) {
-  const row = { machine: name, synced: false, sha: '', installExit: null, problem: '' };
+  const row = { machine: name, synced: false, sha: '', installExit: null, node: '', problem: '' };
   try {
     const moved = target ? await syncTarget(ctx, target) : await syncLocal(ctx);
     row.sha = moved.sha ?? '';
     row.installExit = moved.installExit ?? null;
+    row.node = moved.node ?? '';
     row.problem = moved.problem ?? afterInstallProblem(name, before, moved.after, Boolean(target));
     if (row.problem) return row;
     const tip = target ? ctx.tips.target : ctx.tips.local;
@@ -263,7 +272,7 @@ function chooseTargets(options) {
 
 function printRows(rows, json) {
   if (json) return console.log(JSON.stringify(rows));
-  for (const row of rows) console.log(`${row.machine}: ${row.synced ? 'synced' : 'NOT synced'} sha ${row.sha || '-'} install ${row.installExit ?? '-'}${row.problem ? ` problem: ${row.problem}` : ''}`);
+  for (const row of rows) console.log(`${row.machine}: ${row.synced ? 'synced' : 'NOT synced'} sha ${row.sha || '-'} install ${row.installExit ?? '-'}${row.node ? ` node ${row.node}` : ''}${row.problem ? ` problem: ${row.problem}` : ''}`);
 }
 
 /** Under the run lock: writes this run's bundle and shared files, syncs every machine without a problem side by side, and removes them. */
@@ -279,7 +288,7 @@ async function syncAll(options, names, problems, reports) {
     writeFileSync(sharedFile, shared, { flag: 'wx', mode: 0o600 });
     const ctx = { ...options, sharedFile, bundles };
     return await Promise.all(names.map((name, index) => (problems[name].length > 0
-      ? { machine: name, synced: false, sha: '', installExit: null, problem: problems[name].join('; ') }
+      ? { machine: name, synced: false, sha: '', installExit: null, node: '', problem: problems[name].join('; ') }
       : syncMachine(ctx, name, options.targets[index - 1], reports[index]))));
   } finally {
     removeTempFiles();
