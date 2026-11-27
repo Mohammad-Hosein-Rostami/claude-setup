@@ -159,6 +159,7 @@ test('a job whose pieces all landed and whose features are all checked prints jo
   assert.ok(lines(due).includes('features landed, not checked: f 1/1 (risk none) -> tess due now (last piece landed)'), due.stdout);
   assert.ok(nextOf(due).includes(`(mark each: --mark-tess <feature> --sha ${landed} with this --repo and --plan ${alpha})`), nextOf(due));
   assert.equal(tick(home, ['--repo', repo, '--plan', alpha, '--mark-tess', 'f', '--sha', landed]).status, EXIT_SHOWN);
+  assert.equal(spawnSync(process.execPath, [BOARD, 'done', '--repo', repo, '--job', 'alpha', '--tess', 'f', '--sha', landed, '--verdict', 'ok'], { encoding: 'utf8', env: envOf(home) }).status, EXIT_SHOWN);
 
   const done = tick(home, ['--repo', repo]);
   assert.equal(done.status, EXIT_SHOWN, done.stdout + done.stderr);

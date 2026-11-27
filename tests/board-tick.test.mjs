@@ -213,6 +213,8 @@ test('--mark-tess writes the job marks file as { feature: { sha, at } } and the 
   assert.deepEqual(Object.keys(marks[FEATURE]).sort(), ['at', 'sha']);
   assert.equal(marks[FEATURE].sha, sha);
   assert.ok(Date.parse(marks[FEATURE].at) >= started - 1000 && Date.parse(marks[FEATURE].at) <= Date.now() + 1000, marks[FEATURE].at);
+  const done = spawnSync(process.execPath, [BOARD, 'done', '--repo', repo, '--job', JOB, '--tess', FEATURE, '--sha', sha, '--verdict', 'ok'], { encoding: 'utf8', env: { ...CLEAN_ENV, HOME: home, USERPROFILE: home } });
+  assert.equal(done.status, EXIT_SHOWN, done.stderr);
   const after = tick(home, ['--repo', repo, '--plan', plan]);
   assert.equal(after.status, EXIT_SHOWN, after.stderr);
   const shown = lines(after);
