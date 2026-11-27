@@ -30,7 +30,7 @@ const OPUS = 'claude-opus-5-5';
 const SONNET = 'claude-sonnet-5-5';
 const HAIKU = 'claude-haiku-5-5';
 const PLAN = {
-  lex: { model: OPUS, effort: 'high', skills: ['tradeoff-analysis', 'tech-research'] },
+  lex: { model: OPUS, effort: 'high', skills: ['plan-writing', 'tradeoff-analysis', 'tech-research'] },
   'lex-scout': { model: HAIKU, effort: 'high', skills: [] },
   'lex-web': { model: SONNET, effort: 'high', skills: ['tech-research'] },
   dev: { model: OPUS, effort: 'high', skills: ['clean-code'] },
