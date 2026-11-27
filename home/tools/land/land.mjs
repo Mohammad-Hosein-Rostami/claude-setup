@@ -5,18 +5,22 @@
 //   branch whose content is all on the base, and print what is left and why (sweep.mjs). It runs no review.
 // Usage: node ~/.claude/tools/land/land.mjs <branch> [--repo <path>] [--test <command>] [--test-timeout <seconds>]
 //   --repo is the base checkout (the folder where the base branch is checked out), default the current folder; the base is the
-//   branch checked out there. --test runs <command> in the lane's worktree at the rebased tip; a failing test refuses the land.
+//   branch checked out there, never a lane (a branch with a lane record, ../git-tidy/lib/base-record.mjs). --test runs
+//   <command> in the lane's worktree at the rebased tip; a failing test refuses the land.
 // Exports: none (a CLI). Exit codes: 0 landed, 1 refused or stopped (the message says why and what to do), 2 usage error.
 // Invariants:
 // - Nothing changes before every check passed: an unknown branch, a dirty or half-merged base checkout or lane worktree, or a
 //   lane checked out in the main worktree is refused with the reason; so is a lane with no commit in common with the base,
-//   which a rebase would replay whole onto it.
+//   which a rebase would replay whole onto it, and a lane claimed on another base than the one checked out (its record
+//   `branch.<lane>.cs-lane-base`), which could bring that base's commits along. A lane with no record lands as before.
 // - With no --test the lane is rebased and lands, whatever files both sides changed. With --test the rebased tip must pass it
 //   first, and the lane's branch moves only once it passed (test-gate.mjs); only a base that moves in the last step leaves the
 //   lane at the tested sha.
 // - History stays one line: the base moves only by `git merge --ff-only` of the full sha the rebase produced (never a moving
 //   ref), and with --test that is the sha that was tested. The base's sha is read once: the rebase and the fast-forward both use
 //   it, and a base that moved meanwhile is refused. A rebase that stops is aborted, so the lane is left as it was.
+// - After the fast-forward the base is marked as a base (`branch.<base>.cs-base`), so no later sweep deletes it once the owner
+//   works on another branch; a mark that cannot be written is one stderr warning, and the landing goes on and exits 0.
 // - Never pushes and never forces: a pool folder (`<main>/.claude/worktrees/lane-<n>`) is detached and unlocked by git-tidy's
 //   detachLandedSlot (../git-tidy/lib/lane-pool.mjs) under the pool lock, never removed or unlocked here; one it cannot free stays
 //   locked and land exits 1 naming the `lane release` step. A worktree outside the pool that holds the branch (read under that
@@ -33,10 +37,12 @@
 //   deletion log that is not a regular file) is printed on stderr and removes nothing more; the landing stands and exits 0.
 import { realpathSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { LANE_BASE_KEY, markBase, readLaneBase } from '../git-tidy/lib/base-record.mjs';
 import { UsageError, gitFlag, gitText, runGit } from '../git-tidy/lib/git.mjs';
 import { detachLandedSlot } from '../git-tidy/lib/lane-pool.mjs';
 import { nestedRepositoryPaths, nestedRepositoryWhy } from '../git-tidy/lib/nested-repository.mjs';
 import { listWorktrees, openRepo } from '../git-tidy/lib/repo.mjs';
+import { shellWord } from '../git-tidy/lib/shell-word.mjs';
 import { appendLandEntry, readLandEntries } from './ledger.mjs';
 import { LandRefusal, firstLine, refuseUnclean } from './refusal.mjs';
 import { MAX_TIMEOUT_SECONDS } from './run-test.mjs';
@@ -90,7 +96,10 @@ function parseArgs(argv) {
   };
 }
 
-/** The base checkout `{ dir, base }`: the top folder of the checkout at `repo` and the branch checked out there. */
+/**
+ * The base checkout `{ dir, base }`: the top folder of the checkout at `repo` and the branch checked out there. A branch with a
+ * lane record is a lane, never a base: it is refused with the step that switches back.
+ */
 function openBase(repo) {
   if (!statSync(repo, { throwIfNoEntry: false })?.isDirectory()) throw new LandRefusal(`${repo} is not a folder; pass the base checkout with --repo <path>`);
   const top = runGit(repo, ['rev-parse', '--show-toplevel']);
@@ -98,7 +107,10 @@ function openBase(repo) {
   const dir = realpathSync(top.stdout.trim());
   const head = runGit(dir, ['symbolic-ref', '-q', 'HEAD']);
   if (head.status !== 0) throw new LandRefusal(`${dir} has no branch checked out (detached HEAD); check out the base branch there first`);
-  return { dir, base: head.stdout.trim().slice(HEADS.length) };
+  const base = head.stdout.trim().slice(HEADS.length);
+  const claimedOn = readLaneBase(dir, base);
+  if (claimedOn !== null) throw new LandRefusal(`${dir} has the lane ${base} checked out (claimed on ${claimedOn}), not a base: switch it back (git switch ${shellWord(claimedOn)} there), then land again`);
+  return { dir, base };
 }
 
 /** The lane's worktree entry (git-tidy listWorktrees), or null when the branch is not checked out anywhere. */
@@ -110,6 +122,17 @@ function findLane({ dir, base }, branch) {
   if (worktree?.main) throw new LandRefusal(`${branch} is checked out in the main worktree ${worktree.path}; switch that folder to another branch first`);
   if (worktree?.missing) throw new LandRefusal(`the worktree folder of ${branch} (${worktree.path}) is gone; run git worktree unlock and git worktree prune, then land again`);
   return worktree;
+}
+
+/**
+ * Refuses a lane claimed on another base than the one checked out: rebasing it here could bring commits of that other base the
+ * checked-out one lacks. A lane with no record (an old lane, a `git worktree add` branch) passes.
+ */
+function refuseOtherBase({ dir, base }, branch) {
+  const claimedOn = readLaneBase(dir, branch);
+  if (claimedOn === null || claimedOn === base) return;
+  const move = `git config ${shellWord(`branch.${branch}.${LANE_BASE_KEY}`)} ${shellWord(base)}`;
+  throw new LandRefusal(`${branch} was claimed on ${claimedOn}, but ${dir} has ${base} checked out; nothing changed. Landing it here could bring commits of ${claimedOn} that ${base} lacks. Switch back (git switch ${shellWord(claimedOn)} in ${shellWord(dir)}) and land again, or move the lane on purpose: ${move}, then land again`);
 }
 
 /** Refuses a lane with no commit in common with the base: a rebase would replay all its history onto the base. */
@@ -238,6 +261,7 @@ async function land({ branch, repo, test, testTimeoutSeconds }) {
   const checkout = openBase(repo);
   refuseUnclean('the base checkout', checkout.dir);
   const worktree = findLane(checkout, branch);
+  refuseOtherBase(checkout, branch);
   if (worktree !== null) refuseUnclean(`the worktree of ${branch}`, worktree.path);
   const baseSha = gitText(checkout.dir, ['rev-parse', '--verify', `${HEADS}${checkout.base}^{commit}`]);
   refuseUnrelated(checkout, branch, baseSha);
@@ -248,6 +272,8 @@ async function land({ branch, repo, test, testTimeoutSeconds }) {
   const count = gitText(checkout.dir, ['rev-list', '--count', `${baseSha}..${tip}`]);
   fastForward(checkout, branch, { baseSha, tip });
   console.log(`landed ${branch} on ${checkout.base} at ${tip} (${count} commit(s))`);
+  const markWarning = markBase(checkout.dir, checkout.base);
+  if (markWarning !== null) console.error(`land: ${markWarning}`);
   const entry = { at: new Date().toISOString(), repo: checkout.dir, branch, from: baseSha, to: tip, commits: Number(count) };
   const ledgerWarning = isLandedBefore(checkout.dir, branch, { baseSha, tip }) ? null : appendLandEntry(checkout.dir, entry);
   if (ledgerWarning !== null) console.error(ledgerWarning);

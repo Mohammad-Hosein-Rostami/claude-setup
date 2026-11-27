@@ -15,6 +15,9 @@ node ~/.claude/tools/land/land.mjs <branch> [--repo <path>] [--test <command>] [
 
 `--repo` is the base checkout: the folder where the base branch is checked out (default: the current folder). The base is the
 branch checked out there, so `land feat/x --repo ~/code/app` lands `feat/x` on whatever `~/code/app` has checked out.
+A lane is never a base: a checked-out branch that `git-tidy lane claim` recorded as a lane (`branch.<lane>.cs-lane-base`) is
+refused (`land: <dir> has the lane <b> checked out (claimed on <c>), not a base: switch it back (git switch <c> there), then
+land again`).
 
 `--test` runs the command (through the shell, in the lane's worktree, at the rebased tip) before the base moves, for example
 `land lane/x --repo ~/code/app --test "node --test tests/*.test.mjs"`. `--test-timeout` is its deadline in seconds (default
@@ -29,7 +32,11 @@ Steps, in order; nothing changes until every check has passed:
 1. Checks: the base checkout has a branch checked out, no unfinished rebase or merge, no changed or untracked file and no file
    marked assume-unchanged, or skip-worktree and on disk (git status does not show edits there; a clean sparse checkout
    passes); the branch exists and is not the base; when
-   the branch has a worktree, that worktree is clean in the same way and is not the main worktree.
+   the branch has a worktree, that worktree is clean in the same way and is not the main worktree. A lane claimed on another
+   base than the one checked out (its record names another branch) is refused, since landing it here could bring that base's
+   commits along: `land: <lane> was claimed on <c>, but <dir> has <base> checked out; nothing changed. ... Switch back (git
+   switch <c> in <dir>) and land again, or move the lane on purpose: git config branch.<lane>.cs-lane-base <base>, then land
+   again`. A lane with no record (an old lane, a branch made with `git worktree add`) lands as before.
 2. Rebase onto the base's sha, read once, with `--reapply-cherry-picks`: a commit is dropped only when its change is already
    on the base (git's default also drops one whose patch id pairs with a base commit while its change differs). A lane with no
    commit in common with the base is refused. With no test, in the
@@ -38,7 +45,7 @@ Steps, in order; nothing changes until every check has passed:
    A rebase that stops (a conflict) is aborted, so the lane is left as it was: rebase it by hand, then land again.
 3. Test, only when `--test` is given (`test-gate.mjs`, `run-test.mjs`); a branch with no worktree to run it in is refused,
    and the refusal gives the step that makes one: `node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim --repo <dir>
-   --branch <branch> --base <its tip sha>` (a pool folder, kept for the next lane once it lands), then land again. The command runs in the lane's worktree at the rebased tip. It fails on a non-zero exit, a
+   --branch <branch>` (a pool folder, kept for the next lane once it lands; the branch stays at its own tip), then land again. The command runs in the lane's worktree at the rebased tip. It fails on a non-zero exit, a
    signal or the deadline. Its whole process group is ended when it ends, at the deadline and on a Ctrl-C of `land`: SIGTERM,
    then SIGKILL to what is left after 3 s, or at once on a second Ctrl-C (Windows: `taskkill /T /F`); a process that put itself in a group of its own is out
    of reach. A failure prints its last 40
@@ -46,8 +53,10 @@ Steps, in order; nothing changes until every check has passed:
    (untracked ones are allowed), and a base checkout edited or switched to another branch meanwhile. Every refusal in this
    step puts the worktree back on the unchanged branch; a pass moves the branch to the tested sha.
 4. Fast-forward: `git merge --ff-only <full sha>` in the base checkout, with the sha the rebase produced (with a test, the sha tested).
-   A base that moved since step 2 is refused; after a passing test that leaves the lane at the tested sha. Then one line goes
-   to the land ledger ("Land ledger" below).
+   A base that moved since step 2 is refused; after a passing test that leaves the lane at the tested sha. Then the base is
+   marked as a base (`git config branch.<base>.cs-base true`), so a later sweep keeps it once you work on another branch; a
+   mark that cannot be written is one `land: <base> not marked as a base: ...` line on stderr, and the landing goes on (exit 0).
+   Then one line goes to the land ledger ("Land ledger" below).
 5. Clean-up of the lane's folder, then its branch:
    - A pool folder (`<main worktree>/.claude/worktrees/lane-<n>`, handed out by `git-tidy lane claim` and locked with
      `cs-lane-pool <branch>`) is not removed: git-tidy's `detachLandedSlot` (`../git-tidy/lib/lane-pool.mjs`) detaches it at
@@ -168,7 +177,7 @@ test passed on <full sha>
 | Exit | Meaning |
 | ---- | ------- |
 | 0 | landed and cleaned up |
-| 1 | refused or stopped; the `land:` line says why and what to do (a dirty checkout, an unknown branch, a rebase conflict, a failed or timed-out test, a lane, worktree or base that moved meanwhile, a clean-up step that failed after landing, a pool folder kept locked) |
+| 1 | refused or stopped; the `land:` line says why and what to do (a dirty checkout, an unknown branch, a lane claimed on another base, a rebase conflict, a failed or timed-out test, a lane, worktree or base that moved meanwhile, a clean-up step that failed after landing, a pool folder kept locked) |
 | 2 | usage error |
 
 Git runs without a shell and without the variables that point it at another repository (`../git-tidy/lib/git.mjs`); the
@@ -178,4 +187,4 @@ worktree list and the clean checks are git-tidy's (`../git-tidy/lib/repo.mjs`), 
 `../long-run/lib/process-tree.mjs`; the pool folder detach is git-tidy's (`../git-tidy/lib/lane-pool.mjs`). Files: `land.mjs`
 (the CLI and its steps), `ledger.mjs` (the land ledger), `sweep.mjs` (step 6: the sweep and the `left:` block),
 `test-gate.mjs` (the test step), `run-test.mjs` (runs the command), `refusal.mjs` (the refusal and the
-clean check). Tests: `tests/land.test.mjs`, `tests/land-test-gate.test.mjs`, `tests/land-sweep*.test.mjs` (`land-sweep-strict` for the one rule), `tests/git-tidy-content-equal.test.mjs`.
+clean check). Tests: `tests/land.test.mjs`, `tests/land-base.test.mjs` (the lane record and the mark), `tests/land-test-gate.test.mjs`, `tests/land-sweep*.test.mjs` (`land-sweep-strict` for the one rule), `tests/git-tidy-content-equal.test.mjs`.

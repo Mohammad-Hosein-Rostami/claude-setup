@@ -12,7 +12,7 @@ import { runTestCommand } from './run-test.mjs';
 
 const HEADS = 'refs/heads/';
 // The advised folder is a pool folder, not `git worktree add`: land detaches a landed pool folder and keeps it for the next lane,
-// where a plain worktree is removed. `--base` is the branch's own tip: claim keeps an existing branch as it is.
+// where a plain worktree is removed. No `--base`: claim keeps an existing branch at its own tip.
 const CLAIM_COMMAND = 'node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim'; // ~ unquoted: the shell expands it
 
 /** The full sha `ref` names in `dir`, or '' when it names nothing. */
@@ -85,7 +85,7 @@ function testFailure({ base }, branch, worktree, { command, tip, outcome }) {
 export async function testRebasedTip(checkout, branch, worktree, { baseSha, command, timeoutSeconds }) {
   const laneTip = shaOf(checkout.dir, `${HEADS}${branch}`);
   if (worktree === null) {
-    const claim = `${CLAIM_COMMAND} --repo ${shellWord(checkout.dir)} --branch ${shellWord(branch)} --base ${laneTip}`;
+    const claim = `${CLAIM_COMMAND} --repo ${shellWord(checkout.dir)} --branch ${shellWord(branch)}`;
     throw new LandRefusal(`the test must run on the rebased tip, in the lane's worktree, and ${branch} has none; nothing changed. Claim a pool folder for it: ${claim}, then land again`);
   }
   const tip = rebaseDetached(checkout, branch, worktree, baseSha);

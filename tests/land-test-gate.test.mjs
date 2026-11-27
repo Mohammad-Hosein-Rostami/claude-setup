@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { CLEAN_ENV, addWorktree, commit, git, lines, makeRepo, snapshot } from './git-tidy-helpers.mjs';
-import { claim, laneEnv, poolPath } from './git-tidy-lane-pool-helpers.mjs';
+import { lane, laneEnv, poolPath } from './git-tidy-lane-pool-helpers.mjs';
 
 const LAND = fileURLToPath(new URL('../home/tools/land/land.mjs', import.meta.url));
 const LANE = 'feat/lane';
@@ -420,7 +420,7 @@ test('a --test on a branch with no worktree is refused before anything changes; 
   const result = land([LANE, '--repo', repo, '--test', PASS], { cwd: repo });
   assert.equal(result.status, 1, result.stdout);
   assert.ok(result.stderr.includes(`the test must run on the rebased tip, in the lane's worktree, and ${LANE} has none; nothing changed`), result.stderr);
-  const claimStep = `node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim --repo ${realpathSync(repo)} --branch ${LANE} --base ${before[1]}, then land again`;
+  const claimStep = `node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim --repo ${realpathSync(repo)} --branch ${LANE}, then land again`;
   assert.ok(result.stderr.includes(`Claim a pool folder for it: ${claimStep}`), result.stderr);
   assert.deepEqual(heads(repo), before, 'neither the base nor the lane moved');
   assert.equal(git(repo, 'symbolic-ref', '--short', 'HEAD'), 'main', 'the base checkout is on the base');
@@ -445,11 +445,10 @@ test('the lane claim a --test refusal advises gives the branch a pool folder, an
   const env = laneEnv();
   const refused = land([TEST_BRANCH, '--repo', repo, '--test', PASS], { cwd: repo, env });
   assert.equal(refused.status, 1, refused.stdout);
-  const advised = `lane claim --repo ${realpathSync(repo)} --branch ${TEST_BRANCH} --base ${branchTip}`;
+  const advised = `lane claim --repo ${realpathSync(repo)} --branch ${TEST_BRANCH}, then land again`;
   assert.ok(refused.stderr.includes(advised), refused.stderr);
-  assert.match(branchTip, /^[0-9a-f]{40}$/);
 
-  const claimed = claim(repo, TEST_BRANCH, branchTip, env);
+  const claimed = lane(['claim', '--repo', repo, '--branch', TEST_BRANCH], env);
   assert.equal(claimed.status, 0, claimed.stderr);
   const folder = poolPath(repo, 1);
   assert.ok(lines(claimed).includes(`lane: ${folder}`), claimed.stdout);
