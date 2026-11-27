@@ -30,7 +30,8 @@ const tick = (home, args) =>
 function writePlan(repo, ids) {
   const path = join(makeTempDir('board-order-plan-'), 'pieces.json');
   const plan = {
-    job: JOB, repo, base: git(repo, 'rev-parse', 'HEAD'),
+    // the base's sha when the plan was written: the first commit, before every land the test writes, so the lands count
+    job: JOB, repo, base: git(repo, 'rev-list', '--max-parents=0', 'HEAD'),
     features: [{ id: 'f', risk: 'none', spec: 'plan.md#one' }],
     pieces: ids.map((id) => ({ id, feature: 'f', files: [`${id}.txt`] })),
   };
@@ -73,5 +74,5 @@ test('--json features[].lands lists the lands in ledger order, whatever order th
   const { repo, home, plan, lands } = interleavedLands();
   const result = tick(home, ['--repo', repo, '--plan', plan, '--json']);
   assert.equal(result.status, EXIT_SHOWN, result.stderr);
-  assert.deepEqual(JSON.parse(result.stdout).plan.features[0].lands, lands);
+  assert.deepEqual(JSON.parse(result.stdout).jobs[0].features[0].lands, lands);
 });

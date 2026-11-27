@@ -1,7 +1,7 @@
 // Purpose: the land ledger: one JSON line per landing, so a reader (board's `tick`) knows what landed and when without asking an
 //   agent. land.mjs appends a line right after its fast-forward; when the base did not move it reads the ledger first, so a
 //   re-run of a landing writes no second line.
-// Exports: landLedgerPath, appendLandEntry, readLandEntries.
+// Exports: repoKey, landLedgerPath, appendLandEntry, readLandEntries.
 // File: <HOME>/.claude/state/land/<repo-key>.jsonl. <repo-key> is the first 16 hex of the sha256 of the real path of the
 //   repository's git common dir (`git rev-parse --path-format=absolute --git-common-dir`), so every worktree of one repository and
 //   every path to it through a link (`~/.claude` is one) or in another letter case give the same file.
@@ -47,6 +47,19 @@ const ENTRY_FIELDS = Object.freeze({
 const ledgerFields = (source) => Object.fromEntries(Object.keys(ENTRY_FIELDS).map((name) => [name, source[name]]));
 
 /**
+ * The key of the repository that holds `repoDir`, the same from every worktree of it and every path to it (see the header); the
+ * board's per-repository state (board/lib/tick-jobs.mjs) uses it too.
+ * @param {string} repoDir any folder of the repository
+ * @returns {string} the first 16 hex of the sha256 of the real path of the repository's git common dir
+ * @throws {Error} when git cannot name the repository's common dir
+ */
+export function repoKey(repoDir) {
+  // realpath(3), not the JS one: it also gives the disk's own letter case, so `~/desktop/app` and `~/Desktop/app` share one key.
+  const commonDir = realpathSync.native(gitText(repoDir, ['rev-parse', '--path-format=absolute', '--git-common-dir']));
+  return createHash('sha256').update(commonDir).digest('hex').slice(0, REPO_KEY_HEX);
+}
+
+/**
  * The ledger file of the repository that holds `repoDir`.
  * @param {string} repoDir any folder of the repository (the base checkout, a lane's worktree)
  * @param {Record<string, string | undefined>} [env] HOME (a test or a smoke run passes a scratch home)
@@ -54,10 +67,7 @@ const ledgerFields = (source) => Object.fromEntries(Object.keys(ENTRY_FIELDS).ma
  * @throws {Error} when git cannot name the repository's common dir
  */
 export function landLedgerPath(repoDir, env = process.env) {
-  // realpath(3), not the JS one: it also gives the disk's own letter case, so `~/desktop/app` and `~/Desktop/app` share one key.
-  const commonDir = realpathSync.native(gitText(repoDir, ['rev-parse', '--path-format=absolute', '--git-common-dir']));
-  const repoKey = createHash('sha256').update(commonDir).digest('hex').slice(0, REPO_KEY_HEX);
-  return join(env.HOME || homedir(), '.claude', 'state', 'land', `${repoKey}.jsonl`);
+  return join(env.HOME || homedir(), '.claude', 'state', 'land', `${repoKey(repoDir)}.jsonl`);
 }
 
 /** NEWLINE when the ledger's last byte is not one (a torn last line), else '' (also for an empty or missing file). */

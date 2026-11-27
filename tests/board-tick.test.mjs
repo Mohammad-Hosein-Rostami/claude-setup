@@ -32,6 +32,8 @@ const POSIX_ONLY = { skip: process.platform === 'win32' ? 'a file name cannot ho
 
 const makeHome = () => realpathSync(makeTempDir('board-tick-home-'));
 const headOf = (dir) => git(dir, 'rev-parse', 'HEAD');
+// a plan's base is the base's sha when it was written: the repo's first commit comes before every land a test writes, so the lands count
+const rootOf = (dir) => git(dir, 'rev-list', '--max-parents=0', 'HEAD');
 
 /** Runs `board.mjs tick <args>` with `home` as HOME and USERPROFILE; no session id is set, so no agent is on the board. */
 const tick = (home, args) =>
@@ -60,7 +62,7 @@ function claimWithCommits({ repo, env }, branch, files) {
 function writePlan(repo, { files = [DECLARED], risk = 'none', pieces = [{ id: PIECE, feature: FEATURE, files }] } = {}) {
   const path = join(makeTempDir('board-tick-plan-'), 'pieces.json');
   const plan = {
-    job: JOB, repo, base: headOf(repo),
+    job: JOB, repo, base: rootOf(repo),
     features: [{ id: FEATURE, risk, spec: 'plan.md#one' }],
     pieces,
   };
@@ -68,12 +70,14 @@ function writePlan(repo, { files = [DECLARED], risk = 'none', pieces = [{ id: PI
   return path;
 }
 
-/** The ledger file the design names for `repo`: <home>/.claude/state/land/<first 16 hex of sha256(real git common dir)>.jsonl. */
-function ledgerFile(home, repo) {
+/** The design's <repo-key> of `repo`: the first 16 hex of sha256(real git common dir). */
+function repoKeyOf(repo) {
   const commonDir = realpathSync.native(git(repo, 'rev-parse', '--path-format=absolute', '--git-common-dir'));
-  const key = createHash('sha256').update(commonDir).digest('hex').slice(0, REPO_KEY_HEX);
-  return join(home, '.claude', 'state', 'land', `${key}.jsonl`);
+  return createHash('sha256').update(commonDir).digest('hex').slice(0, REPO_KEY_HEX);
 }
+
+/** The ledger file the design names for `repo`: <home>/.claude/state/land/<repo-key>.jsonl. */
+const ledgerFile = (home, repo) => join(home, '.claude', 'state', 'land', `${repoKeyOf(repo)}.jsonl`);
 
 /** Writes the ledger of `repo` under `home` as the given raw lines. */
 function writeLedger(home, repo, rawLines) {
@@ -88,7 +92,7 @@ function landedLine(repo, branch) {
   return JSON.stringify({ at: LANDED_AT, repo, branch, from: sha, to: sha, commits: 1 });
 }
 
-const marksFile = (home) => join(home, '.claude', 'state', 'board', 'jobs', `${JOB}.json`);
+const marksFile = (home, repo) => join(home, '.claude', 'state', 'board', 'repos', repoKeyOf(repo), `marks-${JOB}.json`);
 
 test('a clean main with no lanes: exit 0 and a main line that says clean, one line and check 0', () => {
   const { repo } = poolRepo();
@@ -204,7 +208,7 @@ test('--mark-tess writes the job marks file as { feature: { sha, at } } and the 
   const marked = tick(home, ['--repo', repo, '--plan', plan, '--mark-tess', FEATURE, '--sha', sha]);
   assert.equal(marked.status, EXIT_SHOWN, marked.stderr);
   assert.ok(marked.stdout.startsWith(`marked ${FEATURE} for tess at ${sha.slice(0, SHORT_SHA)}`), marked.stdout);
-  const marks = JSON.parse(readFileSync(marksFile(home), 'utf8'));
+  const marks = JSON.parse(readFileSync(marksFile(home, repo), 'utf8'));
   assert.deepEqual(Object.keys(marks), [FEATURE]);
   assert.deepEqual(Object.keys(marks[FEATURE]).sort(), ['at', 'sha']);
   assert.equal(marks[FEATURE].sha, sha);
@@ -225,10 +229,10 @@ test('--mark-tess with a sha that is not 40 hex characters is refused by the tic
   assert.equal(refused.status, EXIT_USAGE, refused.stdout);
   assert.match(refused.stderr, /^board tick: --mark-tess needs .*--sha <full 40-character main sha>/);
   assert.equal(refused.stdout, '');
-  assert.equal(existsSync(marksFile(home)), false, 'a refused mark writes nothing');
+  assert.equal(existsSync(marksFile(home, repo)), false, 'a refused mark writes nothing');
   const accepted = tick(home, ['--repo', repo, '--plan', plan, '--mark-tess', FEATURE, '--sha', sha]);
   assert.equal(accepted.status, EXIT_SHOWN, accepted.stderr);
-  assert.equal(JSON.parse(readFileSync(marksFile(home), 'utf8'))[FEATURE].sha, sha, 'the same call with the full sha writes the mark');
+  assert.equal(JSON.parse(readFileSync(marksFile(home, repo), 'utf8'))[FEATURE].sha, sha, 'the same call with the full sha writes the mark');
 });
 
 const PRUNE = 'node ~/.claude/tools/git-tidy/git-tidy.mjs prune';

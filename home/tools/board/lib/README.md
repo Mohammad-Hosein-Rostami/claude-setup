@@ -21,14 +21,17 @@ Collecting (run only by the detached refresh):
 
 The boss's sync (`tick`, run by hand after every agent report and every land):
 - `tick.mjs`: the `tick` command's facts: main's state and the side findings to tidy, the pool's folders, the lanes in flight,
-  overlaps and strays among their files, the plan's queue and features due for tess.
+  overlaps and strays among their files, and for each remembered job its queue and features due for tess.
 - `tick-lines.mjs`: the tick's plain lines from those facts, ending with the suggested next step.
 - `tick-tests.mjs`: the `test/*` branches not landed on main (the `tests not landed` line), with their commits, folder and plan
   piece.
 - `tick-features.mjs`: the plan's side of the tick: waiting pieces, each feature's lands, which features tess has checked (a mark
   covers the lands its sha holds), whether a round is due, and the features and `commits <feature>:` lines.
-- `tick-plan.mjs`: reads and checks the plan's pieces.json, and reads and writes the job's tess marks (one writer at a time, by a
-  lock file).
+- `tick-jobs.mjs`: the plans the repository's ticks remember (added by `--plan`, removed by `--forget-plan` or when a job is
+  done; one writer at a time, by a lock file), the ledger lands that belong to a plan (after its base), and the branches two
+  plans both name.
+- `tick-plan.mjs`: reads and checks a plan's pieces.json, and reads and writes the job's tess marks, kept per repository (one
+  writer at a time, by a lock file).
 
 Drawing: the status line is 2 rows when calm and at most 4 when busy (agents summary, git, lanes and session). Colour
 marks a state only, never an agent or a branch.

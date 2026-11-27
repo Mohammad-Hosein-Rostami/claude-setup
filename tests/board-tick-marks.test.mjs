@@ -1,6 +1,7 @@
 // Tests of the tess marks of `board.mjs tick` (home/tools/board/lib/tick-features.mjs, tick-plan.mjs, tick.mjs): a mark is judged by
 // ancestry of the landed commits, parallel `--mark-tess` calls keep every mark (a lock file beside the marks), the `commits <feature>:`
-// line and the `next:` line's mark command. Each test runs the CLI as a child process on a throw-away repository in the OS temp
+// line, the `next:` line's mark command, and where the marks live (per repository and job; an old jobs/<job>.json is read, never
+// written). Each test runs the CLI as a child process on a throw-away repository in the OS temp
 // folder (git-tidy-helpers.mjs); every child has its own temp HOME, so the ledger and the marks go to <HOME>/.claude/state/ there and
 // never to the real ~/.claude. The lands are ledger lines written by the test, each between real commits on main.
 import assert from 'node:assert/strict';
@@ -24,16 +25,22 @@ const FEATURES_LINE = 'features landed, not checked:';
 const PARALLEL_MARKS = 8;
 const ROUNDS = 4;
 const FRESH_LOCK_MESSAGE = 'another --mark-tess is writing';
-const STALE_LOCK_AGE_S = 11; // the lock is stale after 10 s (MARK_LOCK_STALE_MS in tick-plan.mjs)
+const STALE_LOCK_AGE_S = 11; // the lock is stale after 10 s (STATE_LOCK_STALE_MS in tick-jobs.mjs)
 const RISKY = 'gate';
 
 const makeHome = () => realpathSync(makeTempDir('board-marks-home-'));
 const headOf = (dir) => git(dir, 'rev-parse', 'HEAD');
 const short = (sha) => sha.slice(0, SHORT_SHA);
-const jobsDir = (home) => join(home, '.claude', 'state', 'board', 'jobs');
-const marksFile = (home) => join(jobsDir(home), `${JOB}.json`);
-const lockFile = (home) => join(jobsDir(home), `${JOB}.lock`);
-const readMarks = (home) => JSON.parse(readFileSync(marksFile(home), 'utf8'));
+/** The <repo-key> of `repo` (land ledger and board state): the first 16 hex of sha256(real git common dir). */
+function repoKeyOf(repo) {
+  const commonDir = realpathSync.native(git(repo, 'rev-parse', '--path-format=absolute', '--git-common-dir'));
+  return createHash('sha256').update(commonDir).digest('hex').slice(0, REPO_KEY_HEX);
+}
+
+const stateDir = (home, repo) => join(home, '.claude', 'state', 'board', 'repos', repoKeyOf(repo));
+const marksFile = (home, repo) => join(stateDir(home, repo), `marks-${JOB}.json`);
+const lockFile = (home, repo) => join(stateDir(home, repo), `marks-${JOB}.lock`);
+const readMarks = (home, repo) => JSON.parse(readFileSync(marksFile(home, repo), 'utf8'));
 
 const envOf = (home) => ({ ...CLEAN_ENV, HOME: home, USERPROFILE: home });
 
@@ -51,11 +58,14 @@ const tickAsync = (home, args) => new Promise((resolve, reject) => {
   child.on('close', (status) => resolve({ status, stdout, stderr }));
 });
 
-/** Writes a pieces.json (job JOB) for `features` ([{ id, risk }]) and `pieces` ([{ id, feature }]) in a temp folder; returns its path. */
+/**
+ * Writes a pieces.json (job JOB) for `features` ([{ id, risk }]) and `pieces` ([{ id, feature }]) in a temp folder; returns its
+ * path. Its base is the repo's first commit: the base's sha when the plan was written comes before every land a test writes.
+ */
 function writePlan(repo, features, pieces) {
   const path = join(makeTempDir('board-marks-plan-'), 'pieces.json');
   const plan = {
-    job: JOB, repo, base: headOf(repo),
+    job: JOB, repo, base: git(repo, 'rev-list', '--max-parents=0', 'HEAD'),
     features: features.map(({ id, risk }) => ({ id, risk, spec: 'plan.md#one' })),
     pieces: pieces.map(({ id, feature }) => ({ id, feature, files: [`${id}.txt`] })),
   };
@@ -63,12 +73,8 @@ function writePlan(repo, features, pieces) {
   return path;
 }
 
-/** The land ledger file of `repo` under `home`: <home>/.claude/state/land/<first 16 hex of sha256(real git common dir)>.jsonl. */
-function ledgerFile(home, repo) {
-  const commonDir = realpathSync.native(git(repo, 'rev-parse', '--path-format=absolute', '--git-common-dir'));
-  const key = createHash('sha256').update(commonDir).digest('hex').slice(0, REPO_KEY_HEX);
-  return join(home, '.claude', 'state', 'land', `${key}.jsonl`);
-}
+/** The land ledger file of `repo` under `home`: <home>/.claude/state/land/<repo-key>.jsonl. */
+const ledgerFile = (home, repo) => join(home, '.claude', 'state', 'land', `${repoKeyOf(repo)}.jsonl`);
 
 /** Writes the ledger of `repo` under `home`: one landing of `lane/<piece>` from `from` to `to` per `[piece, from, to]`, in this order. */
 function writeLands(home, repo, lands) {
@@ -101,7 +107,7 @@ test('a risky feature marked at its first piece\'s land is still due, and checke
   assert.equal(markedLast.status, EXIT_SHOWN, markedLast.stderr);
   const checkedResult = tick(home, ['--repo', repo, '--plan', plan]);
   assert.ok(featuresLineOf(checkedResult).startsWith(`${FEATURES_LINE} none`), checkedResult.stdout);
-  const feature = factsOf(home, repo, plan).plan.features.find(({ id }) => id === 'f');
+  const feature = factsOf(home, repo, plan).jobs[0].features.find(({ id }) => id === 'f');
   assert.equal(feature.isChecked, true);
 });
 
@@ -114,10 +120,10 @@ test('8 --mark-tess calls started at once for 8 features keep all 8 marks and le
     const home = makeHome(); // a fresh marks file each round
     const results = await Promise.all(ids.map((id) => tickAsync(home, markArgs(repo, plan, id, shaOf[id]))));
     results.forEach((result, at) => assert.equal(result.status, EXIT_SHOWN, `round ${round}, ${ids[at]}: ${result.stderr}`));
-    const marks = readMarks(home);
+    const marks = readMarks(home, repo);
     assert.deepEqual(Object.keys(marks).sort(), [...ids].sort(), `round ${round}: the marks file keeps every feature`);
     for (const id of ids) assert.equal(marks[id].sha, shaOf[id], `round ${round}: the mark of ${id}`);
-    assert.equal(existsSync(lockFile(home)), false, `round ${round}: no lock file is left`);
+    assert.equal(existsSync(lockFile(home, repo)), false, `round ${round}: no lock file is left`);
   }
 });
 
@@ -137,7 +143,7 @@ test('an unchecked feature gets a commits line right after the features line, an
   assert.equal(shown[at + 1], `commits f: ${short(base)}..${short(to)}`, result.stdout);
   assert.match(shown[at + 1], /^commits f: [0-9a-f]{8}\.\.[0-9a-f]{8}$/);
 
-  const feature = factsOf(home, repo, plan).plan.features[0];
+  const feature = factsOf(home, repo, plan).jobs[0].features[0];
   assert.deepEqual(feature.lands, [{ piece: 'p1', from: base, to }]);
 });
 
@@ -154,14 +160,14 @@ test('when tess is due and main moved past the last land, the next line names th
   assert.equal(result.status, EXIT_SHOWN, result.stderr);
   const next = lines(result).find((line) => line.startsWith('next:'));
   assert.notEqual(mainSha, landedTo);
-  assert.ok(next.includes(`tess on f (mark each: --mark-tess <feature> --sha ${mainSha} with this --repo and --plan)`), next);
+  assert.ok(next.includes(`tess on f (mark each: --mark-tess <feature> --sha ${mainSha} with this --repo and --plan ${plan})`), next);
 
   const sha = next.match(/--sha ([0-9a-f]{40})/)[1];
   const marked = tick(home, markArgs(repo, plan, 'f', sha));
   assert.equal(marked.status, EXIT_SHOWN, marked.stderr);
   const after = tick(home, ['--repo', repo, '--plan', plan]);
   assert.ok(featuresLineOf(after).startsWith(`${FEATURES_LINE} none`), after.stdout);
-  assert.equal(factsOf(home, repo, plan).plan.features[0].isChecked, true);
+  assert.equal(factsOf(home, repo, plan).jobs[0].features[0].isChecked, true);
 });
 
 test('a fresh lock file refuses --mark-tess with exit 2 and changes nothing; a lock 11 seconds old is broken and the mark is written', () => {
@@ -172,23 +178,23 @@ test('a fresh lock file refuses --mark-tess with exit 2 and changes nothing; a l
   const plan = writePlan(repo, [{ id: 'a', risk: 'none' }, { id: 'b', risk: 'none' }], [{ id: 'p-a', feature: 'a' }, { id: 'p-b', feature: 'b' }]);
   const first = tick(home, markArgs(repo, plan, 'a', firstSha));
   assert.equal(first.status, EXIT_SHOWN, first.stderr);
-  const before = readFileSync(marksFile(home), 'utf8');
-  writeFileSync(lockFile(home), '');
+  const before = readFileSync(marksFile(home, repo), 'utf8');
+  writeFileSync(lockFile(home, repo), '');
 
   const refused = tick(home, markArgs(repo, plan, 'b', secondSha));
   assert.equal(refused.status, EXIT_USAGE, refused.stdout);
   assert.ok(refused.stderr.includes(FRESH_LOCK_MESSAGE), refused.stderr);
-  assert.equal(readFileSync(marksFile(home), 'utf8'), before, 'a refused mark leaves the marks file as it was');
-  assert.equal(existsSync(lockFile(home)), true, 'the lock belongs to its holder and stays');
+  assert.equal(readFileSync(marksFile(home, repo), 'utf8'), before, 'a refused mark leaves the marks file as it was');
+  assert.equal(existsSync(lockFile(home, repo)), true, 'the lock belongs to its holder and stays');
 
   const past = new Date(Date.now() - STALE_LOCK_AGE_S * 1000);
-  utimesSync(lockFile(home), past, past);
-  assert.ok(Date.now() - statSync(lockFile(home)).mtimeMs >= STALE_LOCK_AGE_S * 1000 - 1000, 'the lock is made old');
+  utimesSync(lockFile(home, repo), past, past);
+  assert.ok(Date.now() - statSync(lockFile(home, repo)).mtimeMs >= STALE_LOCK_AGE_S * 1000 - 1000, 'the lock is made old');
   const marked = tick(home, markArgs(repo, plan, 'b', secondSha));
   assert.equal(marked.status, EXIT_SHOWN, marked.stderr);
-  assert.deepEqual(Object.keys(readMarks(home)).sort(), ['a', 'b']);
-  assert.equal(readMarks(home).b.sha, secondSha);
-  assert.equal(existsSync(lockFile(home)), false, 'the call that broke the stale lock releases its own');
+  assert.deepEqual(Object.keys(readMarks(home, repo)).sort(), ['a', 'b']);
+  assert.equal(readMarks(home, repo).b.sha, secondSha);
+  assert.equal(existsSync(lockFile(home, repo)), false, 'the call that broke the stale lock releases its own');
 });
 
 // An inherited key of Object.prototype is no mark: without the own-key guard in planState, `marks.constructor` is a function, a feature with no
@@ -204,7 +210,7 @@ test('a feature named after an Object.prototype key, with no piece landed, is no
   assert.equal(result.status, EXIT_SHOWN, result.stdout + result.stderr);
   assert.equal(result.stderr, '');
   assert.equal(featuresLineOf(result), `${FEATURES_LINE} none -> tess due at 3 (now 0)`, result.stdout);
-  const shown = factsOf(home, repo, plan).plan.features;
+  const shown = factsOf(home, repo, plan).jobs[0].features;
   assert.deepEqual(shown, PROTOTYPE_KEY_FEATURES.map((id) => ({ id, risk: 'none', landed: 0, pieces: 1, lands: [], isChecked: false })));
 });
 
@@ -227,4 +233,40 @@ test('a piece landed twice and marked at its first land only is due, with both r
   assert.equal(markedAgain.status, EXIT_SHOWN, markedAgain.stderr);
   const after = tick(home, ['--repo', repo, '--plan', plan]);
   assert.ok(featuresLineOf(after).startsWith(`${FEATURES_LINE} none`), after.stdout);
+});
+
+const oldMarksFile = (home) => join(home, '.claude', 'state', 'board', 'jobs', `${JOB}.json`);
+
+test('an old jobs/<job>.json marks file is read while the repository has none, and never written: the next mark keeps its marks in the new file', () => {
+  const repo = makeRepo();
+  const home = makeHome();
+  const base = headOf(repo);
+  const firstTo = commit(repo, 'p1.txt');
+  const secondTo = commit(repo, 'p2.txt');
+  writeLands(home, repo, [['p1', base, firstTo], ['p2', firstTo, secondTo]]);
+  const plan = writePlan(repo, [{ id: 'a', risk: 'none' }, { id: 'b', risk: 'none' }], [{ id: 'p1', feature: 'a' }, { id: 'p2', feature: 'b' }]);
+  const oldText = `${JSON.stringify({ a: { sha: firstTo, at: LANDED_AT } })}\n`;
+  mkdirSync(dirname(oldMarksFile(home)), { recursive: true });
+  writeFileSync(oldMarksFile(home), oldText);
+
+  const before = factsOf(home, repo, plan).jobs[0].features;
+  assert.deepEqual(before.map(({ id, isChecked }) => [id, isChecked]), [['a', true], ['b', false]]);
+  const marked = tick(home, markArgs(repo, plan, 'b', secondTo));
+  assert.equal(marked.status, EXIT_SHOWN, marked.stderr);
+  assert.deepEqual(Object.keys(readMarks(home, repo)).sort(), ['a', 'b']);
+  assert.equal(readFileSync(oldMarksFile(home), 'utf8'), oldText, 'the old file is never written');
+});
+
+test('marks are kept per repository: a mark of a job in one repository checks nothing in another with the same job', () => {
+  const home = makeHome();
+  const [first, second] = [makeRepo(), makeRepo()];
+  const plans = [first, second].map((repo) => {
+    const to = commit(repo, 'p1.txt');
+    writeLands(home, repo, [['p1', git(repo, 'rev-parse', 'HEAD~1'), to]]);
+    return { repo, to, plan: writePlan(repo, [{ id: 'f', risk: 'none' }], [{ id: 'p1', feature: 'f' }]) };
+  });
+  const marked = tick(home, markArgs(first, plans[0].plan, 'f', plans[0].to));
+  assert.equal(marked.status, EXIT_SHOWN, marked.stderr);
+  assert.equal(factsOf(home, first, plans[0].plan).jobs[0].features[0].isChecked, true);
+  assert.equal(factsOf(home, second, plans[1].plan).jobs[0].features[0].isChecked, false);
 });

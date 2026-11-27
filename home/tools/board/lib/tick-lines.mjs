@@ -1,6 +1,7 @@
 // Purpose: the plain lines `board tick` prints from its facts (tick.mjs tickFacts): the base (the branch checked out in the main
 //   checkout, by its own name), the side findings to tidy, the pool's folders, one line per lane, the test branches not landed,
-//   overlaps, strays, the plan's lines and the suggested `next:` step.
+//   overlaps, strays, clashes, the plans that cannot be read, each job's lines and the suggested `next:` step. With two or more
+//   jobs each job's own lines (queue, features, commits, its part of the base line and its tess step) start with `<job>: `.
 // Exports: tickLines(tick) -> string[], clean(text), short(sha).
 // Invariants: pure apart from reading the clock for the snapshot age. Every branch name, path and agent name goes through
 //   cells.mjs cleanText, so no control character reaches the terminal, and through shellWord too inside a printed command. `next:`
@@ -34,6 +35,9 @@ const filesText = (files) => firstOf(files.map(clean), SHOWN_FILES);
 
 /** Each distinct kind of `findings` once, in first-seen order. */
 const kindsOf = (findings) => [...new Set(findings.map(({ kind }) => kind))];
+/** `<job>: ` before a job's own text when the tick shows two or more jobs, else nothing (one job reads as before). */
+const jobPrefix = (tick, job) => (tick.jobs.length > 1 ? `${job.job}: ` : '');
+const TICK_COMMAND = 'node ~/.claude/tools/board/board.mjs tick';
 
 /** `running`, `done`, or `quiet N min`, as `board show` prints an agent's state. */
 function agentStateText(agent) {
@@ -42,12 +46,16 @@ function agentStateText(agent) {
   return 'done';
 }
 
-function mainLine({ main, plan }) {
+/** A job's tess part of the base line: its pieces landed since its newest tess mark. */
+const tessSince = (job) => `${job.landedSince} landed ${job.lastTessSha === null ? 'and no tess round yet' : `since tess round at ${short(job.lastTessSha)}`}`;
+
+function mainLine(tick) {
+  const { main } = tick;
   const kinds = kindsOf(main.findings).map((kind) => `${main.findings.filter((finding) => finding.kind === kind).length} ${kind}`);
   const isDirty = main.findings.some(({ kind }) => kind === 'dirty-base');
   const isOneLine = !main.findings.some(({ kind }) => kind === 'merge-commit');
   const check = kinds.length === 0 ? 'git-tidy check 0' : `git-tidy check 1: ${kinds.join(', ')}`;
-  const tess = plan === null ? '' : `, ${plan.landedSince} landed ${plan.lastTessSha === null ? 'and no tess round yet' : `since tess round at ${short(plan.lastTessSha)}`}`;
+  const tess = tick.jobs.map((job) => `, ${jobPrefix(tick, job)}${tessSince(job)}`).join('');
   return `base ${clean(main.branch)} ${short(main.sha)} ${isDirty ? 'dirty' : 'clean'}, ${isOneLine ? 'one line' : 'not one line'} (${check})${tess}`;
 }
 
@@ -119,21 +127,54 @@ function testsStep({ tests, repo }) {
   return `test branches ${names}: land each one tess passed (land ${branch} --repo ${shellWord(clean(repo))}), a failing repro gets a Fix: piece on its branch`;
 }
 
+/** Why a waiting piece can or cannot start: a clash first (it never starts while two plans name its branch), then its after-pieces. */
+function pieceState(piece) {
+  if (piece.isStartable) return 'startable';
+  if (piece.isClash) return 'clash';
+  return piece.after.length > 0 ? `after ${piece.after.join(', ')}` : `overlaps ${piece.overlaps.map(clean).join(', ')}`;
+}
+
 function queueLine(queue) {
-  if (queue.length === 0) return 'queue empty';
-  const state = (piece) => {
-    if (piece.isStartable) return 'startable';
-    return piece.after.length > 0 ? `after ${piece.after.join(', ')}` : `overlaps ${piece.overlaps.map(clean).join(', ')}`;
-  };
-  return `queue ${queue.map((piece) => `${piece.id} ${state(piece)}`).join(' | ')}`;
+  return queue.length === 0 ? 'queue empty' : `queue ${queue.map((piece) => `${piece.id} ${pieceState(piece)}`).join(' | ')}`;
+}
+
+/** One job's lines: its queue, its features line and its commits lines. */
+const jobLines = (tick, job) => [queueLine(job.queue), featuresLine(job), ...commitsLines(job)].map((line) => `${jobPrefix(tick, job)}${line}`);
+
+/** `clash <branch>: piece <a> of <job1>, piece <b> of <job2>`: two plans name one branch. */
+const clashLine = ({ branch, owners }) => `clash ${clean(branch)}: ${owners.map(({ job, piece }) => `piece ${piece} of ${job}`).join(', ')}`;
+
+/** A remembered plan that cannot be read: why, and the command that forgets it. */
+function planProblemLine({ repo }, { path, problem }) {
+  return `${clean(problem)} (forget it: ${TICK_COMMAND} --repo ${shellWord(clean(repo))} --forget-plan ${shellWord(clean(path))})`;
+}
+
+/** A done job's line: forgotten by this tick, or why it could not be. */
+const forgottenLine = ({ job, problem }) => `job ${job} done (${problem === null ? 'forgotten' : `not forgotten: ${clean(problem)}`})`;
+
+/**
+ * The tess steps: one per job with tess due, while fewer than MAX_TESS tess run, each with the mark command at the base's sha
+ * (gate R5) and that job's plan (the tick may have read it from the remembered list, not from a `--plan` of this call).
+ */
+function tessSteps(tick) {
+  const steps = [];
+  let free = MAX_TESS - tick.tessRunning;
+  for (const job of tick.jobs.filter((entry) => entry.tess.reason !== null)) {
+    if (free <= 0) break;
+    const ids = job.tess.features.slice(0, free).map((feature) => feature.id);
+    free -= ids.length;
+    steps.push(`${jobPrefix(tick, job)}tess on ${ids.join(', ')} (mark each: --mark-tess <feature> --sha ${tick.main.sha} with this --repo and --plan ${shellWord(clean(job.path))})`);
+  }
+  return steps;
 }
 
 /**
- * The `next:` line: land one lane, claim pieces while fewer than MAX_DEV lanes run, land the test branches left, start tess when
- * due with the mark command at the base's sha (gate R5); never while the base fails.
+ * The `next:` line: land one lane, claim pieces (of every job, in plan order) while fewer than MAX_DEV lanes run, land the test
+ * branches left, start tess when due (tessSteps); never while the base fails.
  */
 function nextLine(tick) {
-  const { main, lanes, overlaps, strays, queue, plan, tessRunning } = tick;
+  const { main, lanes, overlaps, strays, tessRunning } = tick;
+  const queue = tick.jobs.flatMap((job) => job.queue);
   const count = `dev ${lanes.length}/${MAX_DEV}, tess ${tessRunning}/${MAX_TESS}`;
   if (main.findings.length > 0) return `next: fix ${clean(main.branch)} first (node ~/.claude/tools/git-tidy/git-tidy.mjs check ${clean(tick.repo)}), start no new piece; ${count}`;
   const flagged = new Set([...overlaps.flatMap((pair) => [pair.first, pair.second]), ...strays.map((stray) => stray.branch)]);
@@ -145,15 +186,11 @@ function nextLine(tick) {
   queue.filter((piece) => piece.isStartable).slice(0, Math.max(0, MAX_DEV - lanes.length)).forEach((piece) => steps.push(claimText(piece)));
   const testsNext = testsStep(tick);
   if (testsNext !== null) steps.push(testsNext);
-  if (plan !== null && plan.tess.reason !== null && tessRunning < MAX_TESS) {
-    const ids = plan.tess.features.slice(0, MAX_TESS - tessRunning).map((feature) => feature.id).join(', ');
-    steps.push(`tess on ${ids} (mark each: --mark-tess <feature> --sha ${main.sha} with this --repo and --plan)`);
-  }
-  return `next: ${[...steps, count].join('; ')}`;
+  return `next: ${[...steps, ...tessSteps(tick), count].join('; ')}`;
 }
 
 /**
- * The tick as plain lines (about 20 for 3 lanes and 12 pieces).
+ * The tick as plain lines (about 20 for 3 lanes and one job of 12 pieces).
  * @param {object} tick tick.mjs tickFacts's result
  * @returns {string[]} the lines in print order, `next:` last
  */
@@ -166,7 +203,11 @@ export function tickLines(tick) {
     ...[testsLine(tick.tests)].filter((line) => line !== null),
     ...tick.overlaps.map((pair) => `overlap ${clean(pair.first)} x ${clean(pair.second)}: ${filesText(pair.files)}`),
     ...tick.strays.map((stray) => `stray ${clean(stray.branch)}: ${filesText(stray.files)} (not in its files)`),
-    ...(tick.plan === null ? [] : [queueLine(tick.queue), featuresLine(tick.plan), ...commitsLines(tick.plan)]),
+    ...tick.clashes.map(clashLine),
+    ...tick.planProblems.map((problem) => planProblemLine(tick, problem)),
+    ...(tick.listProblem === null ? [] : [`plans list: ${clean(tick.listProblem)}`]),
+    ...tick.jobs.flatMap((job) => jobLines(tick, job)),
+    ...tick.forgotten.map(forgottenLine),
     ...(tick.ledgerSkipped > 0 ? [`ledger ${plural(tick.ledgerSkipped, 'bad line')} skipped`] : []),
     ...(tick.ledgerUnreadable === null ? [] : [`ledger unreadable (${clean(tick.ledgerUnreadable)}): no piece counts as landed`]),
     nextLine(tick),

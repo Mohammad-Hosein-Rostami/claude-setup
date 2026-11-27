@@ -31,16 +31,26 @@ malformed session id, an unknown command).
 ## The tick command
 
 The boss runs `tick` after every agent report and after every land; nothing runs it by itself. It reads only, apart from one
-forced refresh of the session's board (for the agents) and `--mark-tess`:
+forced refresh of the session's board (for the agents), the list of remembered plans and `--mark-tess`:
 
 ```sh
-node ~/.claude/tools/board/board.mjs tick --repo <abs main checkout> [--plan <abs pieces.json>] [--session <id>] [--json]
+node ~/.claude/tools/board/board.mjs tick --repo <abs main checkout> [--plan <abs pieces.json>]... [--session <id>] [--json]
 node ~/.claude/tools/board/board.mjs tick --repo <abs> --plan <abs> --mark-tess <feature> --sha <40-hex>
+node ~/.claude/tools/board/board.mjs tick --repo <abs> --forget-plan <abs pieces.json>
 ```
 
+**Remembered plans** (`lib/tick-jobs.mjs`): the tick remembers every plan (job) of the repository, so the boss passes a plan's
+`--plan` once and later ticks read it without one. Each `--plan` (it may repeat) is read first (a bad one is exit 2 and is not
+remembered) and then added to the list in `~/.claude/state/board/repos/<repo-key>.json` (`{ "plans": ["<abs>", ...] }`;
+`<repo-key>` is the land ledger's, so every worktree of a repository shares one list and another repository never sees it). A
+change of the list runs under a lock file beside it and writes a temp file and a rename, so two ticks that add plans at once
+keep both. A job leaves the list when every piece has landed and every feature is checked (`job <slug> done (forgotten)`,
+printed once), or by `--forget-plan <abs>` (`forgot <path>`, or `<path> was not remembered`; it goes with `--repo` alone).
+
 The lines (`lib/tick.mjs`), every branch name, path and agent name cleaned of control characters; `queue` and `features` print
-only with `--plan`, `tests not landed` only when a test branch is left, `ledger` only when the land ledger has lines it cannot
-parse or cannot be read at all:
+for each job the tick reads (none before the first `--plan`), `tests not landed` only when a test branch is left, `ledger` only
+when the land ledger has lines it cannot parse or cannot be read at all. With two or more jobs, each job's `queue`, `features`
+and `commits` lines, its part of the `base` line and its tess step in `next:` start with `<job>: `:
 
 ```text
 base <name> <sha> <clean|dirty>, <one line|not one line> (git-tidy check 0|1: <count> <kind>, ...)[, <n> landed since tess round at <sha>]
@@ -50,17 +60,22 @@ lane <branch> <type> <agent id> <running|done|quiet N min>|no agent +<n> commits
 tests not landed: <branch> +<n>[ (piece <piece>)][ (<type> <running|done|quiet N min>)], <branch> no commit (in <folder>), ..., +<n> more
 overlap <lane or piece> x <lane>: <file>, <file>, <file>, +<n> more
 stray <lane>: <files> (not in its files)
-queue <piece> startable | <piece> after <piece>, ... | <piece> overlaps <lane>
-features landed, not checked: <feature> <landed>/<pieces> (risk <risk>), ... -> tess due at 3 (now <n>)|tess due now (<why>)
+clash <branch>: piece <a> of <job1>, piece <b> of <job2>
+plan <path>: <problem> (forget it: node ~/.claude/tools/board/board.mjs tick --repo <repo> --forget-plan <path>)
+plans list: <file> <problem>; delete it to start the list again
+[<job>: ]queue <piece> startable | <piece> clash | <piece> after <piece>, ... | <piece> overlaps <lane>
+[<job>: ]features landed, not checked: <feature> <landed>/<pieces> (risk <risk>), ... -> tess due at 3 (now <n>)|tess due now (<why>)
+[<job>: ]commits <feature>: <from>..<to> ...
+job <slug> done (forgotten|not forgotten: <why>)
 ledger <n> bad lines skipped
 ledger unreadable (<why>): no piece counts as landed
-next: land <lane>; claim <piece>[ (branch <branch>)]; test branches <branch>, ...: land each one tess passed (land <branch> --repo <repo>), a failing repro gets a Fix: piece on its branch; tess on <feature>; dev <n>/3, tess <n>/3
+next: land <lane>; claim <piece>[ (branch <branch>)]; test branches <branch>, ...: land each one tess passed (land <branch> --repo <repo>), a failing repro gets a Fix: piece on its branch; [<job>: ]tess on <feature> (mark each: ... --plan <path>); dev <n>/3, tess <n>/3
 ```
 
 - **base**: the branch checked out in the main checkout of `--repo`, by its own name (`git-tidy`'s base, never assumed to be
   `main`), with `git-tidy check`'s findings about it by kind: `dirty-base`, `merge-commit`, `stale-checkout`, and any kind not
-  on the `tidy` line. `dirty` is a `dirty-base` finding, `not one line` a merge commit. Any finding is exit 1. With `--plan` it ends with the plan's pieces
-  landed since the newest tess mark (`<n> landed and no tess round yet` before the first).
+  on the `tidy` line. `dirty` is a `dirty-base` finding, `not one line` a merge commit. Any finding is exit 1. With a job it ends with the job's pieces
+  landed since its newest tess mark (`<n> landed and no tess round yet` before the first), one part per job.
 - **tidy**: only when `git-tidy check` finds leftovers beside the base: `tangled-ref`, `merged-branch`, `merged-tag`,
   `merged-worktree`, `stale-worktree`, `superseded-copy`, `agent-leftover`, each kind with its count and first subject. The
   command prints what `prune` would remove and changes nothing (`--apply` removes); it takes the same base as the tick. These
@@ -81,8 +96,14 @@ next: land <lane>; claim <piece>[ (branch <branch>)]; test branches <branch>, ..
 - **overlap**: two lanes share a file, or a piece whose `after` pieces have all landed declares a file a lane changed (that piece
   is not startable). **stray**: a lane on a piece's branch changed a file its piece does not declare. Either is exit 1; such a lane
   lands after the other one, with `land --test`.
-- **queue**: the plan's pieces not landed and not in a lane. A piece is landed when the land ledger
-  (`~/.claude/tools/land/ledger.mjs`) holds a land of its branch: its `branch`, else `lane/<piece id>`.
+- **clash**: two plans name one branch (two jobs reuse a piece id, or give the same `branch`): neither piece is startable
+  (`clash` in its queue) until one plan changes. Exit 1.
+- **plan**, **plans list**: a remembered plan that cannot be read (gone, not JSON, not the format) is skipped, with the command
+  that forgets it; a list file that cannot be read (torn, a link, too big) is never overwritten: delete it. Either is exit 1,
+  and the rest of the tick still prints.
+- **queue**: the job's pieces not landed and not in a lane. A piece is landed when the land ledger
+  (`~/.claude/tools/land/ledger.mjs`) holds a land of its branch (its `branch`, else `lane/<piece id>`) made after the plan's
+  `base`: a land whose commit the base already holds belongs to an older job that used the same branch name.
 - **features**: the features fully landed and not checked, and every risky one (`risk` not `none`) with a landed piece and no
   tess mark since: no new piece should touch its files until tess returns. A feature is checked when its tess mark is newer than
   its newest land. tess (its quick look; `full` only when the owner asks) is due when a risky feature is listed, when 3
@@ -90,34 +111,41 @@ next: land <lane>; claim <piece>[ (branch <branch>)]; test branches <branch>, ..
 - **next**: only a suggestion: land one ready lane, claim startable pieces while fewer than 3 lanes are in flight (a piece
   with a `branch` as `claim <piece> (branch <branch>)`: claim that branch), land the test branches with commits and no plan
   piece or live agent (at most 3 named; land each one tess's report passed, and a failing repro gets a `Fix:` piece on its
-  branch), start tess when it is due. While the base has a finding of its own it says `fix <name> first` and to start no new piece; a `tidy` finding never
+  branch), start tess when it is due (per job, with the mark command for that job's plan). While the base has a finding of its own it says `fix <name> first` and to start no new piece; a `tidy` finding never
   does.
 
-`--mark-tess <feature> --sha <40-hex>` records that tess was started on that feature at that sha (it must be on the base), and
-prints `marked <feature> for tess at <sha>`. The marks are in `~/.claude/state/board/jobs/<job>.json` as
-`{ "<feature>": { "sha": "<40-hex>", "at": "<ISO>" } }`, written through a temp file and a rename; delete the file to forget
-them. `--json` prints every fact as one JSON object (lanes with their files, folders with why and `lockedAtMs`, features, tess
-status); `main` is the base (`branch` its name, `sha` its tip); `main.findings` holds the base's findings only and `tidy` the
+`--mark-tess <feature> --sha <40-hex>` (with exactly one `--plan`, which it does not add to the list) records that tess was
+started on that feature at that sha (it must be on the base), and prints `marked <feature> for tess at <sha>`. The marks are per
+repository and job, in `~/.claude/state/board/repos/<repo-key>/marks-<job>.json` as
+`{ "<feature>": { "sha": "<40-hex>", "at": "<ISO>" } }`, written through a temp file and a rename under a lock file; delete the
+file to forget them. An older `~/.claude/state/board/jobs/<job>.json` is read while the new file is not there yet, and never
+written: the next mark copies its marks into the new file. `--json` prints every fact as one JSON object (lanes with their
+files, folders with why and `lockedAtMs`, `jobs`: each with `job`, `path`, `queue`, `features`, `tess` status, `isDone`; `clashes`,
+`planProblems`, `listProblem`, `forgotten`); `main` is the base (`branch` its name, `sha` its tip); `main.findings` holds the base's findings only and `tidy` the
 side ones, each `{ "kind", "subject" }`; `lanes[].claimedOn` is the base a lane was claimed on (null with no record); `tests` holds the
 test branches, each `{ "branch", "commits", "folder", "piece", "agent" }` (`folder`, `piece` and `agent` null when none).
 
-Exit 0 shown; 1 findings (an overlap, a stray, a `git-tidy check` finding on the base or on the `tidy` line); 2 usage: a bad flag, a `--repo` that is not
-a git repository, a missing or bad plan or marks file (the message names what is wrong), or a git failure.
+Exit 0 shown; 1 findings (an overlap, a stray, a clash, a `git-tidy check` finding on the base or on the `tidy` line, a remembered
+plan or the list that cannot be read, a done job that could not be forgotten); 2 usage: a bad flag, a `--repo` that is not a git
+repository, a missing or bad `--plan` or marks file (the message names what is wrong), or a git failure.
 
 ### pieces.json
 
-lex writes it next to the plan; the tick reads it with `--plan`. Ids (`job`, features, pieces) are letters, digits, `-` and `_`
-(at most 64, starting with a letter or digit); `files` are repository-relative paths; `after` and `branch` are optional:
+lex writes it next to the plan; the tick reads it with `--plan` and remembers it. Ids (`job`, features, pieces) are letters,
+digits, `-` and `_` (at most 64, starting with a letter or digit); `base` is the full sha of the base when the plan was written (a
+commit of the repository); `files` are repository-relative paths; `after` and `branch` are optional, and so are the texts a
+brief takes: a feature's `spec`, `qa` and `acceptance`, a piece's `acceptance` (strings):
 
 ```json
 { "job": "<slug>", "repo": "<abs>", "base": "<40-hex>",
-  "features": [{ "id": "login", "risk": "none | security,data,...", "spec": "<plan path>#<section>" }],
-  "pieces": [{ "id": "login-1", "feature": "login", "files": ["<repo-relative path>"], "after": ["<piece id>"], "branch": "test/<topic>" }] }
+  "features": [{ "id": "login", "risk": "none | security,data,...", "spec": "<plan path>#<section>", "qa": "quick look", "acceptance": "<text>" }],
+  "pieces": [{ "id": "login-1", "feature": "login", "files": ["<repo-relative path>"], "after": ["<piece id>"], "branch": "test/<topic>", "acceptance": "<text>" }] }
 ```
 
 A piece's branch is its `branch`, else `lane/<piece id>`. A `Fix:` piece names tess-write's repro branch (`test/<topic>`), so
 it lands under that name and the tick counts it. A `branch` must be a name `lane claim --branch` takes and no base branch, and
-no two pieces may share a branch: else the tick exits 2 and names the piece. No two pieces that can run at the same time share a file; the tick shows it when they do.
+no two pieces may share a branch: else the tick exits 2 and names the piece. Two plans may reuse a piece id, but not a branch
+(the tick shows a `clash`). No two pieces that can run at the same time share a file; the tick shows it when they do.
 
 ## The status line rows
 
