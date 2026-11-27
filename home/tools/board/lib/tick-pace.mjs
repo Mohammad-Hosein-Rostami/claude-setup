@@ -1,5 +1,5 @@
 // Purpose: the tick's `agents` and `job` lines (plan-core-best section 9, cb-pace-1), which answer "where are we, how long":
-//   the session's agents that run, by type, each with its name and age (or `quiet N min`), and one line per job with its
+//   the session's agents that run, by type, each with its name and age when known (or `quiet N min`), and one line per job with its
 //   progress and its measured pace: the median gap between the job's consecutive lands in the land ledger (the last MAX_GAPS)
 //   times the pieces not landed yet. The pace is never a guess: under MIN_LANDS lands it says it is unknown.
 // Exports: agentsLine(agents, nowMs) -> string, jobLine(job) -> string.
@@ -21,19 +21,23 @@ const clean = (text) => cleanText(text, PLAIN_LOOK);
 const sum = (numbers) => numbers.reduce((total, number) => total + number, 0);
 const wholeMinutes = (ms) => Math.max(0, Math.floor(ms / MS_PER_MIN)); // as agents.mjs counts them: a clock skew is 0, never negative
 
-/** One agent as the line names it: `<name> quiet N min` while quiet, else `<name> N min` since it started. */
+/**
+ * One agent as the line names it: `<name> quiet N min` while quiet, else `<name> N min` since it started, or `<name>` alone when
+ * its start time is unknown (repos.mjs placeAgents leaves `startMs` out of the board's agents), never `NaN min`.
+ */
 function agentText(agent, nowMs) {
-  const state = agent.state === QUIET ? `quiet ${agent.quietMin} min` : `${wholeMinutes(nowMs - agent.startMs)} min`;
-  return `${clean(agent.name)} ${state}`;
+  const name = clean(agent.name);
+  if (agent.state === QUIET) return `${name} quiet ${agent.quietMin} min`;
+  return Number.isFinite(agent.startMs) ? `${name} ${wholeMinutes(nowMs - agent.startMs)} min` : name;
 }
 
 /**
  * The `agents` line: how many of the session's agents run (quiet ones included), by type in the board's order, each type with
  * its count and the names of its agents, at most MAX_NAMES names in all and then `; +<n> more`.
- * @param {{ type: string, name: string, state: string, quietMin: number, startMs: number }[]} agents the board's agents
- *   (agents.mjs sessionAgents: running first, then newest), done ones included
+ * @param {{ type: string, name: string, state: string, quietMin: number, startMs?: number }[]} agents the board's agents
+ *   (agents.mjs sessionAgents: running first, then newest), done ones included; `startMs` absent when the start is unknown
  * @param {number} nowMs the time the ages are counted to
- * @returns {string} `agents <n> running: <type> <n> (<name> <n> min, ...), ...[; +<n> more]`, or `agents none running`
+ * @returns {string} `agents <n> running: <type> <n> (<name>[ <n> min], ...), ...[; +<n> more]`, or `agents none running`
  */
 export function agentsLine(agents, nowMs) {
   const live = agents.filter((agent) => agent.state !== DONE);

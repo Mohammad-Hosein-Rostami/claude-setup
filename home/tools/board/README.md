@@ -73,7 +73,7 @@ plans list: <file> <problem>; delete it to start the list again
 job <slug> done (forgotten|not forgotten: <why>)
 ledger <n> bad lines skipped
 ledger unreadable (<why>): no piece counts as landed
-agents <n> running: <type> <n> (<name> <n> min|<name> quiet N min, ...), ...[; +<n> more]|agents none running
+agents <n> running: <type> <n> (<name>[ <n> min]|<name> quiet N min, ...), ...[; +<n> more]|agents none running
 job <slug> (<abs pieces.json>): <n>/<n> landed, <n> in lanes, <n> waiting; <n>/<n> features checked; about <n> min per land (last <n>) -> about <n> h for <n> left|pace unknown (fewer than 2 lands)
 sync running|never|ok at <sha>|failed[ at <sha>]: <first problem> (<n> times since <HH:MM>)|incomplete at <sha>: <machine> behind, ...|record unreadable (<why>)|state unknown (<why>)
 next: <n> steps (dev <n>/3, tess <n>/3; these replace every earlier do line)
@@ -147,7 +147,8 @@ do <n>: sync failed <n> times since <HH:MM> (<first problem>): tell the owner on
   is no finding (the exit is unchanged); a land whose files git cannot list is exit 2.
 - **agents**: the session's agents that run (quiet ones included; done ones are not counted), by type in the board's order,
   each type with its count and its agents' names (the description they were started with), each with the minutes since it
-  started, or `quiet N min` while it is quiet; at most 6 names in all, then `; +<n> more`.
+  started (left out when the board does not know its start), or `quiet N min` while it is quiet; at most 6 names in all, then
+  `; +<n> more`.
 - **job**: each job the tick reads, with its plan file: its pieces landed, in a lane and waiting (in the queue), its features
   checked by tess, and its measured pace: the median gap between the job's consecutive lands in the land ledger (the newest 6
   gaps, `last <n>` says how many) times the pieces not landed yet (those in lanes included), in minutes, from an hour on in
