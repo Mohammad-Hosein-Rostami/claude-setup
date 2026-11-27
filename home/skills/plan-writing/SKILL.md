@@ -55,9 +55,9 @@ exits 2 when the plan it is given with `--plan` has an empty `files`, an `after`
 
 `base`: the sha the plan was first written on (a re-plan keeps it). `branch`: only for a `Fix:` on an existing repro branch or
 a test branch the owner asked for. `waits`: another job's branches that must land first (at most 16); the tick checks each
-name but does not hold the piece back yet, so the report names each for the boss. No other field. Ids start with a short job
-prefix, and every other piece's branch, `lane/<id>`, is new: `git branch --list '<branch>'` and `grep -l '"branch":"<branch>"'
-~/.claude/state/land/*.jsonl` print nothing.
+name and holds the piece back until each branch has a land in the repo's land ledger (its `queue` line shows `waits <branch>`
+for the rest). No other field. Ids start with a short job prefix, and every other piece's branch, `lane/<id>`, is new: `git
+branch --list '<branch>'` and `grep -l '"branch":"<branch>"' ~/.claude/state/land/*.jsonl` print nothing.
 
 ## Contact check
 
