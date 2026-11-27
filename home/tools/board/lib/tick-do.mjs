@@ -35,6 +35,8 @@ const CHECK = 'node ~/.claude/tools/git-tidy/git-tidy.mjs check';
 const LAND_IF = 'if its report says done, or partial with safe to land: yes (re-queue its open lines as a piece); never a blocked one';
 // the tick does not know a repository's test command: copied as printed, land runs `<suite>`, which fails, so it lands nothing
 const SUITE_PLACEHOLDER = "'<suite>'";
+// sync-record.mjs: a target ssh did not reach has the problem `unreachable: ...`, or `<machine>: unreachable: ...`
+const UNREACHABLE = 'unreachable:';
 // cleanText reads only `ascii` from a look: these lines keep non-ASCII names as they are and carry no colour
 const PLAIN_LOOK = { ascii: false };
 
@@ -137,12 +139,17 @@ function failedSinceText(record) {
 }
 
 const isReadable = (record) => record !== null && record.unreadable === undefined;
-/** The machines a base run has not synced to `sha`, in the record's order. */
-const behindAt = (record, sha) => record.machines.filter((entry) => !(entry.ok && entry.sha === sha)).map((entry) => clean(entry.machine));
+/** The machine entries a base run has not synced to `sha`, in the record's order. */
+const behindAt = (record, sha) => record.machines.filter((entry) => !(entry.ok && entry.sha === sha));
+const namesOf = (entries, state) => entries.map((entry) => `${clean(entry.machine)} ${state}`).join(', ');
+const isUnreachable = (entry) => entry.problem.startsWith(UNREACHABLE) || entry.problem.startsWith(`${entry.machine}: ${UNREACHABLE}`);
+/** Whether every behind machine was out of ssh's reach: a sync again cannot reach it until it is woken. */
+const isOnlyUnreachable = (behind) => behind.length > 0 && behind.every(isUnreachable);
 
 /**
  * The sync line: a failing sync with its count and retry, else a sync while a machine is not at the base's tip (or none was
- * recorded); nothing while a sync runs, its lock cannot be read, or the repository's path is one sync refuses.
+ * recorded); nothing while a sync runs, its lock cannot be read, the repository's path is one sync refuses, or the last run was
+ * at the base's tip and every machine it left behind was unreachable (the `sync` status line says to wake it).
  */
 function syncSteps(tick) {
   const { sync, main } = tick;
@@ -154,15 +161,18 @@ function syncSteps(tick) {
     return [step('sync-failed', text, command)];
   }
   if (isReadable(record) && record.ok && record.sha === main.sha) return [];
+  const behind = isReadable(record) ? behindAt(record, main.sha) : [];
+  // the sync line says to wake it first: a retry at the same sha would fail on it again after every tick
+  if (isReadable(record) && record.sha === main.sha && isOnlyUnreachable(behind)) return [];
   let synced = 'never';
   if (record !== null) synced = isReadable(record) && record.sha !== '' ? short(record.sha) : 'unknown';
-  const behind = isReadable(record) ? behindAt(record, main.sha).map((machine) => `${machine} behind`) : [];
-  return [step('sync', `sync in the background (base ${short(main.sha)}, synced ${synced}${behind.length === 0 ? '' : `; ${behind.join(', ')}`})`, command)];
+  return [step('sync', `sync in the background (base ${short(main.sha)}, synced ${synced}${behind.length === 0 ? '' : `; ${namesOf(behind, 'behind')}`})`, command)];
 }
 
 /**
  * The `sync` status line, only in the setup's own repository (tick.mjs syncFacts): running, never, ok at a sha, failed with its
- * first problem and count, not every machine at the last run's sha, or a record or lock that cannot be read.
+ * first problem and count, not every machine at the last run's sha (each `unreachable` with what to do when ssh reached none of
+ * them, else each `behind`), or a record or lock that cannot be read.
  * @param {{ sync: object | null }} tick the tick's facts
  * @returns {string | null} the line, or null outside the setup's own repository
  */
@@ -176,7 +186,9 @@ export function syncLine({ sync }) {
   const at = record.sha === '' ? '' : ` at ${short(record.sha)}`;
   if (record.failures > 0) return `sync failed${at}: ${firstProblem(record)} (${plural(record.failures, 'time')} since ${failedSinceText(record)})`;
   if (record.ok) return `sync ok${at}`;
-  return `sync incomplete${at}: ${behindAt(record, record.sha).map((machine) => `${machine} behind`).join(', ')}`;
+  const behind = behindAt(record, record.sha);
+  if (isOnlyUnreachable(behind)) return `sync incomplete${at}: ${namesOf(behind, 'unreachable')} (wake ${behind.length === 1 ? 'it' : 'them'} and turn on Remote Login, then sync)`;
+  return `sync incomplete${at}: ${namesOf(behind, 'behind')}`;
 }
 
 /** The `next:` header: what holds the steps back, or how many there are; `nothing to do now` only with none. */
