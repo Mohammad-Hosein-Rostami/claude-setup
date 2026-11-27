@@ -58,7 +58,7 @@ const state = (repo, worktree) => snapshot(repo, worktree);
 
 test('two lanes that changed the same file land with no --test: exit 0, both edits on main in a straight line, no test run', () => {
   const { repo, worktree } = overlapRepo();
-  const result = land(repo);
+  const result = land(repo, '--no-tick');
   assert.equal(result.status, 0, result.stderr);
   const tip = git(repo, 'rev-parse', 'main');
   assert.deepEqual(outputLines(result.stdout), [

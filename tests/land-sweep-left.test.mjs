@@ -27,7 +27,7 @@ const NO_HANG_MS = 30_000;
 
 /** Lands `branch` from `repo` and returns its output lines after the three of the landing itself (landed, worktree, branch). */
 function sweepLines(repo, branch) {
-  const result = land([branch, '--repo', repo], repo);
+  const result = land([branch, '--repo', repo, '--no-tick'], repo);
   assert.equal(result.status, 0, result.stderr);
   return outputLines(result.stdout).slice(3);
 }
@@ -90,7 +90,7 @@ test('u: the base, live and idle lanes and a lane with its own commit on top of 
 function landWithUnsafeLog(spoil) {
   const { repo, laneTree, testTree, laneTip, testTip } = laneSquashedOnTestBranch();
   spoil(logPath(repo));
-  const result = spawnSync(process.execPath, [LAND, 'test/x', '--repo', repo], { cwd: repo, encoding: 'utf8', env: CLEAN_ENV, timeout: NO_HANG_MS });
+  const result = spawnSync(process.execPath, [LAND, 'test/x', '--repo', repo, '--no-tick'], { cwd: repo, encoding: 'utf8', env: CLEAN_ENV, timeout: NO_HANG_MS });
   assert.equal(result.error, undefined, `land did not exit within ${NO_HANG_MS} ms`);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stderr, /^land: test\/x landed on main at [0-9a-f]+ and was removed; the clean-up of other branches was skipped: the deletion log .+\n$/);

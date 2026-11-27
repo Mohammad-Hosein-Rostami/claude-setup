@@ -28,7 +28,7 @@ function laneBehindBase({ laneFile = 'lane.txt', laneText = 'lane', baseFile = '
 test('a lane in a locked worktree is rebased onto the moved base, fast-forwarded, and its worktree and branch are deleted', () => {
   const { repo, worktree } = laneBehindBase();
   git(repo, 'worktree', 'lock', worktree);
-  const result = land([LANE, '--repo', repo], repo);
+  const result = land([LANE, '--repo', repo, '--no-tick'], repo);
   assert.equal(result.status, 0, result.stderr);
   const tip = git(repo, 'rev-parse', 'main');
   assert.deepEqual(result.stdout.trim().split('\n'), [`landed ${LANE} on main at ${tip} (1 commit(s))`, `removed worktree ${worktree}`, `deleted branch ${LANE}`, 'left: none']);
@@ -68,7 +68,7 @@ test('a branch with no worktree is rebased in the base checkout, which ends on t
   commit(worktree, 'plain.txt');
   git(repo, 'worktree', 'remove', worktree);
   commit(repo, 'other.txt');
-  const result = land(['feat/plain'], repo);
+  const result = land(['feat/plain', '--no-tick'], repo);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /^landed feat\/plain on main at [0-9a-f]{40} \(1 commit\(s\)\)\ndeleted branch feat\/plain\nleft: none\n$/);
   assert.equal(git(repo, 'symbolic-ref', '--short', 'HEAD'), 'main');

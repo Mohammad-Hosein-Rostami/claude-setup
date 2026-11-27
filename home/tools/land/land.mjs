@@ -2,11 +2,12 @@
 // Purpose: land one lane on its base branch with one command: rebase the lane onto the base, optionally test the rebased tip,
 //   fast-forward the base checkout to it and record that in the land ledger (ledger.mjs), then clear the lane away (a pool folder
 //   of `git-tidy lane claim` is kept for the next lane, any other worktree is removed) and delete its branch, then every other
-//   branch whose content is all on the base, and print what is left and why (sweep.mjs). It runs no review.
-// Usage: node ~/.claude/tools/land/land.mjs <branch> [--repo <path>] [--test <command>] [--test-timeout <seconds>]
+//   branch whose content is all on the base, and print what is left and why (sweep.mjs), then the tick of the base checkout
+//   (tick-after.mjs: `board tick` with the remembered plans), so the next round shows at once. It runs no review.
+// Usage: node ~/.claude/tools/land/land.mjs <branch> [--repo <path>] [--test <command>] [--test-timeout <seconds>] [--no-tick]
 //   --repo is the base checkout (the folder where the base branch is checked out), default the current folder; the base is the
 //   branch checked out there, never a lane (a branch with a lane record, ../git-tidy/lib/base-record.mjs). --test runs
-//   <command> in the lane's worktree at the rebased tip; a failing test refuses the land.
+//   <command> in the lane's worktree at the rebased tip; a failing test refuses the land. --no-tick prints no tick.
 // Exports: none (a CLI). Exit codes: 0 landed, 1 refused or stopped (the message says why and what to do), 2 usage error.
 // Invariants:
 // - Nothing changes before every check passed: an unknown branch, a dirty or half-merged base checkout or lane worktree, or a
@@ -30,11 +31,16 @@
 // - The land ledger gets one line per landing, written only after the fast-forward. A base that moved always gets its line. A
 //   base that did not move gets none when the ledger already has a line for the branch at a sha the base holds: that is a
 //   re-run after a clean-up stop, also when other lanes moved the base before it. Otherwise (a lane with no new commit) it gets
-//   a line with 0 commits, so a reader sees the lane as landed. A line that cannot be written, or a ledger that cannot be
-//   checked, is one stderr warning each, and the landing goes on and exits 0.
+//   a line with 0 commits, so a reader sees the lane as landed. A ledger that cannot be checked is one stderr warning, and the
+//   landing goes on. A line that cannot be written is a warning and stops the landing before the clean-up: the lane's branch and
+//   folder are kept (without the line the tick would show the piece as still waiting) and land exits 1 with `landed but not
+//   recorded`; a re-run lands nothing new and writes the line.
 // - The clean-up after the landing runs `git-tidy prune --apply` over the repository: a branch goes only when its tip is on
 //   the base or merging it would change nothing, and only after it is written to the deletion log. A clean-up that fails (a
 //   deletion log that is not a regular file) is printed on stderr and removes nothing more; the landing stands and exits 0.
+// - The tick prints whenever `landed ...` was printed (the base moved), also when land then exits 1, and only when the base that
+//   moved is the base the tick reads (the main checkout's branch); else one `tick skipped:` line. It never changes land's exit: a
+//   tick that fails is one `tick failed:` line on stderr. A refusal before the fast-forward prints no tick.
 import { realpathSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { LANE_BASE_KEY, markBase, readLaneBase } from '../git-tidy/lib/base-record.mjs';
@@ -49,7 +55,7 @@ import { MAX_TIMEOUT_SECONDS } from './run-test.mjs';
 import { sweepRepo } from './sweep.mjs';
 import { testRebasedTip } from './test-gate.mjs';
 
-const USAGE = 'usage: node ~/.claude/tools/land/land.mjs <branch> [--repo <path>] [--test <command>] [--test-timeout <seconds>]';
+const USAGE = 'usage: node ~/.claude/tools/land/land.mjs <branch> [--repo <path>] [--test <command>] [--test-timeout <seconds>] [--no-tick]';
 const HEADS = 'refs/heads/';
 const EXIT_LANDED = 0;
 const EXIT_REFUSED = 1;
@@ -58,6 +64,7 @@ const EXIT_USAGE = 2;
 const DEFAULT_TEST_TIMEOUT_SECONDS = 30 * 60;
 // The options that take a value, and what each value is (for the usage error when it is missing).
 const OPTION_VALUES = { '--repo': 'a folder', '--test': 'a command', '--test-timeout': 'a number of seconds' };
+const NO_TICK = '--no-tick';
 
 /** The --test-timeout value as whole seconds; anything but a whole number from 1 to MAX_TIMEOUT_SECONDS is a UsageError. */
 function parseSeconds(text) {
@@ -68,15 +75,18 @@ function parseSeconds(text) {
 }
 
 /**
- * The parsed command line: `{ branch, repo, test, testTimeoutSeconds }` (`repo` defaults to the current folder, `test` to null).
- * Anything else is a UsageError.
+ * The parsed command line: `{ branch, repo, test, testTimeoutSeconds, tick }` (`repo` defaults to the current folder, `test` to
+ * null, `tick` to true). Anything else is a UsageError.
  */
 function parseArgs(argv) {
   const positional = [];
   const values = {};
+  let tick = true;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
-    if (Object.hasOwn(OPTION_VALUES, arg)) {
+    if (arg === NO_TICK) {
+      tick = false;
+    } else if (Object.hasOwn(OPTION_VALUES, arg)) {
       if (argv[i + 1] === undefined) throw new UsageError(`${arg} needs ${OPTION_VALUES[arg]}\n${USAGE}`);
       values[arg] = argv[i + 1];
       i += 1;
@@ -93,6 +103,7 @@ function parseArgs(argv) {
     repo: resolve(values['--repo'] ?? process.cwd()),
     test: values['--test'] ?? null,
     testTimeoutSeconds: values['--test-timeout'] === undefined ? DEFAULT_TEST_TIMEOUT_SECONDS : parseSeconds(values['--test-timeout']),
+    tick,
   };
 }
 
@@ -157,7 +168,7 @@ function rebaseLane({ dir, base }, branch, worktree, baseSha) {
       const aborted = runGit(where, ['rebase', '--abort']).status === 0;
       const back = worktree || runGit(dir, ['switch', '-q', base]).status === 0;
       const state = aborted && back ? `it was aborted, so ${branch} is as it was` : `finish or abort it by hand in ${where}, and check out ${base} in ${dir}`;
-      throw new LandRefusal(`the rebase of ${branch} onto ${base} stopped (${firstLine(result.stderr || result.stdout)}); ${state}. Rebase it by hand (git rebase ${base} in ${where}), then land again`);
+      throw new LandRefusal(`the rebase of ${branch} onto ${base} stopped (${firstLine(result.stderr || result.stdout)}); ${state}. Rebase it by hand (git rebase --reapply-cherry-picks ${base} in ${where}), then land again`);
     }
     if (!worktree) gitText(dir, ['switch', '-q', base]);
   }
@@ -256,8 +267,11 @@ function sweepAfter(checkout, branch, tip) {
   }
 }
 
-/** Lands `branch` on the base checked out at `repo`, printing one line per step. Throws LandRefusal when it refuses or stops. */
-async function land({ branch, repo, test, testTimeoutSeconds }) {
+/**
+ * Lands `branch` on the base checked out at `repo` up to the fast-forward and its `landed ...` line. Throws LandRefusal when it
+ * refuses or stops; nothing has moved then. Returns the landing for finishLanding.
+ */
+async function fastForwardLane({ branch, repo, test, testTimeoutSeconds }) {
   const checkout = openBase(repo);
   refuseUnclean('the base checkout', checkout.dir);
   const worktree = findLane(checkout, branch);
@@ -272,18 +286,47 @@ async function land({ branch, repo, test, testTimeoutSeconds }) {
   const count = gitText(checkout.dir, ['rev-list', '--count', `${baseSha}..${tip}`]);
   fastForward(checkout, branch, { baseSha, tip });
   console.log(`landed ${branch} on ${checkout.base} at ${tip} (${count} commit(s))`);
+  return { checkout, branch, baseSha, tip, count };
+}
+
+/**
+ * After the fast-forward: marks the base, writes the ledger line, clears the lane away and sweeps the other branches, printing
+ * one line per step. A ledger line that cannot be written throws LandRefusal before the clean-up: with the lane kept, a re-run
+ * records it (the tick counts a piece as landed only by its ledger line). A clean-up that stops throws LandRefusal (removeLane).
+ */
+function finishLanding({ checkout, branch, baseSha, tip, count }) {
   const markWarning = markBase(checkout.dir, checkout.base);
   if (markWarning !== null) console.error(`land: ${markWarning}`);
   const entry = { at: new Date().toISOString(), repo: checkout.dir, branch, from: baseSha, to: tip, commits: Number(count) };
   const ledgerWarning = isLandedBefore(checkout.dir, branch, { baseSha, tip }) ? null : appendLandEntry(checkout.dir, entry);
-  if (ledgerWarning !== null) console.error(ledgerWarning);
+  if (ledgerWarning !== null) {
+    console.error(ledgerWarning);
+    throw new LandRefusal(`landed but not recorded: the ledger line of ${branch} at ${tip} was not written (above), so its branch and folder are kept; run land again to record it`);
+  }
   for (const line of removeLane(checkout, branch, tip)) console.log(line);
   for (const line of sweepAfter(checkout, branch, tip)) console.log(line);
 }
 
-async function main(argv) {
+/**
+ * Prints the tick after a landing (tick-after.mjs printTickAfterLand). Never throws, so land's exit stays its own: a tick that
+ * fails, or a board module that fails to load (imported only here for that reason), is one `tick failed:` line on stderr.
+ */
+async function printTick(checkout) {
   try {
-    await land(parseArgs(argv));
+    const { printTickAfterLand } = await import('./tick-after.mjs');
+    printTickAfterLand(checkout);
+  } catch (error) {
+    console.error(`tick failed: ${firstLine(String(error?.message ?? error))}`);
+  }
+}
+
+async function main(argv) {
+  let options = null;
+  let landing = null;
+  try {
+    options = parseArgs(argv);
+    landing = await fastForwardLane(options);
+    finishLanding(landing);
     return EXIT_LANDED;
   } catch (error) {
     if (error instanceof UsageError) {
@@ -292,6 +335,9 @@ async function main(argv) {
     }
     console.error(error instanceof LandRefusal ? `land: ${error.message}` : error);
     return EXIT_REFUSED;
+  } finally {
+    // once `landed ...` printed, the base moved: the tick shows the next round, also after a stop in the clean-up (exit 1)
+    if (landing !== null && options.tick) await printTick(landing.checkout);
   }
 }
 

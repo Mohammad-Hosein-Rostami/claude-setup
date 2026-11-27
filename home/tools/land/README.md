@@ -6,11 +6,12 @@ Lands one lane on its base branch with one command and keeps history one straigh
 optionally tests the rebased tip, fast-forwards the base checkout to it with `git merge --ff-only` and writes one line to the
 land ledger (below), then clears the lane's folder away (a pool folder from `git-tidy lane claim` stays for the next lane, any
 other worktree is removed) and deletes its branch, then every other branch whose content is all on the base (one content
-proof, below), and ends with a `left:` list of the branches still there and why. It runs no review, and it never pushes.
+proof, below), prints a `left:` list of the branches still there and why, and ends with the tick of the base checkout
+(below). It runs no review, and it never pushes.
 Node 22, git, no dependencies. It replaces `land-lane` (plan 2026-11-24).
 
 ```sh
-node ~/.claude/tools/land/land.mjs <branch> [--repo <path>] [--test <command>] [--test-timeout <seconds>]
+node ~/.claude/tools/land/land.mjs <branch> [--repo <path>] [--test <command>] [--test-timeout <seconds>] [--no-tick]
 ```
 
 `--repo` is the base checkout: the folder where the base branch is checked out (default: the current folder). The base is the
@@ -42,7 +43,8 @@ Steps, in order; nothing changes until every check has passed:
    commit in common with the base is refused. With no test, in the
    lane's worktree, or, for a branch with no worktree, in the base checkout (which is switched back to the base after). With a
    test, in the lane's worktree on a detached HEAD, so the branch stays where it was.
-   A rebase that stops (a conflict) is aborted, so the lane is left as it was: rebase it by hand, then land again.
+   A rebase that stops (a conflict) is aborted, so the lane is left as it was: rebase it by hand
+   (`git rebase --reapply-cherry-picks <base>`), then land again.
 3. Test, only when `--test` is given (`test-gate.mjs`, `run-test.mjs`); a branch with no worktree to run it in is refused,
    and the refusal gives the step that makes one: `node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim --repo <dir>
    --branch <branch>` (a pool folder, kept for the next lane once it lands; the branch stays at its own tip), then land again. The command runs in the lane's worktree at the rebased tip. It fails on a non-zero exit, a
@@ -114,6 +116,20 @@ With no other branch the block is `left: none`. A lane in a pool folder prints
 `lane folder /path/to/.claude/worktrees/lane-1 detached at <full sha> (kept for the next lane)` in place of its
 `removed worktree` line.
 
+## The tick after a landing
+
+Once `landed ...` is printed the base has moved, so land then prints a `tick:` line and the output of
+`board tick --repo <base checkout>` with the plans the repository's ticks remember (`../board/README.md`, "tick"), run in the
+same process (`tick-after.mjs`): the boss sees the next round without a second call. The tick reads the session's board after
+one forced refresh (the session id is `CLAUDE_CODE_SESSION_ID`; with none, the lanes show no agents). It prints also when land
+exits 1 after the fast-forward (a clean-up that stopped, a ledger line not written), and never after a refusal before it.
+
+- `--no-tick` prints no tick.
+- The tick reads the branch checked out in the main checkout as its base. A land on another base (from a linked checkout)
+  prints `tick skipped: landed on <base>, the main checkout is on <branch>` instead.
+- A tick that fails prints `tick failed: <first line of its error>` on stderr. The tick never changes land's exit code; a
+  tick with findings (its own exit 1) prints in full.
+
 ## Land ledger
 
 Each landing appends one JSON line, right after the fast-forward, to `~/.claude/state/land/<repo-key>.jsonl` (`~` is the
@@ -134,8 +150,11 @@ writes with `appendLandEntry`, a reader uses `readLandEntries` (it skips and cou
 and `landLedgerPath`.
 
 A line that cannot be written (a link, FIFO or folder at the path, a file that would pass its 32 MB cap, a disk error)
-never fails the landing: land prints one `land: the ledger line of <branch> was not written (<why>) ...` line on stderr and
-goes on (exit 0). A ledger that cannot be checked for an earlier line prints `land: the ledger could not be checked (<why>);
+stops land after the fast-forward: the base has moved, but without the line `board tick` would show the piece as still
+waiting. Land prints `land: the ledger line of <branch> was not written (<why>) ...` and `land: landed but not recorded: ...;
+run land again to record it` on stderr, keeps the lane's branch and folder (no clean-up, no sweep), prints the tick and exits 1.
+Running `land <branch>` again once the cause is gone lands nothing new (0 commits), writes the line and cleans up. A ledger
+that cannot be checked for an earlier line prints `land: the ledger could not be checked (<why>);
 ...` and the line is written. `git-tidy range <to sha>` finds that landing's range again from the base's reflog. The ledger is a plain
 state file: move it away or delete it to start again.
 
@@ -177,7 +196,7 @@ test passed on <full sha>
 | Exit | Meaning |
 | ---- | ------- |
 | 0 | landed and cleaned up |
-| 1 | refused or stopped; the `land:` line says why and what to do (a dirty checkout, an unknown branch, a lane claimed on another base, a rebase conflict, a failed or timed-out test, a lane, worktree or base that moved meanwhile, a clean-up step that failed after landing, a pool folder kept locked) |
+| 1 | refused or stopped; the `land:` line says why and what to do (a dirty checkout, an unknown branch, a lane claimed on another base, a rebase conflict, a failed or timed-out test, a lane, worktree or base that moved meanwhile, a ledger line not written after landing, a clean-up step that failed after landing, a pool folder kept locked) |
 | 2 | usage error |
 
 Git runs without a shell and without the variables that point it at another repository (`../git-tidy/lib/git.mjs`); the
@@ -187,4 +206,4 @@ worktree list and the clean checks are git-tidy's (`../git-tidy/lib/repo.mjs`), 
 `../long-run/lib/process-tree.mjs`; the pool folder detach is git-tidy's (`../git-tidy/lib/lane-pool.mjs`). Files: `land.mjs`
 (the CLI and its steps), `ledger.mjs` (the land ledger), `sweep.mjs` (step 6: the sweep and the `left:` block),
 `test-gate.mjs` (the test step), `run-test.mjs` (runs the command), `refusal.mjs` (the refusal and the
-clean check). Tests: `tests/land.test.mjs`, `tests/land-base.test.mjs` (the lane record and the mark), `tests/land-test-gate.test.mjs`, `tests/land-sweep*.test.mjs` (`land-sweep-strict` for the one rule), `tests/git-tidy-content-equal.test.mjs`.
+clean check), `tick-after.mjs` (the tick after a landing). Tests: `tests/land.test.mjs`, `tests/land-base.test.mjs` (the lane record and the mark), `tests/land-test-gate.test.mjs`, `tests/land-sweep*.test.mjs` (`land-sweep-strict` for the one rule), `tests/git-tidy-content-equal.test.mjs`.

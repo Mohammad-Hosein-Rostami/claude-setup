@@ -32,7 +32,7 @@ function rebaseDetached({ base }, branch, worktree, baseSha) {
     const aborted = runGit(where, ['rebase', '--abort']).status === 0;
     const back = runGit(where, ['switch', '-q', branch]).status === 0;
     const state = aborted && back ? `it was aborted, so ${branch} is as it was` : `finish or abort it by hand in ${where}, then run git switch ${branch} there`;
-    throw new LandRefusal(`the rebase of ${branch} onto ${base} stopped (${firstLine(result.stderr || result.stdout)}); ${state}. Rebase it by hand (git rebase ${base} in ${where}), then land again`);
+    throw new LandRefusal(`the rebase of ${branch} onto ${base} stopped (${firstLine(result.stderr || result.stdout)}); ${state}. Rebase it by hand (git rebase --reapply-cherry-picks ${base} in ${where}), then land again`);
   }
   return shaOf(where, 'HEAD');
 }
@@ -66,7 +66,7 @@ function restoreLane(worktree, branch, tip, error) {
 /** The refusal for a test that did not pass, with the last lines of its output. */
 function testFailure({ base }, branch, worktree, { command, tip, outcome }) {
   const tail = outcome.tail.length > 0 ? `\nlast ${outcome.tail.length} line(s) of the test output:\n${outcome.tail.join('\n')}` : '\nthe test printed nothing';
-  return new LandRefusal(`the test of ${tip} failed (${outcome.reason}): ${command}. Nothing landed: ${base} did not move and ${branch} is as it was. To see the failure, rebase it (git rebase ${base} in ${worktree.path}), fix it, then land again with --test${tail}`);
+  return new LandRefusal(`the test of ${tip} failed (${outcome.reason}): ${command}. Nothing landed: ${base} did not move and ${branch} is as it was. To see the failure, rebase it (git rebase --reapply-cherry-picks ${base} in ${worktree.path}), fix it, then land again with --test${tail}`);
 }
 
 /**

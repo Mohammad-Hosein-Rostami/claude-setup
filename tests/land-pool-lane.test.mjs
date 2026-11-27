@@ -1,6 +1,7 @@
 // Tests of land's pool-lane clean-up and land ledger (home/tools/land/land.mjs, ledger.mjs; boss-integrator design, U13): a lane
 // claimed from the pool is kept as a free folder, a lane outside the pool is removed as before, each landing appends one ledger line,
-// and a ledger that cannot be written or a nested repository in the lane's folder stops nothing it should not.
+// a ledger that cannot be written keeps the lane for a re-run, and a nested repository in the lane's folder stops nothing it
+// should not.
 // Every repository is a throw-away one in the OS temp folder (git-tidy-helpers.mjs) and every child gets its own temp HOME, so
 // the ledger goes to <HOME>/.claude/state/land/ there and never to the real ~/.claude.
 import assert from 'node:assert/strict';
@@ -148,19 +149,20 @@ test('a lane outside the pool is still removed with its branch after landing', (
   assert.equal(ledgerLines(home, repo).length, 1, 'a lane outside the pool is in the ledger too');
 });
 
-test('a ledger that cannot be written is one warning line: the landing stands and exits 0', () => {
+test('a ledger that cannot be written stops land after the landing: exit 1, and the lane is kept so a re-run records it', () => {
   const { repo, folder, mainBefore } = plainLane();
   const home = makeHome();
   writeFileSync(join(home, '.claude'), 'a file where the ledger folder should be');
-  const result = landWith(home, [LANE, '--repo', repo], repo);
-  assert.equal(result.status, 0, result.stderr);
+  const result = landWith(home, [LANE, '--repo', repo, '--no-tick'], repo);
+  assert.equal(result.status, 1, result.stderr);
   const warnings = lines({ stdout: result.stderr });
-  assert.equal(warnings.length, 1, result.stderr);
+  assert.equal(warnings.length, 2, result.stderr);
   assert.match(warnings[0], /^land: the ledger line of lane\/x was not written \(/);
+  assert.match(warnings[1], /^land: landed but not recorded: .+; run land again to record it$/);
   assert.notEqual(headOf(repo), mainBefore, 'main moved');
   assert.equal(headOf(repo), git(repo, 'rev-parse', 'main'));
-  assert.equal(existsSync(folder), false, 'the clean-up went on');
-  assert.equal(branchExists(repo, LANE), false);
+  assert.equal(existsSync(folder), true, 'no clean-up: the lane folder is kept');
+  assert.equal(branchExists(repo, LANE), true, 'no clean-up: the lane branch is kept');
   assert.match(result.stdout, /^landed lane\/x on main at [0-9a-f]{40} \(1 commit\(s\)\)$/m);
 });
 

@@ -41,7 +41,7 @@ function laneWithUnrelatedCommit(repo) {
 
 /** Lands lane/L from `repo`; returns the spawn result and its stdout and stderr in one text for failure messages. */
 function landLane(repo) {
-  const result = land(['lane/L', '--repo', repo], repo);
+  const result = land(['lane/L', '--repo', repo, '--no-tick'], repo);
   return { result, said: `stdout:\n${result.stdout}\nstderr:\n${result.stderr}` };
 }
 

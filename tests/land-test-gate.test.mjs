@@ -181,7 +181,7 @@ test('a passing --test lands the sha the test saw', () => {
   const { repo, worktree } = overlapRepo();
   const seen = join(repo, '..', 'seen-head.txt');
   const command = recordHeadCommand(repo, seen);
-  const result = land([LANE, '--repo', repo, '--test', command], { cwd: repo });
+  const result = land([LANE, '--repo', repo, '--test', command, '--no-tick'], { cwd: repo });
   assert.equal(result.status, 0, result.stderr);
   const tip = git(repo, 'rev-parse', 'main');
   assert.equal(readFileSync(seen, 'utf8'), tip, 'the test ran on the sha that landed');
@@ -224,7 +224,7 @@ test('a failing --test is refused with its exit code and only its last 40 output
   assert.equal(result.status, 1, result.stdout);
   const tip = testedSha(result.stdout);
   assertRebasedOnto(repo, tip, before[0]);
-  assert.ok(result.stderr.startsWith(`land: the test of ${tip} failed (exit 1): ${command}. Nothing landed: main did not move and ${LANE} is as it was. To see the failure, rebase it (git rebase main in ${worktree}), fix it, then land again with --test`), result.stderr);
+  assert.ok(result.stderr.startsWith(`land: the test of ${tip} failed (exit 1): ${command}. Nothing landed: main did not move and ${LANE} is as it was. To see the failure, rebase it (git rebase --reapply-cherry-picks main in ${worktree}), fix it, then land again with --test`), result.stderr);
   const shown = outputLines(result.stderr);
   const tailStart = shown.indexOf(`last ${TAIL_LINES} line(s) of the test output:`);
   assert.notEqual(tailStart, -1, result.stderr);
@@ -238,13 +238,13 @@ test('a failing --test is refused with its exit code and only its last 40 output
 
 test('with a lane that only the base moved past, no --test lands without testing, a passing --test lands and a failing one is refused', () => {
   const plain = laneBehindBase();
-  const untested = land([LANE, '--repo', plain.repo], { cwd: plain.repo });
+  const untested = land([LANE, '--repo', plain.repo, '--no-tick'], { cwd: plain.repo });
   assert.equal(untested.status, 0, untested.stderr);
   const plainTip = git(plain.repo, 'rev-parse', 'main');
   assert.deepEqual(outputLines(untested.stdout), [`landed ${LANE} on main at ${plainTip} (1 commit(s))`, `removed worktree ${plain.worktree}`, `deleted branch ${LANE}`, 'left: none']);
 
   const passing = laneBehindBase();
-  const tested = land([LANE, '--repo', passing.repo, '--test', PASS], { cwd: passing.repo });
+  const tested = land([LANE, '--repo', passing.repo, '--test', PASS, '--no-tick'], { cwd: passing.repo });
   assert.equal(tested.status, 0, tested.stderr);
   const tip = git(passing.repo, 'rev-parse', 'main');
   assert.deepEqual(outputLines(tested.stdout), [
@@ -429,7 +429,7 @@ test('a --test on a branch with no worktree is refused before anything changes; 
   // Regression guard: the same shape with no --test lands as before.
   const plain = laneBehindBase();
   git(plain.repo, 'worktree', 'remove', plain.worktree);
-  const landed = land([LANE, '--repo', plain.repo], { cwd: plain.repo });
+  const landed = land([LANE, '--repo', plain.repo, '--no-tick'], { cwd: plain.repo });
   assert.equal(landed.status, 0, landed.stderr);
   assert.match(landed.stdout, /^landed feat\/lane on main at [0-9a-f]{40} \(1 commit\(s\)\)\ndeleted branch feat\/lane\nleft: none\n$/);
 });

@@ -44,7 +44,7 @@ function testFastForwardedThenRebased({ baseMovesAgain = false, edit = true } = 
 
 test('a: a lane continued on a test branch and squashed with it is deleted with its clean worktree when the test branch lands', () => {
   const { repo, laneTree, testTree, laneTip, testTip } = laneSquashedOnTestBranch();
-  const result = land(['test/x', '--repo', repo], repo);
+  const result = land(['test/x', '--repo', repo, '--no-tick'], repo);
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(outputLines(result.stdout), [
     `landed test/x on main at ${testTip} (1 commit(s))`,
@@ -62,7 +62,7 @@ test('a: a lane continued on a test branch and squashed with it is deleted with 
 // Safety (tess D-R2/D-R3 class): the lane's commit was fixed up, so its content (feature v1) is on no branch once test/x lands.
 test('a: a lane whose commit the landed test branch fixed up by autosquash stays with its worktree, named under left:', () => {
   const { repo, laneTree, laneTip } = laneFixedOnTestBranch();
-  const result = land(['test/x', '--repo', repo], repo);
+  const result = land(['test/x', '--repo', repo, '--no-tick'], repo);
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(outputLines(result.stdout).slice(3), ['left:', '  lane/x: active, ahead 1']);
   assert.equal(tipOf(repo, 'lane/x'), laneTip);
@@ -80,7 +80,7 @@ test('q: the logged deletion names the sha that restores the deleted branch at t
 
 test('b: a test branch fast-forwarded into the lane, then rewritten by a rebase with an edit, stays when the lane lands', () => {
   const { repo, testTree, testTip } = testFastForwardedThenRebased();
-  const result = land([LANE, '--repo', repo], repo);
+  const result = land([LANE, '--repo', repo, '--no-tick'], repo);
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(outputLines(result.stdout).slice(3), ['left:', `  ${TEST}: active, ahead 1`]);
   assert.equal(tipOf(repo, TEST), testTip);
@@ -90,7 +90,7 @@ test('b: a test branch fast-forwarded into the lane, then rewritten by a rebase 
 test('s: with --test, a test branch the lane carried unchanged through two rebases is deleted after the landing', () => {
   // The base moved, so the gate rebases the lane again; the test commit's patch is on the base unchanged.
   const { repo, laneTree, testTree, testTip } = testFastForwardedThenRebased({ baseMovesAgain: true, edit: false });
-  const result = land([LANE, '--repo', repo, '--test', PASS], repo);
+  const result = land([LANE, '--repo', repo, '--test', PASS, '--no-tick'], repo);
   assert.equal(result.status, 0, result.stderr);
   const tip = git(repo, 'rev-parse', 'main');
   assert.deepEqual(outputLines(result.stdout), [
@@ -115,7 +115,7 @@ test('c: a cherry-picked fold that was amended after the pick stays: its content
   writeFileSync(join(laneTree, 'shared.test.txt'), 'amended check\n');
   git(laneTree, 'commit', '-q', '-a', '--amend', '--no-edit');
   backdate(testTree);
-  const result = land([LANE, '--repo', repo], repo);
+  const result = land([LANE, '--repo', repo, '--no-tick'], repo);
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(outputLines(result.stdout).slice(3), ['left:', `  ${TEST}: active, ahead 1`]);
   assert.equal(tipOf(repo, TEST), testTip);
@@ -129,7 +129,7 @@ test('c: a plain cherry-pick of a test branch is deleted with its worktree when 
   commit(laneTree, 'lane.txt');
   git(laneTree, 'cherry-pick', testTip);
   backdate(testTree);
-  const result = land([LANE, '--repo', repo], repo);
+  const result = land([LANE, '--repo', repo, '--no-tick'], repo);
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(outputLines(result.stdout).slice(3), [`removed worktree ${testTree}`, `deleted ${TEST} (was ${testTip})`, 'left: none']);
 });
@@ -145,7 +145,7 @@ test('d: a lower stacked lane whose commit the top fixed by autosquash stays wit
   git(topTree, 'commit', '-q', '-a', `--fixup=${lowerFirst}`);
   git(topTree, '-c', KEEP_TODO, 'rebase', '-q', '-i', '--autosquash', 'main');
   backdate(lowerTree);
-  const result = land(['lane/top', '--repo', repo], repo);
+  const result = land(['lane/top', '--repo', repo, '--no-tick'], repo);
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(outputLines(result.stdout).slice(3), ['left:', '  lane/s: active, ahead 1']);
   assert.equal(tipOf(repo, 'lane/s'), lowerTip);
@@ -162,7 +162,7 @@ test('f: a lane reset with --soft and recommitted after folding a test branch de
   git(laneTree, 'merge', '--ff-only', '-q', TEST);
   git(laneTree, 'reset', '-q', '--soft', 'main');
   git(laneTree, 'commit', '-q', '-m', 'lane and its test in one commit');
-  const result = land([LANE, '--repo', repo], repo);
+  const result = land([LANE, '--repo', repo, '--no-tick'], repo);
   assert.equal(result.status, 0, result.stderr);
   const tip = git(repo, 'rev-parse', 'main');
   assert.deepEqual(outputLines(result.stdout), [
@@ -195,7 +195,7 @@ test('R2: a test branch whose patch id equals a lane commit that changed another
   backdate(testTree);
   const laneTip = tipOf(repo, LANE);
   assert.equal(patchIdOf(repo, testTip), patchIdOf(repo, laneTip), 'precondition: the two commits have one patch id');
-  const result = land([LANE, '--repo', repo], repo);
+  const result = land([LANE, '--repo', repo, '--no-tick'], repo);
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(outputLines(result.stdout).slice(3), ['left:', `  ${TEST}: active, ahead 1`]);
   assert.equal(tipOf(repo, TEST), testTip);
