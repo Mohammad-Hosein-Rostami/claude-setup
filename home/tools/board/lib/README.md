@@ -24,6 +24,8 @@ The boss's sync (`tick`, run by hand after every agent report and every land):
   (each with its piece's declared files, and the holds on them), and for each remembered job its queue, features due for tess
   and holds.
 - `tick-lines.mjs`: the tick's plain lines from those facts, ending with the `next:` header and its `do` lines.
+- `tick-pace.mjs`: the `agents` line (the session's agents that run, by type, with names and ages) and each job's `job` line
+  (pieces landed, in lanes and waiting, features checked, and the pace measured from the job's lands in the land ledger).
 - `tick-do.mjs`: the steps to run next, in order (land, resume, release, start dev, start tess, test branches, sync), each with
   the exact command, and the `sync` line.
 - `sync-record.mjs`: the sync record `scripts/sync-machines.mjs` writes after each run and the tick reads, sync's repo-path

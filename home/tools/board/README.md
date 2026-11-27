@@ -51,8 +51,9 @@ printed once), or by `--forget-plan <abs>` (`forgot <path>`, or `<path> was not 
 The lines (`lib/tick.mjs`), every branch name, path and agent name cleaned of control characters; `queue` and `features` print
 for each job the tick reads (none before the first `--plan`), `tests not landed` only when a test branch is left, `ledger` only
 when the land ledger has lines it cannot parse or cannot be read at all, `hold` only for a held feature, `sync` only in the
-setup's own repository. With two or more jobs, each job's `queue`, `features`, `commits` and `hold` lines and its part of the
-`base` line start with `<job>: `. The tick ends with the `next:` header and its numbered `do` lines (`lib/tick-do.mjs`):
+setup's own repository; `agents` always, and one `job` line per job (`lib/tick-pace.mjs`). With two or more jobs, each job's
+`queue`, `features`, `commits` and `hold` lines and its part of the `base` line start with `<job>: ` (a `job` line names its job
+itself). The tick ends with the `next:` header and its numbered `do` lines (`lib/tick-do.mjs`):
 
 ```text
 base <name> <sha> <clean|dirty>, <one line|not one line> (git-tidy check 0|1: <count> <kind>, ...)[, <n> landed since tess round at <sha>]
@@ -72,6 +73,8 @@ plans list: <file> <problem>; delete it to start the list again
 job <slug> done (forgotten|not forgotten: <why>)
 ledger <n> bad lines skipped
 ledger unreadable (<why>): no piece counts as landed
+agents <n> running: <type> <n> (<name> <n> min|<name> quiet N min, ...), ...[; +<n> more]|agents none running
+job <slug> (<abs pieces.json>): <n>/<n> landed, <n> in lanes, <n> waiting; <n>/<n> features checked; about <n> min per land (last <n>) -> about <n> h for <n> left|pace unknown (fewer than 2 lands)
 sync running|never|ok at <sha>|failed[ at <sha>]: <first problem> (<n> times since <HH:MM>)|incomplete at <sha>: <machine> behind, ...|record unreadable (<why>)|state unknown (<why>)
 next: <n> steps (dev <n>/3, tess <n>/3; these replace every earlier do line)
 next: nothing to do now; <n> agents running (dev <n>/3, tess <n>/3)
@@ -142,6 +145,14 @@ do <n>: sync failed <n> times since <HH:MM> (<first problem>): tell the owner on
   with either verdict: a `must-fix` frees the files for the fix piece, whose land holds them again. Holds count across every
   job the tick reads: a piece on a held file shows `held by <feature>` and is not startable, a lane on one is not ready. A hold
   is no finding (the exit is unchanged); a land whose files git cannot list is exit 2.
+- **agents**: the session's agents that run (quiet ones included; done ones are not counted), by type in the board's order,
+  each type with its count and its agents' names (the description they were started with), each with the minutes since it
+  started, or `quiet N min` while it is quiet; at most 6 names in all, then `; +<n> more`.
+- **job**: each job the tick reads, with its plan file: its pieces landed, in a lane and waiting (in the queue), its features
+  checked by tess, and its measured pace: the median gap between the job's consecutive lands in the land ledger (the newest 6
+  gaps, `last <n>` says how many) times the pieces not landed yet (those in lanes included), in minutes, from an hour on in
+  hours (`under 1 min` below a minute; `none left` once every piece landed). Under 2 lands it says
+  `pace unknown (fewer than 2 lands)`; it never guesses. No finding (the exit is unchanged).
 - **sync**: only in the setup's own repository (the one holding the running board code) with `scripts/sync-machines.mjs`: the
   sync record `sync-machines.mjs` writes after each run (`lib/sync-record.mjs`), so a failed sync stays on screen. A machine is
   synced only at the base's tip by a base run, never by a `--tag` run. No finding (the exit is unchanged).
@@ -170,7 +181,8 @@ repository and job, in `~/.claude/state/board/repos/<repo-key>/marks-<job>.json`
 `done` included), written through a temp file and a rename under a lock file; delete the file to forget them. An older
 `~/.claude/state/board/jobs/<job>.json` is read while the new file is not there yet, and never written: the next mark copies its
 marks into the new file. `--json` prints every fact as one JSON object (lanes with their
-files and `held`, folders with why and `lockedAtMs`, `jobs`: each with `job`, `path`, `queue` (each piece with its `files`,
+files and `held`, folders with why and `lockedAtMs`, `agents` (the session board's agents), `jobs`: each with `job`, `path`,
+`lands` (the plan's lands in the land ledger, each its ledger line), `queue` (each piece with its `files`,
 `after`, `waits`, `overlaps`, `held`, `isClash` and `isStartable`), `features` (each with tess's `verdict` on a mark holding all
 its lands, or null, `isChecked`, `riskFound` and `tessOn`, the sha of that mark while tess has not returned on it), `tess`
 status (`features` listed, `underTess` tess is on, `fixing` waiting for a fix), `holds` (each `{ "feature", "why", "sha",
@@ -364,14 +376,14 @@ A refresh runs one at a time (a claim in the file), at most every 5 s while an a
 - the subagent transcripts (`<session>/subagents/agent-<id>.jsonl`; an old `subagents/workflows/` folder is not read), only their new
   bytes since the last refresh, with their `.meta.json` (type, description, worktree) (`lib/agent-transcript.mjs`, `lib/agents.mjs`);
 - each agent's tokens (the last call's usage: its context so far) and the folder of the last file it read or changed, which
-  places it in a worktree when its own folder is the lead's;
+  places it in a worktree when its own folder is the boss's;
 - the base branch (`lib/repo-stats.mjs`, every 60 s): its tip and the commits on its first-parent line since local midnight;
 - git (`lib/repos.mjs`, `lib/trusted-repos.mjs`, `lib/git-state.mjs`) only in trusted repositories, worked out again on every
   refresh (never read back from the cache): the session folder's and the setup's own (the repository holding the running board
   code, from this code's real path: `~/.claude/tools` links into it). Claude Code's folder-trust record is not used: the owner runs
   with bypass permissions, so it is unreliable. Of those, up to 3 with work: the session's own and each one a registered worktree
   of which holds a folder this session used (an agent's edited files, its isolation worktree, its cwd, live or done, and the
-  lead's Edit/Write folders, read from the new bytes of the main transcript), newest use first. Git runs
+  boss's Edit/Write folders, read from the new bytes of the main transcript), newest use first. Git runs
   only on what the trusted repository records itself, read fresh on every refresh and never from the cache: its shared git folder
   (`--git-dir=<common>` for the refs and the base-branch facts) and each worktree it records (the main checkout, and
   `<common>/worktrees/<name>` whose `gitdir` names `<path>/.git` and whose `commondir` leads back to `<common>`; a main `.git`

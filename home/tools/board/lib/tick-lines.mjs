@@ -1,17 +1,19 @@
 // Purpose: the plain lines `board tick` prints from its facts (tick.mjs tickFacts): the base (the branch checked out in the main
 //   checkout, by its own name), the side findings to tidy, the pool's folders, one line per lane, the test branches not landed,
-//   overlaps, strays, clashes, the plans that cannot be read, each job's lines (queue, features, commits, holds), the `sync` line
-//   in the setup's own repository, and last the `next:` header with its numbered `do` lines (tick-do.mjs). With two or more jobs
-//   each job's own lines (queue, features, commits, holds, its part of the base line) start with `<job>: `.
+//   overlaps, strays, clashes, the plans that cannot be read, each job's lines (queue, features, commits, holds), the `agents`
+//   line and one `job` line per job (tick-pace.mjs), the `sync` line in the setup's own repository, and last the `next:` header
+//   with its numbered `do` lines (tick-do.mjs). With two or more jobs each job's own lines (queue, features, commits, holds, its
+//   part of the base line) start with `<job>: `; a `job` line names its job itself.
 // Exports: tickLines(tick) -> string[], clean(text), short(sha).
-// Invariants: pure apart from reading the clock for the snapshot age (and tick-do.mjs's). Every branch name, path and agent name
-//   goes through cells.mjs cleanText, so no control character reaches the terminal, and through shellWord too inside a printed
-//   command. The `do` lines only suggest: the boss decides (tick-do.mjs says which steps print when).
+// Invariants: pure apart from reading the clock for the snapshot age and the agents' ages (and tick-do.mjs's). Every branch
+//   name, path and agent name goes through cells.mjs cleanText, so no control character reaches the terminal, and through
+//   shellWord too inside a printed command. The `do` lines only suggest: the boss decides (tick-do.mjs says which steps print when).
 import { SNAPSHOT_LABEL } from '../../git-tidy/lib/lane-slots.mjs';
 import { shellWord } from '../../git-tidy/lib/shell-word.mjs';
 import { cleanText } from './cells.mjs';
 import { doSteps, isSnapshot, syncLine } from './tick-do.mjs';
 import { commitsLines, featuresLine } from './tick-features.mjs';
+import { agentsLine, jobLine } from './tick-pace.mjs';
 import { queueLine } from './tick-queue.mjs';
 
 const SHORT_SHA = 8;
@@ -159,6 +161,8 @@ export function tickLines(tick) {
     ...tick.forgotten.map(forgottenLine),
     ...(tick.ledgerSkipped > 0 ? [`ledger ${plural(tick.ledgerSkipped, 'bad line')} skipped`] : []),
     ...(tick.ledgerUnreadable === null ? [] : [`ledger unreadable (${clean(tick.ledgerUnreadable)}): no piece counts as landed`]),
+    agentsLine(tick.agents, Date.now()),
+    ...tick.jobs.map(jobLine),
     ...[syncLine(tick)].filter((line) => line !== null),
     ...doLines(tick),
   ];
