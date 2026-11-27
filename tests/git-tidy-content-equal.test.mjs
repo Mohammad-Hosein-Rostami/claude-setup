@@ -23,7 +23,7 @@ const BUSY = '1 uncommitted or untracked files';
 const LOCKED = 'locked; unlock it with `git worktree unlock` first';
 
 const sweepLines = (repo, branch) => {
-  const result = land([branch, '--repo', repo], repo);
+  const result = land([branch, '--repo', repo, '--no-tick'], repo);
   assert.equal(result.status, 0, result.stderr);
   return outputLines(result.stdout).slice(3);
 };
