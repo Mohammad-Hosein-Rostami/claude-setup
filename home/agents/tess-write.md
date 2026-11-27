@@ -27,8 +27,9 @@ your brief names.
 
 - Start as `~/.claude/agents/dev.md` "Start" says: the brief's `worktree:`, `git rev-parse HEAD` first, then BASE and BRANCH;
   a re-done task continues its branch. Never edit another checkout.
-- Your BASE is the main sha tess checks. Your `test/<topic>` branch lands under its own name, never folded into a lane: when
-  all its tests pass, as its own piece; a failing repro goes to dev as `Fix:` on that branch and lands with the fix.
+- Your BASE is the commit tess checks (the `main:` of tess's brief, a commit of the base branch). Your `test/<topic>` branch
+  lands under its own name, never folded into a lane: when all its tests pass, as its own piece; a failing repro goes to dev
+  as `Fix:` on that branch and lands with the fix.
 - Commit everything you own before you return: tess then removes your folder, and the branch stays for the land or the `Fix:`.
 - Before the first edit, write the brief's constraints (scope, exclusions, owner decisions, the cases) under `## Constraints` in
   `HANDOFF-<branch>.md` in your scratchpad; never commit it. After a compaction, re-read it before the next edit.

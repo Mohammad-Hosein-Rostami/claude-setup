@@ -5,12 +5,12 @@ description: Use when deciding which checks a change needs before calling it don
 
 Write the plan into the detail file before the first check runs.
 
-1. Inputs: base (the `from` of the oldest `<from>..<to>` range in the brief's `commits:`), tip (the brief's `main:` sha),
-   spec, acceptance lines. An empty range (`git diff --name-only <base>...<tip>` prints nothing) is `not checked: empty
-   range`, never a pass.
+1. Inputs: the ranges (each `<from>..<to>` of the brief's `commits:`, one per land, each read on its own: `<oldest from>..<tip>`
+   also holds other features' lands), tip (the brief's `main:` sha), base (the oldest `from`, for base runs), spec, acceptance
+   lines. Every range empty (`git diff --name-only <from>..<to>` prints nothing) is `not checked: empty range`, never a pass.
 2. Risk: `node ~/.claude/tools/risk/risk.mjs --base <base> --tip <tip> --repo <dir>`. `risk: unknown` counts as risky.
-3. Kinds from `git diff --name-only <base>...<tip>`: code, tests only, docs or text only, dependencies (manifest or lockfile),
-   UI (`.tsx .jsx .vue .css .scss .html`, styles), config or CI (`.github/`, Dockerfiles), the project's AI setup (`.claude/`,
+3. Kinds from each range's `git diff --name-only <from>..<to>`: code, tests only, docs or text only, dependencies (manifest
+   or lockfile), UI (`.tsx .jsx .vue .css .scss .html`, styles), config or CI (`.github/`, Dockerfiles), the project's AI setup (`.claude/`,
    `CLAUDE.md`, `AGENTS.md`), pixel (a Figma or matrix brief: not tess's).
 4. Commands: read them from the project, in this order: CI config (`.github/workflows/*.yml` and similar: what the team really
    runs), `package.json` scripts, Makefile, README, CONTRIBUTING. Never invent a command. A missing one is `not run (no command)`.
@@ -20,7 +20,7 @@ Write the plan into the detail file before the first check runs.
 
    | Kind / `qa:` | Checks |
    |---|---|
-   | quick test (any code, tests only, AI setup or CI) | related tests (the runner's own: `vitest related <files>`, `jest --findRelatedTests <files>`; else the test files the diff changed and those that import or are named for the changed files); the project's typecheck, else a syntax check of each changed file (`node --check`, `bash -n`, `python -m py_compile`); a failing one also on the base (new or old) |
+   | quick test (any code, tests only, AI setup or CI) | related tests (the runner's own: `vitest related <files>`, `jest --findRelatedTests <files>`; else the test files the ranges changed and those that import the changed files, are named for them or read them by path); the project's typecheck, else a syntax check of each changed file (`node --check`, `bash -n`, `python -m py_compile`); a failing one also on the base (new or old) |
    | quick review (any change) | you read the diff once against the brief, the spec and the acceptance lines (steps 6 and 8); no probes, no second round |
    | docs or text only | none (links: `node ~/.claude/tools/refs/refs.mjs check .` when the repo uses it) |
    | `full` (owner asks) | lint on changed files; the full suite instead of related tests (only with `suite: yes`); build when the project has one; the `examples:` dev-docs listed, run in tess's check folder when they are local and safe; tess-review and tess-simple; edge cases (step 7); tess-write for uncovered lines; the rows below by kind |
@@ -29,7 +29,7 @@ Write the plan into the detail file before the first check runs.
    | `ui`, non-pixel (owner asks, or in `full`) | ui-quality-pass items 1-8 read against the diff; the project's a11y or e2e tests; `ui-check responsive` at 320, 768, 1280 only when the brief gives a URL |
    | `tests` (owner asks) | tess-write's tests; the "can it fail" check (tess, "Verify tess-write's tests") |
    | AI setup or CI (in `full` or `review`) | review on the gate class |
-   | smoke (`qa: smoke`) | When dev's report has `smoke: <command> \| expect: <observable>`: one `tess-run` call runs it 1 time (a code path) or 3 times (the result depends on the model's choices), every `claude` start with `--model sonnet --output-format stream-json --verbose`, each try in `<detail dir>/smoke/try-<n>/`: `command.txt`, `stdout.jsonl`, `stderr.txt`, `exit.txt`, `seconds.txt`, and the check line `expect \| observed \| PASS/FAIL`. A usage-limit stop is `not run (limit, resets <time>)`. Nothing waits for it. |
+   | smoke (`qa: smoke`) | When dev's report has `smoke: <command> \| expect: <observable>`: one `tess-run` call runs it 1 time (a code path) or 3 times (the result depends on the model's choices), every `claude` start with `--model sonnet --output-format stream-json --verbose` and without the calling session's `CLAUDE_*` and `CLAUDECODE` variables (the set `childEnv` in `tests/e2e/lib/env.mjs` drops), the subscription login (`CLAUDE_CODE_OAUTH_TOKEN`) kept, each try in `<detail dir>/smoke/try-<n>/`: `command.txt`, `stdout.jsonl`, `stderr.txt`, `exit.txt`, `seconds.txt`, and the check line `expect \| observed \| PASS/FAIL`. A usage-limit stop is `not run (limit, resets <time>)`. Nothing waits for it. |
    | e2e (`qa: e2e`) | only when the owner asks, or a final pass; never per feature: tess's `e2e` section (`node tests/e2e/run.mjs --all`) |
 
    A tool that is not installed (gitleaks, osv-scanner, Playwright) or an audit with no network is `not run (<why>)`, never a
@@ -43,7 +43,7 @@ Write the plan into the detail file before the first check runs.
 8. Test-file changes inside a code diff: list each edited or deleted assertion and each new skip, `.only`, `todo` or raised timeout
    as a finding candidate (agents edit tests to pass them).
 9. Order: cheap and narrow first (typecheck, lint, related tests), then build and suite. Run the full suite directly, once per
-   main sha: only with `suite: yes`, recorded in `<git common dir>/cs-suite/<sha>.txt`. Run every planned check; never stop at
+   tip: only with `suite: yes`, recorded in `<git common dir>/cs-suite/<sha>.txt`. Run every planned check; never stop at
    the first failure.
 
 Done-gate: the plan names every check with its command or `not run (why)`, the acceptance map has no blank line, and (in
@@ -61,10 +61,10 @@ Done-gate: the plan names every check with its command or `not run (why)`, the a
 | pixel work | none: dev-pixel and pixel-qa; its logic code follows the rows above | - | - |
 
 The boss routes on the higher of dev's report `risk:` and lex's plan `risk:` and `qa:` for the feature (`risk: unknown` is
-risky). tess checks only main, one feature per tess, started only by the boss, which claims a snapshot lane per tess at
-main's sha X (`node ~/.claude/tools/git-tidy/git-tidy.mjs lane claim --repo <abs> --snapshot --base <X>`) and runs
-`lane release` after that tess returns. Its brief: `qa:`, `repo:`, `main: <sha>`, `worktree:` (that snapshot lane),
-`feature:`, `commits:` (the tick's `commits <feature>:` line, one `<from>..<to>` range per land), `suite: yes|no` (only with
-`full`: `yes` on exactly one tess per sha; the others reuse its result), `spec:`, `acceptance:`, `risk:`. tess replies `main: ok` or
-`main: must-fix <n>`. The boss re-checks a must-fix's repro in a snapshot lane of the newest main before it becomes the next
-piece.
+risky). tess checks only the base branch, one feature per tess, started only by the boss with `board start --tess <feature>`:
+a snapshot lane at the base's tip first, then the feature's tess mark, then the brief: `qa:`, `repo:`, `main: <sha>`,
+`worktree:` (that snapshot), `feature:`, `commits:` (the tick's `commits <feature>:` line, one `<from>..<to>` range per land),
+`suite: yes|no` (`yes` only for the first `full` tess at that sha; the others reuse its result), `spec:`, `risk:`, `job:`,
+`done:`, `release:`. tess replies `main: ok` or `main: must-fix <n>`, records it with `done:` and releases its snapshot with
+`release:`; the tick names a snapshot left over and holds a risky feature's files until tess records `done`. The boss
+re-checks a must-fix's repro in a snapshot lane of the newest base before it becomes the next piece.

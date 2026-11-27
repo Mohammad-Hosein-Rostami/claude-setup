@@ -26,6 +26,8 @@ description: Use when reviewing a diff, or before returning a risky lane - check
      order-only `indexOf` checks, negative text asserts after a copy change, an env knob set in every case.
    - Errors read as absence: a failed read, list or git call taken as empty or "nothing open"; a wrapper whose failed exec exits 0.
    - Sibling sites: a fix on one branch, handler or call site leaves the others of its class open.
+   - Input states: each branch of a chain against each state of its input (detached, dirty, missing); a sweep count with no
+     file:line list.
    - Shell: an `EXIT` trap set before the values it removes; secrets in a child's argv.
    - Node: object-literal lookups on untrusted keys read the prototype; a promise with no catch ends the process; `fetch` keeps
      custom auth headers on a cross-origin redirect.

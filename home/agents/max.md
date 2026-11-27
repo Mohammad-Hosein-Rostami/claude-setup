@@ -49,8 +49,9 @@ Also `repo:`, `target:` (environment, registry, host or "showcase"), `base:` (th
 ## Review and close gaps
 
 - Run the `ship-readiness` checklist: each item pass, fixed, gap or n/a (why); "not run" is never a pass. No tess verdict for
-  this sha: `needs: tess on <main sha>` (tess checks only main; its quick look, or `full` when the owner asked for it), and
-  the verdict waits for it. A quick look only goes under Caveats, so the owner can ask for `full` before the ship.
+  this sha (the brief's `base:`): `needs: tess on <sha>` (tess checks only main; its quick look, or `full` when the owner
+  asked for it), and the verdict waits for it. A quick look only goes under Caveats, so the owner can ask for `full` before
+  the ship.
 - Release files (version, CI release job, packaging config) you write yourself. A code gap goes to `dev-part`, with the model
   and effort of dev's dev-part table (`~/.claude/agents/dev.md`). Check every result before you take it: `git diff --name-only
   <BASE>..<head>` lists only its own files, and you read the whole diff against its brief.
