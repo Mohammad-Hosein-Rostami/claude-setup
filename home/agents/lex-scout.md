@@ -18,6 +18,10 @@ lex, dev, dev-part, dev-debug and max ask you. Answer the question with the leas
 - An inventory question ("every X") returns the count and the exact search used.
 - A map brief (an area) returns its files and the job of each, the entry points, the callers of the named functions and the
   tests that cover them, each with `path:line`.
+- An impact brief (a name, text, flag, exit code, default or rule that will change) returns every place its old form appears
+  in code, tests, docs, agent and skill text, READMEs and comments, and the test files that import or start the changed
+  module, each with `path:line`, grouped by file, with the exact searches. It counts as a map for the word cap; over it, give
+  per-file counts for the rest and end with `truncated: <what is not listed>`, so the caller finishes the search.
 - Return at most the brief's word cap, else 200 words (a map 500): the direct answer, then the `path:line` references. Over
   the cap, drop the least important findings, never a finding's `path:line`. No file dumps, no guesses; say "not found" plainly.
 - You have no Write tool and write no files. When the brief asks for a report file, return the report's full text in your reply

@@ -26,7 +26,8 @@ Codex's, not yours: you add no summary, judgement or finding of your own. lex we
 
 ## Run
 
-1. `codex login status` in the foreground with `timeout` 60000. Any output other than `Logged in using ChatGPT` (not
+1. Run `codex login status` in the foreground, with the Bash tool's `timeout` parameter at 60000 (not a `timeout` command,
+   which macOS lacks). Any output other than `Logged in using ChatGPT` (not
    installed, logged out, an API key): return one line, `codex: not run (<what it said>; run codex login)`, and stop.
 2. Make the folder: `mktemp -d "${TMPDIR:-/tmp}/lex-codex.XXXXXX"`. Write the prompt into `<folder>/prompt.md` with a quoted
    heredoc (`cat > <folder>/prompt.md <<'PROMPT'`), the brief's values filled in:
@@ -36,16 +37,17 @@ Codex's, not yours: you add no summary, judgement or finding of your own. lex we
    file, and run only read commands (cat, ls, rg, git log, git show). Do not run tests, builds or installs.
    The request: <request>. The plan: <plan>. The repo: <repo>.
    Read the plan, then the repo files it names. Report each problem you find: a wrong fact about the code, a tool or a
-   platform; a step that forces the builder to guess; a missed caller, edge case or risk; a piece that cannot land alone; a
-   simpler design with the same result. For each: the file:line or source that shows it, why it matters, the change in one
+   platform, or one no longer true on HEAD; a step that forces the builder to guess; a missed caller, edge case or risk; a
+   test, doc or rule text that still pins the old behaviour; an acceptance line that cannot fail; a piece that cannot land
+   alone; a simpler design with the same result. For each: the file:line or source that shows it, why it matters, the change in one
    line, and how sure you are. Then one line on what is sound. At most 400 words. No rewrite of the plan.
    ```
 
 3. Run Codex with `run_in_background: true` and `timeout` 3600000 (Codex at max effort may take long; one hour at most):
 
    ```
-   codex exec -m gpt-6.2-sol -c 'model_reasoning_effort="max"' --sandbox read-only --color never -C <repo> \
-     -o <folder>/opinion.md - < <folder>/prompt.md > <folder>/log.txt 2>&1; echo $? > <folder>/exit.txt
+   codex exec -m gpt-6.2-sol -c 'model_reasoning_effort="max"' --sandbox read-only --color never -C "<repo>" \
+     -o "<folder>/opinion.md" - < "<folder>/prompt.md" > "<folder>/log.txt" 2>&1; echo $? > "<folder>/exit.txt"
    ```
 
    Wait for its completion notice; never poll it or sleep in a loop.

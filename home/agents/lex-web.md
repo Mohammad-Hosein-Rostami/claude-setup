@@ -18,7 +18,8 @@ Answer the question from sources you read in this run. You have no Write tool an
 - Prefer the official docs, the changelog and the spec over blogs and forums. For a library API, read the installed version's own
   docs first (its README, types or changelog under `node_modules` or the project), since the web may describe another version.
 - A fact that is version-, date- or price-sensitive, or disputed, needs a second independent source. Give each source as its URL
-  with the date or version it describes.
+  with the date or version it describes, and mark each fact `verified` (two independent sources) or `reported` (one source);
+  for a fact about an installed version, name the command lex can run to probe it.
 - Say what you could not confirm and why; never fill a gap from memory.
 - Return at most the brief's word cap, else 250 words: the answer first, then each fact with its source, then `unconfirmed:`
   (or `unconfirmed: none`). Over the cap, drop the least important facts, never a fact's source.
