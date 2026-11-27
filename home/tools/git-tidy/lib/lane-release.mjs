@@ -10,6 +10,8 @@
 // - Release detaches, unlocks and deletes a landed branch (prune's compare-and-delete; kept when its reflog holds commits found nowhere
 //   else); it never detaches or deletes a base branch and refuses a folder a claim is filling. Land detaches the landed folder and
 //   prune deletes the branch. The folder stays a plain detached worktree that `git-tidy prune` keeps.
+// - Release with an expected lock reason compares it, under the pool lock, with the folder's lock reason before anything else, so a
+//   release printed before the folder was re-claimed never frees the new claim.
 // - Release and land's detach delete the slot's fill file (lane-fill-state.mjs) before they switch or unlock: a fill file counts on a
 //   detached, pool-locked slot (lane-slots.mjs), the state both pass through.
 // - Land's detach runs under the pool lock and reads the slot inside it; it frees only the pool slot that holds the landed branch at
@@ -73,9 +75,12 @@ function deleteReleasedBranch(repo, branch) {
   return deleted.action === 'deleted' ? `branch ${branch} deleted (${deleted.detail})` : `branch ${branch} kept: ${deleted.detail}`;
 }
 
-function releaseUnderLock(repo, folder) {
+function releaseUnderLock(repo, folder, expectedReason) {
   const tree = slotTree(repo, folder);
   if (tree === undefined || tree.missing) return { released: false, why: 'not a present worktree of this repository' };
+  if (expectedReason !== null && !(tree.locked && tree.lockReason === expectedReason)) {
+    return { released: false, why: `${folder} is now ${tree.locked ? tree.lockReason || 'locked with no reason' : 'unlocked'}, not ${expectedReason}` };
+  }
   const slot = readSlot(repo, folder);
   if (slot.state === 'filling') return { released: false, why: 'a claim is filling it: release it after that claim ends' };
   const refusal = releaseRefusal(repo, tree);
@@ -91,12 +96,15 @@ function releaseUnderLock(repo, folder) {
  * Frees the pool folder `folder`: detaches it, removes its claim lock and deletes its landed branch.
  * @param {object} repo openRepo's result
  * @param {string} folder the slot folder
+ * @param {string|null} [expectedReason] the lock reason the folder had when the release was decided (`lane release --expect`), so
+ *   a folder re-claimed since then is not freed; null: no such check
  * @returns {{ released: boolean, why: string, branch?: string|null }} refused (released false) when it is not a pool folder of this
- *   repository, a claim is filling it, someone else's lock holds it, it has unfinished work, or its branch is not landed on the base
+ *   repository, its lock reason is not `expectedReason` (unlocked included), a claim is filling it, someone else's lock holds it,
+ *   it has unfinished work, or its branch is not landed on the base
  */
-export function releaseLane(repo, folder) {
+export function releaseLane(repo, folder, expectedReason = null) {
   if (!isPoolSlot(repo, folder)) return { released: false, why: `not a lane folder of this repository (${poolFolderOf(repo)}/lane-<n>)` };
-  return withPoolLock(commonDirOf(repo), `release ${folder}`, () => releaseUnderLock(repo, folder));
+  return withPoolLock(commonDirOf(repo), `release ${folder}`, () => releaseUnderLock(repo, folder, expectedReason));
 }
 
 /** git's first non-empty message line (a local copy: git-tidy imports nothing from home/tools/land). */

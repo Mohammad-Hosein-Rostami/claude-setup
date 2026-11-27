@@ -5,8 +5,8 @@
 //   2 usage (bad sha, a new branch's --base not on the base, an existing branch claimed on another base, a branch that fails check-ref-format,
 //   --snapshot with --branch, a branch checked out or being filled in another folder: named), 4 the pool lock stayed held by another
 //   live claim, 14 a git command, the lane's base record or the clone fill failed (the folder is not handed out). A snapshot claim
-//   (--snapshot) has the same codes. list 0. release 0 detached, 3 refused (why). reclaim 0, 1 a
-//   removal failed.
+//   (--snapshot) has the same codes. list 0. release 0 detached, 3 refused (why; with --expect also when the folder's lock reason
+//   is not the expected one). reclaim 0, 1 a removal failed.
 //   Every command: 2 usage, 4 pool lock busy, 14 git failed.
 // Invariants: --repo and --folder are absolute paths; only lane-pool.mjs writes; a job-made record that could not be written is one stderr
 //   line (the folder is then not swept by the job-leftover sweep, the safe side).
@@ -22,12 +22,13 @@ import { shellWord } from './shell-word.mjs';
 export const LANE_USAGE = 'usage: git-tidy.mjs lane claim --repo <abs> --branch <name> [--base <40-hex sha>] [--json]\n'
   + '       git-tidy.mjs lane claim --repo <abs> --snapshot [--base <40-hex sha>] [--json]\n'
   + '       git-tidy.mjs lane list --repo <abs> [--json]\n'
-  + '       git-tidy.mjs lane release --repo <abs> --folder <abs lane folder> [--json]\n'
+  + '       git-tidy.mjs lane release --repo <abs> --folder <abs lane folder> [--expect <lock reason>] [--json]\n'
   + '       git-tidy.mjs lane reclaim --repo <abs> [--json]';
 const EXIT = Object.freeze({ ok: 0, notReady: 1, failed: 1, usage: 2, refused: 3, busy: 4, git: 14 });
 const NEEDS = Object.freeze({ claim: ['repo', 'branch'], list: ['repo'], release: ['repo', 'folder'], reclaim: ['repo'] });
-const OPTIONAL = Object.freeze({ claim: ['base'] }); // flags a command takes but does not need (claim: the base's tip by default)
-const FLAGS = Object.freeze({ '--repo': 'repo', '--branch': 'branch', '--base': 'base', '--folder': 'folder' });
+// flags a command takes but does not need (claim: the base's tip by default; release: no lock reason check by default)
+const OPTIONAL = Object.freeze({ claim: ['base'], release: ['expect'] });
+const FLAGS = Object.freeze({ '--repo': 'repo', '--branch': 'branch', '--base': 'base', '--folder': 'folder', '--expect': 'expect' });
 const ABSOLUTE_PATH = /^(\/|[A-Za-z]:[\\/])/;
 const WRITTEN_RECORDS = new Set(['recorded', 'filled']);
 const DONE_OUTCOMES = new Set(['installed', 'cloned']); // prepareLane outcomes that put node_modules in place now
@@ -35,7 +36,7 @@ const CLI = fileURLToPath(new URL('../git-tidy.mjs', import.meta.url));
 
 function parseLaneArgs([command, ...rest]) {
   if (!Object.hasOwn(NEEDS, command ?? '')) throw new UsageError(LANE_USAGE);
-  const options = { command, json: false, snapshot: false, repo: null, branch: null, base: null, folder: null };
+  const options = { command, json: false, snapshot: false, repo: null, branch: null, base: null, folder: null, expect: null };
   for (let i = 0; i < rest.length; i++) {
     const name = FLAGS[rest[i]];
     if (rest[i] === '--json') options.json = true;
@@ -121,7 +122,7 @@ function runList(repo, options) {
 }
 
 function runRelease(repo, options) {
-  const result = releaseLane(repo, options.folder);
+  const result = releaseLane(repo, options.folder, options.expect);
   if (options.json) console.log(JSON.stringify({ folder: options.folder, ...result }, null, 2));
   else console.log(result.released ? [`released ${options.folder} (${result.why})`, ...(result.branch ? [result.branch] : [])].join('\n') : `refused: ${result.why}`);
   return result.released ? EXIT.ok : EXIT.refused;

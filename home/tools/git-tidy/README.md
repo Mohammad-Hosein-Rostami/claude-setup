@@ -270,10 +270,13 @@ node_modules) stay warm, and no folder is left behind:
 - `lane list --repo <abs> [--json]`: one line per folder, `lane-<n> free|busy|missing|filling|broken <why>`: `filling <branch>
   pid <n>` while a claim fills it, `broken the fill of <branch> by pid <n> stopped` when that claim died or its fill failed. In
   `--json` each slot also has `fillFile` (the fill file's `{ pid, branch, target, startedAt }`, or null).
-- `lane release --repo <abs> --folder <abs> [--json]`: frees a folder whose branch is landed and whose tree is clean: detach,
-  remove its `cs-lane-pool` lock, delete the branch (prune's compare-and-delete; kept when its reflog holds commits found nowhere
-  else). Exit 0 released, 3 refused with why (not a pool folder, a claim is filling it, a base branch, someone else's lock,
-  unfinished work, not landed).
+- `lane release --repo <abs> --folder <abs> [--expect <lock reason>] [--json]`: frees a folder whose branch is landed and whose
+  tree is clean: detach, remove its `cs-lane-pool` lock, delete the branch (prune's compare-and-delete; kept when its reflog holds
+  commits found nowhere else). Exit 0 released, 3 refused with why (not a pool folder, a claim is filling it, a base branch,
+  someone else's lock, unfinished work, not landed). With `--expect`, the folder's lock reason (such as `cs-lane-pool snapshot
+  1a2b3c4d`) is read under the pool lock before anything changes; when it differs, the folder was re-claimed since the release was printed, and
+  nothing changes: exit 3, `refused: <folder> is now <reason>, not <expected>` (`unlocked` when it has no lock). A new claim with
+  the same reason (a snapshot of the same commit) is not told apart.
 - `lane reclaim --repo <abs> [--json]`: removes, with `git worktree remove` (never `--force`), each free folder unused for 24 hours
   (`RECLAIM_IDLE_MS`; use = its HEAD reflog, HEAD or index changed). When the repository was used in that time (a folder holds a
   branch, or a free one was used), its lowest free folder stays. A folder whose HEAD reflog holds commits found nowhere else
